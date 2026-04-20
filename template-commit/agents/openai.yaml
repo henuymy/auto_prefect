@@ -1,4 +1,0 @@
-interface:
-  display_name: "Template Commit"
-  short_description: "Safely replace the official template after notification succeeds."
-  default_prompt: "Use this skill to commit an updated temporary template as the official template only after WeCom sending succeeds."

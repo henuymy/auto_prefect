@@ -1,136 +1,121 @@
-# 自动化通报项目
+# 自动化通报 Prefect 项目
 
-本项目当前包含自动化通报系统设计文档，以及一个用于登录内网系统并获取目标域 `JSESSIONID` 的 Selenium 原型。
+这是一个 Prefect 风格的自动化通报项目。当前阶段先完成标准目录整理，现有可运行脚本暂时放在 `legacy_modules/`，后续再逐步迁移到 `services/`。
 
-## 当前目录
+## 目录结构
 
 ```text
-autologin/
-├── SKILL.md              # Skill 入口说明
-├── agents/
-│   └── openai.yaml       # Skill UI 元数据
-├── references/
-│   └── config.example.json
-├── scripts/
-│   ├── autologin.py      # 登录命令行入口
-│   ├── login_flow.py     # Selenium 登录流程
-│   ├── cookie_recorder.py # 登录过程中写入三阶段 Cookie JSON
-│   ├── otp_provider_gotify.py
-│   └── requirements.txt
-├── config.json           # 本地真实配置，已忽略
-└── runtime/              # 本地运行产物，已忽略
-auto_notify/
-├── app.py                # 主应用入口
-└── handlers/
-    └── login_handler.py  # 登录模块适配层
+.
+├── pyproject.toml
+├── prefect.yaml
+├── README.md
+├── ARCHITECTURE.md
+├── requirements.txt
+├── config/
+│   ├── app_settings.yaml
+│   ├── login_profiles.yaml
+│   ├── method_registry.json
+│   ├── modules/
+│   │   ├── autologin.json
+│   │   ├── excel_sender_wx.json
+│   │   ├── report_compare.json
+│   │   ├── report_downloader.json
+│   │   ├── template_updater.json
+│   │   └── template_commit.json
+│   └── tasks/
+│       ├── example.json
+│       └── local.json
+├── flows/
+│   ├── notify_single_flow.py
+│   ├── notify_multi_method_flow.py
+│   ├── manual_rerun_flow.py
+│   └── __init__.py
+├── tasks/
+├── services/
+├── models/
+├── infrastructure/
+├── utils/
+├── deployments/
+├── runtime/
+├── tests/
+├── docs/
+└── legacy_modules/
 ```
 
-## 运行登录原型
+## 分层原则
 
-1. 进入 `autologin` 目录。
-2. 参考 `references/config.example.json` 创建 `config.json`，填写真实账号、密码和系统地址。
-3. 安装依赖。
-4. 执行登录脚本。
+```text
+flows         只负责编排和分支
+tasks         只做 Prefect task 包装
+services      放业务逻辑，不依赖 Prefect
+models        放输入输出数据结构
+infrastructure 放 HTTP、Excel、企业微信、Gotify 等底层客户端
+utils         放通用工具
+runtime       放运行产物，不提交
+legacy_modules 临时保留旧脚本，后续迁移
+```
+
+详细约束见 `ARCHITECTURE.md`。
+
+## 安装依赖
 
 ```powershell
-cd autologin
-pip install -r scripts/requirements.txt
-python scripts/autologin.py
+pip install -r requirements.txt
 ```
 
-脚本会打开 Edge 浏览器，登录后把目标域的 `JSESSIONID` 保存到 `autologin/runtime/jsessionid.txt`，并在同一次登录链路中把三阶段 Cookie 写入 `autologin/runtime/cookie_dump.json`。
+## 运行单任务 Flow
 
-也可以从项目根目录通过主应用入口执行当前已接入的登录模块：
+本地真实配置文件：
+
+```text
+config/tasks/local.json
+```
+
+如果不存在，会回退读取：
+
+```text
+config/tasks/example.json
+```
+
+运行：
 
 ```powershell
-python -m auto_notify.app login
+python flows\notify_single_flow.py
 ```
 
-## 报表与模板原数据比对
-
-下载报表后，可以使用独立的 `report-compare` skill 将新报表中所有工作表与正式模板中的对应工作表进行比对。默认按同名工作表匹配，如果名字不同，在 `report-compare/config.json` 的 `sheet_mappings` 里配置映射。比对结果会返回：
-
-- `same`：数据一致
-- `changed`：数据有变化，可以继续写入临时模板并发送
-- `invalid`：字段不一致、数据为空或主键异常，应停止后续流程
-
-示例：
+指定某个通报配置运行：
 
 ```powershell
-python report-compare\scripts\compare_reports.py --config report-compare\config.json
+python -c "from flows.notify_single_flow import auto_notify_flow; auto_notify_flow('config/tasks/vnet_daily.json')"
 ```
 
-也可以临时通过命令行传入文件路径：
+后续多个通报建议按“一个通报一个配置”新增：
 
-```powershell
-python report-compare\scripts\compare_reports.py `
-  --new-report "report-downloader/runtime/downloads/xxx.xls" `
-  --template "C:/path/to/template.xlsx" `
-  --header-row 1
+```text
+config/tasks/vnet_daily.json
+config/tasks/market_daily.json
+config/tasks/zhengqi_daily.json
 ```
 
-如果有不参与比对的字段，可以重复传入 `--ignore-column`：
+当前 Flow 仍调用 `legacy_modules/` 中的旧脚本，顺序为：
 
-```powershell
-python report-compare\scripts\compare_reports.py `
-  --new-report "report-downloader/runtime/downloads/xxx.xls" `
-  --template "C:/path/to/template.xlsx" `
-  --ignore-column "更新时间"
+```text
+可选登录
+→ 下载报表
+→ 比对报表和正式模板
+→ same：结束
+→ invalid：失败停止
+→ changed：生成临时模板
+→ 自动生成本次发送配置
+→ 发送企业微信
+→ 发送成功后提交正式模板
 ```
 
-如果需要按主键比对，而不是按行顺序比对，可以重复传入 `--key-column`。
+## 后续迁移方向
 
-## 比对通过后更新临时模板
-
-`template-updater` 会读取 `report-compare` 的比对结果。只有结果为 `changed` 时才复制正式模板并写入下载报表中的变化页；`same` 会跳过，`invalid` 会停止。
-
-```powershell
-python template-updater\scripts\update_template.py
-```
-
-输出的临时模板副本会保存到 `template-updater/runtime/templates`，正式模板不会被直接覆盖。
-
-## 发送成功后提交正式模板
-
-`template-commit` 会读取 `template-updater` 的更新清单和 `excel-sender-wx` 的发送结果。只有企业微信真实发送成功后，才会备份正式模板并用临时模板副本替换它。
-
-```powershell
-python template-commit\scripts\commit_template.py
-```
-
-如果发送结果是 dry-run 或存在失败项，脚本会拒绝提交。
-
-## Gotify 验证码
-
-默认通过 SmsForwarder + Gotify 自动获取短信验证码。请在 `autologin/config.json` 中填写 `otp_config`：
-
-```json
-{
-  "otp_mode": "gotify",
-  "otp_config": {
-    "gotify_url": "https://gotify.example.com",
-    "client_token": "your_client_token_for_fetch_side",
-    "title_prefix": "短信发送方或转发标题",
-    "allowed_senders": ["短信发送方或转发标题"],
-    "required_keywords": ["动态密钥"],
-    "code_regex": "(?<!\\d)(\\d{4,8})(?!\\d)",
-    "preferred_code_lengths": [6],
-    "timeout_seconds": 180,
-    "poll_interval_seconds": 3,
-    "max_request_count": 3,
-    "retry_interval_seconds": 5,
-    "message_ttl_seconds": 600,
-    "trigger_grace_seconds": 120,
-    "require_new_message": true,
-    "delete_after_success": true
-  }
-}
-```
-
-`title_prefix` 和 `allowed_senders` 要按 Gotify 实际收到的消息填写。如果 Gotify 消息标题就是短信发送方号码，就把这两个字段都填成该号码。`required_keywords` 建议填写短信里的稳定关键词，例如“动态密钥”；若短信正文没有固定关键词，可以设为空列表，并用 `preferred_code_lengths` 优先选择常见的 6 位验证码。`require_new_message` 会在请求短信前记录 Gotify 已有消息，后续只接受新消息，避免误用历史动态密钥。如果一轮等待超时，会按 `max_request_count` 重新触发短信发送。登录成功后，脚本会按 `delete_after_success` 配置删除已消费的 Gotify 消息。
-
-如果需要临时回到手工输入验证码，把 `otp_mode` 改成 `manual`。
-
-## 后续工程化方向
-
-设计文档建议后续拆分为 `config_manager`、`scheduler`、`login_handler`、`report_handler`、`compare_handler`、`template_handler`、`notify_handler`、`commit_handler` 和 `state_manager` 等模块。下一步建议先把当前登录原型收敛为 `login_handler`，再接入 Gotify 验证码提供器。
+1. `autologin/session` 已迁移出会话复用入口到 `services/session_manager.py`，旧 Selenium 登录脚本暂时作为刷新 Cookie 的后备入口。
+2. `report-downloader` 已迁移到 `services/method_service.py`，旧脚本暂时保留备用。
+3. `report-compare` 已迁移到 `services/compare_service.py`，旧脚本暂时保留备用。
+4. `template-updater` 已迁移到 `services/template_service.py`，旧脚本暂时保留备用。
+5. `excel-sender-wx` 已拆到 `services/screenshot_service.py` 和 `services/notify_service.py`，旧脚本暂时保留备用。
+6. `template-commit` 已迁移到 `services/commit_service.py`，旧脚本暂时保留备用。

@@ -1,0 +1,9 @@
+{
+  "update_manifest_path": "runtime/template_updater/update_manifest.json",
+  "send_result_path": "runtime/excel_sender_wx/send_result.json",
+  "backup_dir": "runtime/template_commit/backups",
+  "manifest_path": "runtime/template_commit/commit_manifest.json",
+  "require_send_success": true,
+  "allow_dry_run_commit": false,
+  "overwrite": true
+}

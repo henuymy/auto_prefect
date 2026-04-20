@@ -1,0 +1,43 @@
+{
+  "cookie_dump_path": "runtime/cookies/cookie_dump.json",
+  "output_dir": "runtime/report_downloader/downloads",
+  "manifest_path": "runtime/report_downloader/download_manifest.json",
+  "request_timeout_seconds": 120,
+  "verify_ssl": false,
+  "trust_env": false,
+  "proxies": {},
+  "reports": [
+    {
+      "enabled": true,
+      "name": "日通报导出",
+      "stage": "report_analysis",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      "headers_from_cookies": {
+        "ssr-token": "ssr-token"
+      },
+      "csrf_headers_from_cookies": {
+        "ssr-header": "ssr-token"
+      },
+      "allow_redirects": true,
+      "data": {
+        "area": "371",
+        "templateId": "86283",
+        "sheetIndex": "-1",
+        "sheetName": "日通报",
+        "type": "excel",
+        "versionName": "20260331",
+        "resId": "513958",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "false"
+      }
+    }
+  ]
+}

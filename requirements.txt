@@ -1,0 +1,4 @@
+prefect>=3.0
+requests>=2.31.0
+selenium>=4.0.0
+pywin32>=306; platform_system == "Windows"

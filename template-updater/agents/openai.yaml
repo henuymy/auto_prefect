@@ -1,4 +1,0 @@
-interface:
-  display_name: "Template Updater"
-  short_description: "Write downloaded report sheets into a temporary template copy after comparison passes."
-  default_prompt: "Use this skill to update a temporary template copy only after report comparison succeeds."

@@ -1,0 +1,5 @@
+profiles:
+  default:
+    enabled: false
+    config_path: legacy_modules/modules/autologin/config.json
+

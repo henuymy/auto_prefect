@@ -1,0 +1,11 @@
+{
+  "compare_result_path": "runtime/report_compare/compare_result.json",
+  "compare_config_path": "config/modules/report_compare.json",
+  "source_report_path": null,
+  "template_path": null,
+  "output_dir": "runtime/template_updater/templates",
+  "manifest_path": "runtime/template_updater/update_manifest.json",
+  "write_sheets": "changed",
+  "copy_mode": "all",
+  "visible": false
+}

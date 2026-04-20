@@ -1,0 +1,15 @@
+[project]
+name = "auto-notify"
+version = "0.1.0"
+description = "Prefect-based automated report notification workflow."
+requires-python = ">=3.11"
+dependencies = [
+  "prefect>=3.0",
+  "requests>=2.31.0",
+  "selenium>=4.0.0",
+  "pywin32>=306; platform_system == 'Windows'",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

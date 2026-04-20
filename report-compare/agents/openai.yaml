@@ -1,4 +1,0 @@
-interface:
-  display_name: "Report Compare"
-  short_description: "Compare downloaded Excel report data with template raw data."
-  default_prompt: "Use this skill to compare a downloaded report with the raw-data sheet in an official template before writing or sending notifications."

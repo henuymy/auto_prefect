@@ -1,0 +1,6 @@
+name: notify-multi-method
+entrypoint: flows/notify_multi_method_flow.py:notify_multi_method_flow
+work_pool:
+  name: default-agent-pool
+  work_queue_name: default
+

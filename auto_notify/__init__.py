@@ -1,2 +1,0 @@
-"""Auto notify application package."""
-

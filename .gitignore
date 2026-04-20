@@ -2,20 +2,10 @@ __pycache__/
 *.py[cod]
 
 # Local credentials and session artifacts
-autologin/config.json
-autologin/runtime/
-excel-sender-wx/config.json
-excel-sender-wx/runtime/
-report-downloader/config.json
-report-downloader/runtime/
-report-compare/config.json
-report-compare/runtime/
-report-compare/*.xls
-report-compare/*.xlsx
-template-updater/config.json
-template-updater/runtime/
-template-commit/config.json
-template-commit/runtime/
+legacy_modules/modules/*/config.json
+legacy_modules/modules/*/runtime/
+legacy_modules/modules/report-compare/*.xls
+legacy_modules/modules/report-compare/*.xlsx
 
 # Runtime output
 runtime/
@@ -25,3 +15,6 @@ cache/
 *.log
 .env
 .env.*
+config/tasks/local.json
+config/tasks/*.local.json
+config/modules/*.local.json

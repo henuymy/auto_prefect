@@ -1,0 +1,6 @@
+"""Placeholder tests for Prefect flows."""
+
+
+def test_project_imports():
+    import flows.notify_single_flow  # noqa: F401
+
