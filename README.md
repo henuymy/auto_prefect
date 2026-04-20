@@ -46,6 +46,50 @@ python scripts/autologin.py
 python -m auto_notify.app login
 ```
 
+## 报表与模板原数据比对
+
+下载报表后，可以使用独立的 `report-compare` skill 将新报表中所有工作表与正式模板中的对应工作表进行比对。默认按同名工作表匹配，如果名字不同，在 `report-compare/config.json` 的 `sheet_mappings` 里配置映射。比对结果会返回：
+
+- `same`：数据一致
+- `changed`：数据有变化，可以继续写入临时模板并发送
+- `invalid`：字段不一致、数据为空或主键异常，应停止后续流程
+
+示例：
+
+```powershell
+python report-compare\scripts\compare_reports.py --config report-compare\config.json
+```
+
+也可以临时通过命令行传入文件路径：
+
+```powershell
+python report-compare\scripts\compare_reports.py `
+  --new-report "report-downloader/runtime/downloads/xxx.xls" `
+  --template "C:/path/to/template.xlsx" `
+  --header-row 1
+```
+
+如果有不参与比对的字段，可以重复传入 `--ignore-column`：
+
+```powershell
+python report-compare\scripts\compare_reports.py `
+  --new-report "report-downloader/runtime/downloads/xxx.xls" `
+  --template "C:/path/to/template.xlsx" `
+  --ignore-column "更新时间"
+```
+
+如果需要按主键比对，而不是按行顺序比对，可以重复传入 `--key-column`。
+
+## 比对通过后更新临时模板
+
+`template-updater` 会读取 `report-compare` 的比对结果。只有结果为 `changed` 时才复制正式模板并写入下载报表中的变化页；`same` 会跳过，`invalid` 会停止。
+
+```powershell
+python template-updater\scripts\update_template.py
+```
+
+输出的临时模板副本会保存到 `template-updater/runtime/templates`，正式模板不会被直接覆盖。
+
 ## Gotify 验证码
 
 默认通过 SmsForwarder + Gotify 自动获取短信验证码。请在 `autologin/config.json` 中填写 `otp_config`：

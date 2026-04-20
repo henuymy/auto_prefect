@@ -8,6 +8,12 @@ excel-sender-wx/config.json
 excel-sender-wx/runtime/
 report-downloader/config.json
 report-downloader/runtime/
+report-compare/config.json
+report-compare/runtime/
+report-compare/*.xls
+report-compare/*.xlsx
+template-updater/config.json
+template-updater/runtime/
 
 # Runtime output
 runtime/
