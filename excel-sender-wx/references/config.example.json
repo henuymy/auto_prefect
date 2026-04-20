@@ -1,0 +1,52 @@
+{
+  "capture_defaults": {
+    "mode": "used_range",
+    "shrink_empty_edges": true,
+    "appearance": "printer",
+    "format": "picture",
+    "export_scale": 2,
+    "optimize_png": true,
+    "png_colors": 256
+  },
+  "workbooks": [
+    {
+      "name": "2月自控厅V网",
+      "file": "C:/Users/yuyu/Desktop/工作/市场工作/V网v1/通报模版/现模版/2月自控厅V网.xlsx",
+      "excel_open": {
+        "update_links": false,
+        "refresh_before_capture": false,
+        "refresh_timeout_seconds": 120
+      },
+      "reports": [
+        {
+          "name": "自控厅V网通报",
+          "items": [
+            {
+              "type": "image",
+              "sheet": "通报"
+            },
+            {
+              "type": "text",
+              "sheet": "通报语句",
+              "text": {
+                "mode": "used_range"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "wecom": {
+    "mode": "webhook",
+    "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+  },
+  "output": {
+    "runtime_dir": "runtime",
+    "image_dir": "images",
+    "package_file": "message_package.json",
+    "preview_image_file": "preview.png",
+    "send_result_file": "send_result.json",
+    "cleanup_after_send": true
+  }
+}

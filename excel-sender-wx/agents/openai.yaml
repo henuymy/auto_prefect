@@ -1,0 +1,4 @@
+interface:
+  display_name: "Excel Sender WX"
+  short_description: "Capture Excel report sheets and send images/text to WeCom."
+  default_prompt: "Use this skill to capture configured Excel report sheets and send the resulting images and text to WeCom."

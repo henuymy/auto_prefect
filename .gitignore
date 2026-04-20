@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+
+# Local credentials and session artifacts
+autologin/config.json
+autologin/runtime/
+excel-sender-wx/config.json
+excel-sender-wx/runtime/
+report-downloader/config.json
+report-downloader/runtime/
+
+# Runtime output
+runtime/
+logs/
+temp/
+cache/
+*.log
+.env
+.env.*

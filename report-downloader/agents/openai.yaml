@@ -1,0 +1,4 @@
+interface:
+  display_name: "Report Downloader"
+  short_description: "Download configured reports with captured Cookie JSON."
+  default_prompt: "Use this skill to download configured reports using staged cookies from autologin."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Autologin"
+  short_description: "NGBOSS login with Gotify OTP and staged Cookie JSON export."
+  default_prompt: "Use this skill to log in to NGBOSS and export staged Cookie JSON for ngboss/USM applications."

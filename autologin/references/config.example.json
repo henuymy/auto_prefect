@@ -1,0 +1,49 @@
+{
+  "login_url": "http://example.local/uac/web3/jsp/login/login.jsp",
+  "usm_host": "usm.example.local",
+  "credentials": {
+    "username": "your_username",
+    "password": "your_password"
+  },
+  "otp_mode": "gotify",
+  "otp_config": {
+    "gotify_url": "https://gotify.example.com",
+    "client_token": "your_client_token_for_fetch_side",
+    "title_prefix": "短信发送方或转发标题",
+    "allowed_senders": ["短信发送方或转发标题"],
+    "required_keywords": ["动态密钥"],
+    "code_regex": "(?<!\\d)(\\d{4,8})(?!\\d)",
+    "preferred_code_lengths": [6],
+    "timeout_seconds": 180,
+    "poll_interval_seconds": 3,
+    "max_request_count": 3,
+    "retry_interval_seconds": 5,
+    "message_ttl_seconds": 600,
+    "trigger_grace_seconds": 120,
+    "require_new_message": true,
+    "fetch_limit": 20,
+    "delete_after_success": true
+  },
+  "usm_cookie_apps": [
+    {
+      "stage": "report_analysis",
+      "name": "报表分析系统"
+    },
+    {
+      "stage": "smart_ops",
+      "name": "智慧运营平台"
+    },
+    {
+      "stage": "data_market",
+      "name": "数据超市"
+    }
+  ],
+  "cookie_dump": {
+    "enabled": true,
+    "output_file": "runtime/cookie_dump.json"
+  },
+  "browser": {
+    "name": "edge",
+    "headless": false
+  }
+}
