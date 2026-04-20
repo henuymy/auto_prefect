@@ -90,6 +90,16 @@ python template-updater\scripts\update_template.py
 
 输出的临时模板副本会保存到 `template-updater/runtime/templates`，正式模板不会被直接覆盖。
 
+## 发送成功后提交正式模板
+
+`template-commit` 会读取 `template-updater` 的更新清单和 `excel-sender-wx` 的发送结果。只有企业微信真实发送成功后，才会备份正式模板并用临时模板副本替换它。
+
+```powershell
+python template-commit\scripts\commit_template.py
+```
+
+如果发送结果是 dry-run 或存在失败项，脚本会拒绝提交。
+
 ## Gotify 验证码
 
 默认通过 SmsForwarder + Gotify 自动获取短信验证码。请在 `autologin/config.json` 中填写 `otp_config`：
