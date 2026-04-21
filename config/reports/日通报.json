@@ -10,7 +10,7 @@
       "sheetIndex": "-1",
       "sheetName": "日通报",
       "type": "excel",
-      "versionName": "20260331",
+      "versionName": "20260330",
       "resId": "513958",
       "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
       "param_key": "key",
@@ -22,7 +22,6 @@
   },
   "compare": {
     "sheet_mappings": [],
-    "skip_sheets": [],
     "header_row": 1,
     "ignore_columns": [],
     "key_columns": []
@@ -30,8 +29,17 @@
   "send": {
     "workbook_name": "郑州移动PK赛日通报",
     "items": [
-      { "type": "image", "sheet": "通报" },
-      { "type": "text", "sheet": "通报语句", "text": { "mode": "used_range" } }
+      {
+        "type": "image",
+        "sheet": "通报"
+      },
+      {
+        "type": "text",
+        "sheet": "通报语句",
+        "text": {
+          "mode": "used_range"
+        }
+      }
     ]
   }
 }
