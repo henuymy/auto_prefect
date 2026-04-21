@@ -1,0 +1,37 @@
+{
+  "name": "日通报",
+  "template_path": "templates/513958_郑州移动PK赛日通报_模版.xlsx",
+  "download": {
+    "name": "日通报导出",
+    "stage": "report_analysis",
+    "data": {
+      "area": "371",
+      "templateId": "86283",
+      "sheetIndex": "-1",
+      "sheetName": "日通报",
+      "type": "excel",
+      "versionName": "20260331",
+      "resId": "513958",
+      "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+      "param_key": "key",
+      "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+      "key": "0000",
+      "protectValue": "",
+      "downloadXlsx": "false"
+    }
+  },
+  "compare": {
+    "sheet_mappings": [],
+    "skip_sheets": [],
+    "header_row": 1,
+    "ignore_columns": [],
+    "key_columns": []
+  },
+  "send": {
+    "workbook_name": "郑州移动PK赛日通报",
+    "items": [
+      { "type": "image", "sheet": "通报" },
+      { "type": "text", "sheet": "通报语句", "text": { "mode": "used_range" } }
+    ]
+  }
+}

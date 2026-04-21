@@ -1,6 +1,7 @@
 {
   "flow_name": "auto-notify-force-login-flow",
   "runtime_dir": "runtime/flow/force_login_latest",
+  "report_config_path": "config/reports/日通报.json",
   "steps": {
     "login": {
       "enabled": true,

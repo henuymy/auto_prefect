@@ -58,6 +58,46 @@ def write_json(path, payload):
     return resolved
 
 
+def deep_merge(base, override):
+    result = copy.deepcopy(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
+def build_download_config(base_config, report_cfg):
+    download_defaults = base_config.get("report_defaults", {})
+    report_override = report_cfg.get("download", {})
+    merged_report = deep_merge(download_defaults, report_override)
+    merged_report["name"] = merged_report.get("name") or report_cfg.get("name")
+    config = {k: v for k, v in base_config.items() if k != "report_defaults"}
+    config["reports"] = [merged_report]
+    return config
+
+
+def build_compare_config(base_config, report_cfg):
+    return deep_merge(base_config, {
+        "template_path": report_cfg.get("template_path"),
+        **report_cfg.get("compare", {}),
+    })
+
+
+def build_send_config(base_config, report_cfg, workbook_file):
+    send = report_cfg.get("send", {})
+    config = copy.deepcopy(base_config)
+    workbooks = config.get("workbooks") or []
+    if not workbooks:
+        raise RuntimeError("企业微信发送配置缺少 workbooks")
+    workbooks[0]["file"] = str(workbook_file)
+    workbooks[0]["name"] = send.get("workbook_name") or workbooks[0].get("name")
+    if send.get("items"):
+        workbooks[0]["reports"] = [{"name": send.get("workbook_name"), "items": send["items"]}]
+    return config
+
+
 def select_downloaded_report_path(download_manifest, report_name=None):
     results = download_manifest.get("results") or []
     if not results:
@@ -73,14 +113,6 @@ def select_downloaded_report_path(download_manifest, report_name=None):
 
 
 @task
-def prepare_compare_config(base_config_path, output_config_path, download_manifest=None, report_name=None):
-    compare_config = read_json(base_config_path)
-    if download_manifest:
-        compare_config["new_report_path"] = select_downloaded_report_path(download_manifest, report_name=report_name)
-    return str(write_json(output_config_path, compare_config))
-
-
-@task
 def prepare_template_config(base_config_path, output_config_path, compare_config_path):
     template_config = read_json(base_config_path)
     compare_config = read_json(compare_config_path)
@@ -88,17 +120,6 @@ def prepare_template_config(base_config_path, output_config_path, compare_config
     template_config["source_report_path"] = compare_config.get("new_report_path")
     template_config["template_path"] = compare_config.get("template_path")
     return str(write_json(output_config_path, template_config))
-
-
-@task
-def prepare_send_config(base_config_path, output_config_path, workbook_path):
-    base_config = read_json(base_config_path)
-    send_config = copy.deepcopy(base_config)
-    workbooks = send_config.get("workbooks") or []
-    if not workbooks:
-        raise RuntimeError("企业微信发送配置缺少 workbooks")
-    workbooks[0]["file"] = str(workbook_path)
-    return str(write_json(output_config_path, send_config))
 
 
 @flow(name="auto-notify-flow")
@@ -111,6 +132,9 @@ def auto_notify_flow(config_path=None):
     flow_runtime_dir = resolve_project_path(
         config.get("runtime_dir", f"runtime/flow/{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     )
+
+    report_cfg = read_json(config["report_config_path"]) if config.get("report_config_path") else {}
+
     if steps.get("login", {}).get("enabled", False):
         session_result = prepare_session_task(
             read_json(steps["login"]["config_path"]),
@@ -121,24 +145,40 @@ def auto_notify_flow(config_path=None):
 
     download_manifest = None
     if steps.get("download", {}).get("enabled", True):
-        download_manifest = download_reports_task(
-            read_json(steps["download"]["config_path"]),
-            dry_run=bool(steps["download"].get("dry_run", False)),
-            debug=bool(steps["download"].get("debug", False)),
-        )
+        download_config = build_download_config(read_json(steps["download"]["config_path"]), report_cfg)
+        try:
+            download_manifest = download_reports_task(
+                download_config,
+                dry_run=bool(steps["download"].get("dry_run", False)),
+                debug=bool(steps["download"].get("debug", False)),
+            )
+        except RuntimeError as exc:
+            if "session 已过期" not in str(exc) or not steps.get("login", {}).get("enabled", False):
+                raise
+            logger.warning("下载失败（session 过期），强制重新登录后重试")
+            session_result = prepare_session_task(
+                read_json(steps["login"]["config_path"]),
+                force_refresh=True,
+            )
+            if session_result.get("status") == "invalid":
+                raise RuntimeError(f"重新登录失败: {session_result.get('reason')}") from exc
+            download_manifest = download_reports_task(
+                download_config,
+                dry_run=bool(steps["download"].get("dry_run", False)),
+                debug=bool(steps["download"].get("debug", False)),
+            )
         if download_manifest.get("dry_run"):
             logger.info("下载 dry-run 完成，停止后续比对和发送")
-            return {
-                "status": "skipped",
-                "reason": "download_dry_run",
-                "download_manifest": download_manifest,
-            }
+            return {"status": "skipped", "reason": "download_dry_run", "download_manifest": download_manifest}
 
-    compare_config_path = prepare_compare_config(
-        steps["compare"]["config_path"],
+    compare_config = build_compare_config(read_json(steps["compare"]["config_path"]), report_cfg)
+    if download_manifest:
+        compare_config["new_report_path"] = select_downloaded_report_path(
+            download_manifest, report_name=steps["compare"].get("download_report_name")
+        )
+    compare_config_path = write_json(
         steps["compare"].get("generated_config_path", str(flow_runtime_dir / "compare_config.json")),
-        download_manifest=download_manifest,
-        report_name=steps["compare"].get("download_report_name"),
+        compare_config,
     )
     compare_result = compare_report_task(read_json(compare_config_path))
     if compare_result.get("result") == "invalid":
@@ -157,10 +197,10 @@ def auto_notify_flow(config_path=None):
         logger.info("模板更新跳过: %s", update_manifest.get("reason"))
         return {"status": "skipped", "reason": update_manifest.get("reason")}
 
-    send_config_path = prepare_send_config(
-        steps["send_wecom"]["base_config_path"],
+    send_config = build_send_config(read_json(steps["send_wecom"]["base_config_path"]), report_cfg, update_manifest["output_path"])
+    send_config_path = write_json(
         steps["send_wecom"].get("generated_config_path", str(flow_runtime_dir / "excel_sender_config.json")),
-        update_manifest["output_path"],
+        send_config,
     )
     send_config = read_json(send_config_path)
     package, package_file = build_message_package_task(send_config)
@@ -172,12 +212,8 @@ def auto_notify_flow(config_path=None):
         timeout=int(steps["send_wecom"].get("timeout", 30)),
     )
     if steps.get("commit_template", {}).get("enabled", True):
-        commit_config = read_json(steps["commit_template"]["config_path"])
-        commit_template_task(commit_config)
-    return {
-        "status": "completed",
-        "updated_template_path": update_manifest["output_path"],
-    }
+        commit_template_task(read_json(steps["commit_template"]["config_path"]))
+    return {"status": "completed", "updated_template_path": update_manifest["output_path"]}
 
 
 if __name__ == "__main__":

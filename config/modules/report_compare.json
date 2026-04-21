@@ -1,12 +1,5 @@
 {
-  "new_report_path": "runtime/report_downloader/downloads/513958_郑州移动PK赛日通报_371_yumingyang_2026年03月31日_郑州.xls",
-  "template_path": "templates/513958_郑州移动PK赛日通报_模版.xlsx",
-  "sheet_mappings": [],
-  "skip_sheets": [],
-  "header_row": 1,
-  "ignore_columns": [],
-  "key_columns": [],
+  "output_path": "runtime/report_compare/compare_result.json",
   "sample_limit": 10,
-  "visible": false,
-  "output_path": "runtime/report_compare/compare_result.json"
+  "visible": false
 }
