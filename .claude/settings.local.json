@@ -11,7 +11,8 @@
       "Bash(rm config/method_registry.json)",
       "Bash(xargs wc *)",
       "Bash(rm infrastructure/http_client.py services/state_service.py tasks/state_tasks.py utils/file_utils.py utils/log_utils.py utils/retry_utils.py utils/time_utils.py)",
-      "Bash(rm config/app_settings.yaml config/login_profiles.yaml)"
+      "Bash(rm config/app_settings.yaml config/login_profiles.yaml)",
+      "Bash(rm deployments/notify_multi_deployment.yaml flows/notify_multi_method_flow.py)"
     ]
   }
 }
