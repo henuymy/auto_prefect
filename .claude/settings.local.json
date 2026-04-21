@@ -7,7 +7,8 @@
       "Bash(curl -s http://127.0.0.1:8238)",
       "Bash(C:/Users/yuyu/.conda/envs/auto-notify/python.exe *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(rm config/method_registry.json)"
     ]
   }
 }
