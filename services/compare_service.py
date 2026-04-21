@@ -10,17 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from models.compare_result import CompareResult, WorkbookCompareResult
+from infrastructure.excel_client import require_win32, get_sheet, sheet_names as workbook_sheet_names
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-
-
-def require_win32():
-    try:
-        import win32com.client  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError("缺少 pywin32，无法通过 Excel COM 读取 .xls/.xlsx 文件") from exc
-    return win32com.client
 
 
 def load_json(path):
@@ -96,18 +89,6 @@ def values_to_matrix(values):
     if values and not isinstance(values[0], tuple):
         return [list(values)]
     return [list(row) for row in values]
-
-
-def workbook_sheet_names(workbook):
-    return [workbook.Worksheets(i).Name for i in range(1, workbook.Worksheets.Count + 1)]
-
-
-def get_sheet(workbook, sheet_name):
-    try:
-        return workbook.Worksheets(sheet_name)
-    except Exception as exc:
-        names = workbook_sheet_names(workbook)
-        raise KeyError(f"找不到工作表 {sheet_name!r}，当前工作表: {names}") from exc
 
 
 def read_sheet_table(workbook, sheet_name, range_address=None):

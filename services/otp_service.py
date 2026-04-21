@@ -1,12 +1,13 @@
 """Gotify OTP provider for SMSForwarder-based login."""
 
-import json
 import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib import error, parse, request
+from urllib import error
+
+from infrastructure.gotify_client import fetch_messages, delete_message
 
 
 @dataclass
@@ -72,39 +73,6 @@ def _matches_time(message, trigger_time, ttl_seconds, grace_seconds=30):
     if message_time < trigger_time - timedelta(seconds=grace_seconds):
         return False
     return (message_time - trigger_time).total_seconds() <= ttl_seconds
-
-
-def _request_json(url, client_token, method="GET", timeout=10):
-    req = request.Request(url, method=method)
-    req.add_header("X-Gotify-Key", client_token)
-    opener = request.build_opener(request.ProxyHandler({}))
-    with opener.open(req, timeout=timeout) as resp:
-        if method == "DELETE":
-            return {}
-        data = resp.read().decode("utf-8")
-        return json.loads(data)
-
-
-def fetch_messages(otp_config):
-    gotify_url = otp_config["gotify_url"].rstrip("/")
-    client_token = otp_config["client_token"]
-    limit = int(otp_config.get("fetch_limit", 20))
-    timeout = int(otp_config.get("request_timeout_seconds", 10))
-    query = parse.urlencode({"limit": limit})
-    url = f"{gotify_url}/message?{query}"
-    payload = _request_json(url, client_token, timeout=timeout)
-    return payload.get("messages", [])
-
-
-def delete_message(otp_config, message_id):
-    if not message_id:
-        return False
-    gotify_url = otp_config["gotify_url"].rstrip("/")
-    client_token = otp_config["client_token"]
-    timeout = int(otp_config.get("request_timeout_seconds", 10))
-    url = f"{gotify_url}/message/{message_id}"
-    _request_json(url, client_token, method="DELETE", timeout=timeout)
-    return True
 
 
 def prepare_wait_context(otp_config):

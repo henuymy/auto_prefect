@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 
 
+from infrastructure.excel_client import require_win32, get_sheet, open_excel, open_workbook
+
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 COPY_APPEARANCE = {
     "screen": 1,
@@ -19,14 +21,6 @@ COPY_FORMAT = {
     "picture": -4147,
     "bitmap": 2,
 }
-
-
-def require_win32():
-    try:
-        import win32com.client  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError("缺少 pywin32，请先安装: pip install pywin32") from exc
-    return win32com.client
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
@@ -115,31 +109,6 @@ def range_from_capture(ws, capture):
     return ws.Range(
         ws.Cells(max(1, first_row - padding_rows), max(1, first_col - padding_cols)),
         ws.Cells(last_row + padding_rows, last_col + padding_cols),
-    )
-
-
-def get_sheet(workbook, sheet_name):
-    try:
-        return workbook.Worksheets(sheet_name)
-    except Exception as exc:
-        names = [workbook.Worksheets(i).Name for i in range(1, workbook.Worksheets.Count + 1)]
-        raise KeyError(f"找不到工作表 {sheet_name!r}，当前工作表: {names}") from exc
-
-
-def open_excel(visible=False):
-    win32com = require_win32()
-    excel = win32com.DispatchEx("Excel.Application")
-    excel.Visible = bool(visible)
-    excel.DisplayAlerts = False
-    excel.AskToUpdateLinks = False
-    return excel
-
-
-def open_workbook(excel, workbook_path, update_links=False, read_only=True):
-    return excel.Workbooks.Open(
-        str(Path(workbook_path).resolve()),
-        UpdateLinks=3 if update_links else 0,
-        ReadOnly=read_only,
     )
 
 
