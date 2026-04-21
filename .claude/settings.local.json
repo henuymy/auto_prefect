@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm runtime/cookies/cookie_dump.json)",
+      "Bash(rm legacy_modules/modules/autologin/runtime/cookie_dump.json)",
+      "Bash(python *)",
+      "Bash(curl -s http://127.0.0.1:8238)",
+      "Bash(C:/Users/yuyu/.conda/envs/auto-notify/python.exe *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}

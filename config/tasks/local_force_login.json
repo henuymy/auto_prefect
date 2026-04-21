@@ -26,7 +26,7 @@
     },
     "send_wecom": {
       "enabled": true,
-      "base_config_path": "config/modules/excel_sender_wx.local.json",
+      "base_config_path": "config/modules/wecom_sender.json",
       "generated_config_path": "runtime/flow/force_login_latest/excel_sender_config.json",
       "dry_run": false,
       "timeout": 30
