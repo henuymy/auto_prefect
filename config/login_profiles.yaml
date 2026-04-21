@@ -1,5 +1,0 @@
-profiles:
-  default:
-    enabled: false
-    config_path: config/modules/autologin.json
-
