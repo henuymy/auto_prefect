@@ -8,7 +8,9 @@
       "Bash(C:/Users/yuyu/.conda/envs/auto-notify/python.exe *)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(rm config/method_registry.json)"
+      "Bash(rm config/method_registry.json)",
+      "Bash(xargs wc *)",
+      "Bash(rm infrastructure/http_client.py services/state_service.py tasks/state_tasks.py utils/file_utils.py utils/log_utils.py utils/retry_utils.py utils/time_utils.py)"
     ]
   }
 }
