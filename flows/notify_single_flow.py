@@ -113,12 +113,14 @@ def select_downloaded_report_path(download_manifest, report_name=None):
 
 
 @task
-def prepare_template_config(base_config_path, output_config_path, compare_config_path):
+def prepare_template_config(base_config_path, output_config_path, compare_config_path, overrides=None):
     template_config = read_json(base_config_path)
     compare_config = read_json(compare_config_path)
     template_config["compare_config_path"] = str(compare_config_path)
     template_config["source_report_path"] = compare_config.get("new_report_path")
     template_config["template_path"] = compare_config.get("template_path")
+    if overrides:
+        template_config.update(overrides)
     return str(write_json(output_config_path, template_config))
 
 
@@ -191,15 +193,19 @@ def auto_notify_flow(config_path=None):
         steps["update_template"]["config_path"],
         steps["update_template"].get("generated_config_path", str(flow_runtime_dir / "template_updater_config.json")),
         compare_config_path,
+        overrides={k: steps["update_template"][k] for k in ("output_dir", "manifest_path") if k in steps["update_template"]},
     )
     update_manifest = update_template_task(read_json(template_config_path))
     if update_manifest.get("status") == "skipped":
         logger.info("模板更新跳过: %s", update_manifest.get("reason"))
         return {"status": "skipped", "reason": update_manifest.get("reason")}
 
-    send_config = build_send_config(read_json(steps["send_wecom"]["base_config_path"]), report_cfg, update_manifest["output_path"])
+    send_step = steps["send_wecom"]
+    send_config = build_send_config(read_json(send_step["base_config_path"]), report_cfg, update_manifest["output_path"])
+    if send_step.get("runtime_dir"):
+        send_config.setdefault("output", {})["runtime_dir"] = send_step["runtime_dir"]
     send_config_path = write_json(
-        steps["send_wecom"].get("generated_config_path", str(flow_runtime_dir / "excel_sender_config.json")),
+        send_step.get("generated_config_path", str(flow_runtime_dir / "excel_sender_config.json")),
         send_config,
     )
     send_config = read_json(send_config_path)
@@ -208,11 +214,16 @@ def auto_notify_flow(config_path=None):
         send_config,
         package,
         package_file=package_file,
-        dry_run=bool(steps["send_wecom"].get("dry_run", False)),
-        timeout=int(steps["send_wecom"].get("timeout", 30)),
+        dry_run=bool(send_step.get("dry_run", False)),
+        timeout=int(send_step.get("timeout", 30)),
     )
     if steps.get("commit_template", {}).get("enabled", True):
-        commit_template_task(read_json(steps["commit_template"]["config_path"]))
+        commit_step = steps["commit_template"]
+        commit_config = read_json(commit_step["config_path"])
+        for key in ("update_manifest_path", "send_result_path", "backup_dir", "manifest_path"):
+            if key in commit_step:
+                commit_config[key] = commit_step[key]
+        commit_template_task(commit_config)
     return {"status": "completed", "updated_template_path": update_manifest["output_path"]}
 
 
