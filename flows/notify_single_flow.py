@@ -83,7 +83,10 @@ def prepare_compare_config(base_config_path, output_config_path, download_manife
 @task
 def prepare_template_config(base_config_path, output_config_path, compare_config_path):
     template_config = read_json(base_config_path)
+    compare_config = read_json(compare_config_path)
     template_config["compare_config_path"] = str(compare_config_path)
+    template_config["source_report_path"] = compare_config.get("new_report_path")
+    template_config["template_path"] = compare_config.get("template_path")
     return str(write_json(output_config_path, template_config))
 
 

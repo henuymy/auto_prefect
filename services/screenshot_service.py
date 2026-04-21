@@ -239,6 +239,8 @@ def optimize_png(image_path, capture):
     with Image.open(path) as image:
         source = image.convert("RGB")
         optimized = source.quantize(colors=png_colors, method=Image.Quantize.MEDIANCUT)
+        if "transparency" in optimized.info and isinstance(optimized.info["transparency"], tuple):
+            del optimized.info["transparency"]
         optimized.save(path, format="PNG", optimize=True, compress_level=9)
 
 

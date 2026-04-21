@@ -163,6 +163,14 @@ def raise_for_status_with_context(response):
     raise RuntimeError(f"下载接口返回非文件状态码: HTTP {response.status_code}")
 
 
+def is_html_response(response):
+    content_type = response.headers.get("Content-Type", "").lower()
+    if "text/html" in content_type:
+        return True
+    preview = response.content[:100].lower()
+    return preview.lstrip().startswith(b"<!doctype html") or preview.lstrip().startswith(b"<html")
+
+
 def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, proxies):
     session = requests.Session()
     session.trust_env = trust_env
@@ -170,6 +178,8 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     session.headers.update({"User-Agent": "report-downloader/1.0"})
     response = request_report(session, report, stage, timeout, verify_ssl, proxies)
     raise_for_status_with_context(response)
+    if is_html_response(response):
+        raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {response.url}")
     if not response.content:
         raise RuntimeError(f"下载响应为空: HTTP {response.status_code} {response.url}")
 

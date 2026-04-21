@@ -12,6 +12,7 @@ runtime/
 logs/
 temp/
 cache/
+.prefect-local/
 *.log
 .env
 .env.*

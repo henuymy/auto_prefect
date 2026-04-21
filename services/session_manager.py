@@ -61,7 +61,20 @@ def stage_has_live_cookies(stage, min_ttl_seconds=0):
     return any(not cookie_is_expired(cookie, min_ttl_seconds=min_ttl_seconds) for cookie in cookies)
 
 
-def validate_cookie_dump(cookie_dump, required_stages=None, min_ttl_seconds=0):
+def cookie_dump_age_seconds(cookie_dump):
+    generated_at = cookie_dump.get("generated_at")
+    if not generated_at:
+        return None
+    try:
+        ts = datetime.fromisoformat(generated_at)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds()
+    except ValueError:
+        return None
+
+
+def validate_cookie_dump(cookie_dump, required_stages=None, min_ttl_seconds=0, max_age_seconds=None):
     required_stages = required_stages or []
     missing = []
     expired_or_empty = []
@@ -73,12 +86,19 @@ def validate_cookie_dump(cookie_dump, required_stages=None, min_ttl_seconds=0):
         if not stage_has_live_cookies(stage, min_ttl_seconds=min_ttl_seconds):
             expired_or_empty.append(stage_name)
 
-    valid = not missing and not expired_or_empty
+    too_old = False
+    if max_age_seconds is not None:
+        age = cookie_dump_age_seconds(cookie_dump)
+        if age is None or age > max_age_seconds:
+            too_old = True
+
+    valid = not missing and not expired_or_empty and not too_old
     return {
         "valid": valid,
         "available_stages": stage_names(cookie_dump),
         "missing_stages": missing,
         "expired_or_empty_stages": expired_or_empty,
+        "too_old": too_old,
     }
 
 
@@ -126,6 +146,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
     legacy_cookie_dump_path = resolve_path(config.get("legacy_cookie_dump_path"), base_dir)
     required_stages = config.get("required_stages") or []
     min_ttl_seconds = int(config.get("min_ttl_seconds", 0) or 0)
+    max_age_seconds = config.get("max_age_seconds")
+    if max_age_seconds is not None:
+        max_age_seconds = int(max_age_seconds)
 
     cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
     if not cookie_dump and legacy_cookie_dump_path and legacy_cookie_dump_path.exists():
@@ -133,7 +156,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
         cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
 
     if cookie_dump and not force_refresh:
-        validation = validate_cookie_dump(cookie_dump, required_stages, min_ttl_seconds=min_ttl_seconds)
+        validation = validate_cookie_dump(cookie_dump, required_stages, min_ttl_seconds=min_ttl_seconds, max_age_seconds=max_age_seconds)
         if validation["valid"]:
             return {
                 "status": "reused",

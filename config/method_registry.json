@@ -3,7 +3,7 @@
     {
       "name": "default_report",
       "description": "Default report download method. Fill real method metadata when service migration starts.",
-      "config_path": "legacy_modules/modules/report-downloader/config.json"
+      "config_path": "config/modules/report_downloader.json"
     }
   ]
 }

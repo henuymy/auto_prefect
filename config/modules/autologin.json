@@ -1,10 +1,11 @@
 {
   "cookie_dump_path": "runtime/cookies/cookie_dump.json",
-  "legacy_cookie_dump_path": "legacy_modules/modules/autologin/runtime/cookie_dump.json",
+  "legacy_cookie_dump_path": null,
   "required_stages": [
     "report_analysis"
   ],
   "min_ttl_seconds": 300,
-  "allow_login": false,
-  "login_command": "python legacy_modules/modules/autologin/scripts/autologin.py --config legacy_modules/modules/autologin/config.json"
+  "max_age_seconds": 3600,
+  "allow_login": true,
+  "login_command": "python -c \"from services.login_service import run_login; run_login('config/modules/login_config.json')\""
 }

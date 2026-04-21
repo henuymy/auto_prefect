@@ -57,13 +57,55 @@ legacy_modules 临时保留旧脚本，后续迁移
 
 详细约束见 `ARCHITECTURE.md`。
 
-## 安装依赖
+## 环境配置
 
-```powershell
-pip install -r requirements.txt
+**创建 Conda 环境（推荐）**
+
+```bash
+conda create -n auto-notify python=3.11 -y
+conda activate auto-notify
 ```
 
-## 运行单任务 Flow
+**安装依赖**
+
+```bash
+pip install -r requirements.txt pillow -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+## 使用 Prefect Web UI 运行
+
+**第一步：启动 Prefect Server（终端1，保持运行）**
+
+```bash
+"C:\Users\yuyu\.conda\envs\auto-notify\python.exe" -m prefect server start
+```
+
+**第二步：启动 Worker（终端2，保持运行）**
+
+```bash
+set PREFECT_API_URL=http://127.0.0.1:4200/api
+"C:\Users\yuyu\.conda\envs\auto-notify\python.exe" -m prefect worker start --pool default-agent-pool
+```
+
+**第三步：部署 Flow（只需执行一次）**
+
+```bash
+cd "C:\Users\yuyu\Desktop\项目\自动通报"
+set PREFECT_API_URL=http://127.0.0.1:4200/api
+"C:\Users\yuyu\.conda\envs\auto-notify\python.exe" -m prefect deploy --all
+```
+
+**第四步：在 Web UI 中运行**
+
+打开浏览器访问 http://127.0.0.1:4200/
+
+在 Deployments 页面可以看到：
+- `auto-notify-flow/notify-single` — 普通登录模式
+- `auto-notify-force-login-flow/notify-single-force-login` — 强制重新登录模式（推荐）
+
+点击对应 deployment，然后点 **Quick Run** 即可触发运行。
+
+## 命令行直接运行
 
 本地真实配置文件：
 

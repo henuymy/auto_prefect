@@ -1,7 +1,7 @@
 name: notify-single
 entrypoint: flows/notify_single_flow.py:auto_notify_flow
 parameters:
-  config_path: config/tasks/example.json
+  config_path: config/tasks/local.json
 work_pool:
   name: default-agent-pool
   work_queue_name: default
