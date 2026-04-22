@@ -167,3 +167,7 @@ config/tasks/zhengqi_daily.json
 4. `template-updater` 已迁移到 `services/template_service.py`，旧脚本暂时保留备用。
 5. `excel-sender-wx` 已拆到 `services/screenshot_service.py` 和 `services/notify_service.py`，旧脚本暂时保留备用。
 6. `template-commit` 已迁移到 `services/commit_service.py`，旧脚本暂时保留备用。
+
+
+pwsh -File scripts/prefect_start.ps1 -Mode both
+pwsh -File scripts/prefect_stop.ps1
