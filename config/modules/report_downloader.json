@@ -9,7 +9,6 @@
   "report_defaults": {
     "enabled": true,
     "method": "POST",
-    "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
     "headers": {
       "Content-Type": "application/x-www-form-urlencoded"
     },

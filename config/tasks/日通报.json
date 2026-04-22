@@ -1,6 +1,6 @@
 {
-  "flow_name": "auto-notify-force-login-flow",
-  "runtime_dir": "runtime/flow/force_login_latest",
+  "flow_name": "auto-notify-日通报",
+  "runtime_dir": "runtime/flow/日通报",
   "report_config_path": "config/reports/日通报.json",
   "wait_for_change": {
     "enabled": true,
@@ -11,7 +11,7 @@
     "login": {
       "enabled": true,
       "config_path": "config/modules/autologin.json",
-      "force_refresh": true
+      "force_refresh": false
     },
     "download": {
       "enabled": true,
@@ -22,18 +22,18 @@
     "compare": {
       "enabled": true,
       "config_path": "config/modules/report_compare.json",
-      "generated_config_path": "runtime/flow/force_login_latest/compare_config.json",
+      "generated_config_path": "runtime/flow/日通报/compare_config.json",
       "download_report_name": "日通报导出"
     },
     "update_template": {
       "enabled": true,
       "config_path": "config/modules/template_updater.json",
-      "generated_config_path": "runtime/flow/force_login_latest/template_updater_config.json"
+      "generated_config_path": "runtime/flow/日通报/template_updater_config.json"
     },
     "send_wecom": {
       "enabled": true,
       "base_config_path": "config/modules/wecom_sender.json",
-      "generated_config_path": "runtime/flow/force_login_latest/excel_sender_config.json",
+      "generated_config_path": "runtime/flow/日通报/excel_sender_config.json",
       "dry_run": false,
       "timeout": 30
     },

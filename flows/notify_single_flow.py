@@ -7,6 +7,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from time import monotonic, sleep
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
@@ -68,11 +69,35 @@ def deep_merge(base, override):
     return result
 
 
+def resolve_dynamic_placeholders(value, now=None):
+    if not isinstance(value, str):
+        return value
+    now = now or datetime.now()
+    replacements = {
+        "${today}": now.strftime("%Y-%m-%d"),
+        "${hour}": str(now.hour),
+        "${hour2}": now.strftime("%H"),
+    }
+    resolved = value
+    for token, token_value in replacements.items():
+        resolved = resolved.replace(token, token_value)
+    return resolved
+
+
+def resolve_dynamic_structure(payload, now=None):
+    if isinstance(payload, dict):
+        return {key: resolve_dynamic_structure(value, now=now) for key, value in payload.items()}
+    if isinstance(payload, list):
+        return [resolve_dynamic_structure(item, now=now) for item in payload]
+    return resolve_dynamic_placeholders(payload, now=now)
+
+
 def build_download_config(base_config, report_cfg):
     download_defaults = base_config.get("report_defaults", {})
     report_override = report_cfg.get("download", {})
     merged_report = deep_merge(download_defaults, report_override)
     merged_report["name"] = merged_report.get("name") or report_cfg.get("name")
+    merged_report = resolve_dynamic_structure(merged_report)
     config = {k: v for k, v in base_config.items() if k != "report_defaults"}
     config["reports"] = [merged_report]
     return config
@@ -112,6 +137,28 @@ def select_downloaded_report_path(download_manifest, report_name=None):
     return candidates[0]["output_path"]
 
 
+def parse_wait_for_change_config(config):
+    wait_cfg = config.get("wait_for_change") or {}
+    enabled = bool(wait_cfg.get("enabled", False))
+    poll_interval_raw = wait_cfg.get("poll_interval_seconds")
+    poll_interval_seconds = 300 if poll_interval_raw is None else int(poll_interval_raw)
+    if poll_interval_seconds <= 0:
+        raise ValueError("wait_for_change.poll_interval_seconds 必须大于 0")
+
+    max_wait_minutes = wait_cfg.get("max_wait_minutes")
+    max_wait_seconds = None
+    if max_wait_minutes is not None:
+        max_wait_seconds = int(float(max_wait_minutes) * 60)
+        if max_wait_seconds <= 0:
+            raise ValueError("wait_for_change.max_wait_minutes 必须大于 0")
+
+    return {
+        "enabled": enabled,
+        "poll_interval_seconds": poll_interval_seconds,
+        "max_wait_seconds": max_wait_seconds,
+    }
+
+
 @task
 def prepare_template_config(base_config_path, output_config_path, compare_config_path, overrides=None):
     template_config = read_json(base_config_path)
@@ -145,11 +192,15 @@ def auto_notify_flow(config_path=None):
         if session_result.get("status") == "invalid":
             raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
 
-    download_manifest = None
-    if steps.get("download", {}).get("enabled", True):
+    wait_cfg = parse_wait_for_change_config(config)
+    wait_started_at = monotonic()
+
+    def run_download_with_session_retry():
+        if not steps.get("download", {}).get("enabled", True):
+            return None
         download_config = build_download_config(read_json(steps["download"]["config_path"]), report_cfg)
         try:
-            download_manifest = download_reports_task(
+            return download_reports_task(
                 download_config,
                 dry_run=bool(steps["download"].get("dry_run", False)),
                 debug=bool(steps["download"].get("debug", False)),
@@ -164,30 +215,63 @@ def auto_notify_flow(config_path=None):
             )
             if session_result.get("status") == "invalid":
                 raise RuntimeError(f"重新登录失败: {session_result.get('reason')}") from exc
-            download_manifest = download_reports_task(
+            return download_reports_task(
                 download_config,
                 dry_run=bool(steps["download"].get("dry_run", False)),
                 debug=bool(steps["download"].get("debug", False)),
             )
-        if download_manifest.get("dry_run"):
+
+    attempt = 0
+    compare_result = None
+    update_manifest = None
+    while True:
+        attempt += 1
+        download_manifest = run_download_with_session_retry()
+        if download_manifest and download_manifest.get("dry_run"):
             logger.info("下载 dry-run 完成，停止后续比对和发送")
             return {"status": "skipped", "reason": "download_dry_run", "download_manifest": download_manifest}
 
-    compare_config = build_compare_config(read_json(steps["compare"]["config_path"]), report_cfg)
-    if download_manifest:
-        compare_config["new_report_path"] = select_downloaded_report_path(
-            download_manifest, report_name=steps["compare"].get("download_report_name")
+        compare_config = build_compare_config(read_json(steps["compare"]["config_path"]), report_cfg)
+        if download_manifest:
+            compare_config["new_report_path"] = select_downloaded_report_path(
+                download_manifest, report_name=steps["compare"].get("download_report_name")
+            )
+        compare_config_path = write_json(
+            steps["compare"].get("generated_config_path", str(flow_runtime_dir / "compare_config.json")),
+            compare_config,
         )
-    compare_config_path = write_json(
-        steps["compare"].get("generated_config_path", str(flow_runtime_dir / "compare_config.json")),
-        compare_config,
-    )
-    compare_result = compare_report_task(read_json(compare_config_path))
-    if compare_result.get("result") == "invalid":
-        raise RuntimeError("比对结果 invalid，停止流程")
-    if compare_result.get("result") == "same":
-        logger.info("数据一致，无需更新和发送")
-        return {"status": "skipped", "reason": "compare_same"}
+        compare_result = compare_report_task(read_json(compare_config_path))
+        compare_status = compare_result.get("result")
+        if compare_status == "invalid":
+            raise RuntimeError("比对结果 invalid，停止流程")
+        if compare_status == "changed":
+            break
+        if compare_status != "same":
+            raise RuntimeError(f"不支持的比对结果: {compare_status!r}")
+        if not wait_cfg["enabled"]:
+            logger.info("数据一致，无需更新和发送")
+            return {"status": "skipped", "reason": "compare_same", "attempts": attempt}
+
+        elapsed_seconds = int(monotonic() - wait_started_at)
+        max_wait_seconds = wait_cfg["max_wait_seconds"]
+        if max_wait_seconds is not None and elapsed_seconds >= max_wait_seconds:
+            logger.warning(
+                "比对结果持续 same，已超时（%s 秒），停止重试",
+                max_wait_seconds,
+            )
+            return {
+                "status": "timeout_no_change",
+                "reason": "compare_same_timeout",
+                "attempts": attempt,
+                "elapsed_seconds": elapsed_seconds,
+            }
+
+        logger.info(
+            "比对结果 same（第 %s 次），%s 秒后重试下载与比对",
+            attempt,
+            wait_cfg["poll_interval_seconds"],
+        )
+        sleep(wait_cfg["poll_interval_seconds"])
 
     template_config_path = prepare_template_config(
         steps["update_template"]["config_path"],

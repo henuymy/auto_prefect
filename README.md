@@ -105,6 +105,12 @@ set PREFECT_API_URL=http://127.0.0.1:4200/api
 
 点击对应 deployment，然后点 **Quick Run** 即可触发运行。
 
+
+##streamlit Web UI 
+streamlit run admin/app.py
+
+
+
 ## 命令行直接运行
 
 本地真实配置文件：

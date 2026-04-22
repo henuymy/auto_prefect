@@ -1,8 +1,8 @@
 {
-  "name": "日通报",
+  "name": "test",
   "template_path": "templates/513958_郑州移动PK赛日通报_模版.xlsx",
   "download": {
-    "name": "日通报导出",
+    "name": "temp",
     "stage": "report_analysis",
     "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
     "data": {
