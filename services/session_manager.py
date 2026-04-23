@@ -113,7 +113,7 @@ def sync_cookie_dump(source_path, target_path):
     return target
 
 
-def run_login_command(command, cwd=PROJECT_DIR):
+def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None):
     completed = subprocess.run(
         command,
         cwd=str(cwd),
@@ -121,6 +121,7 @@ def run_login_command(command, cwd=PROJECT_DIR):
         text=True,
         capture_output=True,
         check=False,
+        timeout=timeout_seconds,
     )
     if completed.returncode != 0:
         raise RuntimeError(
@@ -183,7 +184,10 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
     if not command:
         raise ValueError("Cookie 无效且未配置 login_command")
 
-    command_result = run_login_command(command, cwd=base_dir)
+    login_timeout_seconds = config.get("login_timeout_seconds")
+    if login_timeout_seconds is not None:
+        login_timeout_seconds = int(login_timeout_seconds)
+    command_result = run_login_command(command, cwd=base_dir, timeout_seconds=login_timeout_seconds)
     source_path = legacy_cookie_dump_path or cookie_dump_path
     sync_cookie_dump(source_path, cookie_dump_path)
     refreshed_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)

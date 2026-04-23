@@ -1,173 +1,365 @@
 # 自动化通报 Prefect 项目
 
-这是一个 Prefect 风格的自动化通报项目。当前阶段先完成标准目录整理，现有可运行脚本暂时放在 `legacy_modules/`，后续再逐步迁移到 `services/`。
+这是一个基于 Prefect 的自动化通报项目，当前主流程聚焦 **日通报**：
+
+```text
+自动登录/复用 Cookie
+→ 下载报表
+→ 比对报表和正式模板
+→ same：等待重试或结束
+→ invalid：失败停止
+→ changed：生成临时模板
+→ 企业微信发送图片/文本
+→ 发送成功后提交正式模板
+```
+
+## 当前保留的配置
+
+当前只保留日通报这一套业务配置：
+
+```text
+config/reports/日通报.json
+config/tasks/日通报.json
+```
+
+部署入口也只保留一个：
+
+```text
+auto-notify-flow/notify-daily
+```
+
+对应文件：
+
+```text
+prefect.yaml
+flows/notify_single_flow.py
+```
 
 ## 目录结构
 
 ```text
 .
-├── pyproject.toml
-├── prefect.yaml
-├── README.md
-├── ARCHITECTURE.md
-├── requirements.txt
+├── admin/                    # Streamlit 配置管理页面
 ├── config/
-│   ├── app_settings.yaml
-│   ├── login_profiles.yaml
-│   ├── method_registry.json
-│   ├── modules/
-│   │   ├── autologin.json
-│   │   ├── excel_sender_wx.json
-│   │   ├── report_compare.json
-│   │   ├── report_downloader.json
-│   │   ├── template_updater.json
-│   │   └── template_commit.json
-│   └── tasks/
-│       ├── example.json
-│       └── local.json
-├── flows/
-│   ├── notify_single_flow.py
-│   ├── notify_multi_method_flow.py
-│   ├── manual_rerun_flow.py
-│   └── __init__.py
-├── tasks/
-├── services/
-├── models/
-├── infrastructure/
-├── utils/
-├── deployments/
-├── runtime/
-├── tests/
-├── docs/
-└── legacy_modules/
+│   ├── modules/              # 通用模块配置
+│   ├── reports/              # 报表业务配置，目前保留日通报
+│   └── tasks/                # Flow 任务配置，目前保留日通报
+├── flows/                    # Prefect flow 编排
+├── services/                 # 业务逻辑
+├── tasks/                    # Prefect task 包装
+├── scripts/                  # Prefect 启停脚本
+├── runtime/                  # 运行产物，不提交
+├── tests/                    # 单元测试
+├── CONFIG_REFERENCE.md       # 配置字段说明
+└── SSO_EXPORT_FLOW.md        # SSO 到导出链路说明
 ```
 
-## 分层原则
+## 环境准备
 
-```text
-flows         只负责编排和分支
-tasks         只做 Prefect task 包装
-services      放业务逻辑，不依赖 Prefect
-models        放输入输出数据结构
-infrastructure 放 HTTP、Excel、企业微信、Gotify 等底层客户端
-utils         放通用工具
-runtime       放运行产物，不提交
-legacy_modules 临时保留旧脚本，后续迁移
-```
+推荐使用 Conda 环境：
 
-详细约束见 `ARCHITECTURE.md`。
-
-## 环境配置
-
-**创建 Conda 环境（推荐）**
-
-```bash
+```powershell
 conda create -n auto-notify python=3.11 -y
 conda activate auto-notify
+pip install -r requirements.txt
 ```
 
-**安装依赖**
+如果使用 Excel COM、Selenium、企业微信截图发送等能力，请确保：
 
-```bash
-pip install -r requirements.txt pillow -i https://pypi.tuna.tsinghua.edu.cn/simple
+```text
+Microsoft Excel 已安装
+Microsoft Edge 已安装
+Edge WebDriver 可用
 ```
 
-## 使用 Prefect Web UI 运行
+## Prefect 数据库
 
-**第一步：启动 Prefect Server（终端1，保持运行）**
+Prefect 用到的数据库是它自己的元数据库，只存这些内容：
 
-```bash
-"C:\Users\yuyu\.conda\envs\auto-notify\python.exe" -m prefect server start
+```text
+deployment
+flow run / task run 状态
+worker 心跳
+调度记录
+日志元数据
 ```
 
-**第二步：启动 Worker（终端2，保持运行）**
+它不会改你的业务报表数据，但如果你本地调试也一直连远程 PostgreSQL，测试 run 和日志会一起写进去，库会变脏。
 
-```bash
-set PREFECT_API_URL=http://127.0.0.1:4200/api
-"C:\Users\yuyu\.conda\envs\auto-notify\python.exe" -m prefect worker start --pool default-agent-pool
+因此建议分两种模式：
+
+1. 本地调试：SQLite，本机隔离，不污染远程调度库
+2. 正式调度：PostgreSQL，稳定支撑 server + scheduler + worker
+
+注意：
+
+```text
+SQLite 不适合长期调度。
+Prefect Server + Scheduler + Worker 会并发写元数据库，Windows 本地 SQLite 容易出现 database is locked。
 ```
 
-**第三步：部署 Flow（只需执行一次）**
+正式调度请使用 PostgreSQL。
 
-```bash
-cd "C:\Users\yuyu\Desktop\项目\自动通报"
-set PREFECT_API_URL=http://127.0.0.1:4200/api
-"C:\Users\yuyu\.conda\envs\auto-notify\python.exe" -m prefect deploy --all
+当前已验证可用的 PostgreSQL 连接格式：
+
+```text
+postgresql+asyncpg://user_rEkhna:password_YSDPae@60.205.108.31:5432/prefect
 ```
 
-**第四步：在 Web UI 中运行**
+说明：
 
-打开浏览器访问 http://127.0.0.1:4200/
+```text
+host: 60.205.108.31
+port: 5432
+database: prefect
+user: user_rEkhna
+driver: asyncpg
+```
 
-在 Deployments 页面可以看到：
-- `auto-notify-flow/notify-single` — 普通登录模式
-- `auto-notify-force-login-flow/notify-single-force-login` — 强制重新登录模式（推荐）
+## 启动 Prefect 服务
 
-点击对应 deployment，然后点 **Quick Run** 即可触发运行。
+有两种启动方式，本质上是同一套环境：
 
+1. 快捷启动
+   - 用 `scripts\prefect_start.ps1`
+   - 一条命令自动拉起 `server + worker`
+   - 适合日常使用
+2. 手动启动
+   - 先用 `scripts\prefect_env_debug.ps1` 或 `scripts\prefect_env_prod.ps1` 写入环境变量
+   - 再自己执行 `python -m prefect ...`
+   - 适合排查问题、手工控制每一步
 
-##streamlit Web UI 
+建议：
+
+```text
+平时正式启动服务：优先用 prefect_start.ps1
+需要排查问题：再用 prefect_env_*.ps1 + python -m prefect ...
+```
+
+### 1. 本地调试模式
+
+适合：
+
+```text
+本地点 UI 看配置
+手动试跑
+不想把测试记录写进远程 PostgreSQL
+```
+
+先停止旧服务：
+
+```powershell
+pwsh -File scripts\prefect_stop.ps1
+```
+
+再启动本地调试：
+
+```powershell
+pwsh -File scripts\prefect_start.ps1 -Mode both -Detached -UseSqliteDebug
+```
+
+说明：
+
+```text
+本地调试模式使用 runtime/prefect_home/prefect.db
+会禁用 Prefect 后台 services，适合手动测试，不适合长期调度
+```
+
+### 2. 正式调度模式
+
+适合：
+
+```text
+真正定时跑日通报
+需要 scheduler + worker
+需要长期稳定运行
+```
+
+先停止旧服务和残留锁文件：
+
+```powershell
+pwsh -File scripts\prefect_stop.ps1
+```
+
+启动 Server + Worker：
+
+```powershell
+pwsh -File scripts\prefect_start.ps1 -Mode both -Detached
+```
+
+启动后打开：
+
+```text
+http://127.0.0.1:4200
+```
+
+说明：
+
+```text
+scripts\prefect_start.ps1 默认已经写了 PostgreSQL 连接串
+所以通常不需要再手动传 -DatabaseUrl
+只有以后数据库地址、账号或库名变了，才需要显式覆盖
+```
+
+## 不用脚本时，如何手动启动
+
+如果你想自己开终端、逐条执行命令，可以按下面做。
+
+### 1. 本地调试模式（SQLite）
+
+适合：
+
+```text
+本地临时调试
+手动点 UI
+不想污染远程 PostgreSQL 元数据
+```
+
+终端 1：启动 Server
+
+```powershell
+conda activate auto-notify
+. .\scripts\prefect_env_debug.ps1
+python -m prefect server start --no-services --workers 1
+```
+
+终端 2：启动 Worker
+
+```powershell
+conda activate auto-notify
+. .\scripts\prefect_env_debug.ps1
+python -m prefect worker start --pool default-agent-pool --type process
+```
+
+### 2. 正式调度模式（PostgreSQL）
+
+适合：
+
+```text
+要启用 scheduler
+要长期稳定调度
+要避免 SQLite 锁库
+```
+
+终端 1：启动 Server
+
+```powershell
+conda activate auto-notify
+. .\scripts\prefect_env_prod.ps1
+python -m prefect server start --workers 1
+```
+
+终端 2：启动 Worker
+
+```powershell
+conda activate auto-notify
+. .\scripts\prefect_env_prod.ps1
+python -m prefect worker start --pool default-agent-pool --type process
+```
+
+启动后打开：
+
+```text
+http://127.0.0.1:4200
+```
+
+## 部署 Flow
+
+服务启动后，优先使用“单条部署”：
+
+```powershell
+$env:PREFECT_API_URL = "http://127.0.0.1:4200/api"
+$env:PREFECT_API_DATABASE_CONNECTION_URL = "postgresql+asyncpg://user_rEkhna:password_YSDPae@60.205.108.31:5432/prefect"
+$env:PREFECT_SERVER_DATABASE_CONNECTION_URL = $env:PREFECT_API_DATABASE_CONNECTION_URL
+$env:PYTHONUTF8 = "1"
+C:\Users\yuyu\.conda\envs\auto-notify\python.exe -m prefect deploy --name notify-daily
+```
+
+部署成功后，在 Web UI 的 Deployments 中运行：
+
+```text
+auto-notify-flow/notify-daily
+```
+
+如果不用脚本，也可以直接在终端手动部署：
+
+```powershell
+conda activate auto-notify
+. .\scripts\prefect_env_prod.ps1
+$env:PYTHONUTF8 = "1"
+python -m prefect deploy --name notify-daily
+```
+
+如果你当前启动的是本地 SQLite 调试模式，把上面的数据库连接串替换成：
+
+```powershell
+. .\scripts\prefect_env_debug.ps1
+$env:PYTHONUTF8 = "1"
+python -m prefect deploy --name notify-daily
+```
+
+如果后面 `prefect.yaml` 又加回多个 deployment，再使用：
+
+```powershell
+python -m prefect deploy --all
+```
+
+## Streamlit 配置页面
+
+启动配置管理页面：
+
+```powershell
 streamlit run admin/app.py
-
-
-
-## 命令行直接运行
-
-本地真实配置文件：
-
-```text
-config/tasks/local.json
 ```
 
-如果不存在，会回退读取：
+页面可维护：
 
 ```text
-config/tasks/example.json
+下载 URL
+Cookie Stage
+请求 data JSON
+比对参数
+发送 items
+等待重试 wait_for_change
 ```
 
-运行：
+## 动态占位符
+
+下载请求 `data` 支持动态占位符：
+
+```text
+${today}              当前日期，YYYY-MM-DD
+${yesterday}          前一天日期，YYYY-MM-DD
+${yesterday_yyyymmdd} 前一天日期，YYYYMMDD
+${hour}               当前小时，0-23
+${hour2}              当前小时，00-23
+```
+
+示例：
+
+```json
+{
+  "queryDate": "${yesterday}",
+  "versionName": "${yesterday_yyyymmdd}"
+}
+```
+
+如果不写占位符，参数会原样发送。
+
+## 单条命令运行
+
+不走 Prefect Server/Worker，直接跑日通报：
 
 ```powershell
-python flows\notify_single_flow.py
+C:\Users\yuyu\.conda\envs\auto-notify\python.exe -c "from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow('config/tasks/日通报.json'))"
 ```
 
-指定某个通报配置运行：
+这个方式适合排查业务问题，但不提供 UI 调度能力。
 
-```powershell
-python -c "from flows.notify_single_flow import auto_notify_flow; auto_notify_flow('config/tasks/vnet_daily.json')"
-```
-
-后续多个通报建议按“一个通报一个配置”新增：
+## 相关文档
 
 ```text
-config/tasks/vnet_daily.json
-config/tasks/market_daily.json
-config/tasks/zhengqi_daily.json
+CONFIG_REFERENCE.md   配置字段说明
+SSO_EXPORT_FLOW.md    SSO 登录到报表导出的链路说明
+ARCHITECTURE.md       分层设计约束
 ```
-
-当前 Flow 仍调用 `legacy_modules/` 中的旧脚本，顺序为：
-
-```text
-可选登录
-→ 下载报表
-→ 比对报表和正式模板
-→ same：结束
-→ invalid：失败停止
-→ changed：生成临时模板
-→ 自动生成本次发送配置
-→ 发送企业微信
-→ 发送成功后提交正式模板
-```
-
-## 后续迁移方向
-
-1. `autologin/session` 已迁移出会话复用入口到 `services/session_manager.py`，旧 Selenium 登录脚本暂时作为刷新 Cookie 的后备入口。
-2. `report-downloader` 已迁移到 `services/method_service.py`，旧脚本暂时保留备用。
-3. `report-compare` 已迁移到 `services/compare_service.py`，旧脚本暂时保留备用。
-4. `template-updater` 已迁移到 `services/template_service.py`，旧脚本暂时保留备用。
-5. `excel-sender-wx` 已拆到 `services/screenshot_service.py` 和 `services/notify_service.py`，旧脚本暂时保留备用。
-6. `template-commit` 已迁移到 `services/commit_service.py`，旧脚本暂时保留备用。
-
-
-pwsh -File scripts/prefect_start.ps1 -Mode both
-pwsh -File scripts/prefect_stop.ps1

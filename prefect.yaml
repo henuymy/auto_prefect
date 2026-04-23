@@ -2,17 +2,10 @@ name: auto-notify
 prefect-version: "3.0"
 
 deployments:
-  - name: notify-single
+  - name: notify-daily
     entrypoint: flows/notify_single_flow.py:auto_notify_flow
     parameters:
-      config_path: config/tasks/local.json
-    work_pool:
-      name: default-agent-pool
-      work_queue_name: default
-  - name: notify-single-force-login
-    entrypoint: flows/notify_single_force_login_flow.py:auto_notify_force_login_flow
-    parameters:
-      config_path: config/tasks/local_force_login.json
+      config_path: config/tasks/日通报.json
     work_pool:
       name: default-agent-pool
       work_queue_name: default

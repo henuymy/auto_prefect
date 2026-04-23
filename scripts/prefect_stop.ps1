@@ -12,12 +12,11 @@ if (-not $PrefectHome) {
 }
 $AutoNotifyPython = Join-Path $env:USERPROFILE ".conda\envs\auto-notify\python.exe"
 
-Write-Host "RepoRoot       : $RepoRoot"
-Write-Host "PREFECT_HOME   : $PrefectHome"
+Write-Host "RepoRoot        : $RepoRoot"
+Write-Host "PREFECT_HOME    : $PrefectHome"
 Write-Host "AutoNotifyPython: $AutoNotifyPython"
 Write-Host ""
 
-# 1) 按端口停止 Prefect Server
 $killedByPort = @()
 foreach ($port in $Ports) {
     $listeners = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
@@ -29,7 +28,6 @@ foreach ($port in $Ports) {
     }
 }
 
-# 2) 可选：停止 auto-notify 环境下的 python（通常是 worker）
 $killedPython = @()
 if ($KillAutoNotifyPython) {
     $py = Get-Process -Name "python" -ErrorAction SilentlyContinue |
@@ -40,21 +38,33 @@ if ($KillAutoNotifyPython) {
     }
 }
 
-# 3) 清理 SQLite 锁文件（避免 locked/readonly 残留）
-$homesToClean = @(
-    $PrefectHome,
-    (Join-Path $env:USERPROFILE ".prefect")
-)
-foreach ($home in $homesToClean) {
-    if (-not (Test-Path -LiteralPath $home)) {
+$killedShell = @()
+$prefectShells = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.Name -in @("pwsh.exe", "powershell.exe") -and
+        $_.CommandLine -and
+        (
+            $_.CommandLine -like "*prefect server start*" -or
+            $_.CommandLine -like "*prefect worker start*" -or
+            $_.CommandLine -like "*Prefect Server*" -or
+            $_.CommandLine -like "*Prefect Worker*"
+        )
+    }
+foreach ($proc in $prefectShells) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    $killedShell += $proc.ProcessId
+}
+
+# 兼容清理：如果曾经用 SQLite 调试，停止时顺手清掉 WAL/SHM 锁文件。
+foreach ($homePath in @($PrefectHome, (Join-Path $env:USERPROFILE ".prefect"))) {
+    if (-not (Test-Path -LiteralPath $homePath)) {
         continue
     }
-    attrib -R "$home\*" /S /D | Out-Null
-    Remove-Item -LiteralPath (Join-Path $home "prefect.db-wal") -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath (Join-Path $home "prefect.db-shm") -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $homePath "prefect.db-wal") -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $homePath "prefect.db-shm") -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "Stopped by port: $($killedByPort -join ',')"
 Write-Host "Stopped python : $($killedPython -join ',')"
+Write-Host "Stopped shell  : $($killedShell -join ',')"
 Write-Host "Done."
-
