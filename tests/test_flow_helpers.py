@@ -77,6 +77,8 @@ def test_resolve_dynamic_placeholders_supports_today_and_hour():
 
     now = datetime(2026, 3, 14, 16, 30, 0)
     assert resolve_dynamic_placeholders("${today}", now=now) == "2026-03-14"
+    assert resolve_dynamic_placeholders("${yesterday}", now=now) == "2026-03-13"
+    assert resolve_dynamic_placeholders("${yesterday_yyyymmdd}", now=now) == "20260313"
     assert resolve_dynamic_placeholders("${hour}", now=now) == "16"
     assert resolve_dynamic_placeholders("${hour2}", now=now) == "16"
 
@@ -94,7 +96,8 @@ def test_build_download_config_resolves_dynamic_tokens():
         "name": "PK小时通报",
         "download": {
             "data": {
-                "queryDate": "${today}",
+                "queryDate": "${yesterday}",
+                "versionName": "${yesterday_yyyymmdd}",
                 "hour": "${hour}",
                 "queryHour2": "${hour2}",
             }
@@ -104,6 +107,7 @@ def test_build_download_config_resolves_dynamic_tokens():
     config = build_download_config(base, report_cfg)
     report = config["reports"][0]
 
-    assert report["data"]["queryDate"] != "${today}"
+    assert report["data"]["queryDate"] != "${yesterday}"
+    assert report["data"]["versionName"] != "${yesterday_yyyymmdd}"
     assert report["data"]["hour"] != "${hour}"
     assert report["data"]["queryHour2"] != "${hour2}"

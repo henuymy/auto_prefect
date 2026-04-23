@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -73,8 +73,11 @@ def resolve_dynamic_placeholders(value, now=None):
     if not isinstance(value, str):
         return value
     now = now or datetime.now()
+    yesterday = now - timedelta(days=1)
     replacements = {
         "${today}": now.strftime("%Y-%m-%d"),
+        "${yesterday}": yesterday.strftime("%Y-%m-%d"),
+        "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
         "${hour}": str(now.hour),
         "${hour2}": now.strftime("%H"),
     }

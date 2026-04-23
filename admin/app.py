@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse
 
@@ -235,8 +235,11 @@ def format_json_text_in_state(state_key: str, label: str):
 
 def resolve_placeholder_preview(payload):
     now = datetime.now()
+    yesterday = now - timedelta(days=1)
     replacements = {
         "${today}": now.strftime("%Y-%m-%d"),
+        "${yesterday}": yesterday.strftime("%Y-%m-%d"),
+        "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
         "${hour}": str(now.hour),
         "${hour2}": now.strftime("%H"),
     }
@@ -392,7 +395,10 @@ with col_edit:
         label_visibility="collapsed",
         placeholder='{\n  "key": "value"\n}',
     )
-    st.caption("占位符支持：`${today}`(YYYY-MM-DD), `${hour}`(0-23), `${hour2}`(00-23)")
+    st.caption(
+        "占位符支持：`${today}`(YYYY-MM-DD), `${yesterday}`(前一天 YYYY-MM-DD), "
+        "`${yesterday_yyyymmdd}`(前一天 YYYYMMDD), `${hour}`(0-23), `${hour2}`(00-23)"
+    )
     if st.button("预览 data 占位符替换结果", key="preview_dl_data_tokens"):
         try:
             dl_data_obj = json.loads(st.session_state.get("dl_data_input", "{}") or "{}")
