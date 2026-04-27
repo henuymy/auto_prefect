@@ -374,6 +374,98 @@ Cookie Stage
 等待重试 wait_for_change
 ```
 
+## Runtime 运行产物
+
+`runtime/` 是每次运行过程中生成的中间产物和结果文件目录，默认不需要手动编辑。
+
+常见目录和文件：
+
+```text
+runtime/cookies/cookie_dump.json
+```
+
+保存自动登录后抓取到的 Cookie。下载报表时会根据配置里的 `Cookie Stage` 从这里取对应 Cookie，例如：
+
+```text
+report_analysis
+smart_ops
+data_market
+```
+
+```text
+runtime/report_downloader/downloads/
+runtime/report_downloader/download_manifest.json
+```
+
+保存下载下来的原始报表文件，以及本次下载清单。`download_manifest.json` 会记录每个报表的下载路径、URL、状态码、文件大小等信息。
+
+```text
+runtime/flow/<报表名称>/
+```
+
+保存某个报表 flow 的本次运行产物。例如 `爱家V网` 会生成：
+
+```text
+runtime/flow/爱家V网/
+```
+
+常见文件：
+
+```text
+runtime/flow/<报表名称>/compare_config.json
+runtime/flow/<报表名称>/template_updater_config.json
+runtime/flow/<报表名称>/update_manifest.json
+runtime/flow/<报表名称>/wecom/send_result.json
+runtime/flow/<报表名称>/commit_manifest.json
+```
+
+说明：
+
+```text
+compare_config.json             Flow 临时生成的比对配置
+template_updater_config.json    Flow 临时生成的模板更新配置
+update_manifest.json            模板更新结果，记录 updated/skipped、更新了哪些 sheet、新模板路径
+wecom/send_result.json          企业微信发送结果
+commit_manifest.json            正式模板提交结果，提交成功后才会生成或更新
+```
+
+更新后的临时模板会保存在：
+
+```text
+runtime/flow/<报表名称>/templates/
+```
+
+例如：
+
+```text
+runtime/flow/爱家V网/templates/爱家亲情网报表_updated_20260427_205924.xlsx
+```
+
+如果流程最后一步 `commit_template` 失败，但 `update_manifest.json` 已经是 `status: updated`，说明：
+
+```text
+下载成功
+比对成功
+临时模板已生成
+正式模板还没有被覆盖提交
+```
+
+这时通常可以根据 `update_manifest.json` 里的 `output_path` 找到新模板，确认后再补跑提交模板。
+
+如果企业微信已经发送成功，但提交模板失败，不建议直接完整重跑，避免重复发送。可以只补跑提交模板：
+
+```powershell
+python -c "from services.commit_service import commit_template; commit_template({'update_manifest_path':'runtime/flow/爱家V网/update_manifest.json','send_result_path':'runtime/flow/爱家V网/wecom/send_result.json','backup_dir':'runtime/flow/爱家V网/backups','manifest_path':'runtime/flow/爱家V网/commit_manifest.json','overwrite':True})"
+```
+
+注意：提交正式模板时，如果 `templates/<模板文件>.xlsx` 正被 Excel/WPS 打开，Windows 会拒绝覆盖，可能出现：
+
+```text
+PermissionError: [Errno 13] Permission denied
+```
+
+关闭占用模板的 Excel/WPS 后，再补跑提交即可。
+
 ## 动态占位符
 
 下载请求 `data` 支持动态占位符：

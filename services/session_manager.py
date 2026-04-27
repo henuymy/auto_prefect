@@ -119,6 +119,8 @@ def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None):
         cwd=str(cwd),
         shell=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
         timeout=timeout_seconds,

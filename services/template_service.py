@@ -48,7 +48,11 @@ def load_compare_context(config, base_dir=PROJECT_DIR):
     if not template_path and compare_config:
         template_path = resolve_path(compare_config.get("template_path"), compare_config_dir)
 
-    if not source_report_path:
+    sheets_have_source_paths = all(
+        item.get("source_report_path")
+        for item in compare_result.get("sheets", [])
+    )
+    if not source_report_path and not sheets_have_source_paths:
         raise ValueError("缺少 source_report_path，也无法从 compare_config_path 中读取 new_report_path")
     if not template_path:
         raise ValueError("缺少 template_path，也无法从 compare_config_path 中读取 template_path")
@@ -78,6 +82,14 @@ def copy_sheet_content(source_sheet, target_sheet):
     clear_target_sheet(target_sheet)
     source_sheet.UsedRange.Copy()
     target_sheet.Range("A1").PasteSpecial(Paste=-4104)
+
+
+def update_condition_met(sheet_results, update_condition):
+    if update_condition == "any_changed":
+        return any(item.get("result") == "changed" for item in sheet_results)
+    if update_condition == "all_changed":
+        return bool(sheet_results) and all(item.get("result") == "changed" for item in sheet_results)
+    raise ValueError("update_condition 只支持 any_changed 或 all_changed")
 
 
 def update_template_copy(source_report_path, template_path, output_path, sheet_results, write_sheets, visible=False):
@@ -135,6 +147,68 @@ def update_template_copy(source_report_path, template_path, output_path, sheet_r
     return updated_sheets
 
 
+def update_template_copy_multi(source_report_path, template_path, output_path, sheet_results, write_sheets, visible=False):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(template_path, output_path)
+
+    win32com = require_win32()
+    excel = win32com.DispatchEx("Excel.Application")
+    excel.Visible = bool(visible)
+    excel.DisplayAlerts = False
+    excel.AskToUpdateLinks = False
+    target_workbook = None
+    source_workbooks = {}
+    updated_sheets = []
+    try:
+        target_workbook = excel.Workbooks.Open(
+            str(output_path),
+            UpdateLinks=0,
+            ReadOnly=False,
+            IgnoreReadOnlyRecommended=True,
+        )
+
+        for sheet_result in sheet_results:
+            if not should_write_sheet(sheet_result, write_sheets):
+                continue
+            source_path = resolve_path(sheet_result.get("source_report_path") or source_report_path)
+            if not source_path:
+                raise ValueError(f"缺少 sheet 的 source_report_path: {sheet_result}")
+            source_key = str(source_path)
+            if source_key not in source_workbooks:
+                source_workbooks[source_key] = excel.Workbooks.Open(
+                    source_key,
+                    UpdateLinks=0,
+                    ReadOnly=True,
+                    IgnoreReadOnlyRecommended=True,
+                )
+            source_sheet_name = sheet_result["new_sheet_name"]
+            target_sheet_name = sheet_result["template_sheet_name"]
+            source_sheet = get_sheet(source_workbooks[source_key], source_sheet_name)
+            target_sheet = get_sheet(target_workbook, target_sheet_name)
+            copy_sheet_content(source_sheet, target_sheet)
+            updated_sheets.append({
+                "name": sheet_result.get("name") or source_sheet_name,
+                "download_name": sheet_result.get("download_name"),
+                "source_report_path": source_key,
+                "source_sheet_name": source_sheet_name,
+                "template_sheet_name": target_sheet_name,
+                "compare_result": sheet_result.get("result"),
+            })
+
+        target_workbook.Save()
+    finally:
+        try:
+            excel.CutCopyMode = False
+        except Exception:
+            pass
+        for workbook in source_workbooks.values():
+            workbook.Close(SaveChanges=False)
+        if target_workbook is not None:
+            target_workbook.Close(SaveChanges=False)
+        excel.Quit()
+    return updated_sheets
+
+
 def write_manifest(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -147,14 +221,16 @@ def update_template(config, base_dir=PROJECT_DIR):
     manifest_path = resolve_path(config.get("manifest_path", "runtime/template_updater/update_manifest.json"), base_dir)
     output_dir = resolve_path(config.get("output_dir", "runtime/template_updater/templates"), base_dir)
     write_sheets = config.get("write_sheets", "changed")
+    update_condition = config.get("update_condition", "any_changed")
 
     result = compare_result.get("result")
     if result == "invalid":
         raise RuntimeError("比对结果为 invalid，停止更新模板")
-    if result == "same":
+    if result == "same" or not update_condition_met(compare_result.get("sheets", []), update_condition):
         manifest = {
             "status": "skipped",
-            "reason": "compare_result_same",
+            "reason": "update_condition_not_met" if result != "same" else "compare_result_same",
+            "update_condition": update_condition,
             "source_report_path": str(source_report_path),
             "template_path": str(template_path),
             "output_path": None,
@@ -167,7 +243,7 @@ def update_template(config, base_dir=PROJECT_DIR):
         raise RuntimeError(f"不支持的比对结果: {result}")
 
     output_path = output_template_path(template_path, output_dir)
-    updated_sheets = update_template_copy(
+    updated_sheets = update_template_copy_multi(
         source_report_path,
         template_path,
         output_path,
@@ -181,6 +257,7 @@ def update_template(config, base_dir=PROJECT_DIR):
         "template_path": str(template_path),
         "output_path": str(output_path),
         "write_sheets": write_sheets,
+        "update_condition": update_condition,
         "updated_sheets": updated_sheets,
         "generated_at": datetime.now().isoformat(),
     }

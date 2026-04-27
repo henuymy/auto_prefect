@@ -1,0 +1,137 @@
+{
+  "name": "爱家V网",
+  "template_path": "templates/爱家亲情网报表.xlsx",
+  "download": {
+    "name": "335837",
+    "stage": "report_analysis",
+    "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+    "data": {
+      "area": "371017",
+      "templateId": "85479",
+      "sheetIndex": "-1",
+      "sheetName": "新增",
+      "type": "excel",
+      "versionName": "${yesterday_yyyymmdd}",
+      "resId": "335837",
+      "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+      "param_key": "key",
+      "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+      "key": "0000",
+      "protectValue": "",
+      "downloadXlsx": "false"
+    }
+  },
+  "compare": {
+    "sheet_mappings": [],
+    "header_row": 1,
+    "ignore_columns": [],
+    "key_columns": []
+  },
+  "send": {
+    "webhook_url": "",
+    "workbook_name": "",
+    "items": [
+      {
+        "type": "image",
+        "sheet": "通报"
+      },
+      {
+        "type": "text",
+        "sheet": "文字页",
+        "text": {
+          "mode": "used_range"
+        }
+      }
+    ]
+  },
+  "template_update": {
+    "update_condition": "all_changed",
+    "write_sheets": "changed"
+  },
+  "downloads": [
+    {
+      "name": "335837",
+      "stage": "report_analysis",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "data": {
+        "area": "371017",
+        "templateId": "85479",
+        "sheetIndex": "-1",
+        "sheetName": "新增",
+        "type": "excel",
+        "versionName": "${yesterday_yyyymmdd}",
+        "resId": "335837",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "false"
+      }
+    },
+    {
+      "name": "338462",
+      "stage": "report_analysis",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "data": {
+        "area": "371017",
+        "templateId": "86680",
+        "sheetIndex": "-1",
+        "sheetName": "整体",
+        "type": "excel",
+        "versionName": "${yesterday_yyyymmdd}",
+        "resId": "338462",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "false"
+      }
+    }
+  ],
+  "compare_sources": [
+    {
+      "download_name": "335837",
+      "sheet_mappings": [
+        {
+          "name": "新增-335837",
+          "new_sheet_name": "新增",
+          "template_sheet_name": "新增-335837",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        },
+        {
+          "name": "净增-336837",
+          "new_sheet_name": "净增",
+          "template_sheet_name": "净增-336837",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "338462",
+      "sheet_mappings": [
+        {
+          "name": "整体-338462",
+          "new_sheet_name": "整体",
+          "template_sheet_name": "整体-338462",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        },
+        {
+          "name": "移动之家2021-338462",
+          "new_sheet_name": "移动之家2021",
+          "template_sheet_name": "移动之家2021-338462",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    }
+  ]
+}

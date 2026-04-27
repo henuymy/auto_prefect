@@ -1,11 +1,16 @@
 import pytest
+from pathlib import Path
 
 from flows.notify_single_flow import (
+    aggregate_compare_results,
     build_download_config,
+    build_compare_source_configs,
     parse_wait_for_change_config,
     resolve_dynamic_placeholders,
     select_downloaded_report_path,
 )
+
+PROJECT_TEST_RUNTIME_DIR = Path("runtime/flow/test")
 
 
 def test_select_downloaded_report_path_by_name():
@@ -111,3 +116,102 @@ def test_build_download_config_resolves_dynamic_tokens():
     assert report["data"]["versionName"] != "${yesterday_yyyymmdd}"
     assert report["data"]["hour"] != "${hour}"
     assert report["data"]["queryHour2"] != "${hour2}"
+
+
+def test_build_download_config_supports_multiple_downloads():
+    base = {
+        "report_defaults": {
+            "enabled": True,
+            "method": "POST",
+            "url": "https://example/export",
+        },
+    }
+    report_cfg = {
+        "name": "多源通报",
+        "downloads": [
+            {"name": "报表A", "data": {"sheetName": "A"}},
+            {"name": "报表B", "data": {"sheetName": "B"}},
+        ],
+    }
+
+    config = build_download_config(base, report_cfg)
+
+    assert [item["name"] for item in config["reports"]] == ["报表A", "报表B"]
+    assert config["reports"][0]["method"] == "POST"
+    assert config["reports"][1]["data"]["sheetName"] == "B"
+
+
+def test_build_compare_source_configs_maps_download_outputs():
+    manifest = {
+        "results": [
+            {"name": "报表A", "output_path": "runtime/downloads/a.xls"},
+            {"name": "报表B", "output_path": "runtime/downloads/b.xls"},
+        ]
+    }
+    report_cfg = {
+        "template_path": "templates/template.xlsx",
+        "compare_sources": [
+            {
+                "download_name": "报表A",
+                "sheet_mappings": [{"new_sheet_name": "A1", "template_sheet_name": "T1"}],
+            },
+            {
+                "download_name": "报表B",
+                "sheet_mappings": [{"new_sheet_name": "B1", "template_sheet_name": "T2"}],
+            },
+        ],
+    }
+
+    configs = build_compare_source_configs(
+        {"sample_limit": 10},
+        report_cfg,
+        manifest,
+        {},
+        PROJECT_TEST_RUNTIME_DIR,
+    )
+
+    assert [item["download_name"] for item in configs] == ["报表A", "报表B"]
+    assert configs[0]["config"]["new_report_path"].endswith("a.xls")
+    assert configs[1]["config"]["sheet_mappings"][0]["template_sheet_name"] == "T2"
+
+
+def test_aggregate_compare_results_all_changed_requires_every_sheet_changed():
+    compare_runs = [
+        {
+            "download_name": "报表A",
+            "source_report_path": "a.xls",
+            "config": {"new_report_path": "a.xls"},
+            "result": {
+                "sheets": [
+                    {"name": "A1", "new_sheet_name": "A1", "template_sheet_name": "T1", "result": "changed"},
+                    {"name": "A2", "new_sheet_name": "A2", "template_sheet_name": "T2", "result": "same"},
+                ]
+            },
+        }
+    ]
+
+    result = aggregate_compare_results(compare_runs, update_condition="all_changed")
+
+    assert result["result"] == "same"
+    assert result["summary"]["changed"] == 1
+    assert result["sheets"][0]["source_report_path"] == "a.xls"
+
+
+def test_aggregate_compare_results_all_changed_passes_when_all_changed():
+    compare_runs = [
+        {
+            "download_name": "报表A",
+            "source_report_path": "a.xls",
+            "config": {"new_report_path": "a.xls"},
+            "result": {
+                "sheets": [
+                    {"name": "A1", "new_sheet_name": "A1", "template_sheet_name": "T1", "result": "changed"},
+                ]
+            },
+        }
+    ]
+
+    result = aggregate_compare_results(compare_runs, update_condition="all_changed")
+
+    assert result["result"] == "changed"
+    assert result["summary"]["total"] == 1

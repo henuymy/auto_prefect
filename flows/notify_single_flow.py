@@ -97,12 +97,18 @@ def resolve_dynamic_structure(payload, now=None):
 
 def build_download_config(base_config, report_cfg):
     download_defaults = base_config.get("report_defaults", {})
-    report_override = report_cfg.get("download", {})
-    merged_report = deep_merge(download_defaults, report_override)
-    merged_report["name"] = merged_report.get("name") or report_cfg.get("name")
-    merged_report = resolve_dynamic_structure(merged_report)
+    report_overrides = report_cfg.get("downloads") or [report_cfg.get("download", {})]
+    merged_reports = []
+    for index, report_override in enumerate(report_overrides, start=1):
+        merged_report = deep_merge(download_defaults, report_override)
+        merged_report["name"] = (
+            merged_report.get("name")
+            or report_cfg.get("name")
+            or f"report-{index}"
+        )
+        merged_reports.append(resolve_dynamic_structure(merged_report))
     config = {k: v for k, v in base_config.items() if k != "report_defaults"}
-    config["reports"] = [merged_report]
+    config["reports"] = merged_reports
     return config
 
 
@@ -123,7 +129,14 @@ def build_send_config(base_config, report_cfg, workbook_file):
     workbooks[0]["name"] = send.get("workbook_name") or workbooks[0].get("name")
     if send.get("items"):
         workbooks[0]["reports"] = [{"name": send.get("workbook_name"), "items": send["items"]}]
+    if send.get("webhook_url"):
+        config.setdefault("wecom", {})["webhook_url"] = send["webhook_url"]
     return config
+
+
+def get_update_condition(report_cfg):
+    template_update = report_cfg.get("template_update") or {}
+    return template_update.get("update_condition", "any_changed")
 
 
 def select_downloaded_report_path(download_manifest, report_name=None):
@@ -138,6 +151,92 @@ def select_downloaded_report_path(download_manifest, report_name=None):
         names = [item.get("name") for item in results]
         raise RuntimeError(f"下载结果中找不到可用 output_path，report_name={report_name!r}，已下载: {names}")
     return candidates[0]["output_path"]
+
+
+def downloaded_report_path_map(download_manifest):
+    mapping = {}
+    for item in download_manifest.get("results") or []:
+        name = item.get("name")
+        output_path = item.get("output_path")
+        if name and output_path:
+            mapping[name] = output_path
+    return mapping
+
+
+def build_compare_source_configs(base_config, report_cfg, download_manifest, compare_step, flow_runtime_dir):
+    template_path = report_cfg.get("template_path")
+    compare_sources = report_cfg.get("compare_sources") or []
+    if not compare_sources:
+        compare_config = build_compare_config(base_config, report_cfg)
+        if download_manifest:
+            compare_config["new_report_path"] = select_downloaded_report_path(
+                download_manifest,
+                report_name=compare_step.get("download_report_name"),
+            )
+        return [{
+            "name": compare_step.get("download_report_name") or report_cfg.get("name"),
+            "download_name": compare_step.get("download_report_name") or report_cfg.get("name"),
+            "config": compare_config,
+        }]
+
+    paths_by_name = downloaded_report_path_map(download_manifest or {})
+    configs = []
+    for index, source in enumerate(compare_sources, start=1):
+        download_name = source.get("download_name")
+        if not download_name:
+            raise ValueError(f"compare_sources[{index}] 缺少 download_name")
+        if download_name not in paths_by_name:
+            raise RuntimeError(f"下载结果中找不到 compare_sources 对应报表: {download_name}")
+        source_override = {k: v for k, v in source.items() if k != "download_name"}
+        compare_config = deep_merge(base_config, {
+            "template_path": template_path,
+            "new_report_path": paths_by_name[download_name],
+            **source_override,
+        })
+        compare_config["output_path"] = str(flow_runtime_dir / "compare_results" / f"{download_name}.json")
+        configs.append({
+            "name": source.get("name") or download_name,
+            "download_name": download_name,
+            "source_report_path": paths_by_name[download_name],
+            "config": compare_config,
+        })
+    return configs
+
+
+def aggregate_compare_results(compare_runs, update_condition="any_changed"):
+    sheets = []
+    for run in compare_runs:
+        for sheet in run["result"].get("sheets", []):
+            item = dict(sheet)
+            item["download_name"] = run.get("download_name")
+            item["source_report_path"] = run.get("source_report_path") or run["config"].get("new_report_path")
+            sheets.append(item)
+
+    summary = {
+        "same": sum(1 for item in sheets if item.get("result") == "same"),
+        "changed": sum(1 for item in sheets if item.get("result") == "changed"),
+        "invalid": sum(1 for item in sheets if item.get("result") == "invalid"),
+        "total": len(sheets),
+    }
+    if summary["invalid"]:
+        result = "invalid"
+        message = "存在无法比对的工作表"
+    elif update_condition == "all_changed":
+        result = "changed" if summary["total"] > 0 and summary["changed"] == summary["total"] else "same"
+        message = "所有参与比较的工作表均有变化" if result == "changed" else "未满足全部 changed 的更新条件"
+    elif update_condition == "any_changed":
+        result = "changed" if summary["changed"] else "same"
+        message = "至少一个工作表数据有变化" if result == "changed" else "所有工作表数据一致"
+    else:
+        raise ValueError("template_update.update_condition 只支持 any_changed 或 all_changed")
+
+    return {
+        "result": result,
+        "sheets": sheets,
+        "summary": summary,
+        "message": message,
+        "update_condition": update_condition,
+    }
 
 
 def parse_wait_for_change_config(config):
@@ -167,6 +266,8 @@ def prepare_template_config(base_config_path, output_config_path, compare_config
     template_config = read_json(base_config_path)
     compare_config = read_json(compare_config_path)
     template_config["compare_config_path"] = str(compare_config_path)
+    if compare_config.get("compare_result_path"):
+        template_config["compare_result_path"] = compare_config.get("compare_result_path")
     template_config["source_report_path"] = compare_config.get("new_report_path")
     template_config["template_path"] = compare_config.get("template_path")
     if overrides:
@@ -234,16 +335,44 @@ def auto_notify_flow(config_path=None):
             logger.info("下载 dry-run 完成，停止后续比对和发送")
             return {"status": "skipped", "reason": "download_dry_run", "download_manifest": download_manifest}
 
-        compare_config = build_compare_config(read_json(steps["compare"]["config_path"]), report_cfg)
-        if download_manifest:
-            compare_config["new_report_path"] = select_downloaded_report_path(
-                download_manifest, report_name=steps["compare"].get("download_report_name")
+        compare_base_config = read_json(steps["compare"]["config_path"])
+        compare_configs = build_compare_source_configs(
+            compare_base_config,
+            report_cfg,
+            download_manifest,
+            steps["compare"],
+            flow_runtime_dir,
+        )
+        compare_runs = []
+        for index, compare_item in enumerate(compare_configs, start=1):
+            compare_config_path = write_json(
+                str(flow_runtime_dir / "compare_configs" / f"compare_{index}.json"),
+                compare_item["config"],
             )
+            compare_result_item = compare_report_task(read_json(compare_config_path))
+            compare_runs.append({
+                **compare_item,
+                "config_path": str(compare_config_path),
+                "result": compare_result_item,
+            })
+        compare_result = aggregate_compare_results(compare_runs, get_update_condition(report_cfg))
         compare_config_path = write_json(
             steps["compare"].get("generated_config_path", str(flow_runtime_dir / "compare_config.json")),
-            compare_config,
+            {
+                "template_path": report_cfg.get("template_path"),
+                "compare_result_path": str(flow_runtime_dir / "compare_result.json"),
+                "compare_runs": [
+                    {
+                        "name": item.get("name"),
+                        "download_name": item.get("download_name"),
+                        "source_report_path": item.get("source_report_path") or item["config"].get("new_report_path"),
+                        "config_path": item.get("config_path"),
+                    }
+                    for item in compare_runs
+                ],
+            },
         )
-        compare_result = compare_report_task(read_json(compare_config_path))
+        write_json(str(flow_runtime_dir / "compare_result.json"), compare_result)
         compare_status = compare_result.get("result")
         if compare_status == "invalid":
             raise RuntimeError("比对结果 invalid，停止流程")
@@ -280,7 +409,10 @@ def auto_notify_flow(config_path=None):
         steps["update_template"]["config_path"],
         steps["update_template"].get("generated_config_path", str(flow_runtime_dir / "template_updater_config.json")),
         compare_config_path,
-        overrides={k: steps["update_template"][k] for k in ("output_dir", "manifest_path") if k in steps["update_template"]},
+        overrides={
+            **{k: steps["update_template"][k] for k in ("output_dir", "manifest_path") if k in steps["update_template"]},
+            **(report_cfg.get("template_update") or {}),
+        },
     )
     update_manifest = update_template_task(read_json(template_config_path))
     if update_manifest.get("status") == "skipped":

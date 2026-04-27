@@ -5,7 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shutil
+import tempfile
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -144,6 +147,33 @@ def refresh_workbook(excel, workbook, timeout_seconds=120):
     raise TimeoutError(f"刷新查询和连接超时: {timeout_seconds} 秒")
 
 
+def export_chart_to_png(chart, output_path, attempts=2, delay_seconds=0.5):
+    output = Path(output_path)
+    temp_dir = Path(tempfile.gettempdir()) / "auto_notify_excel_exports"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        temp_file = temp_dir / f"capture_{uuid.uuid4().hex}.png"
+        try:
+            chart.Export(str(temp_file), "PNG")
+            if not temp_file.exists() or temp_file.stat().st_size == 0:
+                raise RuntimeError(f"Excel 导出的 PNG 为空: {temp_file}")
+            shutil.copyfile(temp_file, output)
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts:
+                time.sleep(delay_seconds)
+        finally:
+            try:
+                temp_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    raise RuntimeError(f"Excel 导出 PNG 失败: {output}") from last_error
+
+
 def capture_range_to_png(ws, output_path, capture=None):
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -168,7 +198,13 @@ def capture_range_to_png(ws, output_path, capture=None):
         chart_object.Activate()
         chart = chart_object.Chart
         chart.Paste()
-        chart.Export(str(output.resolve()), "PNG")
+        time.sleep(float(capture.get("paste_wait_seconds", 0.2) or 0.2))
+        export_chart_to_png(
+            chart,
+            output.resolve(),
+            attempts=int(capture.get("export_attempts", 2) or 2),
+            delay_seconds=float(capture.get("export_retry_delay_seconds", 0.5) or 0.5),
+        )
     finally:
         chart_object.Delete()
 

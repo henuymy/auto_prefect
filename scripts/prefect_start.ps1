@@ -41,6 +41,8 @@ $env:PREFECT_SERVER_DATABASE_TIMEOUT = "60"
 $env:PREFECT_API_SERVICES_SCHEDULER_ENABLED = if ($UseSqliteDebug) { "False" } else { "True" }
 $env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = if ($UseSqliteDebug) { "False" } else { "True" }
 $env:PREFECT_SERVER_ANALYTICS_ENABLED = "False"
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 
 Write-Host "RepoRoot       : $RepoRoot"
 Write-Host "PythonExe      : $PythonExe"
@@ -92,6 +94,8 @@ function Get-EnvBootstrap {
 `$env:PREFECT_API_SERVICES_SCHEDULER_ENABLED = '$($env:PREFECT_API_SERVICES_SCHEDULER_ENABLED)'
 `$env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = '$($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)'
 `$env:PREFECT_SERVER_ANALYTICS_ENABLED = 'False'
+`$env:PYTHONUTF8 = '1'
+`$env:PYTHONIOENCODING = 'utf-8'
 "@
 }
 
