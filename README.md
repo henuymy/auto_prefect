@@ -61,7 +61,58 @@ flows/notify_single_flow.py
 ```powershell
 conda create -n auto-notify python=3.11 -y
 conda activate auto-notify
-pip install -r requirements.txt
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn
+```
+
+如果你想“一次配好，后面直接跑”，推荐直接执行：
+
+```powershell
+pwsh -File scripts\setup_windows_env.ps1
+```
+
+这个脚本会：
+
+```text
+创建或复用 auto-notify conda 环境
+配置 conda 清华镜像
+安装 requirements.txt 依赖
+创建 runtime 目录
+检查 Edge / Excel COM
+把 autologin.json 的 login_command 固定到当前 conda 环境
+执行一次基础 smoke test
+```
+
+常用参数：
+
+```powershell
+pwsh -File scripts\setup_windows_env.ps1 -EnvName auto-notify
+pwsh -File scripts\setup_windows_env.ps1 -SkipCondaCreate
+pwsh -File scripts\setup_windows_env.ps1 -SkipSmokeTest
+pwsh -File scripts\setup_windows_env.ps1 -SkipCondaMirror
+```
+
+默认会使用清华 `pip` 镜像：
+
+```text
+https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+如果你想覆盖成别的源，也可以：
+
+```powershell
+pwsh -File scripts\setup_windows_env.ps1 -PipIndexUrl "https://mirrors.aliyun.com/pypi/simple/" -PipTrustedHost "mirrors.aliyun.com"
+```
+
+`setup_windows_env.ps1` 默认也会把 `conda` 切到清华镜像。
+
+如果你想手动执行，命令如下：
+
+```powershell
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+conda config --set show_channel_urls yes
 ```
 
 如果使用 Excel COM、Selenium、企业微信截图发送等能力，请确保：

@@ -1,4 +1,6 @@
 prefect>=3.0
 requests>=2.31.0
 selenium>=4.0.0
+asyncpg>=0.29.0
+streamlit>=1.40.0
 pywin32>=306; platform_system == "Windows"
