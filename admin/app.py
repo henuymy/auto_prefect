@@ -15,6 +15,7 @@ import streamlit as st
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 REPORTS_DIR = PROJECT_DIR / "config" / "reports"
 TASKS_DIR = PROJECT_DIR / "config" / "tasks"
+TEMPLATES_DIR = PROJECT_DIR / "templates"
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 TASKS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -22,6 +23,20 @@ WORK_POOL = "default-agent-pool"
 FLOW_ENTRYPOINT = "flows/notify_single_flow.py:auto_notify_flow"
 DEFAULT_STAGE_OPTIONS = ["report_analysis", "smart_ops", "data_market"]
 COOKIE_DUMP_PATH = PROJECT_DIR / "runtime" / "cookies" / "cookie_dump.json"
+SAME_ACTION_OPTIONS = ["等待数据变化后发送", "直接发送当前通报", "直接结束"]
+
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+from utils.request_parser import (  # noqa: E402
+    headers_from_header_rows,
+    parse_request_by_mode,
+)
+
+
+LEGACY_SSR_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
+LEGACY_SSR_HEADERS_FROM_COOKIES = {"ssr-token": "ssr-token"}
+LEGACY_SSR_CSRF_HEADERS_FROM_COOKIES = {"ssr-header": "ssr-token"}
 
 
 def load_json(path: Path) -> dict:
@@ -45,6 +60,24 @@ def report_name_from_path(path: Path) -> str:
 
 def task_config_path(report_name: str) -> Path:
     return TASKS_DIR / f"{report_name}.json"
+
+
+def normalize_project_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(PROJECT_DIR)).replace("\\", "/")
+    except ValueError:
+        return str(path)
+
+
+def list_template_files() -> list[str]:
+    if not TEMPLATES_DIR.exists():
+        return []
+    extensions = {".xlsx", ".xlsm", ".xls"}
+    return [
+        normalize_project_path(path)
+        for path in sorted(TEMPLATES_DIR.rglob("*"))
+        if path.is_file() and path.suffix.lower() in extensions
+    ]
 
 
 def build_task_config(report_name: str, report_config_path: str, download_name: str | None = None) -> dict:
@@ -257,12 +290,77 @@ def init_state_value(marker_key: str, state_key: str, selected_marker: str, valu
         st.session_state[state_key] = value
 
 
+def same_action_from_config(template_update: dict, wait_cfg: dict) -> str:
+    if bool((template_update or {}).get("send_when_same", False)):
+        return "直接发送当前通报"
+    if bool((wait_cfg or {}).get("enabled", True)):
+        return "等待数据变化后发送"
+    return "直接结束"
+
+
+def json_dumps_for_cell(value) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def default_body_type_for_download(item: dict) -> str:
+    if item.get("body_type"):
+        return item.get("body_type")
+    if "json" in item:
+        return "json"
+    if item.get("raw_body"):
+        return "raw"
+    return "form"
+
+
+def is_legacy_ssr_download(item: dict) -> bool:
+    if not item:
+        return False
+    has_real_content = bool(item.get("name") or item.get("url") or item.get("data") or item.get("json"))
+    has_new_request_fields = any(
+        key in item
+        for key in ("method", "body_type", "headers", "headers_from_cookies", "csrf_headers_from_cookies", "raw_body")
+    )
+    return has_real_content and not has_new_request_fields
+
+
+def default_headers_for_download(item: dict) -> dict:
+    if item.get("headers"):
+        return item.get("headers") or {}
+    if is_legacy_ssr_download(item):
+        return dict(LEGACY_SSR_HEADERS)
+    return {}
+
+
+def default_headers_from_cookies_for_download(item: dict) -> dict:
+    if item.get("headers_from_cookies"):
+        return item.get("headers_from_cookies") or {}
+    if is_legacy_ssr_download(item):
+        return dict(LEGACY_SSR_HEADERS_FROM_COOKIES)
+    return {}
+
+
+def default_csrf_headers_from_cookies_for_download(item: dict) -> dict:
+    if item.get("csrf_headers_from_cookies"):
+        return item.get("csrf_headers_from_cookies") or {}
+    if is_legacy_ssr_download(item):
+        return dict(LEGACY_SSR_CSRF_HEADERS_FROM_COOKIES)
+    return {}
+
+
 def download_to_form_row(item: dict) -> dict:
+    body_type = default_body_type_for_download(item)
+    data_value = item.get("json") if "json" in item and "data" not in item else item.get("data", {})
     return {
         "name": item.get("name", ""),
         "stage": item.get("stage", "report_analysis"),
+        "method": item.get("method", "POST"),
         "url": item.get("url", ""),
-        "data_json": json.dumps(item.get("data", {}), ensure_ascii=False, indent=2),
+        "headers_json": json_dumps_for_cell(default_headers_for_download(item)),
+        "headers_from_cookies_json": json_dumps_for_cell(default_headers_from_cookies_for_download(item)),
+        "csrf_headers_from_cookies_json": json_dumps_for_cell(default_csrf_headers_from_cookies_for_download(item)),
+        "body_type": body_type,
+        "data_json": json_dumps_for_cell(data_value or {}),
+        "raw_body": item.get("raw_body", ""),
     }
 
 
@@ -274,9 +372,92 @@ def normalize_table_rows(rows) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def is_blank_value(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and value != value:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def parse_optional_int(value, default=None):
+    if is_blank_value(value):
+        return default
+    return int(float(value))
+
+
 def downloads_to_form_rows(downloads: list[dict]) -> list[dict]:
     rows = [download_to_form_row(item or {}) for item in downloads]
     return rows or [download_to_form_row({})]
+
+
+def apply_default_stage_to_rows(rows: list[dict], default_stage: str) -> list[dict]:
+    normalized = normalize_table_rows(rows)
+    for row in normalized:
+        if not (row.get("stage") or "").strip():
+            row["stage"] = default_stage
+    return normalized
+
+
+def non_empty_download_rows(rows: list[dict]) -> list[dict]:
+    kept = []
+    for row in normalize_table_rows(rows):
+        if any(
+            str(row.get(key) or "").strip()
+            for key in ("name", "url", "headers_json", "data_json", "raw_body")
+        ):
+            kept.append(row)
+    return kept
+
+
+def non_empty_compare_rows(rows: list[dict]) -> list[dict]:
+    kept = []
+    for row in normalize_table_rows(rows):
+        if any(
+            str(row.get(key) or "").strip()
+            for key in (
+                "download_name",
+                "name",
+                "new_sheet_name",
+                "template_sheet_name",
+                "header_row",
+                "ignore_columns",
+                "key_columns",
+            )
+        ):
+            kept.append(row)
+    return kept
+
+
+def empty_compare_row(download_name: str = "") -> dict:
+    return {
+        "download_name": download_name,
+        "name": "",
+        "new_sheet_name": "",
+        "template_sheet_name": "",
+        "header_row": None,
+        "ignore_columns": "",
+        "key_columns": "",
+    }
+
+
+def non_empty_send_rows(rows: list[dict]) -> list[dict]:
+    kept = []
+    for row in normalize_table_rows(rows):
+        if any(str(row.get(key) or "").strip() for key in ("type", "sheet", "text_mode", "extra_json")):
+            kept.append(row)
+    return kept
+
+
+def empty_send_row() -> dict:
+    return {
+        "type": "image",
+        "sheet": "",
+        "text_mode": "",
+        "extra_json": "{}",
+    }
 
 
 def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
@@ -286,31 +467,109 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
     for index, row in enumerate(rows, start=1):
         name = (row.get("name") or "").strip()
         stage = (row.get("stage") or "").strip()
+        method = (row.get("method") or "POST").strip().upper()
         url = (row.get("url") or "").strip()
+        headers_raw = row.get("headers_json") or "{}"
+        headers_from_cookies_raw = row.get("headers_from_cookies_json") or "{}"
+        csrf_headers_from_cookies_raw = row.get("csrf_headers_from_cookies_json") or "{}"
+        body_type = (row.get("body_type") or "form").strip().lower()
         data_raw = row.get("data_json") or "{}"
-        if not any([name, stage, url, data_raw.strip() not in {"", "{}"}]):
+        raw_body = row.get("raw_body") or ""
+        if not any([
+            name,
+            stage,
+            url,
+            data_raw.strip() not in {"", "{}"},
+            raw_body.strip(),
+        ]):
             continue
+        if body_type not in {"json", "form", "raw"}:
+            errors.append(f"downloads 第 {index} 行 body_type 只支持 json/form/raw")
+            body_type = "form"
         try:
             data = json.loads(data_raw or "{}")
-            if not isinstance(data, dict):
-                errors.append(f"downloads 第 {index} 行 data_json 必须是对象 JSON")
+            if body_type == "form" and not isinstance(data, dict):
+                errors.append(f"downloads 第 {index} 行 form 类型 data_json 必须是对象 JSON")
                 data = {}
         except json.JSONDecodeError as exc:
             errors.append(f"downloads 第 {index} 行 data_json 格式错误: {exc}")
             data = {}
+        try:
+            headers = json.loads(headers_raw or "{}")
+            if not isinstance(headers, dict):
+                errors.append(f"downloads 第 {index} 行 headers_json 必须是对象 JSON")
+                headers = {}
+        except json.JSONDecodeError as exc:
+            errors.append(f"downloads 第 {index} 行 headers_json 格式错误: {exc}")
+            headers = {}
+        try:
+            headers_from_cookies = json.loads(headers_from_cookies_raw or "{}")
+            if not isinstance(headers_from_cookies, dict):
+                errors.append(f"downloads 第 {index} 行 headers_from_cookies_json 必须是对象 JSON")
+                headers_from_cookies = {}
+        except json.JSONDecodeError as exc:
+            errors.append(f"downloads 第 {index} 行 headers_from_cookies_json 格式错误: {exc}")
+            headers_from_cookies = {}
+        try:
+            csrf_headers_from_cookies = json.loads(csrf_headers_from_cookies_raw or "{}")
+            if not isinstance(csrf_headers_from_cookies, dict):
+                errors.append(f"downloads 第 {index} 行 csrf_headers_from_cookies_json 必须是对象 JSON")
+                csrf_headers_from_cookies = {}
+        except json.JSONDecodeError as exc:
+            errors.append(f"downloads 第 {index} 行 csrf_headers_from_cookies_json 格式错误: {exc}")
+            csrf_headers_from_cookies = {}
         if not name:
             errors.append(f"downloads 第 {index} 行缺少 name")
         if not stage:
             errors.append(f"downloads 第 {index} 行缺少 stage")
         if not url:
             errors.append(f"downloads 第 {index} 行缺少 url")
-        downloads.append({
+        item = {
             "name": name,
             "stage": stage,
+            "method": method,
             "url": url,
-            "data": data,
-        })
+            "headers": headers,
+            "body_type": body_type,
+        }
+        if headers_from_cookies:
+            item["headers_from_cookies"] = headers_from_cookies
+        if csrf_headers_from_cookies:
+            item["csrf_headers_from_cookies"] = csrf_headers_from_cookies
+        if body_type == "raw":
+            item["raw_body"] = raw_body
+        else:
+            item["data"] = data
+        downloads.append(item)
     return downloads, errors
+
+
+def form_rows_to_download_drafts(rows: list[dict], default_stage: str) -> list[dict]:
+    downloads = []
+    for row in apply_default_stage_to_rows(rows, default_stage):
+        item = {
+            "name": (row.get("name") or "").strip(),
+            "stage": (row.get("stage") or default_stage or "").strip(),
+            "method": (row.get("method") or "POST").strip().upper(),
+            "url": (row.get("url") or "").strip(),
+            "body_type": (row.get("body_type") or "form").strip().lower(),
+        }
+        for source_key, target_key, default_value in (
+            ("headers_json", "headers", {}),
+            ("headers_from_cookies_json", "headers_from_cookies", {}),
+            ("csrf_headers_from_cookies_json", "csrf_headers_from_cookies", {}),
+            ("data_json", "data", {}),
+        ):
+            try:
+                parsed = json.loads(row.get(source_key) or "{}")
+            except json.JSONDecodeError:
+                parsed = default_value
+            item[target_key] = parsed
+        if row.get("raw_body"):
+            item["raw_body"] = row.get("raw_body")
+        if any(value not in ("", {}, []) for value in item.values()):
+            downloads.append(item)
+    return downloads
 
 
 def compare_sources_to_form_rows(compare_sources: list[dict]) -> list[dict]:
@@ -323,19 +582,11 @@ def compare_sources_to_form_rows(compare_sources: list[dict]) -> list[dict]:
                 "name": mapping.get("name", ""),
                 "new_sheet_name": mapping.get("new_sheet_name", ""),
                 "template_sheet_name": mapping.get("template_sheet_name", ""),
-                "header_row": int(mapping.get("header_row") or 1),
+                "header_row": parse_optional_int(mapping.get("header_row")),
                 "ignore_columns": ",".join(mapping.get("ignore_columns") or []),
                 "key_columns": ",".join(mapping.get("key_columns") or []),
             })
-    return rows or [{
-        "download_name": "",
-        "name": "",
-        "new_sheet_name": "",
-        "template_sheet_name": "",
-        "header_row": 1,
-        "ignore_columns": "",
-        "key_columns": "",
-    }]
+    return rows or [empty_compare_row()]
 
 
 def sheet_mappings_to_form_rows(sheet_mappings: list[dict], download_name: str = "") -> list[dict]:
@@ -348,19 +599,11 @@ def sheet_mappings_to_form_rows(sheet_mappings: list[dict], download_name: str =
             "name": mapping.get("name", ""),
             "new_sheet_name": mapping.get("new_sheet_name") or mapping.get("new_sheet") or mapping.get("sheet") or "",
             "template_sheet_name": mapping.get("template_sheet_name") or mapping.get("template_sheet") or mapping.get("new_sheet_name") or "",
-            "header_row": int(mapping.get("header_row") or 1),
+            "header_row": parse_optional_int(mapping.get("header_row")),
             "ignore_columns": ",".join(mapping.get("ignore_columns") or []),
             "key_columns": ",".join(mapping.get("key_columns") or []),
         })
-    return rows or [{
-        "download_name": download_name,
-        "name": "",
-        "new_sheet_name": "",
-        "template_sheet_name": "",
-        "header_row": 1,
-        "ignore_columns": "",
-        "key_columns": "",
-    }]
+    return rows or [empty_compare_row(download_name)]
 
 
 def form_rows_to_sheet_mappings(rows: list[dict]) -> tuple[list[dict], list[str]]:
@@ -380,7 +623,7 @@ def form_rows_to_sheet_mappings(rows: list[dict]) -> tuple[list[dict], list[str]
             "name": (row.get("name") or new_sheet_name or template_sheet_name).strip(),
             "new_sheet_name": new_sheet_name,
             "template_sheet_name": template_sheet_name,
-            "header_row": int(row.get("header_row") or 1),
+            "header_row": parse_optional_int(row.get("header_row"), default=1),
             "ignore_columns": [c.strip() for c in (row.get("ignore_columns") or "").split(",") if c.strip()],
             "key_columns": [c.strip() for c in (row.get("key_columns") or "").split(",") if c.strip()],
         })
@@ -407,7 +650,7 @@ def form_rows_to_compare_sources(rows: list[dict]) -> tuple[list[dict], list[str
             "name": (row.get("name") or new_sheet_name or template_sheet_name).strip(),
             "new_sheet_name": new_sheet_name,
             "template_sheet_name": template_sheet_name,
-            "header_row": int(row.get("header_row") or 1),
+            "header_row": parse_optional_int(row.get("header_row"), default=1),
             "ignore_columns": [c.strip() for c in (row.get("ignore_columns") or "").split(",") if c.strip()],
             "key_columns": [c.strip() for c in (row.get("key_columns") or "").split(",") if c.strip()],
         }
@@ -416,6 +659,28 @@ def form_rows_to_compare_sources(rows: list[dict]) -> tuple[list[dict], list[str
         {"download_name": download_name, "sheet_mappings": mappings}
         for download_name, mappings in grouped.items()
     ], errors
+
+
+def form_rows_to_compare_source_drafts(rows: list[dict]) -> list[dict]:
+    rows = normalize_table_rows(rows)
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        download_name = (row.get("download_name") or "").strip()
+        mapping = {
+            "name": (row.get("name") or "").strip(),
+            "new_sheet_name": (row.get("new_sheet_name") or "").strip(),
+            "template_sheet_name": (row.get("template_sheet_name") or "").strip(),
+            "header_row": parse_optional_int(row.get("header_row")),
+            "ignore_columns": [c.strip() for c in (row.get("ignore_columns") or "").split(",") if c.strip()],
+            "key_columns": [c.strip() for c in (row.get("key_columns") or "").split(",") if c.strip()],
+        }
+        if not download_name and not any(value not in ("", [], None) for value in mapping.values()):
+            continue
+        grouped.setdefault(download_name, []).append(mapping)
+    return [
+        {"download_name": download_name, "sheet_mappings": mappings}
+        for download_name, mappings in grouped.items()
+    ]
 
 
 def send_items_to_form_rows(items: list[dict]) -> list[dict]:
@@ -437,12 +702,7 @@ def send_items_to_form_rows(items: list[dict]) -> list[dict]:
             "text_mode": text_cfg.get("mode", "used_range") if item.get("type") == "text" else "",
             "extra_json": json.dumps(extra, ensure_ascii=False, indent=2) if extra else "{}",
         })
-    return rows or [{
-        "type": "image",
-        "sheet": "",
-        "text_mode": "",
-        "extra_json": "{}",
-    }]
+    return rows or [empty_send_row()]
 
 
 def form_rows_to_send_items(rows: list[dict]) -> tuple[list[dict], list[str]]:
@@ -476,6 +736,66 @@ def form_rows_to_send_items(rows: list[dict]) -> tuple[list[dict], list[str]]:
             item.pop("text", None)
         items.append(item)
     return items, errors
+
+
+def form_rows_to_send_item_drafts(rows: list[dict]) -> list[dict]:
+    items = []
+    for row in normalize_table_rows(rows):
+        item_type = (row.get("type") or "image").strip()
+        sheet = (row.get("sheet") or "").strip()
+        try:
+            extra = json.loads(row.get("extra_json") or "{}")
+            if not isinstance(extra, dict):
+                extra = {}
+        except json.JSONDecodeError:
+            extra = {}
+        if not any([item_type, sheet, extra]):
+            continue
+        item = {**extra, "type": item_type, "sheet": sheet}
+        if item_type == "text":
+            text_cfg = item.get("text") if isinstance(item.get("text"), dict) else {}
+            item["text"] = {**text_cfg, "mode": (row.get("text_mode") or "used_range").strip()}
+        items.append(item)
+    return items
+
+
+def build_report_config_payload(
+    name,
+    template_path,
+    primary_download,
+    downloads,
+    compare_sheet_mappings,
+    compare_sources,
+    send_webhook_url,
+    send_workbook_name,
+    send_items,
+    template_update,
+    use_multi_report,
+    draft=False,
+) -> dict:
+    report_cfg = {
+        "name": name,
+        "template_path": template_path,
+        "download": primary_download,
+        "compare": {
+            "sheet_mappings": compare_sheet_mappings,
+            "header_row": 1,
+            "ignore_columns": [],
+            "key_columns": [],
+        },
+        "send": {
+            "webhook_url": send_webhook_url.strip(),
+            "workbook_name": send_workbook_name,
+            "items": send_items,
+        },
+        "template_update": template_update,
+    }
+    if use_multi_report:
+        report_cfg["downloads"] = downloads
+        report_cfg["compare_sources"] = compare_sources
+    if draft:
+        report_cfg["draft"] = True
+    return report_cfg
 
 
 def resolve_placeholder_preview(payload):
@@ -544,7 +864,8 @@ with col_edit:
             },
             "template_update": {
                 "update_condition": "any_changed",
-                "write_sheets": "changed"
+                "write_sheets": "changed",
+                "send_when_same": False
             }
         }
     else:
@@ -573,8 +894,26 @@ with col_edit:
             }
 
     # 基本信息
-    name = st.text_input("报表名称", value=default.get("name", ""))
-    template_path = st.text_input("模板路径", value=default.get("template_path", "templates/"))
+    name = st.text_input(
+        "通报名称",
+        value=default.get("name", ""),
+        help="用于保存 config/reports 下的配置文件名，以及 Prefect 部署名称。",
+    )
+    current_template_path = default.get("template_path", "templates/")
+    template_options = list_template_files()
+    template_choice_options = ["手动输入"] + template_options
+    default_template_choice = current_template_path if current_template_path in template_options else "手动输入"
+    template_choice = st.selectbox(
+        "模板文件选择",
+        options=template_choice_options,
+        index=template_choice_options.index(default_template_choice),
+        help="优先从 templates 目录选择 Excel 模板；如果模板在其他目录，可以选择“手动输入”。",
+    )
+    if template_choice == "手动输入":
+        template_path = st.text_input("模板路径", value=current_template_path)
+    else:
+        template_path = template_choice
+        st.text_input("模板路径", value=template_path, disabled=True)
 
     # 下载参数
     st.markdown("**下载报表**")
@@ -584,11 +923,11 @@ with col_edit:
     if current_stage not in stage_options:
         stage_options = [current_stage] + stage_options
     dl_stage = st.selectbox(
-        "Cookie Stage",
+        "默认 Cookie Stage",
         options=stage_options,
         index=stage_options.index(current_stage),
         help=(
-            "用于指定下载报表时使用哪一组登录 Cookie。"
+            "用于给新增下载行提供默认 Cookie。"
             "该值需与 login_config.json 中 usm_cookie_apps 的 stage 一致。"
             "若选错，下载接口可能返回登录页或报“找不到 stage”。"
         ),
@@ -625,22 +964,42 @@ with col_edit:
         send_items_to_form_rows(default.get("send", {}).get("items", [])),
     )
 
-    st.caption("一行就是一个下载报表；只有一行时就是单表，多加几行就是多表。")
+    st.caption(
+        "一行就是一个下载请求；下载标识用于后续比对匹配，也会作为落盘文件名前缀，避免同名 Excel 覆盖。"
+    )
+    st.session_state["downloads_rows"] = apply_default_stage_to_rows(st.session_state["downloads_rows"], dl_stage)
+    dl_btn_col1, dl_btn_col2 = st.columns([1, 5])
+    if dl_btn_col1.button("新增下载行"):
+        rows = non_empty_download_rows(st.session_state["downloads_rows"])
+        rows.append(download_to_form_row({"stage": dl_stage}))
+        st.session_state["downloads_rows"] = rows
+        st.rerun()
+    if dl_btn_col2.button("清理空白行"):
+        rows = non_empty_download_rows(st.session_state["downloads_rows"])
+        st.session_state["downloads_rows"] = rows or [download_to_form_row({"stage": dl_stage})]
+        st.rerun()
     downloads_rows = st.data_editor(
         st.session_state["downloads_rows"],
         key="downloads_rows_editor",
-        num_rows="dynamic",
+        num_rows="fixed",
         width="stretch",
+        column_order=["name", "stage", "method", "url", "headers_json", "body_type", "data_json", "raw_body"],
         column_config={
-            "name": st.column_config.TextColumn("下载名称", required=True),
+            "name": st.column_config.TextColumn("下载标识", required=True),
             "stage": st.column_config.SelectboxColumn("Cookie Stage", options=stage_options, required=True),
+            "method": st.column_config.SelectboxColumn("请求方法", options=["POST", "GET", "PUT", "PATCH", "DELETE"], required=True),
             "url": st.column_config.TextColumn("下载 URL", required=True),
-            "data_json": st.column_config.TextColumn("请求 data JSON", width="large"),
+            "headers_json": st.column_config.TextColumn("请求头 JSON", width="large"),
+            "body_type": st.column_config.SelectboxColumn("载体类型", options=["form", "json", "raw"], required=True),
+            "data_json": st.column_config.TextColumn("请求 data/json", width="large"),
+            "raw_body": st.column_config.TextColumn("raw body", width="medium"),
+            "headers_from_cookies_json": st.column_config.TextColumn("Cookie 转 Header JSON", width="medium"),
+            "csrf_headers_from_cookies_json": st.column_config.TextColumn("动态 CSRF JSON", width="medium"),
         },
     )
     download_rows_normalized = normalize_table_rows(downloads_rows)
 
-    with st.expander("请求载体转 JSON（URL + 载体原文）", expanded=False):
+    with st.expander("请求识别（粘贴 URL + 请求头 + 请求载体）", expanded=False):
         target_options = [
             f"{index + 1}. {(row.get('name') or '未命名下载')}"
             for index, row in enumerate(download_rows_normalized)
@@ -648,46 +1007,159 @@ with col_edit:
         target_label = st.selectbox("回填到下载行", options=target_options)
         target_index = target_options.index(target_label)
         target_download_row = download_rows_normalized[target_index] if download_rows_normalized else {}
-        convert_url = st.text_input("请求 URL（可选）", value=target_download_row.get("url", ""), help="若 URL 有 query 参数，会自动合并到 data")
-        raw_payload = st.text_area(
-            "请求载体原文",
-            value="",
-            height=120,
-            help="支持 JSON、a=1&b=2、或按行 key=value / key: value",
+        st.caption(
+            "推荐使用浏览器 Network 里的 Copy as cURL (bash)；也可以选择分开填写 URL、请求头和请求载体。"
         )
-        if st.button("转换并回填到 data 参数"):
+        parse_mode_options = {
+            "推荐：cURL（bash）": "curl",
+            "分开填写 URL + 请求头 + 请求载体": "headers_body",
+            "请求头/完整 HTTP 请求": "raw_http",
+        }
+        with st.expander("实验性解析方式（不推荐，格式容易因浏览器版本变化）", expanded=False):
+            experimental_mode_options = {
+                "自动识别": "auto",
+                "cURL（cmd）": "curl",
+                "PowerShell": "powershell",
+                "fetch": "fetch",
+                "HAR": "har",
+            }
+            use_experimental_parser = st.checkbox("启用实验性解析方式")
+            experimental_mode_label = st.selectbox(
+                "实验性解析方式",
+                options=list(experimental_mode_options.keys()),
+                disabled=not use_experimental_parser,
+                help="只有 cURL bash 目前作为推荐路径；其他格式建议在识别后仔细核对。",
+            )
+        parse_mode_label = st.selectbox(
+            "解析方式",
+            options=list(parse_mode_options.keys()),
+            index=0,
+            disabled=use_experimental_parser,
+            help="优先使用 cURL（bash）；如果复制的是 Request URL / Request Headers / Payload，请选择分开填写。",
+        )
+        parse_mode = (
+            experimental_mode_options[experimental_mode_label]
+            if use_experimental_parser
+            else parse_mode_options[parse_mode_label]
+        )
+        raw_request = st.text_area(
+            "复制内容（可选）",
+            value="",
+            height=180,
+            placeholder=(
+                "推荐粘贴：Copy as cURL (bash)\n\n"
+                "如果选择“分开填写”，这里可以留空，下面填写 URL、请求头、请求载体。"
+            ),
+        )
+        show_split_fields = parse_mode == "headers_body"
+        split_container = st.container() if show_split_fields else st.expander("高级：分开填写 / 补充字段", expanded=False)
+        with split_container:
+            req_col1, req_col2 = st.columns([1, 3])
+            with req_col1:
+                request_method = st.selectbox(
+                    "请求方法",
+                    options=["POST", "GET", "PUT", "PATCH", "DELETE"],
+                    index=["POST", "GET", "PUT", "PATCH", "DELETE"].index((target_download_row.get("method") or "POST").upper())
+                    if (target_download_row.get("method") or "POST").upper() in ["POST", "GET", "PUT", "PATCH", "DELETE"]
+                    else 0,
+                )
+            with req_col2:
+                request_url = st.text_input("请求 URL", value=target_download_row.get("url", ""))
+            request_headers_text = st.text_area(
+                "请求头原文",
+                value="",
+                height=120,
+                placeholder="Accept: application/json, text/plain, */*\nContent-Type: application/json\nuser-info: ...",
+            )
+            request_body_text = st.text_area(
+                "请求载体原文",
+                value="",
+                height=120,
+                help="支持 JSON、a=1&b=2、按行 key=value / key: value；multipart/form-data 暂按 raw 保存。",
+            )
+        if st.button("识别请求", key="parse_download_request"):
             try:
-                converted = parse_payload_text_to_json(raw_payload)
-                converted = merge_url_query_payload(convert_url, converted)
+                parsed_request = parse_request_by_mode(
+                    parse_mode,
+                    raw_request=raw_request,
+                    method=request_method,
+                    url=request_url,
+                    headers_text=request_headers_text,
+                    body=request_body_text,
+                )
+                st.session_state["download_request_parser_result"] = parsed_request
+                st.session_state["download_request_parser_target_index"] = target_index
+                st.success("识别成功，请确认要发送的请求头后回填")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"识别失败: {exc}")
+
+        parsed_request = st.session_state.get("download_request_parser_result")
+        parsed_target_index = st.session_state.get("download_request_parser_target_index")
+        if parsed_request and parsed_target_index == target_index:
+            st.markdown("**识别结果确认**")
+            st.write(f"方法：`{parsed_request.get('method')}`，载体类型：`{parsed_request.get('body_type')}`")
+            st.code(parsed_request.get("url", ""), language="text")
+            st.caption("默认已取消 Cookie、Content-Length、Host、Connection、Accept-Encoding、sec-* 等浏览器运行时头。")
+            header_rows = st.data_editor(
+                parsed_request.get("header_rows") or [],
+                key="parsed_header_rows_editor",
+                num_rows="dynamic",
+                width="stretch",
+                column_config={
+                    "enabled": st.column_config.CheckboxColumn("发送", default=True),
+                    "name": st.column_config.TextColumn("请求头字段", required=True),
+                    "value": st.column_config.TextColumn("值", width="large"),
+                },
+            )
+            if parsed_request.get("body_type") == "raw":
+                st.text_area("raw body 预览", value=parsed_request.get("raw_body", ""), height=120, disabled=True)
+            else:
+                st.code(json.dumps(parsed_request.get("data", {}), ensure_ascii=False, indent=2), language="json")
+            if st.button("确认回填到下载表格", key="apply_parsed_download_request"):
                 rows = normalize_table_rows(downloads_rows)
                 if not rows:
                     rows = downloads_to_form_rows([{}])
                 while len(rows) <= target_index:
                     rows.append(download_to_form_row({}))
-                rows[target_index]["url"] = convert_url or rows[target_index].get("url", "")
-                rows[target_index]["data_json"] = json.dumps(converted, ensure_ascii=False, indent=2)
+                selected_headers = headers_from_header_rows(normalize_table_rows(header_rows))
+                rows[target_index]["stage"] = rows[target_index].get("stage") or dl_stage
+                rows[target_index]["method"] = parsed_request.get("method") or "POST"
+                rows[target_index]["url"] = parsed_request.get("url") or rows[target_index].get("url", "")
+                rows[target_index]["headers_json"] = json_dumps_for_cell(selected_headers)
+                rows[target_index]["body_type"] = parsed_request.get("body_type") or "form"
+                rows[target_index]["data_json"] = json_dumps_for_cell(parsed_request.get("data", {}))
+                rows[target_index]["raw_body"] = parsed_request.get("raw_body", "")
+                if not rows[target_index].get("name"):
+                    rows[target_index]["name"] = f"download-{target_index + 1}"
                 st.session_state["downloads_rows"] = rows
-                st.success(f"转换成功，已回填到第 {target_index + 1} 行")
+                st.session_state.pop("download_request_parser_result", None)
+                st.session_state.pop("download_request_parser_target_index", None)
+                st.success(f"已回填到第 {target_index + 1} 行")
                 st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
 
     st.caption(
         "占位符支持：`${today}`(YYYY-MM-DD), `${yesterday}`(前一天 YYYY-MM-DD), "
         "`${yesterday_yyyymmdd}`(前一天 YYYYMMDD), `${hour}`(0-23), `${hour2}`(00-23)"
     )
-    if st.button("预览第一行 data 占位符替换结果", key="preview_dl_data_tokens"):
-        try:
-            first_row = download_rows_normalized[0] if download_rows_normalized else {}
-            dl_data_obj = json.loads(first_row.get("data_json", "{}") or "{}")
-            resolved_data, used_replacements = resolve_placeholder_preview(dl_data_obj)
-            st.info(
-                "当前时间预览："
-                + ", ".join([f"{k} => {v}" for k, v in used_replacements.items()])
-            )
-            st.code(json.dumps(resolved_data, ensure_ascii=False, indent=2), language="json")
-        except json.JSONDecodeError as exc:
-            st.error(f"data 参数不是合法 JSON，无法预览: {exc}")
+    with st.expander("预览第一行请求占位符替换结果", expanded=False):
+        if st.button("生成预览", key="preview_dl_data_tokens"):
+            try:
+                first_row = download_rows_normalized[0] if download_rows_normalized else {}
+                dl_payload = {
+                    "url": first_row.get("url", ""),
+                    "headers": json.loads(first_row.get("headers_json", "{}") or "{}"),
+                    "data": json.loads(first_row.get("data_json", "{}") or "{}"),
+                    "raw_body": first_row.get("raw_body", ""),
+                }
+                resolved_data, used_replacements = resolve_placeholder_preview(dl_payload)
+                st.info(
+                    "当前时间预览："
+                    + ", ".join([f"{k} => {v}" for k, v in used_replacements.items()])
+                )
+                st.code(json.dumps(resolved_data, ensure_ascii=False, indent=2), language="json")
+            except json.JSONDecodeError as exc:
+                st.error(f"请求参数不是合法 JSON，无法预览: {exc}")
 
     # 比对参数
     st.markdown("**比对参数**")
@@ -699,51 +1171,104 @@ with col_edit:
         if (row.get("name") or "").strip()
     ]
     use_multi_report = len(download_name_options) > 1 or has_multi_config
+    cmp_btn_col1, cmp_btn_col2 = st.columns([1, 5])
+    default_compare_download = download_name_options[0] if download_name_options else ""
+    if cmp_btn_col1.button("新增比对行"):
+        rows = non_empty_compare_rows(st.session_state["compare_rows"])
+        rows.append(empty_compare_row(default_compare_download))
+        st.session_state["compare_rows"] = rows
+        st.rerun()
+    if cmp_btn_col2.button("清理比对空白行"):
+        rows = non_empty_compare_rows(st.session_state["compare_rows"])
+        st.session_state["compare_rows"] = rows or [empty_compare_row(default_compare_download)]
+        st.rerun()
     compare_rows = st.data_editor(
         st.session_state["compare_rows"],
         key="compare_rows_editor",
-        num_rows="dynamic",
+        num_rows="fixed",
         width="stretch",
         column_config={
             "download_name": st.column_config.SelectboxColumn(
-                "对应下载报表",
+                "对应下载标识",
                 options=download_name_options,
                 required=use_multi_report,
                 disabled=not use_multi_report,
             ),
-            "name": st.column_config.TextColumn("映射名称"),
+            "name": st.column_config.TextColumn(
+                "映射备注（可选）",
+                help="只是备注名，方便在日志/结果中识别这一条映射；真正匹配靠“对应下载标识 + 源 sheet + 模板 sheet”。",
+            ),
             "new_sheet_name": st.column_config.TextColumn("源 sheet", required=True),
             "template_sheet_name": st.column_config.TextColumn("模板 sheet", required=True),
-            "header_row": st.column_config.NumberColumn("表头行", min_value=1, step=1),
-            "ignore_columns": st.column_config.TextColumn("忽略列（逗号分隔）"),
-            "key_columns": st.column_config.TextColumn("主键列（逗号分隔）"),
+            "header_row": st.column_config.NumberColumn(
+                "表头行（可空）",
+                min_value=1,
+                step=1,
+                help="源 sheet 中哪一行是字段名/列名。不填默认第 1 行。",
+            ),
+            "ignore_columns": st.column_config.TextColumn(
+                "忽略列（可空，逗号分隔）",
+                help="这些列不参与比对，例如更新时间、备注。填写列名，多个用英文逗号分隔。",
+            ),
+            "key_columns": st.column_config.TextColumn(
+                "主键列（可空，逗号分隔）",
+                help="用于匹配同一条记录的列，例如号码、地市、日期。为空时按行顺序比对。",
+            ),
         },
     )
     template_update_default = default.get("template_update") or {}
     update_condition_options = ["all_changed", "any_changed"]
     write_sheets_options = ["changed", "all_compared"]
-    update_col1, update_col2 = st.columns(2)
-    with update_col1:
-        update_condition_value = st.selectbox(
-            "更新条件",
-            options=update_condition_options,
-            index=update_condition_options.index(template_update_default.get("update_condition", "any_changed"))
-            if template_update_default.get("update_condition", "any_changed") in update_condition_options
-            else 1,
-            help="all_changed 表示所有参与比较的 sheet 都变化才更新；any_changed 表示任一 sheet 变化即更新。",
-        )
-    with update_col2:
-        write_sheets_value = st.selectbox(
-            "写入范围",
-            options=write_sheets_options,
-            index=write_sheets_options.index(template_update_default.get("write_sheets", "changed"))
-            if template_update_default.get("write_sheets", "changed") in write_sheets_options
-            else 0,
-            help="changed 只写变化 sheet；all_compared 写所有参与比较的 sheet。",
+    wait_cfg = task_default.get("wait_for_change") or {}
+    same_action_default = same_action_from_config(template_update_default, wait_cfg)
+    same_action_value = st.radio(
+        "比对结果 same 时怎么处理",
+        options=SAME_ACTION_OPTIONS,
+        index=SAME_ACTION_OPTIONS.index(same_action_default),
+        horizontal=True,
+        help=(
+            "等待数据变化后发送：same 后 sleep 并重试；"
+            "直接发送当前通报：same 后也生成临时模板并发送，发送成功后提交到正式模板；"
+            "直接结束：same 后不发送。"
+        ),
+    )
+    send_when_same_value = same_action_value == "直接发送当前通报"
+    update_condition_value = template_update_default.get("update_condition", "any_changed")
+    if update_condition_value not in update_condition_options:
+        update_condition_value = "any_changed"
+    write_sheets_value = template_update_default.get("write_sheets", "changed")
+    if write_sheets_value not in write_sheets_options:
+        write_sheets_value = "changed"
+    if send_when_same_value:
+        write_sheets_value = "all_compared"
+        st.caption("提示：same 时会写入所有参与比对的 sheet，生成临时模板并发送；发送成功后提交到正式模板。")
+    else:
+        update_col1, update_col2 = st.columns(2)
+        with update_col1:
+            update_condition_value = st.selectbox(
+                "数据变化判断条件",
+                options=update_condition_options,
+                index=update_condition_options.index(update_condition_value),
+                help="all_changed 表示所有参与比较的 sheet 都变化才更新；any_changed 表示任一 sheet 变化即更新。",
+            )
+        with update_col2:
+            write_sheets_value = st.selectbox(
+                "数据变化时写入范围",
+                options=write_sheets_options,
+                index=write_sheets_options.index(write_sheets_value),
+                help="changed 只写变化 sheet；all_compared 写所有参与比较的 sheet。",
+            )
+    with st.expander("高级：数据变化规则说明", expanded=False):
+        st.markdown(
+            "- `数据变化判断条件` 只影响比对结果为 changed/same 的判定。\n"
+            "- `数据变化时写入范围` 只影响需要按变化更新模板的场景。\n"
+            "- 选择 `直接发送当前通报` 时，会隐藏这些高级项并按当前通报直接发送。"
         )
 
     with st.expander("高级 JSON 预览", expanded=False):
-        preview_downloads, preview_download_errors = form_rows_to_downloads(downloads_rows)
+        preview_downloads, preview_download_errors = form_rows_to_downloads(
+            apply_default_stage_to_rows(downloads_rows, dl_stage)
+        )
         if use_multi_report:
             preview_compare_sources, preview_compare_errors = form_rows_to_compare_sources(compare_rows)
             preview_payload = {"downloads": preview_downloads, "compare_sources": preview_compare_sources}
@@ -753,6 +1278,7 @@ with col_edit:
         preview_payload["template_update"] = {
             "update_condition": update_condition_value,
             "write_sheets": write_sheets_value,
+            "send_when_same": bool(send_when_same_value),
         }
         if preview_download_errors or preview_compare_errors:
             for error in preview_download_errors + preview_compare_errors:
@@ -769,10 +1295,20 @@ with col_edit:
         placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...",
         help="填写后会覆盖 config/modules/wecom_sender.json 中的默认 webhook_url。",
     )
+    send_btn_col1, send_btn_col2 = st.columns([1, 5])
+    if send_btn_col1.button("新增发送行"):
+        rows = non_empty_send_rows(st.session_state["send_rows"])
+        rows.append(empty_send_row())
+        st.session_state["send_rows"] = rows
+        st.rerun()
+    if send_btn_col2.button("清理发送空白行"):
+        rows = non_empty_send_rows(st.session_state["send_rows"])
+        st.session_state["send_rows"] = rows or [empty_send_row()]
+        st.rerun()
     send_rows = st.data_editor(
         st.session_state["send_rows"],
         key="send_rows_editor",
-        num_rows="dynamic",
+        num_rows="fixed",
         width="stretch",
         column_config={
             "type": st.column_config.SelectboxColumn("类型", options=["image", "text"], required=True),
@@ -788,20 +1324,24 @@ with col_edit:
 
     # 等待重试参数（写入 task 配置）
     st.markdown("**等待重试（wait_for_change）**")
-    wait_cfg = task_default.get("wait_for_change") or {}
-    wait_enabled = st.checkbox("启用 same 自动重试", value=bool(wait_cfg.get("enabled", True)))
-    wait_poll_seconds = st.number_input(
-        "重试间隔秒数（poll_interval_seconds）",
-        min_value=1,
-        value=int(wait_cfg.get("poll_interval_seconds", 300)),
-        step=10,
-    )
-    wait_max_minutes = st.number_input(
-        "最大等待分钟（max_wait_minutes）",
-        min_value=1,
-        value=int(wait_cfg.get("max_wait_minutes", 180)),
-        step=10,
-    )
+    wait_enabled = same_action_value == "等待数据变化后发送"
+    if wait_enabled:
+        wait_poll_seconds = st.number_input(
+            "重试间隔秒数（poll_interval_seconds）",
+            min_value=1,
+            value=int(wait_cfg.get("poll_interval_seconds", 300)),
+            step=10,
+        )
+        wait_max_minutes = st.number_input(
+            "最大等待分钟（max_wait_minutes）",
+            min_value=1,
+            value=int(wait_cfg.get("max_wait_minutes", 180)),
+            step=10,
+        )
+    else:
+        wait_poll_seconds = int(wait_cfg.get("poll_interval_seconds", 300))
+        wait_max_minutes = int(wait_cfg.get("max_wait_minutes", 180))
+        st.caption("当前 same 处理方式不会执行等待重试，下面的间隔和超时参数会保留但不生效。")
 
     # 定时设置
     st.markdown("**定时部署**")
@@ -810,13 +1350,68 @@ with col_edit:
     if enable_cron:
         cron_expr = st.text_input("Cron 表达式", value="0 8 * * 1-5", help="例：0 8 * * 1-5 表示工作日早8点")
 
-    btn_col1, btn_col2 = st.columns(2)
-    save_clicked = btn_col1.button("保存配置", type="primary")
-    deploy_clicked = btn_col2.button("保存并部署")
+    btn_col1, btn_col2, btn_col3 = st.columns(3)
+    draft_clicked = btn_col1.button("保存草稿")
+    save_clicked = btn_col2.button("保存配置", type="primary")
+    deploy_clicked = btn_col3.button("保存并部署")
+
+    if draft_clicked:
+        draft_name = name.strip() or f"未命名草稿_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        draft_downloads = form_rows_to_download_drafts(downloads_rows, dl_stage)
+        draft_primary_download = draft_downloads[0] if draft_downloads else {
+            "name": "",
+            "stage": dl_stage,
+            "method": "POST",
+            "url": "",
+            "headers": {},
+            "body_type": "form",
+            "data": {},
+        }
+        draft_compare_sources = form_rows_to_compare_source_drafts(compare_rows)
+        draft_compare_mappings = []
+        if not use_multi_report:
+            draft_compare_sources = []
+            draft_compare_mappings = []
+            for row in normalize_table_rows(compare_rows):
+                mapping = {
+                    "name": (row.get("name") or "").strip(),
+                    "new_sheet_name": (row.get("new_sheet_name") or "").strip(),
+                    "template_sheet_name": (row.get("template_sheet_name") or "").strip(),
+                    "header_row": parse_optional_int(row.get("header_row")),
+                    "ignore_columns": [c.strip() for c in (row.get("ignore_columns") or "").split(",") if c.strip()],
+                    "key_columns": [c.strip() for c in (row.get("key_columns") or "").split(",") if c.strip()],
+                }
+                if any(value not in ("", [], None) for value in mapping.values()):
+                    draft_compare_mappings.append(mapping)
+        draft_send_items = form_rows_to_send_item_drafts(send_rows)
+        template_update_parsed = {
+            "update_condition": update_condition_value,
+            "write_sheets": write_sheets_value,
+            "send_when_same": bool(send_when_same_value),
+        }
+        report_cfg = build_report_config_payload(
+            draft_name,
+            template_path,
+            draft_primary_download,
+            draft_downloads,
+            draft_compare_mappings,
+            draft_compare_sources,
+            snd_webhook_url,
+            snd_name,
+            draft_send_items,
+            template_update_parsed,
+            use_multi_report,
+            draft=True,
+        )
+        report_path = REPORTS_DIR / f"{draft_name}.json"
+        save_json(report_path, report_cfg)
+        st.success(f"草稿已保存：{report_path.name}。草稿不会自动部署，补全后再点“保存配置”或“保存并部署”。")
 
     if save_clicked or deploy_clicked:
         errors = []
-        downloads_parsed, download_form_errors = form_rows_to_downloads(downloads_rows)
+        downloads_parsed, download_form_errors = form_rows_to_downloads(
+            apply_default_stage_to_rows(downloads_rows, dl_stage)
+        )
         errors.extend(download_form_errors)
         if not downloads_parsed:
             errors.append("至少需要一个下载报表")
@@ -842,35 +1437,30 @@ with col_edit:
         template_update_parsed = {
             "update_condition": update_condition_value,
             "write_sheets": write_sheets_value,
+            "send_when_same": bool(send_when_same_value),
         }
 
         if not name:
-            errors.append("报表名称不能为空")
+            errors.append("通报名称不能为空")
 
         if errors:
             for e in errors:
                 st.error(e)
         else:
-            report_cfg = {
-                "name": name,
-                "template_path": template_path,
-                "download": primary_download,
-                "compare": {
-                    "sheet_mappings": cmp_sheet_mappings_parsed,
-                    "header_row": 1,
-                    "ignore_columns": [],
-                    "key_columns": [],
-                },
-                "send": {
-                    "webhook_url": snd_webhook_url.strip(),
-                    "workbook_name": snd_name,
-                    "items": snd_items_parsed,
-                },
-                "template_update": template_update_parsed,
-            }
-            if use_multi_report:
-                report_cfg["downloads"] = downloads_parsed
-                report_cfg["compare_sources"] = compare_sources_parsed
+            report_cfg = build_report_config_payload(
+                name,
+                template_path,
+                primary_download,
+                downloads_parsed,
+                cmp_sheet_mappings_parsed,
+                compare_sources_parsed,
+                snd_webhook_url,
+                snd_name,
+                snd_items_parsed,
+                template_update_parsed,
+                use_multi_report,
+                draft=False,
+            )
             report_path = REPORTS_DIR / f"{name}.json"
             save_json(report_path, report_cfg)
             task_cfg = build_task_config(name, str(report_path.relative_to(PROJECT_DIR)).replace("\\", "/"), download_name=primary_download.get("name"))

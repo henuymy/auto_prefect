@@ -95,12 +95,38 @@ def resolve_dynamic_structure(payload, now=None):
     return resolve_dynamic_placeholders(payload, now=now)
 
 
+def is_complete_download_config(report_override):
+    return any(
+        key in report_override
+        for key in ("method", "body_type", "headers", "json", "raw_body")
+    )
+
+
+def merge_download_defaults(download_defaults, report_override):
+    if not is_complete_download_config(report_override):
+        return deep_merge(download_defaults, report_override)
+    safe_defaults = {
+        key: value
+        for key, value in download_defaults.items()
+        if key not in {
+            "headers",
+            "headers_from_cookies",
+            "csrf_headers_from_cookies",
+            "data",
+            "json",
+            "raw_body",
+            "body_type",
+        }
+    }
+    return deep_merge(safe_defaults, report_override)
+
+
 def build_download_config(base_config, report_cfg):
     download_defaults = base_config.get("report_defaults", {})
     report_overrides = report_cfg.get("downloads") or [report_cfg.get("download", {})]
     merged_reports = []
     for index, report_override in enumerate(report_overrides, start=1):
-        merged_report = deep_merge(download_defaults, report_override)
+        merged_report = merge_download_defaults(download_defaults, report_override)
         merged_report["name"] = (
             merged_report.get("name")
             or report_cfg.get("name")
@@ -137,6 +163,11 @@ def build_send_config(base_config, report_cfg, workbook_file):
 def get_update_condition(report_cfg):
     template_update = report_cfg.get("template_update") or {}
     return template_update.get("update_condition", "any_changed")
+
+
+def should_send_when_same(report_cfg):
+    template_update = report_cfg.get("template_update") or {}
+    return bool(template_update.get("send_when_same", False))
 
 
 def select_downloaded_report_path(download_manifest, report_name=None):
@@ -380,6 +411,9 @@ def auto_notify_flow(config_path=None):
             break
         if compare_status != "same":
             raise RuntimeError(f"不支持的比对结果: {compare_status!r}")
+        if should_send_when_same(report_cfg):
+            logger.info("比对结果 same，但配置为继续发送通报")
+            break
         if not wait_cfg["enabled"]:
             logger.info("数据一致，无需更新和发送")
             return {"status": "skipped", "reason": "compare_same", "attempts": attempt}
@@ -412,6 +446,10 @@ def auto_notify_flow(config_path=None):
         overrides={
             **{k: steps["update_template"][k] for k in ("output_dir", "manifest_path") if k in steps["update_template"]},
             **(report_cfg.get("template_update") or {}),
+            **({
+                "allow_same_update": True,
+                "write_sheets": "all_compared",
+            } if compare_result and compare_result.get("result") == "same" and should_send_when_same(report_cfg) else {}),
         },
     )
     update_manifest = update_template_task(read_json(template_config_path))

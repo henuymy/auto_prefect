@@ -222,14 +222,15 @@ def update_template(config, base_dir=PROJECT_DIR):
     output_dir = resolve_path(config.get("output_dir", "runtime/template_updater/templates"), base_dir)
     write_sheets = config.get("write_sheets", "changed")
     update_condition = config.get("update_condition", "any_changed")
+    allow_same_update = bool(config.get("allow_same_update", False))
 
     result = compare_result.get("result")
     if result == "invalid":
         raise RuntimeError("比对结果为 invalid，停止更新模板")
-    if result == "same" or not update_condition_met(compare_result.get("sheets", []), update_condition):
+    if result == "same" and not allow_same_update:
         manifest = {
             "status": "skipped",
-            "reason": "update_condition_not_met" if result != "same" else "compare_result_same",
+            "reason": "compare_result_same",
             "update_condition": update_condition,
             "source_report_path": str(source_report_path),
             "template_path": str(template_path),
@@ -239,7 +240,20 @@ def update_template(config, base_dir=PROJECT_DIR):
         }
         write_manifest(manifest_path, manifest)
         return manifest
-    if result != "changed":
+    if result != "same" and not update_condition_met(compare_result.get("sheets", []), update_condition):
+        manifest = {
+            "status": "skipped",
+            "reason": "update_condition_not_met",
+            "update_condition": update_condition,
+            "source_report_path": str(source_report_path),
+            "template_path": str(template_path),
+            "output_path": None,
+            "updated_sheets": [],
+            "generated_at": datetime.now().isoformat(),
+        }
+        write_manifest(manifest_path, manifest)
+        return manifest
+    if result not in {"changed", "same"}:
         raise RuntimeError(f"不支持的比对结果: {result}")
 
     output_path = output_template_path(template_path, output_dir)

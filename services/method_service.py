@@ -91,6 +91,7 @@ def summarize_request(report, stage):
         "url": report.get("url"),
         "headers": sorted(headers.keys()),
         "cookies": cookie_names,
+        "body_type": report.get("body_type") or ("json" if "json" in report else "form"),
         "data_keys": list((report.get("data") or {}).keys()),
     }
 
@@ -126,9 +127,17 @@ def filename_from_response(response):
     )
 
 
-def request_report(session, report, stage, timeout, verify_ssl, proxies):
-    method = report.get("method", "GET").upper()
-    url = report["url"]
+def output_filename_for_report(report, response_filename):
+    report_name = safe_filename(report.get("name") or "")
+    response_filename = safe_filename(response_filename)
+    if not report_name:
+        return response_filename
+    if response_filename.startswith(f"{report_name}__"):
+        return response_filename
+    return f"{report_name}__{response_filename}"
+
+
+def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
     kwargs = {
         "headers": build_headers(report, stage),
         "params": report.get("params") or None,
@@ -138,10 +147,23 @@ def request_report(session, report, stage, timeout, verify_ssl, proxies):
     }
     if proxies:
         kwargs["proxies"] = proxies
+
+    body_type = (report.get("body_type") or "").lower().strip()
     if "json" in report:
         kwargs["json"] = report["json"]
-    if "data" in report:
+    elif body_type == "json":
+        kwargs["json"] = report.get("data", {})
+    elif body_type == "raw":
+        kwargs["data"] = report.get("raw_body", "")
+    elif "data" in report:
         kwargs["data"] = report["data"]
+    return kwargs
+
+
+def request_report(session, report, stage, timeout, verify_ssl, proxies):
+    method = report.get("method", "GET").upper()
+    url = report["url"]
+    kwargs = build_request_kwargs(report, stage, timeout, verify_ssl, proxies)
     return session.request(method, url, **kwargs)
 
 
@@ -183,7 +205,8 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     if not response.content:
         raise RuntimeError(f"下载响应为空: HTTP {response.status_code} {response.url}")
 
-    filename = filename_from_response(response)
+    response_filename = filename_from_response(response)
+    filename = output_filename_for_report(report, response_filename)
     output_path = output_dir / filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(response.content)
@@ -194,6 +217,7 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
         "url": response.url,
         "status_code": response.status_code,
         "bytes": len(response.content),
+        "response_filename": response_filename,
         "output_path": str(output_path),
         "downloaded_at": datetime.now().isoformat(),
     }

@@ -4,10 +4,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from services.method_service import (
+    build_request_kwargs,
     build_headers,
     download_reports,
     filename_from_content_disposition,
     find_stage,
+    output_filename_for_report,
 )
 
 
@@ -55,6 +57,55 @@ def test_filename_from_content_disposition_utf8():
     )
 
     assert filename == "日通报.xls"
+
+
+def test_output_filename_for_report_prefixes_download_name():
+    filename = output_filename_for_report({"name": "新增"}, "报表.xlsx")
+
+    assert filename == "新增__报表.xlsx"
+
+
+def test_output_filename_for_report_keeps_existing_prefix():
+    filename = output_filename_for_report({"name": "新增"}, "新增__报表.xlsx")
+
+    assert filename == "新增__报表.xlsx"
+
+
+def test_build_request_kwargs_sends_json_body_type_as_json():
+    stage = {"cookies": []}
+    report = {
+        "headers": {"Content-Type": "application/json"},
+        "body_type": "json",
+        "data": {"date": "${today}"},
+    }
+
+    kwargs = build_request_kwargs(report, stage, 30, False, None)
+
+    assert kwargs["json"] == {"date": "${today}"}
+    assert "data" not in kwargs
+
+
+def test_build_request_kwargs_sends_raw_body_as_data():
+    stage = {"cookies": []}
+    report = {
+        "headers": {"Content-Type": "text/plain"},
+        "body_type": "raw",
+        "raw_body": "raw payload",
+    }
+
+    kwargs = build_request_kwargs(report, stage, 30, False, None)
+
+    assert kwargs["data"] == "raw payload"
+    assert "json" not in kwargs
+
+
+def test_build_request_kwargs_keeps_legacy_data_form_behavior():
+    stage = {"cookies": []}
+    report = {"data": {"templateId": "85479"}}
+
+    kwargs = build_request_kwargs(report, stage, 30, False, None)
+
+    assert kwargs["data"] == {"templateId": "85479"}
 
 
 def test_download_reports_dry_run_writes_manifest():

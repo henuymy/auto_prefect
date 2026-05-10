@@ -8,6 +8,7 @@ from flows.notify_single_flow import (
     parse_wait_for_change_config,
     resolve_dynamic_placeholders,
     select_downloaded_report_path,
+    should_send_when_same,
 )
 
 PROJECT_TEST_RUNTIME_DIR = Path("runtime/flow/test")
@@ -77,6 +78,12 @@ def test_parse_wait_for_change_config_rejects_invalid_max_wait():
         parse_wait_for_change_config({"wait_for_change": {"enabled": True, "max_wait_minutes": 0}})
 
 
+def test_should_send_when_same_reads_template_update_flag():
+    assert should_send_when_same({"template_update": {"send_when_same": True}}) is True
+    assert should_send_when_same({"template_update": {"send_when_same": False}}) is False
+    assert should_send_when_same({}) is False
+
+
 def test_resolve_dynamic_placeholders_supports_today_and_hour():
     from datetime import datetime
 
@@ -139,6 +146,43 @@ def test_build_download_config_supports_multiple_downloads():
     assert [item["name"] for item in config["reports"]] == ["报表A", "报表B"]
     assert config["reports"][0]["method"] == "POST"
     assert config["reports"][1]["data"]["sheetName"] == "B"
+
+
+def test_build_download_config_complete_request_does_not_inherit_ssr_headers():
+    base = {
+        "report_defaults": {
+            "enabled": True,
+            "method": "POST",
+            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+            "headers_from_cookies": {"ssr-token": "ssr-token"},
+            "csrf_headers_from_cookies": {"ssr-header": "ssr-token"},
+            "allow_redirects": True,
+        },
+    }
+    report_cfg = {
+        "download": {
+            "name": "智慧运营",
+            "method": "POST",
+            "url": "https://example/exportData",
+            "headers": {
+                "Content-Type": "application/json",
+                "user-info": "abc",
+            },
+            "body_type": "json",
+            "data": {"date": "${today}"},
+        }
+    }
+
+    config = build_download_config(base, report_cfg)
+    report = config["reports"][0]
+
+    assert report["headers"] == {
+        "Content-Type": "application/json",
+        "user-info": "abc",
+    }
+    assert "headers_from_cookies" not in report
+    assert "csrf_headers_from_cookies" not in report
+    assert report["allow_redirects"] is True
 
 
 def test_build_compare_source_configs_maps_download_outputs():
