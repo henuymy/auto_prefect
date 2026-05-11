@@ -29,7 +29,15 @@
   },
   "usm_cookie_apps": [
     {"stage": "report_analysis", "name": "报表分析系统"},
-    {"stage": "smart_ops", "name": "智慧运营平台"},
+    {
+      "stage": "smart_ops",
+      "name": "智慧运营平台",
+      "storage_ready": {
+        "type": "session_storage",
+        "path": "zhyyptInfo.accessToken",
+        "timeout_seconds": 45
+      }
+    },
     {"stage": "data_market", "name": "数据超市"}
   ],
   "cookie_dump": {

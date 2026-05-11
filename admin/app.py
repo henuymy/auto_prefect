@@ -39,7 +39,7 @@ LEGACY_SSR_HEADERS_FROM_COOKIES = {"ssr-token": "ssr-token"}
 LEGACY_SSR_CSRF_HEADERS_FROM_COOKIES = {"ssr-header": "ssr-token"}
 AUTH_PRESET_NONE = "无"
 AUTH_PRESET_SSR = "SSR Cookie"
-AUTH_PRESET_SMART_OPS = "智慧运营 user-info"
+AUTH_PRESET_SMART_OPS = "智慧运营 User-Info"
 AUTH_PRESET_CUSTOM = "自定义高级"
 AUTH_PRESET_OPTIONS = [
     AUTH_PRESET_NONE,
@@ -405,7 +405,7 @@ def infer_auth_preset(item: dict) -> str:
     session_mapping = normalize_storage_mapping(item.get("headers_from_session_storage") or {})
     cookie_mapping = item.get("headers_from_cookies") or {}
     csrf_mapping = item.get("csrf_headers_from_cookies") or {}
-    if session_mapping.get("user-info") == "zhyyptInfo.accessToken":
+    if session_mapping.get("User-Info") == "zhyyptInfo.accessToken":
         return AUTH_PRESET_SMART_OPS
     if cookie_mapping.get("ssr-token") == "ssr-token" or csrf_mapping.get("ssr-header") == "ssr-token":
         return AUTH_PRESET_SSR
@@ -421,7 +421,7 @@ def apply_auth_preset_to_item(item: dict, auth_preset: str) -> dict:
         item.pop("headers_from_session_storage", None)
         item.pop("headers_from_local_storage", None)
     elif auth_preset == AUTH_PRESET_SMART_OPS:
-        item["headers_from_session_storage"] = {"user-info": "zhyyptInfo.accessToken"}
+        item["headers_from_session_storage"] = {"User-Info": "zhyyptInfo.accessToken"}
         item.pop("headers_from_cookies", None)
         item.pop("csrf_headers_from_cookies", None)
         item.pop("headers_from_local_storage", None)
@@ -469,7 +469,7 @@ def special_header_rows_from_download_row(row: dict) -> list[dict]:
         rows = [
             {
                 "enabled": True,
-                "header_name": "user-info",
+                "header_name": "User-Info",
                 "source_type": "sessionStorage",
                 "source_path": "zhyyptInfo.accessToken",
             }
@@ -1277,7 +1277,7 @@ with col_edit:
                 required=True,
                 help=(
                     "无：不自动替换认证；SSR Cookie：从 Cookie 取 ssr-token；"
-                    "智慧运营 user-info：从 sessionStorage.zhyyptInfo.accessToken 取 user-info；"
+                    "智慧运营 User-Info：从 sessionStorage.zhyyptInfo.accessToken 取 User-Info；"
                     "自定义高级：使用下方高级认证配置。"
                 ),
             ),
@@ -1286,7 +1286,7 @@ with col_edit:
             "headers_json": st.column_config.TextColumn(
                 "固定请求头 JSON",
                 width="medium",
-                help="只显示不会过期的请求头，例如 Content-Type、Accept；user-info/ssr-token 建议用动态认证。",
+                help="只显示不会过期的请求头，例如 Content-Type、Accept；User-Info/ssr-token 建议用动态认证。",
             ),
             "body_type": st.column_config.SelectboxColumn("载体类型", options=["form", "json", "raw"], required=True),
             "data_json": st.column_config.TextColumn("请求体 JSON/form", width="large"),
@@ -1296,7 +1296,7 @@ with col_edit:
             "headers_from_session_storage_json": st.column_config.TextColumn(
                 "会话存储转 Header JSON",
                 width="medium",
-                help='例如 {"user-info": "zhyyptInfo.accessToken"}，从当前 Cookie Stage 的 sessionStorage 取值后放入请求头。',
+                help='例如 {"User-Info": "zhyyptInfo.accessToken"}，从当前 Cookie Stage 的 sessionStorage 取值后放入请求头。',
             ),
             "headers_from_local_storage_json": st.column_config.TextColumn(
                 "本地存储转 Header JSON",
@@ -1316,7 +1316,7 @@ with col_edit:
         auth_target_index = auth_target_options.index(auth_target_label)
         auth_row = download_rows_normalized[auth_target_index] if download_rows_normalized else download_to_form_row({"stage": dl_stage})
         st.caption(
-            "这里用于处理会变的认证字段。常见填写：SSR 用 Cookie 转 Header；智慧运营 user-info 用会话存储转 Header。"
+            "这里用于处理会变的认证字段。常见填写：SSR 用 Cookie 转 Header；智慧运营 User-Info 用会话存储转 Header。"
         )
         quick_col1, quick_col2 = st.columns(2)
         with quick_col1:
@@ -1328,11 +1328,11 @@ with col_edit:
                 st.session_state["downloads_rows"] = rows
                 st.rerun()
         with quick_col2:
-            if st.button("套用智慧运营 user-info", key="apply_smart_ops_auth_defaults"):
+            if st.button("套用智慧运营 User-Info", key="apply_smart_ops_auth_defaults"):
                 rows = normalize_table_rows(downloads_rows)
                 rows[auth_target_index]["auth_preset"] = AUTH_PRESET_SMART_OPS
                 rows[auth_target_index]["headers_from_session_storage_json"] = json_dumps_for_cell(
-                    {"user-info": "zhyyptInfo.accessToken"}
+                    {"User-Info": "zhyyptInfo.accessToken"}
                 )
                 st.session_state["downloads_rows"] = rows
                 st.rerun()
@@ -1354,11 +1354,11 @@ with col_edit:
             width="stretch",
             column_config={
                 "enabled": st.column_config.CheckboxColumn("启用", default=True),
-                "header_name": st.column_config.TextColumn("请求头字段", help="例如 user-info、ssr-token、Authorization"),
+                "header_name": st.column_config.TextColumn("请求头字段", help="例如 User-Info、ssr-token、Authorization"),
                 "source_type": st.column_config.SelectboxColumn(
                     "取值来源",
                     options=["Cookie", "sessionStorage", "localStorage"],
-                    help="Cookie 适合 ssr-token；sessionStorage 适合 user-info。",
+                    help="Cookie 适合 ssr-token；sessionStorage 适合 User-Info。",
                 ),
                 "source_path": st.column_config.TextColumn(
                     "来源字段/路径",
@@ -1561,7 +1561,7 @@ with col_edit:
             }
             recommendations = []
             if "user-info" in parsed_header_names or "userinfo" in parsed_header_names:
-                recommendations.append("检测到 `user-info`，回填时会默认改为从 `sessionStorage.zhyyptInfo.accessToken` 动态读取。")
+                recommendations.append("检测到 `User-Info`，回填时会默认改为从 `sessionStorage.zhyyptInfo.accessToken` 动态读取。")
             if "ssr-token" in parsed_header_names:
                 recommendations.append("检测到 `ssr-token`，回填时会默认改为从 Cookie `ssr-token` 动态读取。")
             if recommendations:
@@ -1592,14 +1592,14 @@ with col_edit:
                 session_header_mapping = parse_json_object(rows[target_index].get("headers_from_session_storage_json"), {})
                 session_header_mapping = normalize_storage_mapping(session_header_mapping)
                 for header_name in list(selected_headers.keys()):
-                    if header_name.lower() in {"user-info", "userinfo"} and "user-info" not in session_header_mapping:
+                    if header_name.lower() in {"user-info", "userinfo"} and "User-Info" not in session_header_mapping:
                         selected_headers.pop(header_name, None)
-                        session_header_mapping["user-info"] = "zhyyptInfo.accessToken"
+                        session_header_mapping["User-Info"] = "zhyyptInfo.accessToken"
                     if header_name.lower() == "ssr-token" and "ssr-token" not in cookie_header_mapping:
                         selected_headers.pop(header_name, None)
                         cookie_header_mapping["ssr-token"] = "ssr-token"
                 rows[target_index]["stage"] = rows[target_index].get("stage") or dl_stage
-                if session_header_mapping.get("user-info") == "zhyyptInfo.accessToken":
+                if session_header_mapping.get("User-Info") == "zhyyptInfo.accessToken":
                     rows[target_index]["auth_preset"] = AUTH_PRESET_SMART_OPS
                 elif cookie_header_mapping.get("ssr-token") == "ssr-token":
                     rows[target_index]["auth_preset"] = AUTH_PRESET_SSR
@@ -1975,4 +1975,5 @@ with col_edit:
                 else:
                     st.error("部署失败")
                     st.code(output)
+
 

@@ -167,9 +167,9 @@ def test_build_download_config_complete_request_does_not_inherit_ssr_headers():
             "url": "https://example/exportData",
             "headers": {
                 "Content-Type": "application/json",
-                "user-info": "abc",
+                "User-Info": "abc",
             },
-            "headers_from_session_storage": {"user-info": "zhyyptInfo.accessToken"},
+            "headers_from_session_storage": {"User-Info": "zhyyptInfo.accessToken"},
             "body_type": "json",
             "data": {"date": "${today}"},
         }
@@ -180,9 +180,9 @@ def test_build_download_config_complete_request_does_not_inherit_ssr_headers():
 
     assert report["headers"] == {
         "Content-Type": "application/json",
-        "user-info": "abc",
+        "User-Info": "abc",
     }
-    assert report["headers_from_session_storage"] == {"user-info": "zhyyptInfo.accessToken"}
+    assert report["headers_from_session_storage"] == {"User-Info": "zhyyptInfo.accessToken"}
     assert "headers_from_cookies" not in report
     assert "csrf_headers_from_cookies" not in report
     assert report["allow_redirects"] is True
@@ -263,4 +263,5 @@ def test_aggregate_compare_results_all_changed_passes_when_all_changed():
 
     assert result["result"] == "changed"
     assert result["summary"]["total"] == 1
+
 

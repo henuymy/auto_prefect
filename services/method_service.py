@@ -148,12 +148,20 @@ def build_headers(report, stage):
             headers[header_name] = cookie_value
     for header_name, storage_path in (report.get("headers_from_session_storage") or {}).items():
         storage_value = find_storage_value(stage, storage_path, storage_type="session_storage")
-        if storage_value:
-            headers[header_name] = storage_value
+        if not storage_value:
+            raise RuntimeError(
+                f"动态请求头 {header_name} 未能从 sessionStorage.{storage_path} 取到值，"
+                "session 已过期或页面尚未写入 Storage"
+            )
+        headers[header_name] = storage_value
     for header_name, storage_path in (report.get("headers_from_local_storage") or {}).items():
         storage_value = find_storage_value(stage, storage_path, storage_type="local_storage")
-        if storage_value:
-            headers[header_name] = storage_value
+        if not storage_value:
+            raise RuntimeError(
+                f"动态请求头 {header_name} 未能从 localStorage.{storage_path} 取到值，"
+                "session 已过期或页面尚未写入 Storage"
+            )
+        headers[header_name] = storage_value
     for header_cookie_name, value_cookie_name in (report.get("csrf_headers_from_cookies") or {}).items():
         header_name = find_cookie_value(stage, header_cookie_name)
         header_value = find_cookie_value(stage, value_cookie_name)

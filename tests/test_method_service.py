@@ -67,13 +67,33 @@ def test_build_headers_from_session_storage_json_path():
     }
     report = {
         "headers": {"Content-Type": "application/json"},
-        "headers_from_session_storage": {"user-info": "zhyyptInfo.accessToken"},
+        "headers_from_session_storage": {"User-Info": "zhyyptInfo.accessToken"},
     }
 
     headers = build_headers(report, stage)
 
     assert headers["Content-Type"] == "application/json"
-    assert headers["user-info"] == "dynamic-user-info"
+    assert headers["User-Info"] == "dynamic-user-info"
+
+
+def test_build_headers_missing_session_storage_value_triggers_session_retry():
+    stage = {
+        "cookies": [],
+        "session_storage": {
+            "zhyyptInfo": json.dumps({"accessToken": ""})
+        },
+    }
+    report = {
+        "headers_from_session_storage": {"User-Info": "zhyyptInfo.accessToken"},
+    }
+
+    try:
+        build_headers(report, stage)
+    except RuntimeError as exc:
+        assert "session 已过期" in str(exc)
+        assert "User-Info" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
 
 
 def test_filename_from_content_disposition_utf8():
@@ -119,14 +139,14 @@ def test_build_request_kwargs_resolves_session_storage_tokens_in_body():
         },
     }
     report = {
-        "headers": {"user-info": "${session_storage:zhyyptInfo.accessToken}"},
+        "headers": {"User-Info": "${session_storage:zhyyptInfo.accessToken}"},
         "body_type": "json",
         "data": {"user_info": "${session_storage:zhyyptInfo.accessToken}"},
     }
 
     kwargs = build_request_kwargs(report, stage, 30, False, None)
 
-    assert kwargs["headers"]["user-info"] == "dynamic-user-info"
+    assert kwargs["headers"]["User-Info"] == "dynamic-user-info"
     assert kwargs["json"]["user_info"] == "dynamic-user-info"
 
 
@@ -225,4 +245,5 @@ def test_download_reports_dry_run_writes_manifest():
         assert manifest_path.exists()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
 

@@ -412,6 +412,40 @@ class AutoLogin:
             pass
         return self.driver.current_window_handle
 
+    def wait_for_storage_ready(self, app_config):
+        storage_ready = app_config.get("storage_ready")
+        if not storage_ready:
+            return
+        storage_type = storage_ready.get("type", "session_storage")
+        storage_path = storage_ready.get("path")
+        timeout_seconds = int(storage_ready.get("timeout_seconds", 30))
+        if not storage_path:
+            return
+        script = """
+            const storageType = arguments[0];
+            const storagePath = arguments[1];
+            const storage = storageType === 'local_storage' ? window.localStorage : window.sessionStorage;
+            const parts = storagePath.split('.');
+            let value = storage.getItem(parts.shift());
+            for (const part of parts) {
+              if (!value) return "";
+              try {
+                value = JSON.parse(value);
+              } catch (err) {
+                return "";
+              }
+              value = value ? value[part] : "";
+            }
+            return value || "";
+        """
+        try:
+            WebDriverWait(self.driver, timeout_seconds).until(
+                lambda d: d.execute_script(script, storage_type, storage_path)
+            )
+            print(f"[INFO] Storage 已就绪: {storage_type}.{storage_path}")
+        except TimeoutException:
+            print(f"[WARN] 等待 Storage 超时，继续捕获: {storage_type}.{storage_path}")
+
     def _switch_to_usm_app_list(self):
         if self.usm_window_handle and self.usm_window_handle in self.driver.window_handles:
             self.driver.switch_to.window(self.usm_window_handle)
@@ -431,6 +465,7 @@ class AutoLogin:
                 raise ValueError("usm_cookie_apps 每一项都必须包含 stage 和 name")
             print(f"[INFO] 准备捕获 USM 应用 Cookie: {stage} / {app_name}")
             self.opened_app_handles[stage] = self.enter_usm_app(app_config)
+            self.wait_for_storage_ready(app_config)
             self.capture_cookies(stage)
             if self.usm_window_handle and self.usm_window_handle in self.driver.window_handles:
                 self.driver.switch_to.window(self.usm_window_handle)
