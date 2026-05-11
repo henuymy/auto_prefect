@@ -164,7 +164,7 @@ def build_task_config(report_name: str, report_config_path: str, download_name: 
     }
 
 
-def deploy(report_name: str, task_cfg_path: Path, cron: str | None):
+def deploy(report_name: str, task_cfg_path: Path, cron: str | None, timezone: str | None = None):
     slug = report_name.replace(" ", "_")
     deployment_name = f"notify-{slug}"
     cmd = [
@@ -176,6 +176,8 @@ def deploy(report_name: str, task_cfg_path: Path, cron: str | None):
     ]
     if cron:
         cmd += ["--cron", cron]
+        if timezone:
+            cmd += ["--timezone", timezone]
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
@@ -1796,8 +1798,21 @@ with col_edit:
     st.markdown("**定时部署**")
     enable_cron = st.checkbox("启用定时", value=False)
     cron_expr = ""
+    cron_timezone = "Asia/Shanghai"
     if enable_cron:
-        cron_expr = st.text_input("Cron 表达式", value="0 8 * * 1-5", help="例：0 8 * * 1-5 表示工作日早8点")
+        cron_col1, cron_col2 = st.columns([2, 1])
+        with cron_col1:
+            cron_expr = st.text_input(
+                "Cron 表达式",
+                value="0 8 * * 1-5",
+                help="例：0 9-18 * * * 表示每天 9 点到 18 点每小时执行一次",
+            )
+        with cron_col2:
+            cron_timezone = st.text_input(
+                "时区",
+                value="Asia/Shanghai",
+                help="中国大陆使用 Asia/Shanghai。设置后 Cron 按北京时间解释，不再按 UTC 偏移。",
+            )
 
     btn_col1, btn_col2, btn_col3 = st.columns(3)
     draft_clicked = btn_col1.button("保存草稿")
@@ -1923,7 +1938,12 @@ with col_edit:
             st.success("配置已保存")
 
             if deploy_clicked:
-                ok, output = deploy(name, task_path, cron_expr if enable_cron else None)
+                ok, output = deploy(
+                    name,
+                    task_path,
+                    cron_expr if enable_cron else None,
+                    cron_timezone if enable_cron else None,
+                )
                 if ok:
                     st.success(f"部署成功：notify-{name.replace(' ', '_')}")
                 else:
