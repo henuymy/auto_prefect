@@ -21,7 +21,7 @@ TASKS_DIR.mkdir(parents=True, exist_ok=True)
 
 WORK_POOL = "default-agent-pool"
 FLOW_ENTRYPOINT = "flows/notify_single_flow.py:auto_notify_flow"
-DEFAULT_STAGE_OPTIONS = ["report_analysis", "smart_ops", "data_market"]
+DEFAULT_STAGE_OPTIONS = ["report_analysis", "smart_ops", "city_ops", "data_market"]
 COOKIE_DUMP_PATH = PROJECT_DIR / "runtime" / "cookies" / "cookie_dump.json"
 SAME_ACTION_OPTIONS = ["等待数据变化后发送", "直接发送当前通报", "直接结束"]
 

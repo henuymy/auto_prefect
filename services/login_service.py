@@ -412,6 +412,58 @@ class AutoLogin:
             pass
         return self.driver.current_window_handle
 
+    def enter_usm_app_from_source(self, app_config):
+        app_name = app_config["name"]
+        source_stage = app_config.get("source_stage")
+        source_handle = self.usm_window_handle if source_stage == "usm_console" else self.opened_app_handles.get(source_stage)
+        if not source_handle or source_handle not in self.driver.window_handles:
+            raise RuntimeError(f"{app_name} 依赖的 source_stage 不存在或已关闭: {source_stage}")
+
+        if source_stage == "usm_console":
+            self._switch_to_usm_app_list()
+        else:
+            self.driver.switch_to.window(source_handle)
+            self.driver.switch_to.default_content()
+
+        icon_src_contains = app_config.get("icon_src_contains")
+        if not icon_src_contains:
+            raise ValueError(f"{app_name} 使用 source_stage 时必须配置 icon_src_contains")
+
+        icon_xpath = f"//img[contains(@src, '{icon_src_contains}')]"
+        menu_item_xpath = (
+            f"{icon_xpath}/ancestor::li[contains(@class,'el-menu-item')][1]"
+        )
+        old_handles = set(self.driver.window_handles)
+        element = None
+        for locator in [
+            (By.XPATH, menu_item_xpath),
+            (By.XPATH, icon_xpath),
+        ]:
+            try:
+                element = WebDriverWait(self.driver, 30).until(EC.element_to_be_clickable(locator))
+                break
+            except TimeoutException:
+                continue
+        if element is None:
+            raise RuntimeError(f"未找到 {app_name} 图标入口: img[src*={icon_src_contains!r}]")
+
+        print(f"[INFO] 从 {source_stage} 点击应用入口: {app_name} / {icon_src_contains}")
+        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", element)
+        self.driver.execute_script("arguments[0].click();", element)
+
+        try:
+            WebDriverWait(self.driver, 10).until(lambda d: len(set(d.window_handles) - old_handles) > 0)
+            new_handle = list(set(self.driver.window_handles) - old_handles)[-1]
+            self.driver.switch_to.window(new_handle)
+        except TimeoutException:
+            self.driver.switch_to.window(source_handle)
+
+        try:
+            WebDriverWait(self.driver, 30).until(lambda d: d.execute_script("return document.readyState") == "complete")
+        except TimeoutException:
+            pass
+        return self.driver.current_window_handle
+
     def wait_for_storage_ready(self, app_config):
         storage_ready = app_config.get("storage_ready")
         if not storage_ready:
@@ -464,7 +516,10 @@ class AutoLogin:
             if not stage or not app_name:
                 raise ValueError("usm_cookie_apps 每一项都必须包含 stage 和 name")
             print(f"[INFO] 准备捕获 USM 应用 Cookie: {stage} / {app_name}")
-            self.opened_app_handles[stage] = self.enter_usm_app(app_config)
+            if app_config.get("source_stage"):
+                self.opened_app_handles[stage] = self.enter_usm_app_from_source(app_config)
+            else:
+                self.opened_app_handles[stage] = self.enter_usm_app(app_config)
             self.wait_for_storage_ready(app_config)
             self.capture_cookies(stage)
             if self.usm_window_handle and self.usm_window_handle in self.driver.window_handles:

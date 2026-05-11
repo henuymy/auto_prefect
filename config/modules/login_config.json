@@ -38,6 +38,12 @@
         "timeout_seconds": 45
       }
     },
+    {
+      "stage": "city_ops",
+      "name": "地市作战平台",
+      "source_stage": "usm_console",
+      "icon_src_contains": "dszzIcon"
+    },
     {"stage": "data_market", "name": "数据超市"}
   ],
   "cookie_dump": {
