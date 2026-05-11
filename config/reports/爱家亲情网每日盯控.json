@@ -4,6 +4,7 @@
   "download": {
     "name": "实时",
     "stage": "smart_ops",
+    "auth_preset": "自定义高级",
     "method": "POST",
     "url": "https://usm.ha.cmcc:19011/zhyypt/smop/export/exportData",
     "headers": {
@@ -14,15 +15,17 @@
       "Origin": "https://usm.ha.cmcc:19011",
       "Pragma": "no-cache",
       "Referer": "https://usm.ha.cmcc:19011/zhyypt/dist/",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
-      "user-info": "eyJ0b2tlblRpY2tldCI6IkFBQUFEQUFBQUJBQUFBQUE0MGd0M2toUVd0ZFN0VEU4b3VkQjNvZTBFT2dpTmtDTnJtU0dNOWNIZkZTVHJ3ZFUvUXNOWlhJQ3c5MmZOY1dYL3lla05GYm5iWDJjbk8vQyIsInVzZXJOYW1lIjoiMzcxX3l1bWluZ3lhbmciLCJ1c2VybmFtZSI6IjM3MV95dW1pbmd5YW5nIn0="
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
     },
     "body_type": "json",
+    "headers_from_session_storage": {
+      "user-info": "zhyptInfo.accessToken"
+    },
     "data": {
       "areaId": "AQ",
       "dataLevel": "4",
       "dataType": "real",
-      "queryDate": "20260510",
+      "queryDate": "${today_yyyymmdd}",
       "expTypeId": "HOLE_REAL_TC_EXP",
       "expFileName": "运营总览-业务销量.xlsx",
       "rankDown": null
@@ -60,6 +63,7 @@
     {
       "name": "实时",
       "stage": "smart_ops",
+      "auth_preset": "自定义高级",
       "method": "POST",
       "url": "https://usm.ha.cmcc:19011/zhyypt/smop/export/exportData",
       "headers": {
@@ -70,15 +74,17 @@
         "Origin": "https://usm.ha.cmcc:19011",
         "Pragma": "no-cache",
         "Referer": "https://usm.ha.cmcc:19011/zhyypt/dist/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
-        "user-info": "eyJ0b2tlblRpY2tldCI6IkFBQUFEQUFBQUJBQUFBQUE0MGd0M2toUVd0ZFN0VEU4b3VkQjNvZTBFT2dpTmtDTnJtU0dNOWNIZkZTVHJ3ZFUvUXNOWlhJQ3c5MmZOY1dYL3lla05GYm5iWDJjbk8vQyIsInVzZXJOYW1lIjoiMzcxX3l1bWluZ3lhbmciLCJ1c2VybmFtZSI6IjM3MV95dW1pbmd5YW5nIn0="
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
       },
       "body_type": "json",
+      "headers_from_session_storage": {
+        "user-info": "zhyptInfo.accessToken"
+      },
       "data": {
         "areaId": "AQ",
         "dataLevel": "4",
         "dataType": "real",
-        "queryDate": "20260510",
+        "queryDate": "${today_yyyymmdd}",
         "expTypeId": "HOLE_REAL_TC_EXP",
         "expFileName": "运营总览-业务销量.xlsx",
         "rankDown": null
@@ -87,6 +93,7 @@
     {
       "name": "日累计",
       "stage": "smart_ops",
+      "auth_preset": "自定义高级",
       "method": "POST",
       "url": "https://usm.ha.cmcc:19011/zhyypt/smop/export/exportData",
       "headers": {
@@ -97,15 +104,17 @@
         "Origin": "https://usm.ha.cmcc:19011",
         "Pragma": "no-cache",
         "Referer": "https://usm.ha.cmcc:19011/zhyypt/dist/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
-        "user-info": "eyJ0b2tlblRpY2tldCI6IkFBQUFEQUFBQUJBQUFBQUE0MGd0M2toUVd0ZFN0VEU4b3VkQjNvZTBFT2dpTmtDTnJtU0dNOWNIZkZTVHJ3ZFUvUXNOWlhJQ3c5MmZOY1dYL3lla05GYm5iWDJjbk8vQyIsInVzZXJOYW1lIjoiMzcxX3l1bWluZ3lhbmciLCJ1c2VybmFtZSI6IjM3MV95dW1pbmd5YW5nIn0="
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
       },
       "body_type": "json",
+      "headers_from_session_storage": {
+        "user-info": "zhyptInfo.accessToken"
+      },
       "data": {
         "areaId": "AQ",
         "dataLevel": "4",
         "dataType": "dtal",
-        "queryDate": "20260509",
+        "queryDate": "${yesterday_yyyymmdd}",
         "expTypeId": "HOLE_REAL_TC_EXP",
         "expFileName": "运营总览-业务销量.xlsx",
         "rankDown": null

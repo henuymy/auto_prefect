@@ -37,6 +37,34 @@ from utils.request_parser import (  # noqa: E402
 LEGACY_SSR_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
 LEGACY_SSR_HEADERS_FROM_COOKIES = {"ssr-token": "ssr-token"}
 LEGACY_SSR_CSRF_HEADERS_FROM_COOKIES = {"ssr-header": "ssr-token"}
+AUTH_PRESET_NONE = "无"
+AUTH_PRESET_SSR = "SSR Cookie"
+AUTH_PRESET_SMART_OPS = "智慧运营 user-info"
+AUTH_PRESET_CUSTOM = "自定义高级"
+AUTH_PRESET_OPTIONS = [
+    AUTH_PRESET_NONE,
+    AUTH_PRESET_SSR,
+    AUTH_PRESET_SMART_OPS,
+    AUTH_PRESET_CUSTOM,
+]
+BODY_PLACEHOLDER_OPTIONS = [
+    "今天 YYYY-MM-DD",
+    "今天 YYYYMMDD",
+    "昨天 YYYY-MM-DD",
+    "昨天 YYYYMMDD",
+    "当前小时",
+    "当前小时两位",
+    "sessionStorage",
+    "localStorage",
+]
+BODY_PLACEHOLDER_MAP = {
+    "今天 YYYY-MM-DD": "${today}",
+    "今天 YYYYMMDD": "${today_yyyymmdd}",
+    "昨天 YYYY-MM-DD": "${yesterday}",
+    "昨天 YYYYMMDD": "${yesterday_yyyymmdd}",
+    "当前小时": "${hour}",
+    "当前小时两位": "${hour2}",
+}
 
 
 def load_json(path: Path) -> dict:
@@ -302,6 +330,15 @@ def json_dumps_for_cell(value) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
 
+def parse_json_object(value, default=None):
+    default = {} if default is None else default
+    try:
+        parsed = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return default
+    return parsed if isinstance(parsed, dict) else default
+
+
 def default_body_type_for_download(item: dict) -> str:
     if item.get("body_type"):
         return item.get("body_type")
@@ -347,17 +384,171 @@ def default_csrf_headers_from_cookies_for_download(item: dict) -> dict:
     return {}
 
 
+def infer_auth_preset(item: dict) -> str:
+    if item.get("auth_preset") in AUTH_PRESET_OPTIONS:
+        return item.get("auth_preset")
+    session_mapping = item.get("headers_from_session_storage") or {}
+    cookie_mapping = item.get("headers_from_cookies") or {}
+    csrf_mapping = item.get("csrf_headers_from_cookies") or {}
+    if session_mapping.get("user-info") == "zhyyptInfo.accessToken":
+        return AUTH_PRESET_SMART_OPS
+    if cookie_mapping.get("ssr-token") == "ssr-token" or csrf_mapping.get("ssr-header") == "ssr-token":
+        return AUTH_PRESET_SSR
+    if session_mapping or cookie_mapping or csrf_mapping or item.get("headers_from_local_storage"):
+        return AUTH_PRESET_CUSTOM
+    return AUTH_PRESET_NONE
+
+
+def apply_auth_preset_to_item(item: dict, auth_preset: str) -> dict:
+    if auth_preset == AUTH_PRESET_SSR:
+        item["headers_from_cookies"] = {"ssr-token": "ssr-token"}
+        item["csrf_headers_from_cookies"] = {"ssr-header": "ssr-token"}
+        item.pop("headers_from_session_storage", None)
+        item.pop("headers_from_local_storage", None)
+    elif auth_preset == AUTH_PRESET_SMART_OPS:
+        item["headers_from_session_storage"] = {"user-info": "zhyyptInfo.accessToken"}
+        item.pop("headers_from_cookies", None)
+        item.pop("csrf_headers_from_cookies", None)
+        item.pop("headers_from_local_storage", None)
+    elif auth_preset == AUTH_PRESET_NONE:
+        item.pop("headers_from_cookies", None)
+        item.pop("csrf_headers_from_cookies", None)
+        item.pop("headers_from_session_storage", None)
+        item.pop("headers_from_local_storage", None)
+    return item
+
+
+def remove_dynamic_headers_from_static(headers: dict, *dynamic_mappings: dict) -> dict:
+    if not headers:
+        return {}
+    dynamic_names = {
+        str(header_name).lower()
+        for mapping in dynamic_mappings
+        for header_name in (mapping or {}).keys()
+    }
+    return {
+        header_name: header_value
+        for header_name, header_value in headers.items()
+        if str(header_name).lower() not in dynamic_names
+    }
+
+
+def special_header_rows_from_download_row(row: dict) -> list[dict]:
+    rows = []
+    for source_key, source_label in (
+        ("headers_from_cookies_json", "Cookie"),
+        ("headers_from_session_storage_json", "sessionStorage"),
+        ("headers_from_local_storage_json", "localStorage"),
+    ):
+        mapping = parse_json_object(row.get(source_key), {})
+        for header_name, source_path in mapping.items():
+            rows.append({
+                "enabled": True,
+                "header_name": header_name,
+                "source_type": source_label,
+                "source_path": source_path,
+            })
+    if not rows:
+        rows = [
+            {
+                "enabled": True,
+                "header_name": "user-info",
+                "source_type": "sessionStorage",
+                "source_path": "zhyyptInfo.accessToken",
+            }
+        ]
+    return rows
+
+
+def storage_placeholder(source_type: str, source_path: str) -> str:
+    if source_type in BODY_PLACEHOLDER_MAP:
+        return BODY_PLACEHOLDER_MAP[source_type]
+    if source_type == "sessionStorage":
+        return f"${{session_storage:{source_path}}}"
+    if source_type == "localStorage":
+        return f"${{local_storage:{source_path}}}"
+    return str(source_path or "")
+
+
+def flatten_dict_paths(payload: dict, prefix: str = "") -> list[tuple[str, object]]:
+    paths = []
+    for key, value in (payload or {}).items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            paths.extend(flatten_dict_paths(value, path))
+        else:
+            paths.append((path, value))
+    return paths
+
+
+def source_from_placeholder(value) -> tuple[str, str, bool]:
+    if not isinstance(value, str):
+        return "今天 YYYYMMDD", "", False
+    for source_type, placeholder in BODY_PLACEHOLDER_MAP.items():
+        if value == placeholder:
+            return source_type, "", True
+    if value.startswith("${session_storage:") and value.endswith("}"):
+        return "sessionStorage", value[len("${session_storage:"):-1], True
+    if value.startswith("${local_storage:") and value.endswith("}"):
+        return "localStorage", value[len("${local_storage:"):-1], True
+    return "今天 YYYYMMDD", "", False
+
+
+def body_placeholder_rows_from_download_row(row: dict) -> list[dict]:
+    payload = parse_json_object(row.get("data_json"), {})
+    rows = []
+    for field_path, value in flatten_dict_paths(payload):
+        if field_path.lower() in {"querydate", "date", "day", "statdate"} or (
+            isinstance(value, str) and value.startswith("${")
+        ):
+            source_type, source_path, enabled = source_from_placeholder(value)
+            rows.append({
+                "enabled": enabled,
+                "body_field": field_path,
+                "source_type": source_type,
+                "source_path": source_path,
+            })
+    if not rows:
+        rows = [
+            {
+                "enabled": False,
+                "body_field": "queryDate",
+                "source_type": "今天 YYYYMMDD",
+                "source_path": "",
+            }
+        ]
+    return rows
+
+
+def set_nested_dict_value(payload: dict, dotted_path: str, value):
+    parts = [part.strip() for part in str(dotted_path or "").split(".") if part.strip()]
+    if not parts:
+        return payload
+    current = payload
+    for part in parts[:-1]:
+        child = current.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            current[part] = child
+        current = child
+    current[parts[-1]] = value
+    return payload
+
+
 def download_to_form_row(item: dict) -> dict:
     body_type = default_body_type_for_download(item)
     data_value = item.get("json") if "json" in item and "data" not in item else item.get("data", {})
     return {
         "name": item.get("name", ""),
         "stage": item.get("stage", "report_analysis"),
+        "auth_preset": infer_auth_preset(item),
         "method": item.get("method", "POST"),
         "url": item.get("url", ""),
         "headers_json": json_dumps_for_cell(default_headers_for_download(item)),
         "headers_from_cookies_json": json_dumps_for_cell(default_headers_from_cookies_for_download(item)),
         "csrf_headers_from_cookies_json": json_dumps_for_cell(default_csrf_headers_from_cookies_for_download(item)),
+        "headers_from_session_storage_json": json_dumps_for_cell(item.get("headers_from_session_storage") or {}),
+        "headers_from_local_storage_json": json_dumps_for_cell(item.get("headers_from_local_storage") or {}),
         "body_type": body_type,
         "data_json": json_dumps_for_cell(data_value or {}),
         "raw_body": item.get("raw_body", ""),
@@ -467,11 +658,14 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
     for index, row in enumerate(rows, start=1):
         name = (row.get("name") or "").strip()
         stage = (row.get("stage") or "").strip()
+        auth_preset = row.get("auth_preset") or AUTH_PRESET_NONE
         method = (row.get("method") or "POST").strip().upper()
         url = (row.get("url") or "").strip()
         headers_raw = row.get("headers_json") or "{}"
         headers_from_cookies_raw = row.get("headers_from_cookies_json") or "{}"
         csrf_headers_from_cookies_raw = row.get("csrf_headers_from_cookies_json") or "{}"
+        headers_from_session_storage_raw = row.get("headers_from_session_storage_json") or "{}"
+        headers_from_local_storage_raw = row.get("headers_from_local_storage_json") or "{}"
         body_type = (row.get("body_type") or "form").strip().lower()
         data_raw = row.get("data_json") or "{}"
         raw_body = row.get("raw_body") or ""
@@ -518,6 +712,22 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
         except json.JSONDecodeError as exc:
             errors.append(f"downloads 第 {index} 行 csrf_headers_from_cookies_json 格式错误: {exc}")
             csrf_headers_from_cookies = {}
+        try:
+            headers_from_session_storage = json.loads(headers_from_session_storage_raw or "{}")
+            if not isinstance(headers_from_session_storage, dict):
+                errors.append(f"downloads 第 {index} 行 headers_from_session_storage_json 必须是对象 JSON")
+                headers_from_session_storage = {}
+        except json.JSONDecodeError as exc:
+            errors.append(f"downloads 第 {index} 行 headers_from_session_storage_json 格式错误: {exc}")
+            headers_from_session_storage = {}
+        try:
+            headers_from_local_storage = json.loads(headers_from_local_storage_raw or "{}")
+            if not isinstance(headers_from_local_storage, dict):
+                errors.append(f"downloads 第 {index} 行 headers_from_local_storage_json 必须是对象 JSON")
+                headers_from_local_storage = {}
+        except json.JSONDecodeError as exc:
+            errors.append(f"downloads 第 {index} 行 headers_from_local_storage_json 格式错误: {exc}")
+            headers_from_local_storage = {}
         if not name:
             errors.append(f"downloads 第 {index} 行缺少 name")
         if not stage:
@@ -527,6 +737,7 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
         item = {
             "name": name,
             "stage": stage,
+            "auth_preset": auth_preset,
             "method": method,
             "url": url,
             "headers": headers,
@@ -536,6 +747,24 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
             item["headers_from_cookies"] = headers_from_cookies
         if csrf_headers_from_cookies:
             item["csrf_headers_from_cookies"] = csrf_headers_from_cookies
+        if headers_from_session_storage:
+            item["headers_from_session_storage"] = headers_from_session_storage
+        if headers_from_local_storage:
+            item["headers_from_local_storage"] = headers_from_local_storage
+        item["headers"] = remove_dynamic_headers_from_static(
+            item.get("headers") or {},
+            item.get("headers_from_cookies") or {},
+            item.get("headers_from_session_storage") or {},
+            item.get("headers_from_local_storage") or {},
+        )
+        if auth_preset != AUTH_PRESET_CUSTOM:
+            item = apply_auth_preset_to_item(item, auth_preset)
+            item["headers"] = remove_dynamic_headers_from_static(
+                item.get("headers") or {},
+                item.get("headers_from_cookies") or {},
+                item.get("headers_from_session_storage") or {},
+                item.get("headers_from_local_storage") or {},
+            )
         if body_type == "raw":
             item["raw_body"] = raw_body
         else:
@@ -550,6 +779,7 @@ def form_rows_to_download_drafts(rows: list[dict], default_stage: str) -> list[d
         item = {
             "name": (row.get("name") or "").strip(),
             "stage": (row.get("stage") or default_stage or "").strip(),
+            "auth_preset": row.get("auth_preset") or AUTH_PRESET_NONE,
             "method": (row.get("method") or "POST").strip().upper(),
             "url": (row.get("url") or "").strip(),
             "body_type": (row.get("body_type") or "form").strip().lower(),
@@ -558,6 +788,8 @@ def form_rows_to_download_drafts(rows: list[dict], default_stage: str) -> list[d
             ("headers_json", "headers", {}),
             ("headers_from_cookies_json", "headers_from_cookies", {}),
             ("csrf_headers_from_cookies_json", "csrf_headers_from_cookies", {}),
+            ("headers_from_session_storage_json", "headers_from_session_storage", {}),
+            ("headers_from_local_storage_json", "headers_from_local_storage", {}),
             ("data_json", "data", {}),
         ):
             try:
@@ -567,6 +799,14 @@ def form_rows_to_download_drafts(rows: list[dict], default_stage: str) -> list[d
             item[target_key] = parsed
         if row.get("raw_body"):
             item["raw_body"] = row.get("raw_body")
+        if item.get("auth_preset") != AUTH_PRESET_CUSTOM:
+            item = apply_auth_preset_to_item(item, item.get("auth_preset"))
+        item["headers"] = remove_dynamic_headers_from_static(
+            item.get("headers") or {},
+            item.get("headers_from_cookies") or {},
+            item.get("headers_from_session_storage") or {},
+            item.get("headers_from_local_storage") or {},
+        )
         if any(value not in ("", {}, []) for value in item.values()):
             downloads.append(item)
     return downloads
@@ -803,6 +1043,7 @@ def resolve_placeholder_preview(payload):
     yesterday = now - timedelta(days=1)
     replacements = {
         "${today}": now.strftime("%Y-%m-%d"),
+        "${today_yyyymmdd}": now.strftime("%Y%m%d"),
         "${yesterday}": yesterday.strftime("%Y-%m-%d"),
         "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
         "${hour}": str(now.hour),
@@ -832,7 +1073,7 @@ st.title("通报配置管理")
 reports = list_reports()
 report_names = [report_name_from_path(p) for p in reports]
 
-col_list, col_edit = st.columns([1, 2])
+col_list, col_edit = st.columns([0.6, 2.4])
 
 with col_list:
     st.subheader("报表列表")
@@ -967,6 +1208,12 @@ with col_edit:
     st.caption(
         "一行就是一个下载请求；下载标识用于后续比对匹配，也会作为落盘文件名前缀，避免同名 Excel 覆盖。"
     )
+    st.caption(
+        "占位符支持：`${today}`(YYYY-MM-DD)、`${yesterday}`(前一天 YYYY-MM-DD)、"
+        "`${today_yyyymmdd}`(今天 YYYYMMDD)、`${yesterday_yyyymmdd}`(前一天 YYYYMMDD)、"
+        "`${hour}`(0-23)、`${hour2}`(00-23)、"
+        "`${session_storage:zhyyptInfo.accessToken}`、`${local_storage:tokenInfo.accessToken}`。"
+    )
     st.session_state["downloads_rows"] = apply_default_stage_to_rows(st.session_state["downloads_rows"], dl_stage)
     dl_btn_col1, dl_btn_col2 = st.columns([1, 5])
     if dl_btn_col1.button("新增下载行"):
@@ -983,21 +1230,200 @@ with col_edit:
         key="downloads_rows_editor",
         num_rows="fixed",
         width="stretch",
-        column_order=["name", "stage", "method", "url", "headers_json", "body_type", "data_json", "raw_body"],
+        column_order=[
+            "name",
+            "stage",
+            "auth_preset",
+            "method",
+            "url",
+            "headers_json",
+            "body_type",
+            "data_json",
+            "raw_body",
+        ],
         column_config={
             "name": st.column_config.TextColumn("下载标识", required=True),
             "stage": st.column_config.SelectboxColumn("Cookie Stage", options=stage_options, required=True),
+            "auth_preset": st.column_config.SelectboxColumn(
+                "动态认证",
+                options=AUTH_PRESET_OPTIONS,
+                required=True,
+                help=(
+                    "无：不自动替换认证；SSR Cookie：从 Cookie 取 ssr-token；"
+                    "智慧运营 user-info：从 sessionStorage.zhyyptInfo.accessToken 取 user-info；"
+                    "自定义高级：使用下方高级认证配置。"
+                ),
+            ),
             "method": st.column_config.SelectboxColumn("请求方法", options=["POST", "GET", "PUT", "PATCH", "DELETE"], required=True),
             "url": st.column_config.TextColumn("下载 URL", required=True),
-            "headers_json": st.column_config.TextColumn("请求头 JSON", width="large"),
+            "headers_json": st.column_config.TextColumn(
+                "固定请求头 JSON",
+                width="medium",
+                help="只显示不会过期的请求头，例如 Content-Type、Accept；user-info/ssr-token 建议用动态认证。",
+            ),
             "body_type": st.column_config.SelectboxColumn("载体类型", options=["form", "json", "raw"], required=True),
-            "data_json": st.column_config.TextColumn("请求 data/json", width="large"),
-            "raw_body": st.column_config.TextColumn("raw body", width="medium"),
+            "data_json": st.column_config.TextColumn("请求体 JSON/form", width="large"),
+            "raw_body": st.column_config.TextColumn("原始请求体 raw", width="medium"),
             "headers_from_cookies_json": st.column_config.TextColumn("Cookie 转 Header JSON", width="medium"),
             "csrf_headers_from_cookies_json": st.column_config.TextColumn("动态 CSRF JSON", width="medium"),
+            "headers_from_session_storage_json": st.column_config.TextColumn(
+                "会话存储转 Header JSON",
+                width="medium",
+                help='例如 {"user-info": "zhyyptInfo.accessToken"}，从当前 Cookie Stage 的 sessionStorage 取值后放入请求头。',
+            ),
+            "headers_from_local_storage_json": st.column_config.TextColumn(
+                "本地存储转 Header JSON",
+                width="medium",
+                help='例如 {"Authorization": "tokenInfo.accessToken"}，从当前 Cookie Stage 的 localStorage 取值后放入请求头。',
+            ),
         },
     )
     download_rows_normalized = normalize_table_rows(downloads_rows)
+
+    with st.expander("高级认证配置（一般不用改）", expanded=False):
+        auth_target_options = [
+            f"{index + 1}. {(row.get('name') or '未命名下载')}"
+            for index, row in enumerate(download_rows_normalized)
+        ] or ["1. 未命名下载"]
+        auth_target_label = st.selectbox("配置哪一行下载", options=auth_target_options, key="download_auth_target")
+        auth_target_index = auth_target_options.index(auth_target_label)
+        auth_row = download_rows_normalized[auth_target_index] if download_rows_normalized else download_to_form_row({"stage": dl_stage})
+        st.caption(
+            "这里用于处理会变的认证字段。常见填写：SSR 用 Cookie 转 Header；智慧运营 user-info 用会话存储转 Header。"
+        )
+        quick_col1, quick_col2 = st.columns(2)
+        with quick_col1:
+            if st.button("套用 SSR 默认认证", key="apply_ssr_auth_defaults"):
+                rows = normalize_table_rows(downloads_rows)
+                rows[auth_target_index]["auth_preset"] = AUTH_PRESET_SSR
+                rows[auth_target_index]["headers_from_cookies_json"] = json_dumps_for_cell({"ssr-token": "ssr-token"})
+                rows[auth_target_index]["csrf_headers_from_cookies_json"] = json_dumps_for_cell({"ssr-header": "ssr-token"})
+                st.session_state["downloads_rows"] = rows
+                st.rerun()
+        with quick_col2:
+            if st.button("套用智慧运营 user-info", key="apply_smart_ops_auth_defaults"):
+                rows = normalize_table_rows(downloads_rows)
+                rows[auth_target_index]["auth_preset"] = AUTH_PRESET_SMART_OPS
+                rows[auth_target_index]["headers_from_session_storage_json"] = json_dumps_for_cell(
+                    {"user-info": "zhyyptInfo.accessToken"}
+                )
+                st.session_state["downloads_rows"] = rows
+                st.rerun()
+
+        st.markdown("**固定请求头**")
+        edited_headers_json = st.text_area(
+            "固定请求头 JSON",
+            value=auth_row.get("headers_json") or "{}",
+            height=120,
+            help="只放不会过期的请求头，例如 Content-Type、Accept。Cookie、user-info、ssr-token 这类变化字段建议在下面表格配置。",
+        )
+
+        st.markdown("**特殊请求头动态替换**")
+        st.caption("请求头字段很多，这里只配置会变化的特殊字段；普通固定头保留在上面的请求头 JSON。")
+        special_header_rows = st.data_editor(
+            special_header_rows_from_download_row(auth_row),
+            key=f"special_header_rows_{auth_target_index}",
+            num_rows="dynamic",
+            width="stretch",
+            column_config={
+                "enabled": st.column_config.CheckboxColumn("启用", default=True),
+                "header_name": st.column_config.TextColumn("请求头字段", help="例如 user-info、ssr-token、Authorization"),
+                "source_type": st.column_config.SelectboxColumn(
+                    "取值来源",
+                    options=["Cookie", "sessionStorage", "localStorage"],
+                    help="Cookie 适合 ssr-token；sessionStorage 适合 user-info。",
+                ),
+                "source_path": st.column_config.TextColumn(
+                    "来源字段/路径",
+                    help="Cookie 填 Cookie 名；Storage 填路径，例如 zhyyptInfo.accessToken。",
+                    width="large",
+                ),
+            },
+        )
+
+        edited_csrf_headers_json = st.text_area(
+            "动态 CSRF JSON（SSR 专用，可空）",
+            value=auth_row.get("csrf_headers_from_cookies_json") or "{}",
+            height=80,
+            help='例如 {"ssr-header": "ssr-token"}，从 Cookie ssr-header 取真正请求头名，从 ssr-token 取值。',
+        )
+
+        st.markdown("**请求体占位符配置**")
+        body_placeholder_rows = st.data_editor(
+            body_placeholder_rows_from_download_row(auth_row),
+            key=f"body_placeholder_rows_{auth_target_index}",
+            num_rows="dynamic",
+            width="stretch",
+            column_config={
+                "enabled": st.column_config.CheckboxColumn("启用", default=False),
+                "body_field": st.column_config.TextColumn(
+                    "请求体字段",
+                    help="要写入占位符的 body 字段，支持点路径，例如 ext.user_info。",
+                ),
+                "source_type": st.column_config.SelectboxColumn(
+                    "占位符来源",
+                    options=BODY_PLACEHOLDER_OPTIONS,
+                    help="日期/小时不用填来源路径；Storage 需要填写来源字段/路径。",
+                ),
+                "source_path": st.column_config.TextColumn(
+                    "来源字段/路径（Storage 时填写）",
+                    help="选择 sessionStorage/localStorage 时填写，例如 zhyyptInfo.accessToken；选择日期/小时可留空。",
+                    width="large",
+                ),
+            },
+        )
+        edited_data_json = st.text_area(
+            "请求体 data/json",
+            value=auth_row.get("data_json") or "{}",
+            height=140,
+            help="可以直接编辑请求体，也可以用上方表格给某个字段写入 Storage 占位符。",
+        )
+        if st.button("保存高级认证到当前下载行", key="save_download_auth_config"):
+            rows = normalize_table_rows(downloads_rows)
+            while len(rows) <= auth_target_index:
+                rows.append(download_to_form_row({"stage": dl_stage}))
+            cookie_headers = {}
+            session_headers = {}
+            local_headers = {}
+            for special_row in normalize_table_rows(special_header_rows):
+                if not special_row.get("enabled", True):
+                    continue
+                header_name = (special_row.get("header_name") or "").strip()
+                source_type = special_row.get("source_type") or "sessionStorage"
+                source_path = (special_row.get("source_path") or "").strip()
+                if not header_name or not source_path:
+                    continue
+                if source_type == "Cookie":
+                    cookie_headers[header_name] = source_path
+                elif source_type == "sessionStorage":
+                    session_headers[header_name] = source_path
+                elif source_type == "localStorage":
+                    local_headers[header_name] = source_path
+            data_payload = parse_json_object(edited_data_json, {})
+            for body_row in normalize_table_rows(body_placeholder_rows):
+                if not body_row.get("enabled"):
+                    continue
+                body_field = (body_row.get("body_field") or "").strip()
+                source_type = body_row.get("source_type") or "今天 YYYYMMDD"
+                source_path = (body_row.get("source_path") or "").strip()
+                if body_field and (source_type in BODY_PLACEHOLDER_MAP or source_path):
+                    set_nested_dict_value(data_payload, body_field, storage_placeholder(source_type, source_path))
+            static_headers = remove_dynamic_headers_from_static(
+                parse_json_object(edited_headers_json, {}),
+                cookie_headers,
+                session_headers,
+                local_headers,
+            )
+            rows[auth_target_index]["headers_json"] = json_dumps_for_cell(static_headers)
+            rows[auth_target_index]["csrf_headers_from_cookies_json"] = edited_csrf_headers_json or "{}"
+            rows[auth_target_index]["headers_from_cookies_json"] = json_dumps_for_cell(cookie_headers)
+            rows[auth_target_index]["headers_from_session_storage_json"] = json_dumps_for_cell(session_headers)
+            rows[auth_target_index]["headers_from_local_storage_json"] = json_dumps_for_cell(local_headers)
+            rows[auth_target_index]["data_json"] = json_dumps_for_cell(data_payload)
+            rows[auth_target_index]["auth_preset"] = AUTH_PRESET_CUSTOM
+            st.session_state["downloads_rows"] = rows
+            st.success("已保存高级认证配置")
+            st.rerun()
 
     with st.expander("请求识别（粘贴 URL + 请求头 + 请求载体）", expanded=False):
         target_options = [
@@ -1101,6 +1527,18 @@ with col_edit:
             st.write(f"方法：`{parsed_request.get('method')}`，载体类型：`{parsed_request.get('body_type')}`")
             st.code(parsed_request.get("url", ""), language="text")
             st.caption("默认已取消 Cookie、Content-Length、Host、Connection、Accept-Encoding、sec-* 等浏览器运行时头。")
+            parsed_header_names = {
+                (row.get("name") or "").lower()
+                for row in parsed_request.get("header_rows") or []
+                if row.get("enabled", True)
+            }
+            recommendations = []
+            if "user-info" in parsed_header_names or "userinfo" in parsed_header_names:
+                recommendations.append("检测到 `user-info`，回填时会默认改为从 `sessionStorage.zhyyptInfo.accessToken` 动态读取。")
+            if "ssr-token" in parsed_header_names:
+                recommendations.append("检测到 `ssr-token`，回填时会默认改为从 Cookie `ssr-token` 动态读取。")
+            if recommendations:
+                st.info("\n\n".join(recommendations))
             header_rows = st.data_editor(
                 parsed_request.get("header_rows") or [],
                 key="parsed_header_rows_editor",
@@ -1123,10 +1561,27 @@ with col_edit:
                 while len(rows) <= target_index:
                     rows.append(download_to_form_row({}))
                 selected_headers = headers_from_header_rows(normalize_table_rows(header_rows))
+                cookie_header_mapping = parse_json_object(rows[target_index].get("headers_from_cookies_json"), {})
+                session_header_mapping = parse_json_object(rows[target_index].get("headers_from_session_storage_json"), {})
+                for header_name in list(selected_headers.keys()):
+                    if header_name.lower() in {"user-info", "userinfo"} and "user-info" not in session_header_mapping:
+                        selected_headers.pop(header_name, None)
+                        session_header_mapping["user-info"] = "zhyyptInfo.accessToken"
+                    if header_name.lower() == "ssr-token" and "ssr-token" not in cookie_header_mapping:
+                        selected_headers.pop(header_name, None)
+                        cookie_header_mapping["ssr-token"] = "ssr-token"
                 rows[target_index]["stage"] = rows[target_index].get("stage") or dl_stage
+                if session_header_mapping.get("user-info") == "zhyyptInfo.accessToken":
+                    rows[target_index]["auth_preset"] = AUTH_PRESET_SMART_OPS
+                elif cookie_header_mapping.get("ssr-token") == "ssr-token":
+                    rows[target_index]["auth_preset"] = AUTH_PRESET_SSR
+                else:
+                    rows[target_index]["auth_preset"] = rows[target_index].get("auth_preset") or AUTH_PRESET_NONE
                 rows[target_index]["method"] = parsed_request.get("method") or "POST"
                 rows[target_index]["url"] = parsed_request.get("url") or rows[target_index].get("url", "")
                 rows[target_index]["headers_json"] = json_dumps_for_cell(selected_headers)
+                rows[target_index]["headers_from_cookies_json"] = json_dumps_for_cell(cookie_header_mapping)
+                rows[target_index]["headers_from_session_storage_json"] = json_dumps_for_cell(session_header_mapping)
                 rows[target_index]["body_type"] = parsed_request.get("body_type") or "form"
                 rows[target_index]["data_json"] = json_dumps_for_cell(parsed_request.get("data", {}))
                 rows[target_index]["raw_body"] = parsed_request.get("raw_body", "")
@@ -1138,10 +1593,6 @@ with col_edit:
                 st.success(f"已回填到第 {target_index + 1} 行")
                 st.rerun()
 
-    st.caption(
-        "占位符支持：`${today}`(YYYY-MM-DD), `${yesterday}`(前一天 YYYY-MM-DD), "
-        "`${yesterday_yyyymmdd}`(前一天 YYYYMMDD), `${hour}`(0-23), `${hour2}`(00-23)"
-    )
     with st.expander("预览第一行请求占位符替换结果", expanded=False):
         if st.button("生成预览", key="preview_dl_data_tokens"):
             try:
@@ -1258,11 +1709,9 @@ with col_edit:
                 index=write_sheets_options.index(write_sheets_value),
                 help="changed 只写变化 sheet；all_compared 写所有参与比较的 sheet。",
             )
-    with st.expander("高级：数据变化规则说明", expanded=False):
-        st.markdown(
-            "- `数据变化判断条件` 只影响比对结果为 changed/same 的判定。\n"
-            "- `数据变化时写入范围` 只影响需要按变化更新模板的场景。\n"
-            "- 选择 `直接发送当前通报` 时，会隐藏这些高级项并按当前通报直接发送。"
+    if not send_when_same_value:
+        st.caption(
+            "提示：数据变化判断条件决定 changed/same；数据变化时写入范围决定更新模板时写哪些 sheet。"
         )
 
     with st.expander("高级 JSON 预览", expanded=False):
@@ -1480,3 +1929,4 @@ with col_edit:
                 else:
                     st.error("部署失败")
                     st.code(output)
+

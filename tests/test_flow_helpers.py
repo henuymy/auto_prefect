@@ -89,6 +89,7 @@ def test_resolve_dynamic_placeholders_supports_today_and_hour():
 
     now = datetime(2026, 3, 14, 16, 30, 0)
     assert resolve_dynamic_placeholders("${today}", now=now) == "2026-03-14"
+    assert resolve_dynamic_placeholders("${today_yyyymmdd}", now=now) == "20260314"
     assert resolve_dynamic_placeholders("${yesterday}", now=now) == "2026-03-13"
     assert resolve_dynamic_placeholders("${yesterday_yyyymmdd}", now=now) == "20260313"
     assert resolve_dynamic_placeholders("${hour}", now=now) == "16"
@@ -168,6 +169,7 @@ def test_build_download_config_complete_request_does_not_inherit_ssr_headers():
                 "Content-Type": "application/json",
                 "user-info": "abc",
             },
+            "headers_from_session_storage": {"user-info": "zhyyptInfo.accessToken"},
             "body_type": "json",
             "data": {"date": "${today}"},
         }
@@ -180,9 +182,11 @@ def test_build_download_config_complete_request_does_not_inherit_ssr_headers():
         "Content-Type": "application/json",
         "user-info": "abc",
     }
+    assert report["headers_from_session_storage"] == {"user-info": "zhyyptInfo.accessToken"}
     assert "headers_from_cookies" not in report
     assert "csrf_headers_from_cookies" not in report
     assert report["allow_redirects"] is True
+
 
 
 def test_build_compare_source_configs_maps_download_outputs():
@@ -259,3 +263,4 @@ def test_aggregate_compare_results_all_changed_passes_when_all_changed():
 
     assert result["result"] == "changed"
     assert result["summary"]["total"] == 1
+

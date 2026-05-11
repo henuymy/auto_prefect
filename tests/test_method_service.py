@@ -3,6 +3,8 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
+import requests
+
 from services.method_service import (
     build_request_kwargs,
     build_headers,
@@ -10,6 +12,7 @@ from services.method_service import (
     filename_from_content_disposition,
     find_stage,
     output_filename_for_report,
+    raise_for_status_with_context,
 )
 
 
@@ -50,6 +53,29 @@ def test_find_stage_and_build_headers_from_cookies():
     assert headers["X-CSRF-TOKEN"] == "token-value"
 
 
+def test_build_headers_from_session_storage_json_path():
+    stage = {
+        "cookies": [],
+        "session_storage": {
+            "zhyyptInfo": json.dumps(
+                {
+                    "accessToken": "dynamic-user-info",
+                    "areaId": "AQ",
+                }
+            )
+        },
+    }
+    report = {
+        "headers": {"Content-Type": "application/json"},
+        "headers_from_session_storage": {"user-info": "zhyyptInfo.accessToken"},
+    }
+
+    headers = build_headers(report, stage)
+
+    assert headers["Content-Type"] == "application/json"
+    assert headers["user-info"] == "dynamic-user-info"
+
+
 def test_filename_from_content_disposition_utf8():
     filename = filename_from_content_disposition(
         "attachment; filename*=UTF-8''%E6%97%A5%E9%80%9A%E6%8A%A5.xls",
@@ -83,6 +109,55 @@ def test_build_request_kwargs_sends_json_body_type_as_json():
 
     assert kwargs["json"] == {"date": "${today}"}
     assert "data" not in kwargs
+
+
+def test_build_request_kwargs_resolves_session_storage_tokens_in_body():
+    stage = {
+        "cookies": [],
+        "session_storage": {
+            "zhyyptInfo": json.dumps({"accessToken": "dynamic-user-info"})
+        },
+    }
+    report = {
+        "headers": {"user-info": "${session_storage:zhyyptInfo.accessToken}"},
+        "body_type": "json",
+        "data": {"user_info": "${session_storage:zhyyptInfo.accessToken}"},
+    }
+
+    kwargs = build_request_kwargs(report, stage, 30, False, None)
+
+    assert kwargs["headers"]["user-info"] == "dynamic-user-info"
+    assert kwargs["json"]["user_info"] == "dynamic-user-info"
+
+
+class FakeRequest:
+    method = "POST"
+
+
+class FakeResponse:
+    def __init__(self, status_code, text, url="https://example/export"):
+        self.status_code = status_code
+        self.text = text
+        self.url = url
+        self.headers = {"Content-Type": "application/json"}
+        self.request = FakeRequest()
+
+    def raise_for_status(self):
+        raise requests.HTTPError("failed")
+
+
+def test_raise_for_status_treats_401_json_login_as_session_expired():
+    response = FakeResponse(
+        401,
+        '{"status":401,"error":"Unauthorized","message":"http://example/login.jsp"}',
+    )
+
+    try:
+        raise_for_status_with_context(response)
+    except RuntimeError as exc:
+        assert "session 已过期" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
 
 
 def test_build_request_kwargs_sends_raw_body_as_data():
@@ -150,3 +225,4 @@ def test_download_reports_dry_run_writes_manifest():
         assert manifest_path.exists()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+

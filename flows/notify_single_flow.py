@@ -76,6 +76,7 @@ def resolve_dynamic_placeholders(value, now=None):
     yesterday = now - timedelta(days=1)
     replacements = {
         "${today}": now.strftime("%Y-%m-%d"),
+        "${today_yyyymmdd}": now.strftime("%Y%m%d"),
         "${yesterday}": yesterday.strftime("%Y-%m-%d"),
         "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
         "${hour}": str(now.hour),
@@ -98,7 +99,15 @@ def resolve_dynamic_structure(payload, now=None):
 def is_complete_download_config(report_override):
     return any(
         key in report_override
-        for key in ("method", "body_type", "headers", "json", "raw_body")
+        for key in (
+            "method",
+            "body_type",
+            "headers",
+            "headers_from_session_storage",
+            "headers_from_local_storage",
+            "json",
+            "raw_body",
+        )
     )
 
 
@@ -112,6 +121,8 @@ def merge_download_defaults(download_defaults, report_override):
             "headers",
             "headers_from_cookies",
             "csrf_headers_from_cookies",
+            "headers_from_session_storage",
+            "headers_from_local_storage",
             "data",
             "json",
             "raw_body",

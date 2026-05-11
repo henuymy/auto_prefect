@@ -63,12 +63,97 @@ def find_cookie_value(stage, cookie_name):
     return None
 
 
+def parse_storage_json(value):
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
+def get_nested_value(value, path_parts):
+    current = parse_storage_json(value)
+    for part in path_parts:
+        if isinstance(current, str):
+            current = parse_storage_json(current)
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit():
+            index = int(part)
+            current = current[index] if index < len(current) else None
+        else:
+            return None
+        if current is None:
+            return None
+    return current
+
+
+def find_storage_value(stage, storage_path, storage_type="session_storage"):
+    if not storage_path:
+        return None
+    storages = []
+    if storage_type in {"session_storage", "session"}:
+        storages.append(stage.get("session_storage") or {})
+    elif storage_type in {"local_storage", "local"}:
+        storages.append(stage.get("local_storage") or {})
+    else:
+        storages.extend([stage.get("session_storage") or {}, stage.get("local_storage") or {}])
+
+    parts = str(storage_path).split(".")
+    key = parts[0]
+    nested_path = parts[1:]
+    for storage in storages:
+        if key not in storage:
+            continue
+        value = storage.get(key)
+        if nested_path:
+            value = get_nested_value(value, nested_path)
+        if value is None:
+            continue
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+    return None
+
+
+STORAGE_TOKEN_PATTERN = re.compile(r"\$\{(session_storage|local_storage):([^}]+)\}")
+
+
+def resolve_storage_references(value, stage):
+    if isinstance(value, dict):
+        return {key: resolve_storage_references(item, stage) for key, item in value.items()}
+    if isinstance(value, list):
+        return [resolve_storage_references(item, stage) for item in value]
+    if not isinstance(value, str):
+        return value
+
+    exact_match = STORAGE_TOKEN_PATTERN.fullmatch(value.strip())
+    if exact_match:
+        resolved = find_storage_value(stage, exact_match.group(2).strip(), exact_match.group(1))
+        return resolved if resolved is not None else value
+
+    def replace_match(match):
+        resolved = find_storage_value(stage, match.group(2).strip(), match.group(1))
+        return resolved if resolved is not None else match.group(0)
+
+    return STORAGE_TOKEN_PATTERN.sub(replace_match, value)
+
+
 def build_headers(report, stage):
-    headers = dict(report.get("headers") or {})
+    headers = resolve_storage_references(dict(report.get("headers") or {}), stage)
     for header_name, cookie_name in (report.get("headers_from_cookies") or {}).items():
         cookie_value = find_cookie_value(stage, cookie_name)
         if cookie_value:
             headers[header_name] = cookie_value
+    for header_name, storage_path in (report.get("headers_from_session_storage") or {}).items():
+        storage_value = find_storage_value(stage, storage_path, storage_type="session_storage")
+        if storage_value:
+            headers[header_name] = storage_value
+    for header_name, storage_path in (report.get("headers_from_local_storage") or {}).items():
+        storage_value = find_storage_value(stage, storage_path, storage_type="local_storage")
+        if storage_value:
+            headers[header_name] = storage_value
     for header_cookie_name, value_cookie_name in (report.get("csrf_headers_from_cookies") or {}).items():
         header_name = find_cookie_value(stage, header_cookie_name)
         header_value = find_cookie_value(stage, value_cookie_name)
@@ -140,7 +225,7 @@ def output_filename_for_report(report, response_filename):
 def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
     kwargs = {
         "headers": build_headers(report, stage),
-        "params": report.get("params") or None,
+        "params": resolve_storage_references(report.get("params"), stage) or None,
         "timeout": timeout,
         "verify": verify_ssl,
         "allow_redirects": bool(report.get("allow_redirects", False)),
@@ -150,13 +235,13 @@ def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
 
     body_type = (report.get("body_type") or "").lower().strip()
     if "json" in report:
-        kwargs["json"] = report["json"]
+        kwargs["json"] = resolve_storage_references(report["json"], stage)
     elif body_type == "json":
-        kwargs["json"] = report.get("data", {})
+        kwargs["json"] = resolve_storage_references(report.get("data", {}), stage)
     elif body_type == "raw":
-        kwargs["data"] = report.get("raw_body", "")
+        kwargs["data"] = resolve_storage_references(report.get("raw_body", ""), stage)
     elif "data" in report:
-        kwargs["data"] = report["data"]
+        kwargs["data"] = resolve_storage_references(report["data"], stage)
     return kwargs
 
 
@@ -170,6 +255,14 @@ def request_report(session, report, stage, timeout, verify_ssl, proxies):
 def raise_for_status_with_context(response):
     if 200 <= response.status_code < 300:
         return
+    body_preview = response.text[:500].replace("\r", " ").replace("\n", " ")
+    lowered_preview = body_preview.lower()
+    if response.status_code in {401, 403} or "unauthorized" in lowered_preview or "login.jsp" in lowered_preview:
+        raise RuntimeError(
+            "下载认证失效（session 已过期），需要重新登录后重试: "
+            f"HTTP {response.status_code} {response.request.method} {response.url}; "
+            f"body_preview={body_preview}"
+        )
     try:
         response.raise_for_status()
     except requests.HTTPError as exc:
@@ -179,7 +272,7 @@ def raise_for_status_with_context(response):
             "url": response.url,
             "allow": response.headers.get("Allow"),
             "content_type": response.headers.get("Content-Type"),
-            "body_preview": response.text[:500].replace("\r", " ").replace("\n", " "),
+            "body_preview": body_preview,
         }
         raise RuntimeError(f"下载接口返回错误: {details}") from exc
     raise RuntimeError(f"下载接口返回非文件状态码: HTTP {response.status_code}")
