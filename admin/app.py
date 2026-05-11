@@ -341,6 +341,19 @@ def parse_json_object(value, default=None):
     return parsed if isinstance(parsed, dict) else default
 
 
+def normalize_storage_path(value):
+    if isinstance(value, str):
+        return value.replace("zhyptInfo.", "zhyyptInfo.")
+    return value
+
+
+def normalize_storage_mapping(mapping: dict) -> dict:
+    return {
+        key: normalize_storage_path(value)
+        for key, value in (mapping or {}).items()
+    }
+
+
 def default_body_type_for_download(item: dict) -> str:
     if item.get("body_type"):
         return item.get("body_type")
@@ -389,7 +402,7 @@ def default_csrf_headers_from_cookies_for_download(item: dict) -> dict:
 def infer_auth_preset(item: dict) -> str:
     if item.get("auth_preset") in AUTH_PRESET_OPTIONS:
         return item.get("auth_preset")
-    session_mapping = item.get("headers_from_session_storage") or {}
+    session_mapping = normalize_storage_mapping(item.get("headers_from_session_storage") or {})
     cookie_mapping = item.get("headers_from_cookies") or {}
     csrf_mapping = item.get("csrf_headers_from_cookies") or {}
     if session_mapping.get("user-info") == "zhyyptInfo.accessToken":
@@ -443,6 +456,8 @@ def special_header_rows_from_download_row(row: dict) -> list[dict]:
         ("headers_from_local_storage_json", "localStorage"),
     ):
         mapping = parse_json_object(row.get(source_key), {})
+        if source_label in {"sessionStorage", "localStorage"}:
+            mapping = normalize_storage_mapping(mapping)
         for header_name, source_path in mapping.items():
             rows.append({
                 "enabled": True,
@@ -549,8 +564,12 @@ def download_to_form_row(item: dict) -> dict:
         "headers_json": json_dumps_for_cell(default_headers_for_download(item)),
         "headers_from_cookies_json": json_dumps_for_cell(default_headers_from_cookies_for_download(item)),
         "csrf_headers_from_cookies_json": json_dumps_for_cell(default_csrf_headers_from_cookies_for_download(item)),
-        "headers_from_session_storage_json": json_dumps_for_cell(item.get("headers_from_session_storage") or {}),
-        "headers_from_local_storage_json": json_dumps_for_cell(item.get("headers_from_local_storage") or {}),
+        "headers_from_session_storage_json": json_dumps_for_cell(
+            normalize_storage_mapping(item.get("headers_from_session_storage") or {})
+        ),
+        "headers_from_local_storage_json": json_dumps_for_cell(
+            normalize_storage_mapping(item.get("headers_from_local_storage") or {})
+        ),
         "body_type": body_type,
         "data_json": json_dumps_for_cell(data_value or {}),
         "raw_body": item.get("raw_body", ""),
@@ -750,9 +769,9 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
         if csrf_headers_from_cookies:
             item["csrf_headers_from_cookies"] = csrf_headers_from_cookies
         if headers_from_session_storage:
-            item["headers_from_session_storage"] = headers_from_session_storage
+            item["headers_from_session_storage"] = normalize_storage_mapping(headers_from_session_storage)
         if headers_from_local_storage:
-            item["headers_from_local_storage"] = headers_from_local_storage
+            item["headers_from_local_storage"] = normalize_storage_mapping(headers_from_local_storage)
         item["headers"] = remove_dynamic_headers_from_static(
             item.get("headers") or {},
             item.get("headers_from_cookies") or {},
@@ -799,6 +818,12 @@ def form_rows_to_download_drafts(rows: list[dict], default_stage: str) -> list[d
             except json.JSONDecodeError:
                 parsed = default_value
             item[target_key] = parsed
+        item["headers_from_session_storage"] = normalize_storage_mapping(
+            item.get("headers_from_session_storage") or {}
+        )
+        item["headers_from_local_storage"] = normalize_storage_mapping(
+            item.get("headers_from_local_storage") or {}
+        )
         if row.get("raw_body"):
             item["raw_body"] = row.get("raw_body")
         if item.get("auth_preset") != AUTH_PRESET_CUSTOM:
@@ -1392,7 +1417,7 @@ with col_edit:
                     continue
                 header_name = (special_row.get("header_name") or "").strip()
                 source_type = special_row.get("source_type") or "sessionStorage"
-                source_path = (special_row.get("source_path") or "").strip()
+                source_path = normalize_storage_path((special_row.get("source_path") or "").strip())
                 if not header_name or not source_path:
                     continue
                 if source_type == "Cookie":
@@ -1407,7 +1432,7 @@ with col_edit:
                     continue
                 body_field = (body_row.get("body_field") or "").strip()
                 source_type = body_row.get("source_type") or "今天 YYYYMMDD"
-                source_path = (body_row.get("source_path") or "").strip()
+                source_path = normalize_storage_path((body_row.get("source_path") or "").strip())
                 if body_field and (source_type in BODY_PLACEHOLDER_MAP or source_path):
                     set_nested_dict_value(data_payload, body_field, storage_placeholder(source_type, source_path))
             static_headers = remove_dynamic_headers_from_static(
@@ -1565,6 +1590,7 @@ with col_edit:
                 selected_headers = headers_from_header_rows(normalize_table_rows(header_rows))
                 cookie_header_mapping = parse_json_object(rows[target_index].get("headers_from_cookies_json"), {})
                 session_header_mapping = parse_json_object(rows[target_index].get("headers_from_session_storage_json"), {})
+                session_header_mapping = normalize_storage_mapping(session_header_mapping)
                 for header_name in list(selected_headers.keys()):
                     if header_name.lower() in {"user-info", "userinfo"} and "user-info" not in session_header_mapping:
                         selected_headers.pop(header_name, None)

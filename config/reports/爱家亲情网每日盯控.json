@@ -19,7 +19,7 @@
     },
     "body_type": "json",
     "headers_from_session_storage": {
-      "user-info": "zhyptInfo.accessToken"
+      "user-info": "zhyyptInfo.accessToken"
     },
     "data": {
       "areaId": "AQ",
@@ -78,7 +78,7 @@
       },
       "body_type": "json",
       "headers_from_session_storage": {
-        "user-info": "zhyptInfo.accessToken"
+        "user-info": "zhyyptInfo.accessToken"
       },
       "data": {
         "areaId": "AQ",
@@ -108,7 +108,7 @@
       },
       "body_type": "json",
       "headers_from_session_storage": {
-        "user-info": "zhyptInfo.accessToken"
+        "user-info": "zhyyptInfo.accessToken"
       },
       "data": {
         "areaId": "AQ",
