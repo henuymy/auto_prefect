@@ -17,6 +17,15 @@ from services.otp_service import delete_message, prepare_wait_context, wait_for_
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
+def xpath_literal(value: str) -> str:
+    if "'" not in value:
+        return f"'{value}'"
+    if '"' not in value:
+        return f'"{value}"'
+    parts = value.split("'")
+    return "concat(" + ', "\'", '.join(f"'{part}'" for part in parts) + ")"
+
+
 def popup_input(prompt: str, title: str = "输入") -> str:
     try:
         import tkinter as tk
@@ -274,6 +283,8 @@ class AutoLogin:
         for locator in [
             (By.ID, "p1050000"),
             (By.XPATH, "//li[@id='p1050000']"),
+            (By.XPATH, "//li[contains(@href, '/uac/web3/jsp/resource/app/appRes3.action')]"),
+            (By.XPATH, "//*[@href='/uac/web3/jsp/resource/app/appRes3.action' or contains(@href, 'appRes3.action')]"),
             (By.XPATH, "//li[contains(text(),'应用登录')]"),
             (By.CSS_SELECTOR, "li#p1050000"),
         ]:
@@ -286,19 +297,78 @@ class AutoLogin:
     def switch_to_app_login_frame(self):
         self.driver.switch_to.default_content()
         wait = WebDriverWait(self.driver, 30)
-        self.driver.switch_to.frame(wait.until(EC.presence_of_element_located((By.ID, "title5tab"))))
-        container = WebDriverWait(self.driver, 10).until(
-            EC.presence_of_element_located((By.ID, "appLoginChoose_div0"))
-        )
-        self.driver.switch_to.frame(WebDriverWait(container, 10).until(lambda e: e.find_element(By.TAG_NAME, "iframe")))
+        frame = None
+        for locator in [
+            (By.CSS_SELECTOR, "iframe#title5tab"),
+            (By.XPATH, "//iframe[contains(@src, '/uac/web3/jsp/resource/app/appRes3.action')]"),
+            (By.XPATH, "//iframe[contains(@src, 'appRes3.action')]"),
+        ]:
+            try:
+                frame = wait.until(EC.presence_of_element_located(locator))
+                break
+            except TimeoutException:
+                continue
+        if frame is None:
+            raise RuntimeError("未找到应用登录 iframe：title5tab / appRes3.action")
+        self.driver.switch_to.frame(frame)
+        wait.until(EC.presence_of_element_located((By.ID, "viewdatalist")))
+        wait.until(EC.presence_of_element_located((By.XPATH, "//*[starts-with(@id,'appLogin_div')]")))
 
     def open_usm_from_app_access(self):
-        self.wait_and_click((By.ID, "appAccess"), timeout=30)
+        entry_config = self.config.get("app_login_entry") or {}
+        entry_name = entry_config.get("name")
+        if entry_name:
+            entry_name_literal = xpath_literal(entry_name)
+            title_xpath = (
+                "//div[starts-with(@id,'appLogin_div')"
+                " and ("
+                f" .//*[contains(@id,'appNameDiv') and contains(normalize-space(.), {entry_name_literal})]"
+                f" or contains(normalize-space(.), {entry_name_literal})"
+                " )]"
+            )
+            title_card = WebDriverWait(self.driver, 30).until(
+                EC.presence_of_element_located((By.XPATH, title_xpath))
+            )
+            title_id = title_card.get_attribute("id") or ""
+            suffix = title_id.replace("appLogin_div", "")
+            if not suffix.isdigit():
+                raise RuntimeError(f"无法从应用卡片 id 推断入口编号: {title_id}")
+            print(f"[INFO] 应用登录入口匹配到: {entry_name} -> {title_id}")
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", title_card)
+            self.driver.execute_script("arguments[0].click();", title_card)
+            choose_div_id = f"appLoginChoose_div{suffix}"
+            choose_div = WebDriverWait(self.driver, 30).until(
+                lambda d: self._visible_element_by_id(choose_div_id)
+            )
+            self.driver.switch_to.frame(
+                WebDriverWait(choose_div, 10).until(lambda e: e.find_element(By.TAG_NAME, "iframe"))
+            )
+            login_button = self.find_entry_login_button()
+        else:
+            raise ValueError("login_config.json 缺少 app_login_entry.name，不能按位置点击应用登录入口")
+        self.driver.execute_script("arguments[0].click();", login_button)
         try:
             WebDriverWait(self.driver, 5).until(lambda d: len(d.window_handles) > 1)
             self.driver.switch_to.window(self.driver.window_handles[-1])
         except TimeoutException:
             pass
+
+    def _visible_element_by_id(self, element_id):
+        element = self.driver.find_element(By.ID, element_id)
+        if element.is_displayed() and element.value_of_css_property("display") != "none":
+            return element
+        return False
+
+    def find_entry_login_button(self):
+        for locator in [
+            (By.ID, "appAccess"),
+            (By.XPATH, "//*[@id='appAccess' or contains(normalize-space(.), '登录') or contains(@value, '登录')]"),
+        ]:
+            try:
+                return WebDriverWait(self.driver, 15).until(EC.element_to_be_clickable(locator))
+            except TimeoutException:
+                continue
+        raise RuntimeError("已进入应用入口 iframe，但未找到登录按钮")
 
     def access_usm_console(self):
         usm_host = self.get_usm_host()
