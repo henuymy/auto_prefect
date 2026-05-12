@@ -374,6 +374,35 @@ Cookie Stage
 等待重试 wait_for_change
 ```
 
+## NiceGUI 配置页面
+
+新版配置页面与 `admin/app.py` 完全隔离，适合用卡片和弹窗维护复杂下载配置：
+
+```powershell
+python -m admin_nicegui.app
+```
+
+启动后打开：
+
+```text
+http://127.0.0.1:8080
+```
+
+说明：
+
+```text
+admin/app.py          旧 Streamlit 后台，继续保留
+admin_nicegui/app.py  新 NiceGUI 后台，独立实现，不引用 admin/app.py
+```
+
+NiceGUI 下载项可以混用多种响应处理方式：
+
+```text
+file                    接口直接返回 Excel/文件
+json_to_excel           JSON 响应转 Excel
+json_drilldown_to_excel 地市作战级联下钻后转 Excel
+```
+
 ## Runtime 运行产物
 
 `runtime/` 是每次运行过程中生成的中间产物和结果文件目录，默认不需要手动编辑。

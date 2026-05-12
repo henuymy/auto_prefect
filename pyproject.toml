@@ -9,6 +9,8 @@ dependencies = [
   "selenium>=4.0.0",
   "asyncpg>=0.29.0",
   "streamlit>=1.40.0",
+  "nicegui>=2.0.0",
+  "openpyxl>=3.1.0",
   "pywin32>=306; platform_system == 'Windows'",
 ]
 
