@@ -42,7 +42,12 @@
       "stage": "city_ops",
       "name": "地市作战平台",
       "source_stage": "usm_console",
-      "icon_src_contains": "dszzIcon"
+      "icon_src_contains": "dszzIcon",
+      "storage_ready": {
+        "type": "session_storage",
+        "path": "uapToken",
+        "timeout_seconds": 45
+      }
     },
     {"stage": "data_market", "name": "数据超市"}
   ],

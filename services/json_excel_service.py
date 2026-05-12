@@ -1,0 +1,173 @@
+"""Helpers for converting JSON API responses to Excel files."""
+
+from __future__ import annotations
+
+import copy
+from collections import deque
+from pathlib import Path
+from typing import Callable
+
+from openpyxl import Workbook
+
+
+def get_by_path(payload, path: str):
+    current = payload
+    for part in [item.strip() for item in str(path or "").split(".") if item.strip()]:
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit():
+            index = int(part)
+            current = current[index] if index < len(current) else None
+        else:
+            return None
+    return current
+
+
+def validate_success_response(payload):
+    if isinstance(payload, dict) and payload.get("reCode") not in (None, "0000"):
+        raise RuntimeError(
+            f"JSON 接口返回失败: reCode={payload.get('reCode')}, reMsg={payload.get('reMsg')}"
+        )
+
+
+def normalize_columns(excel_config: dict):
+    columns = excel_config.get("columns") or []
+    normalized = []
+    for column in columns:
+        field = (column.get("field") or "").strip()
+        header = (column.get("header") or field).strip()
+        if field:
+            normalized.append({"field": field, "header": header})
+    if not normalized:
+        raise ValueError("excel.columns 不能为空")
+    return normalized
+
+
+def extract_rows(payload, data_path: str):
+    validate_success_response(payload)
+    rows = get_by_path(payload, data_path)
+    if rows is None:
+        raise RuntimeError(f"JSON 响应中找不到数据路径: {data_path}")
+    if not isinstance(rows, list):
+        raise RuntimeError(f"JSON 数据路径不是数组: {data_path}")
+    return rows
+
+
+def write_rows_to_excel(rows: list[dict], output_path, excel_config: dict):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    columns = normalize_columns(excel_config)
+    sheet_name = excel_config.get("sheet_name") or "Sheet1"
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = str(sheet_name)[:31] or "Sheet1"
+    worksheet.append([column["header"] for column in columns])
+    for row in rows:
+        worksheet.append([get_by_path(row, column["field"]) for column in columns])
+    workbook.save(output_path)
+    return {
+        "rows": len(rows),
+        "sheet_name": worksheet.title,
+        "output_path": str(output_path),
+    }
+
+
+def json_response_to_excel(response_json, output_path, excel_config: dict):
+    data_path = excel_config.get("data_path") or "result.tableData"
+    rows = extract_rows(response_json, data_path)
+    return write_rows_to_excel(rows, output_path, excel_config)
+
+
+def set_by_path(payload: dict, path: str, value):
+    parts = [item.strip() for item in str(path or "").split(".") if item.strip()]
+    if not parts:
+        return payload
+    current = payload
+    for part in parts[:-1]:
+        child = current.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            current[part] = child
+        current = child
+    current[parts[-1]] = value
+    return payload
+
+
+def drilldown_json_to_excel(
+    initial_payload: dict,
+    fetch_next: Callable[[dict], dict],
+    output_path,
+    drilldown_config: dict,
+    excel_config: dict,
+    initial_response_json=None,
+):
+    data_path = drilldown_config.get("data_path") or "result.tableData"
+    next_area_field = drilldown_config.get("next_area_field") or "areaCode"
+    request_area_field = drilldown_config.get("request_area_field") or "areaId"
+    levels = drilldown_config.get("levels") or ["区县", "网格", "渠道/门店", "人员"]
+    max_requests = int(drilldown_config.get("max_requests") or 1000)
+
+    initial_area_id = get_by_path(initial_payload, request_area_field)
+    queue = deque([
+        {
+            "payload": copy.deepcopy(initial_payload),
+            "level_index": 0,
+            "parent_area_id": "",
+            "request_area_id": initial_area_id,
+            "response": initial_response_json,
+        }
+    ])
+    requested = set()
+    if initial_area_id:
+        requested.add(str(initial_area_id))
+
+    all_rows = []
+    request_count = 0
+    while queue:
+        item = queue.popleft()
+        level_index = int(item["level_index"])
+        level_name = levels[level_index] if level_index < len(levels) else f"层级{level_index + 1}"
+        response_json = item.get("response")
+        if response_json is None:
+            response_json = fetch_next(item["payload"])
+            request_count += 1
+        if request_count > max_requests:
+            raise RuntimeError(f"级联下钻超过最大请求数: {max_requests}")
+
+        rows = extract_rows(response_json, data_path)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            enriched = {
+                **row,
+                "__level_index": level_index,
+                "__level_name": level_name,
+                "__parent_area_id": item.get("parent_area_id") or "",
+                "__request_area_id": item.get("request_area_id") or "",
+            }
+            all_rows.append(enriched)
+
+            next_area_id = row.get(next_area_field)
+            if level_index >= len(levels) - 1 or not next_area_id:
+                continue
+            next_area_id = str(next_area_id)
+            if next_area_id in requested:
+                continue
+            requested.add(next_area_id)
+            next_payload = copy.deepcopy(item["payload"])
+            set_by_path(next_payload, request_area_field, next_area_id)
+            queue.append({
+                "payload": next_payload,
+                "level_index": level_index + 1,
+                "parent_area_id": item.get("request_area_id") or "",
+                "request_area_id": next_area_id,
+                "response": None,
+            })
+
+    write_result = write_rows_to_excel(all_rows, output_path, excel_config)
+    return {
+        **write_result,
+        "requests": request_count,
+        "levels": levels,
+    }

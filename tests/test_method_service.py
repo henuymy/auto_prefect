@@ -8,6 +8,7 @@ import requests
 from services.method_service import (
     build_request_kwargs,
     build_headers,
+    build_cookie_string,
     download_reports,
     filename_from_content_disposition,
     find_stage,
@@ -74,6 +75,23 @@ def test_build_headers_from_session_storage_json_path():
 
     assert headers["Content-Type"] == "application/json"
     assert headers["User-Info"] == "dynamic-user-info"
+
+
+def test_build_headers_from_cookie_string_for_uap_token():
+    stage = {
+        "cookies": [
+            {"name": "JSESSIONID", "value": "abc"},
+            {"name": "locale_cookie", "value": "zh_CN"},
+        ]
+    }
+    report = {
+        "headers_from_cookie_string": {"uapToken": "*"},
+    }
+
+    headers = build_headers(report, stage)
+
+    assert headers["uapToken"] == "JSESSIONID=abc; locale_cookie=zh_CN"
+    assert build_cookie_string(stage, ["JSESSIONID"]) == "JSESSIONID=abc"
 
 
 def test_build_headers_missing_session_storage_value_triggers_session_retry():
@@ -158,12 +176,16 @@ class FakeResponse:
     def __init__(self, status_code, text, url="https://example/export"):
         self.status_code = status_code
         self.text = text
+        self.content = text.encode("utf-8")
         self.url = url
         self.headers = {"Content-Type": "application/json"}
         self.request = FakeRequest()
 
     def raise_for_status(self):
         raise requests.HTTPError("failed")
+
+    def json(self):
+        return json.loads(self.text)
 
 
 def test_raise_for_status_treats_401_json_login_as_session_expired():
@@ -243,6 +265,74 @@ def test_download_reports_dry_run_writes_manifest():
         assert manifest["dry_run"] is True
         assert manifest["results"][0]["request_summary"]["method"] == "POST"
         assert manifest_path.exists()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_download_reports_json_to_excel_writes_output(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        manifest_path = work_dir / "manifest.json"
+        output_dir = work_dir / "downloads"
+        write_json(cookie_dump_path, {"stages": [{"stage": "city_ops", "cookies": []}]})
+
+        class FakeSession:
+            trust_env = False
+
+            def __init__(self):
+                self.cookies = requests.cookies.RequestsCookieJar()
+                self.headers = {}
+
+            def request(self, method, url, **kwargs):
+                response = FakeResponse(
+                    200,
+                    json.dumps(
+                        {
+                            "reCode": "0000",
+                            "result": {
+                                "tableData": [
+                                    {"areaName": "西流湖网格", "areaCode": "AQ726", "sgs_ajvwdz": "5"}
+                                ]
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                    url=url,
+                )
+                response.request.method = method
+                return response
+
+        monkeypatch.setattr("services.method_service.requests.Session", FakeSession)
+
+        manifest = download_reports(
+            {
+                "cookie_dump_path": str(cookie_dump_path),
+                "manifest_path": str(manifest_path),
+                "output_dir": str(output_dir),
+                "reports": [
+                    {
+                        "name": "地市作战",
+                        "stage": "city_ops",
+                        "method": "POST",
+                        "url": "https://example/json",
+                        "body_type": "json",
+                        "data": {"areaId": "AQ726"},
+                        "response_mode": "json_to_excel",
+                        "excel": {
+                            "data_path": "result.tableData",
+                            "sheet_name": "地市作战明细",
+                            "columns": [{"field": "areaName", "header": "名称"}],
+                        },
+                    }
+                ],
+            }
+        )
+
+        result = manifest["results"][0]
+        assert result["response_mode"] == "json_to_excel"
+        assert result["rows"] == 1
+        assert Path(result["output_path"]).exists()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 

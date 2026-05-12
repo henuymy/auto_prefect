@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import json
 import re
+import copy
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import requests
 from urllib3.exceptions import InsecureRequestWarning
+
+from services.json_excel_service import (
+    drilldown_json_to_excel,
+    get_by_path,
+    json_response_to_excel,
+    set_by_path,
+)
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
@@ -61,6 +69,20 @@ def find_cookie_value(stage, cookie_name):
         if cookie.get("name") == cookie_name:
             return cookie.get("value")
     return None
+
+
+def build_cookie_string(stage, cookie_names=None):
+    allowed_names = set(cookie_names or [])
+    pairs = []
+    for cookie in stage.get("cookies", []):
+        name = cookie.get("name")
+        value = cookie.get("value")
+        if not name or value is None:
+            continue
+        if allowed_names and name not in allowed_names:
+            continue
+        pairs.append(f"{name}={value}")
+    return "; ".join(pairs)
 
 
 def parse_storage_json(value):
@@ -162,6 +184,14 @@ def build_headers(report, stage):
                 "session 已过期或页面尚未写入 Storage"
             )
         headers[header_name] = storage_value
+    for header_name, cookie_names in (report.get("headers_from_cookie_string") or {}).items():
+        selected_names = None if cookie_names in (None, "*") else cookie_names
+        if isinstance(selected_names, str):
+            selected_names = [item.strip() for item in selected_names.split(",") if item.strip()]
+        cookie_string = build_cookie_string(stage, selected_names)
+        if not cookie_string:
+            raise RuntimeError(f"动态请求头 {header_name} 未能从 Cookie 生成，session 已过期或 Cookie 为空")
+        headers[header_name] = cookie_string
     for header_cookie_name, value_cookie_name in (report.get("csrf_headers_from_cookies") or {}).items():
         header_name = find_cookie_value(stage, header_cookie_name)
         header_value = find_cookie_value(stage, value_cookie_name)
@@ -185,6 +215,7 @@ def summarize_request(report, stage):
         "headers": sorted(headers.keys()),
         "cookies": cookie_names,
         "body_type": report.get("body_type") or ("json" if "json" in report else "form"),
+        "response_mode": report.get("response_mode", "file"),
         "data_keys": list((report.get("data") or {}).keys()),
     }
 
@@ -260,6 +291,17 @@ def request_report(session, report, stage, timeout, verify_ssl, proxies):
     return session.request(method, url, **kwargs)
 
 
+def response_json_with_context(response):
+    try:
+        return response.json()
+    except ValueError as exc:
+        content_type = response.headers.get("Content-Type", "")
+        preview = response.text[:500].replace("\r", " ").replace("\n", " ")
+        raise RuntimeError(
+            f"下载响应不是 JSON，无法转 Excel: content_type={content_type}, body_preview={preview}"
+        ) from exc
+
+
 def raise_for_status_with_context(response):
     if 200 <= response.status_code < 300:
         return
@@ -305,6 +347,60 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
         raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {response.url}")
     if not response.content:
         raise RuntimeError(f"下载响应为空: HTTP {response.status_code} {response.url}")
+
+    response_mode = (report.get("response_mode") or "file").strip().lower()
+    if response_mode in {"json_to_excel", "json_drilldown_to_excel"}:
+        report_name = safe_filename(report.get("name") or "json-report")
+        output_path = output_dir / f"{report_name}.xlsx"
+        if response_mode == "json_to_excel":
+            convert_result = json_response_to_excel(
+                response_json_with_context(response),
+                output_path,
+                report.get("excel") or {},
+            )
+        else:
+            initial_response_json = response_json_with_context(response)
+            initial_payload = copy.deepcopy(report.get("data") or report.get("json") or {})
+
+            def fetch_next(payload_override):
+                next_report = copy.deepcopy(report)
+                if next_report.get("body_type") == "raw":
+                    raise RuntimeError("json_drilldown_to_excel 不支持 raw 请求体")
+                next_report["data"] = payload_override
+                next_report.pop("json", None)
+                next_response = request_report(session, next_report, stage, timeout, verify_ssl, proxies)
+                raise_for_status_with_context(next_response)
+                if is_html_response(next_response):
+                    raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {next_response.url}")
+                return response_json_with_context(next_response)
+
+            request_area_field = (report.get("drilldown") or {}).get("request_area_field") or "areaId"
+            if initial_payload:
+                set_by_path(initial_payload, request_area_field, get_by_path(initial_payload, request_area_field))
+            convert_result = drilldown_json_to_excel(
+                initial_payload,
+                fetch_next,
+                output_path,
+                report.get("drilldown") or {},
+                report.get("excel") or {},
+                initial_response_json=initial_response_json,
+            )
+        return {
+            "name": report.get("name"),
+            "stage": report.get("stage"),
+            "transport": "requests",
+            "response_mode": response_mode,
+            "url": response.url,
+            "status_code": response.status_code,
+            "bytes": output_path.stat().st_size,
+            "rows": convert_result.get("rows"),
+            "requests": convert_result.get("requests", 1),
+            "sheet_name": convert_result.get("sheet_name"),
+            "output_path": str(output_path),
+            "downloaded_at": datetime.now().isoformat(),
+        }
+    if response_mode != "file":
+        raise ValueError(f"response_mode 只支持 file/json_to_excel/json_drilldown_to_excel: {response_mode}")
 
     response_filename = filename_from_response(response)
     filename = output_filename_for_report(report, response_filename)

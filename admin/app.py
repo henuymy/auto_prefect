@@ -24,6 +24,10 @@ FLOW_ENTRYPOINT = "flows/notify_single_flow.py:auto_notify_flow"
 DEFAULT_STAGE_OPTIONS = ["report_analysis", "smart_ops", "city_ops", "data_market"]
 COOKIE_DUMP_PATH = PROJECT_DIR / "runtime" / "cookies" / "cookie_dump.json"
 SAME_ACTION_OPTIONS = ["等待数据变化后发送", "直接发送当前通报", "直接结束"]
+DOWNLOAD_MODE_FILE = "原始文件下载"
+DOWNLOAD_MODE_JSON = "JSON转Excel"
+DOWNLOAD_MODE_DRILLDOWN = "级联下钻JSON转Excel"
+DOWNLOAD_MODE_OPTIONS = [DOWNLOAD_MODE_FILE, DOWNLOAD_MODE_JSON, DOWNLOAD_MODE_DRILLDOWN]
 
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
@@ -552,9 +556,21 @@ def set_nested_dict_value(payload: dict, dotted_path: str, value):
     return payload
 
 
+def infer_download_mode(report_cfg: dict) -> str:
+    downloads = report_cfg.get("downloads") or [report_cfg.get("download", {})]
+    modes = {(item or {}).get("response_mode", "file") for item in downloads}
+    if "json_drilldown_to_excel" in modes:
+        return DOWNLOAD_MODE_DRILLDOWN
+    if "json_to_excel" in modes:
+        return DOWNLOAD_MODE_JSON
+    return report_cfg.get("download_mode") or DOWNLOAD_MODE_FILE
+
+
 def download_to_form_row(item: dict) -> dict:
     body_type = default_body_type_for_download(item)
     data_value = item.get("json") if "json" in item and "data" not in item else item.get("data", {})
+    excel_cfg = item.get("excel") or {}
+    drilldown_cfg = item.get("drilldown") or {}
     return {
         "name": item.get("name", ""),
         "stage": item.get("stage", "report_analysis"),
@@ -573,6 +589,15 @@ def download_to_form_row(item: dict) -> dict:
         "body_type": body_type,
         "data_json": json_dumps_for_cell(data_value or {}),
         "raw_body": item.get("raw_body", ""),
+        "response_mode": item.get("response_mode", "file"),
+        "headers_from_cookie_string_json": json_dumps_for_cell(item.get("headers_from_cookie_string") or {}),
+        "excel_data_path": excel_cfg.get("data_path", "result.tableData"),
+        "excel_sheet_name": excel_cfg.get("sheet_name", "地市作战明细"),
+        "excel_columns_json": json_dumps_for_cell(excel_cfg.get("columns") or []),
+        "drilldown_levels": ",".join(drilldown_cfg.get("levels") or ["区县", "网格", "渠道/门店", "人员"]),
+        "drilldown_next_area_field": drilldown_cfg.get("next_area_field", "areaCode"),
+        "drilldown_request_area_field": drilldown_cfg.get("request_area_field", "areaId"),
+        "drilldown_max_requests": drilldown_cfg.get("max_requests", 1000),
     }
 
 
@@ -687,9 +712,11 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
         csrf_headers_from_cookies_raw = row.get("csrf_headers_from_cookies_json") or "{}"
         headers_from_session_storage_raw = row.get("headers_from_session_storage_json") or "{}"
         headers_from_local_storage_raw = row.get("headers_from_local_storage_json") or "{}"
+        headers_from_cookie_string_raw = row.get("headers_from_cookie_string_json") or "{}"
         body_type = (row.get("body_type") or "form").strip().lower()
         data_raw = row.get("data_json") or "{}"
         raw_body = row.get("raw_body") or ""
+        response_mode = (row.get("response_mode") or "file").strip().lower()
         if not any([
             name,
             stage,
@@ -749,6 +776,17 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
         except json.JSONDecodeError as exc:
             errors.append(f"downloads 第 {index} 行 headers_from_local_storage_json 格式错误: {exc}")
             headers_from_local_storage = {}
+        try:
+            headers_from_cookie_string = json.loads(headers_from_cookie_string_raw or "{}")
+            if not isinstance(headers_from_cookie_string, dict):
+                errors.append(f"downloads 第 {index} 行 headers_from_cookie_string_json 必须是对象 JSON")
+                headers_from_cookie_string = {}
+        except json.JSONDecodeError as exc:
+            errors.append(f"downloads 第 {index} 行 headers_from_cookie_string_json 格式错误: {exc}")
+            headers_from_cookie_string = {}
+        if response_mode not in {"file", "json_to_excel", "json_drilldown_to_excel"}:
+            errors.append(f"downloads 第 {index} 行 response_mode 只支持 file/json_to_excel/json_drilldown_to_excel")
+            response_mode = "file"
         if not name:
             errors.append(f"downloads 第 {index} 行缺少 name")
         if not stage:
@@ -763,6 +801,7 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
             "url": url,
             "headers": headers,
             "body_type": body_type,
+            "response_mode": response_mode,
         }
         if headers_from_cookies:
             item["headers_from_cookies"] = headers_from_cookies
@@ -772,6 +811,8 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
             item["headers_from_session_storage"] = normalize_storage_mapping(headers_from_session_storage)
         if headers_from_local_storage:
             item["headers_from_local_storage"] = normalize_storage_mapping(headers_from_local_storage)
+        if headers_from_cookie_string:
+            item["headers_from_cookie_string"] = headers_from_cookie_string
         item["headers"] = remove_dynamic_headers_from_static(
             item.get("headers") or {},
             item.get("headers_from_cookies") or {},
@@ -790,6 +831,28 @@ def form_rows_to_downloads(rows: list[dict]) -> tuple[list[dict], list[str]]:
             item["raw_body"] = raw_body
         else:
             item["data"] = data
+        if response_mode in {"json_to_excel", "json_drilldown_to_excel"}:
+            try:
+                excel_columns = json.loads(row.get("excel_columns_json") or "[]")
+                if not isinstance(excel_columns, list):
+                    errors.append(f"downloads 第 {index} 行 excel_columns_json 必须是数组 JSON")
+                    excel_columns = []
+            except json.JSONDecodeError as exc:
+                errors.append(f"downloads 第 {index} 行 excel_columns_json 格式错误: {exc}")
+                excel_columns = []
+            item["excel"] = {
+                "data_path": (row.get("excel_data_path") or "result.tableData").strip(),
+                "sheet_name": (row.get("excel_sheet_name") or "地市作战明细").strip(),
+                "columns": excel_columns,
+            }
+        if response_mode == "json_drilldown_to_excel":
+            item["drilldown"] = {
+                "data_path": (row.get("excel_data_path") or "result.tableData").strip(),
+                "request_area_field": (row.get("drilldown_request_area_field") or "areaId").strip(),
+                "next_area_field": (row.get("drilldown_next_area_field") or "areaCode").strip(),
+                "levels": [part.strip() for part in (row.get("drilldown_levels") or "").split(",") if part.strip()],
+                "max_requests": parse_optional_int(row.get("drilldown_max_requests"), 1000),
+            }
         downloads.append(item)
     return downloads, errors
 
@@ -811,6 +874,7 @@ def form_rows_to_download_drafts(rows: list[dict], default_stage: str) -> list[d
             ("csrf_headers_from_cookies_json", "csrf_headers_from_cookies", {}),
             ("headers_from_session_storage_json", "headers_from_session_storage", {}),
             ("headers_from_local_storage_json", "headers_from_local_storage", {}),
+            ("headers_from_cookie_string_json", "headers_from_cookie_string", {}),
             ("data_json", "data", {}),
         ):
             try:
@@ -826,6 +890,26 @@ def form_rows_to_download_drafts(rows: list[dict], default_stage: str) -> list[d
         )
         if row.get("raw_body"):
             item["raw_body"] = row.get("raw_body")
+        response_mode = (row.get("response_mode") or "file").strip().lower()
+        item["response_mode"] = response_mode
+        if response_mode in {"json_to_excel", "json_drilldown_to_excel"}:
+            try:
+                columns = json.loads(row.get("excel_columns_json") or "[]")
+            except json.JSONDecodeError:
+                columns = []
+            item["excel"] = {
+                "data_path": (row.get("excel_data_path") or "result.tableData").strip(),
+                "sheet_name": (row.get("excel_sheet_name") or "地市作战明细").strip(),
+                "columns": columns,
+            }
+        if response_mode == "json_drilldown_to_excel":
+            item["drilldown"] = {
+                "data_path": (row.get("excel_data_path") or "result.tableData").strip(),
+                "request_area_field": (row.get("drilldown_request_area_field") or "areaId").strip(),
+                "next_area_field": (row.get("drilldown_next_area_field") or "areaCode").strip(),
+                "levels": [part.strip() for part in (row.get("drilldown_levels") or "").split(",") if part.strip()],
+                "max_requests": parse_optional_int(row.get("drilldown_max_requests"), 1000),
+            }
         if item.get("auth_preset") != AUTH_PRESET_CUSTOM:
             item = apply_auth_preset_to_item(item, item.get("auth_preset"))
         item["headers"] = remove_dynamic_headers_from_static(
@@ -1038,6 +1122,7 @@ def build_report_config_payload(
     send_items,
     template_update,
     use_multi_report,
+    download_mode,
     draft=False,
 ) -> dict:
     report_cfg = {
@@ -1056,6 +1141,7 @@ def build_report_config_payload(
             "items": send_items,
         },
         "template_update": template_update,
+        "download_mode": download_mode,
     }
     if use_multi_report:
         report_cfg["downloads"] = downloads
@@ -1186,6 +1272,15 @@ with col_edit:
     # 下载参数
     st.markdown("**下载报表**")
     dl = default.get("download", {})
+    current_download_mode = infer_download_mode(default)
+    download_mode = st.radio(
+        "下载模式",
+        DOWNLOAD_MODE_OPTIONS,
+        index=DOWNLOAD_MODE_OPTIONS.index(current_download_mode)
+        if current_download_mode in DOWNLOAD_MODE_OPTIONS else 0,
+        horizontal=True,
+        help="原始文件下载适合接口直接返回 Excel；JSON 转 Excel适合接口返回 JSON；级联下钻适合地市作战逐级请求。",
+    )
     stage_options = list_stage_options()
     current_stage = dl.get("stage", "report_analysis")
     if current_stage not in stage_options:
@@ -1232,9 +1327,7 @@ with col_edit:
         send_items_to_form_rows(default.get("send", {}).get("items", [])),
     )
 
-    st.caption(
-        "一行就是一个下载请求；下载标识用于后续比对匹配，也会作为落盘文件名前缀，避免同名 Excel 覆盖。"
-    )
+    st.caption("一行就是一个下载请求；下载标识用于后续比对匹配，也会作为落盘文件名前缀，避免同名 Excel 覆盖。")
     st.caption(
         "占位符支持：`${today}`(YYYY-MM-DD)、`${yesterday}`(前一天 YYYY-MM-DD)、"
         "`${today_yyyymmdd}`(今天 YYYYMMDD)、`${yesterday_yyyymmdd}`(前一天 YYYYMMDD)、"
@@ -1242,6 +1335,32 @@ with col_edit:
         "`${session_storage:zhyyptInfo.accessToken}`、`${local_storage:tokenInfo.accessToken}`。"
     )
     st.session_state["downloads_rows"] = apply_default_stage_to_rows(st.session_state["downloads_rows"], dl_stage)
+    mode_response_value = {
+        DOWNLOAD_MODE_FILE: "file",
+        DOWNLOAD_MODE_JSON: "json_to_excel",
+        DOWNLOAD_MODE_DRILLDOWN: "json_drilldown_to_excel",
+    }[download_mode]
+    for row in st.session_state["downloads_rows"]:
+        row["response_mode"] = mode_response_value
+        if download_mode in {DOWNLOAD_MODE_JSON, DOWNLOAD_MODE_DRILLDOWN}:
+            row.setdefault("stage", "city_ops")
+            row["body_type"] = "json"
+            row.setdefault("excel_data_path", "result.tableData")
+            row.setdefault("excel_sheet_name", "地市作战明细")
+            row.setdefault("excel_columns_json", json_dumps_for_cell([
+                {"field": "__level_name", "header": "层级"},
+                {"field": "__parent_area_id", "header": "父级areaId"},
+                {"field": "__request_area_id", "header": "请求areaId"},
+                {"field": "areaName", "header": "名称"},
+                {"field": "areaCode", "header": "编码"},
+                {"field": "sgs_ajvwdz", "header": "爱家亲情网(V网版)"},
+            ]))
+            row.setdefault("headers_from_cookie_string_json", json_dumps_for_cell({"uapToken": "*"}))
+            if download_mode == DOWNLOAD_MODE_DRILLDOWN:
+                row.setdefault("drilldown_levels", "区县,网格,渠道/门店,人员")
+                row.setdefault("drilldown_next_area_field", "areaCode")
+                row.setdefault("drilldown_request_area_field", "areaId")
+                row.setdefault("drilldown_max_requests", 1000)
     dl_btn_col1, dl_btn_col2 = st.columns([1, 5])
     if dl_btn_col1.button("新增下载行"):
         rows = non_empty_download_rows(st.session_state["downloads_rows"])
@@ -1252,12 +1371,8 @@ with col_edit:
         rows = non_empty_download_rows(st.session_state["downloads_rows"])
         st.session_state["downloads_rows"] = rows or [download_to_form_row({"stage": dl_stage})]
         st.rerun()
-    downloads_rows = st.data_editor(
-        st.session_state["downloads_rows"],
-        key="downloads_rows_editor",
-        num_rows="fixed",
-        width="stretch",
-        column_order=[
+    if download_mode == DOWNLOAD_MODE_FILE:
+        download_column_order = [
             "name",
             "stage",
             "auth_preset",
@@ -1267,7 +1382,41 @@ with col_edit:
             "body_type",
             "data_json",
             "raw_body",
-        ],
+        ]
+    elif download_mode == DOWNLOAD_MODE_JSON:
+        download_column_order = [
+            "name",
+            "stage",
+            "method",
+            "url",
+            "headers_json",
+            "headers_from_cookie_string_json",
+            "data_json",
+            "excel_data_path",
+            "excel_sheet_name",
+            "excel_columns_json",
+        ]
+    else:
+        download_column_order = [
+            "name",
+            "stage",
+            "method",
+            "url",
+            "headers_json",
+            "headers_from_cookie_string_json",
+            "data_json",
+            "excel_data_path",
+            "drilldown_levels",
+            "drilldown_max_requests",
+            "excel_sheet_name",
+            "excel_columns_json",
+        ]
+    downloads_rows = st.data_editor(
+        st.session_state["downloads_rows"],
+        key="downloads_rows_editor",
+        num_rows="fixed",
+        width="stretch",
+        column_order=download_column_order,
         column_config={
             "name": st.column_config.TextColumn("下载标识", required=True),
             "stage": st.column_config.SelectboxColumn("Cookie Stage", options=stage_options, required=True),
@@ -1291,6 +1440,19 @@ with col_edit:
             "body_type": st.column_config.SelectboxColumn("载体类型", options=["form", "json", "raw"], required=True),
             "data_json": st.column_config.TextColumn("请求体 JSON/form", width="large"),
             "raw_body": st.column_config.TextColumn("原始请求体 raw", width="medium"),
+            "response_mode": st.column_config.TextColumn("响应模式"),
+            "headers_from_cookie_string_json": st.column_config.TextColumn(
+                "Cookie串转Header JSON",
+                width="medium",
+                help='地市作战常用：{"uapToken":"*"}，表示把当前 Cookie Stage 的 Cookie 串放入 uapToken 请求头。',
+            ),
+            "excel_data_path": st.column_config.TextColumn("JSON数据路径", help="地市作战一般填写 result.tableData"),
+            "excel_sheet_name": st.column_config.TextColumn("Excel Sheet"),
+            "excel_columns_json": st.column_config.TextColumn("Excel列配置 JSON", width="large"),
+            "drilldown_levels": st.column_config.TextColumn("下钻层级", help="逗号分隔，例如：区县,网格,渠道/门店,人员"),
+            "drilldown_next_area_field": st.column_config.TextColumn("下一层字段"),
+            "drilldown_request_area_field": st.column_config.TextColumn("请求area字段"),
+            "drilldown_max_requests": st.column_config.NumberColumn("最大请求数", min_value=1, step=1),
             "headers_from_cookies_json": st.column_config.TextColumn("Cookie 转 Header JSON", width="medium"),
             "csrf_headers_from_cookies_json": st.column_config.TextColumn("动态 CSRF JSON", width="medium"),
             "headers_from_session_storage_json": st.column_config.TextColumn(
@@ -1891,6 +2053,7 @@ with col_edit:
             draft_send_items,
             template_update_parsed,
             use_multi_report,
+            download_mode,
             draft=True,
         )
         report_path = REPORTS_DIR / f"{draft_name}.json"
@@ -1949,6 +2112,7 @@ with col_edit:
                 snd_items_parsed,
                 template_update_parsed,
                 use_multi_report,
+                download_mode,
                 draft=False,
             )
             report_path = REPORTS_DIR / f"{name}.json"

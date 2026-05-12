@@ -105,6 +105,10 @@ def is_complete_download_config(report_override):
             "headers",
             "headers_from_session_storage",
             "headers_from_local_storage",
+            "headers_from_cookie_string",
+            "response_mode",
+            "excel",
+            "drilldown",
             "json",
             "raw_body",
         )
@@ -123,10 +127,14 @@ def merge_download_defaults(download_defaults, report_override):
             "csrf_headers_from_cookies",
             "headers_from_session_storage",
             "headers_from_local_storage",
+            "headers_from_cookie_string",
             "data",
             "json",
             "raw_body",
             "body_type",
+            "response_mode",
+            "excel",
+            "drilldown",
         }
     }
     return deep_merge(safe_defaults, report_override)

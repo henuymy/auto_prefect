@@ -17,10 +17,40 @@ def capture_web_storage(driver):
               }
               return result;
             };
+            const parseParams = (urlText) => {
+              const result = {};
+              try {
+                const url = new URL(urlText);
+                url.searchParams.forEach((value, key) => {
+                  result[key] = value;
+                });
+                const hashText = url.hash || "";
+                const queryIndex = hashText.indexOf("?");
+                if (queryIndex >= 0) {
+                  const hashParams = new URLSearchParams(hashText.slice(queryIndex + 1));
+                  hashParams.forEach((value, key) => {
+                    result[key] = value;
+                  });
+                }
+              } catch (err) {
+                return result;
+              }
+              return result;
+            };
+            const href = window.location.href;
+            const sessionStorageDump = dumpStorage(window.sessionStorage);
+            const urlParams = parseParams(href);
+            // Some apps pass short-lived auth tokens in the route URL instead of writing
+            // them to Web Storage. Mirror those values into session_storage so existing
+            // "sessionStorage.xxx" mappings can still use them.
+            if (urlParams.uapToken && !sessionStorageDump.uapToken) {
+              sessionStorageDump.uapToken = urlParams.uapToken;
+            }
             return {
               storage_origin: window.location.origin,
-              storage_url: window.location.href,
-              session_storage: dumpStorage(window.sessionStorage),
+              storage_url: href,
+              url_params: urlParams,
+              session_storage: sessionStorageDump,
               local_storage: dumpStorage(window.localStorage),
             };
             """

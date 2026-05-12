@@ -1,0 +1,106 @@
+{
+  "name": "爱家亲情网营业厅每日盯控",
+  "template_path": "templates/爱家亲情网营业厅每日盯控表.xlsx",
+  "download": {
+    "name": "实时",
+    "stage": "city_ops",
+    "auth_preset": "自定义高级",
+    "method": "POST",
+    "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailByAreaAndIndex",
+    "headers": {
+      "Accept": "*/*",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+      "Cache-Control": "no-cache",
+      "Content-Type": "application/json",
+      "Origin": "https://usm.ha.cmcc:19011",
+      "Pragma": "no-cache",
+      "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
+    },
+    "body_type": "json",
+    "response_mode": "json_drilldown_to_excel",
+    "headers_from_session_storage": {
+      "uapToken": "uapToken"
+    },
+    "data": {
+      "indCodes": "sgs_ajvwdz,",
+      "areaId": "AQ",
+      "diyCodes": "sgs_ajvwdz",
+      "areaType": null,
+      "queryDate": "${today_yyyymmdd}"
+    },
+    "excel": {
+      "data_path": "result.tableData",
+      "sheet_name": "地市作战明细",
+      "columns": [
+        {
+          "field": "__level_name",
+          "header": "层级"
+        },
+        {
+          "field": "__parent_area_id",
+          "header": "父级areaId"
+        },
+        {
+          "field": "__request_area_id",
+          "header": "请求areaId"
+        },
+        {
+          "field": "areaName",
+          "header": "名称"
+        },
+        {
+          "field": "areaCode",
+          "header": "编码"
+        },
+        {
+          "field": "sgs_ajvwdz",
+          "header": "爱家亲情网(V网版)"
+        }
+      ]
+    },
+    "drilldown": {
+      "data_path": "result.tableData",
+      "request_area_field": "areaId",
+      "next_area_field": "areaCode",
+      "levels": [
+        "区县",
+        "网格",
+        "渠道/门店",
+        "人员"
+      ],
+      "max_requests": 1000
+    }
+  },
+  "compare": {
+    "sheet_mappings": [
+      {
+        "name": "实时",
+        "new_sheet_name": "地市作战明细",
+        "template_sheet_name": "营业厅实时销量",
+        "header_row": 1,
+        "ignore_columns": [],
+        "key_columns": []
+      }
+    ],
+    "header_row": 1,
+    "ignore_columns": [],
+    "key_columns": []
+  },
+  "send": {
+    "webhook_url": "",
+    "workbook_name": "爱家亲情网营业厅每日盯控",
+    "items": [
+      {
+        "type": "image",
+        "sheet": "营业厅通报"
+      }
+    ]
+  },
+  "template_update": {
+    "update_condition": "any_changed",
+    "write_sheets": "all_compared",
+    "send_when_same": true
+  },
+  "download_mode": "级联下钻JSON转Excel"
+}
