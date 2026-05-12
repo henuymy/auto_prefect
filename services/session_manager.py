@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_LOCK_STALE_SECONDS = 30 * 60
+DEFAULT_LOCK_WAIT_SECONDS = 20 * 60
+DEFAULT_LOCK_POLL_SECONDS = 5
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
@@ -33,6 +39,66 @@ def write_json(path, payload):
     with resolved.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     return resolved
+
+
+def read_lock_info(lock_path):
+    try:
+        with Path(lock_path).open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def lock_is_stale(lock_path, stale_seconds):
+    try:
+        mtime = Path(lock_path).stat().st_mtime
+    except FileNotFoundError:
+        return False
+    return time.time() - mtime > stale_seconds
+
+
+@contextmanager
+def file_lock(lock_path, wait_seconds=DEFAULT_LOCK_WAIT_SECONDS, poll_seconds=DEFAULT_LOCK_POLL_SECONDS, stale_seconds=DEFAULT_LOCK_STALE_SECONDS):
+    lock_path = Path(lock_path).resolve()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.time() + wait_seconds
+    acquired = False
+    waited = False
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "pid": os.getpid(),
+                        "created_at": datetime.now().isoformat(),
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            acquired = True
+            break
+        except FileExistsError:
+            if lock_is_stale(lock_path, stale_seconds):
+                try:
+                    lock_path.unlink()
+                    continue
+                except FileNotFoundError:
+                    continue
+            if time.time() >= deadline:
+                lock_info = read_lock_info(lock_path)
+                raise TimeoutError(f"等待登录锁超时: {lock_path}, lock_info={lock_info}")
+            waited = True
+            time.sleep(poll_seconds)
+    try:
+        yield {"lock_path": str(lock_path), "waited": waited}
+    finally:
+        if acquired:
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def stage_names(cookie_dump):
@@ -189,23 +255,52 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
     login_timeout_seconds = config.get("login_timeout_seconds")
     if login_timeout_seconds is not None:
         login_timeout_seconds = int(login_timeout_seconds)
-    command_result = run_login_command(command, cwd=base_dir, timeout_seconds=login_timeout_seconds)
-    source_path = legacy_cookie_dump_path or cookie_dump_path
-    sync_cookie_dump(source_path, cookie_dump_path)
-    refreshed_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
-    refreshed_validation = validate_cookie_dump(
-        refreshed_cookie_dump or {},
-        required_stages,
-        min_ttl_seconds=min_ttl_seconds,
-    )
-    if not refreshed_validation["valid"]:
-        raise RuntimeError(f"登录后 Cookie 仍不可用: {refreshed_validation}")
+    lock_path = resolve_path(config.get("login_lock_path", "runtime/locks/login.lock"), base_dir)
+    lock_wait_seconds = int(config.get("login_lock_wait_seconds", DEFAULT_LOCK_WAIT_SECONDS) or DEFAULT_LOCK_WAIT_SECONDS)
+    lock_poll_seconds = int(config.get("login_lock_poll_seconds", DEFAULT_LOCK_POLL_SECONDS) or DEFAULT_LOCK_POLL_SECONDS)
+    lock_stale_seconds = int(config.get("login_lock_stale_seconds", DEFAULT_LOCK_STALE_SECONDS) or DEFAULT_LOCK_STALE_SECONDS)
+
+    with file_lock(
+        lock_path,
+        wait_seconds=lock_wait_seconds,
+        poll_seconds=lock_poll_seconds,
+        stale_seconds=lock_stale_seconds,
+    ) as lock_result:
+        # Another scheduled flow may have refreshed cookies while this run was waiting.
+        if lock_result["waited"]:
+            waited_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+            waited_validation = validate_cookie_dump(
+                waited_cookie_dump or {},
+                required_stages,
+                min_ttl_seconds=min_ttl_seconds,
+                max_age_seconds=max_age_seconds,
+            )
+            if waited_validation["valid"]:
+                return {
+                    "status": "reused_after_wait",
+                    "cookie_dump_path": str(cookie_dump_path),
+                    "validation": waited_validation,
+                    "lock": lock_result,
+                }
+
+        command_result = run_login_command(command, cwd=base_dir, timeout_seconds=login_timeout_seconds)
+        source_path = legacy_cookie_dump_path or cookie_dump_path
+        sync_cookie_dump(source_path, cookie_dump_path)
+        refreshed_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+        refreshed_validation = validate_cookie_dump(
+            refreshed_cookie_dump or {},
+            required_stages,
+            min_ttl_seconds=min_ttl_seconds,
+        )
+        if not refreshed_validation["valid"]:
+            raise RuntimeError(f"登录后 Cookie 仍不可用: {refreshed_validation}")
 
     return {
         "status": "refreshed",
         "cookie_dump_path": str(cookie_dump_path),
         "validation": refreshed_validation,
         "login": command_result,
+        "lock": lock_result,
     }
 
 

@@ -2,11 +2,18 @@
   "cookie_dump_path": "runtime/cookies/cookie_dump.json",
   "legacy_cookie_dump_path": null,
   "required_stages": [
-    "report_analysis"
+    "report_analysis",
+    "smart_ops",
+    "city_ops",
+    "data_market"
   ],
   "min_ttl_seconds": 300,
-  "max_age_seconds": 3600,
+  "max_age_seconds": 14400,
   "allow_login": true,
   "login_timeout_seconds": 600,
+  "login_lock_path": "runtime/locks/login.lock",
+  "login_lock_wait_seconds": 300,
+  "login_lock_poll_seconds": 5,
+  "login_lock_stale_seconds": 600,
   "login_command": "\"C:\\Users\\yuyu\\.conda\\envs\\auto-notify\\python.exe\" -c \"from services.login_service import run_login; run_login('config/modules/login_config.json')\""
 }

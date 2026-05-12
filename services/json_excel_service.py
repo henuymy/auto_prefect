@@ -25,6 +25,12 @@ def get_by_path(payload, path: str):
 
 def validate_success_response(payload):
     if isinstance(payload, dict) and payload.get("reCode") not in (None, "0000"):
+        re_code = str(payload.get("reCode") or "")
+        re_msg = str(payload.get("reMsg") or "")
+        if re_code in {"1101", "401", "403"} or "登录" in re_msg or "超时" in re_msg:
+            raise RuntimeError(
+                f"JSON 接口返回 session 已过期: reCode={payload.get('reCode')}, reMsg={payload.get('reMsg')}"
+            )
         raise RuntimeError(
             f"JSON 接口返回失败: reCode={payload.get('reCode')}, reMsg={payload.get('reMsg')}"
         )
