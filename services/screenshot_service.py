@@ -16,6 +16,7 @@ from pathlib import Path
 from infrastructure.excel_client import require_win32, get_sheet, open_excel, open_workbook
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+OPENPYXL_FALLBACK_NOTICE = "Excel COM 截图失败，已使用 openpyxl/Pillow 简化渲染兜底"
 COPY_APPEARANCE = {
     "screen": 1,
     "printer": 2,
@@ -174,6 +175,61 @@ def export_chart_to_png(chart, output_path, attempts=2, delay_seconds=0.5):
     raise RuntimeError(f"Excel 导出 PNG 失败: {output}") from last_error
 
 
+def activate_range_for_copy(ws, rng):
+    """Excel CopyPicture is much more reliable when the sheet/range is active."""
+    excel = ws.Application
+    try:
+        ws.Parent.Activate()
+    except Exception:
+        pass
+    try:
+        ws.Activate()
+    except Exception:
+        pass
+    try:
+        excel.CutCopyMode = False
+    except Exception:
+        pass
+    try:
+        rng.Select()
+    except Exception:
+        pass
+
+
+def copy_range_picture_with_retry(ws, rng, appearance_name, format_name, capture):
+    attempts = int(capture.get("copy_attempts", 3) or 3)
+    delay_seconds = float(capture.get("copy_retry_delay_seconds", 0.5) or 0.5)
+    fallback_pairs = capture.get("copy_fallbacks") or [
+        {"appearance": appearance_name, "format": format_name},
+        {"appearance": "screen", "format": format_name},
+        {"appearance": "screen", "format": "bitmap"},
+    ]
+    last_error = None
+
+    for pair in fallback_pairs:
+        current_appearance = pair.get("appearance", appearance_name)
+        current_format = pair.get("format", format_name)
+        if current_appearance not in COPY_APPEARANCE or current_format not in COPY_FORMAT:
+            continue
+        for attempt in range(1, attempts + 1):
+            try:
+                activate_range_for_copy(ws, rng)
+                rng.CopyPicture(
+                    Appearance=COPY_APPEARANCE[current_appearance],
+                    Format=COPY_FORMAT[current_format],
+                )
+                return current_appearance, current_format
+            except Exception as exc:
+                last_error = exc
+                if attempt < attempts:
+                    time.sleep(delay_seconds)
+
+    raise RuntimeError(
+        f"Excel 区域复制为图片失败: sheet={ws.Name}, "
+        f"range={getattr(rng, 'Address', 'unknown')}"
+    ) from last_error
+
+
 def capture_range_to_png(ws, output_path, capture=None):
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +243,13 @@ def capture_range_to_png(ws, output_path, capture=None):
     if format_name not in COPY_FORMAT:
         raise ValueError(f"不支持的 CopyPicture format: {format_name}")
 
-    rng.CopyPicture(Appearance=COPY_APPEARANCE[appearance_name], Format=COPY_FORMAT[format_name])
+    actual_appearance, actual_format = copy_range_picture_with_retry(
+        ws,
+        rng,
+        appearance_name,
+        format_name,
+        capture,
+    )
     export_scale = float(capture.get("export_scale", 1) or 1)
     if export_scale <= 0:
         raise ValueError("capture.export_scale 必须大于 0")
@@ -221,8 +283,8 @@ def capture_range_to_png(ws, output_path, capture=None):
         "range": address,
         "width": width,
         "height": height,
-        "appearance": appearance_name,
-        "format": format_name,
+        "appearance": actual_appearance,
+        "format": actual_format,
         "export_scale": export_scale,
         "optimize_png": bool(capture.get("optimize_png", False)),
         "png_colors": capture.get("png_colors", 256),
@@ -343,7 +405,257 @@ def save_package(package_file, package):
         json.dump(package, f, ensure_ascii=False, indent=2)
 
 
-def build_message_package(config, base_dir=PROJECT_DIR, visible=False):
+def get_excel_process_id(excel):
+    try:
+        import win32process
+
+        _, pid = win32process.GetWindowThreadProcessId(excel.Hwnd)
+        return pid
+    except Exception:
+        return None
+
+
+def quit_excel(excel, pid=None):
+    try:
+        excel.Quit()
+    except Exception:
+        pass
+    if not pid:
+        return
+    time.sleep(0.5)
+    try:
+        import win32api
+        import win32con
+        import win32process
+
+        handle = win32api.OpenProcess(win32con.PROCESS_TERMINATE | win32con.PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        try:
+            exit_code = win32process.GetExitCodeProcess(handle)
+            if exit_code == 259:  # STILL_ACTIVE
+                win32api.TerminateProcess(handle, 1)
+        finally:
+            handle.Close()
+    except Exception:
+        pass
+
+
+def openpyxl_used_bounds(ws):
+    min_row = ws.max_row or 1
+    min_col = ws.max_column or 1
+    max_row = 1
+    max_col = 1
+    found = False
+    for row in ws.iter_rows():
+        for cell in row:
+            if has_value(cell.value):
+                found = True
+                min_row = min(min_row, cell.row)
+                min_col = min(min_col, cell.column)
+                max_row = max(max_row, cell.row)
+                max_col = max(max_col, cell.column)
+    if not found:
+        raise ValueError(f"工作表 {ws.title} 没有可截图的非空单元格")
+    return min_row, min_col, max_row, max_col
+
+
+def openpyxl_range_bounds(ws, capture):
+    capture = capture or {}
+    mode = capture.get("mode", "used_range")
+    if mode == "explicit_range":
+        from openpyxl.utils.cell import range_boundaries
+
+        address = capture.get("range")
+        if not address:
+            raise ValueError("capture.mode=explicit_range 时必须提供 capture.range")
+        min_col, min_row, max_col, max_row = range_boundaries(address)
+        return min_row, min_col, max_row, max_col
+    if mode == "current_region":
+        # The fallback cannot fully reproduce Excel's CurrentRegion. Use the used range
+        # so the message can still be sent instead of failing the flow.
+        return openpyxl_used_bounds(ws)
+    if mode != "used_range":
+        raise ValueError(f"不支持的截图模式: {mode}")
+    return openpyxl_used_bounds(ws)
+
+
+def openpyxl_color_to_rgb(color, default=(255, 255, 255)):
+    if not color or color.type != "rgb" or not color.rgb:
+        return default
+    value = color.rgb[-6:]
+    try:
+        return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+    except ValueError:
+        return default
+
+
+def load_fallback_font(size=14, bold=False):
+    try:
+        from PIL import ImageFont
+    except ImportError as exc:
+        raise RuntimeError("openpyxl 截图兜底需要 Pillow，请先安装 pillow") from exc
+
+    candidates = [
+        "C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+    ]
+    for font_path in candidates:
+        try:
+            return ImageFont.truetype(font_path, size=size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def render_openpyxl_range_to_png(ws, output_path, capture=None):
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError as exc:
+        raise RuntimeError("openpyxl 截图兜底需要 Pillow，请先安装 pillow") from exc
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    capture = capture or {}
+    min_row, min_col, max_row, max_col = openpyxl_range_bounds(ws, capture)
+
+    col_widths = []
+    from openpyxl.utils import get_column_letter
+
+    for col_index in range(min_col, max_col + 1):
+        letter = get_column_letter(col_index)
+        width = ws.column_dimensions[letter].width or 10
+        col_widths.append(max(56, int(float(width) * 8 + 16)))
+
+    row_heights = []
+    for row_index in range(min_row, max_row + 1):
+        height = ws.row_dimensions[row_index].height or 18
+        row_heights.append(max(24, int(float(height) * 1.45)))
+
+    image_width = sum(col_widths) + 1
+    image_height = sum(row_heights) + 1
+    fallback_background = tuple(capture.get("fallback_background", (255, 255, 255)))
+    fallback_grid_color = tuple(capture.get("fallback_grid_color", (232, 236, 242)))
+    fallback_use_cell_fill = bool(capture.get("fallback_use_cell_fill", False))
+    image = Image.new("RGB", (image_width, image_height), fallback_background)
+    draw = ImageDraw.Draw(image)
+    normal_font = load_fallback_font(14, bold=False)
+    bold_font = load_fallback_font(14, bold=True)
+
+    y = 0
+    for row_offset, row_index in enumerate(range(min_row, max_row + 1)):
+        x = 0
+        for col_offset, col_index in enumerate(range(min_col, max_col + 1)):
+            cell = ws.cell(row=row_index, column=col_index)
+            width = col_widths[col_offset]
+            height = row_heights[row_offset]
+            fill = openpyxl_color_to_rgb(cell.fill.fgColor, default=fallback_background)
+            if not fallback_use_cell_fill:
+                fill = fallback_background
+            draw.rectangle([x, y, x + width, y + height], fill=fill, outline=fallback_grid_color)
+            value = "" if cell.value is None else str(cell.value)
+            if value:
+                font = bold_font if cell.font and cell.font.bold else normal_font
+                font_color = openpyxl_color_to_rgb(cell.font.color, default=(30, 30, 30)) if cell.font else (30, 30, 30)
+                draw.text((x + 6, y + 4), value, fill=font_color, font=font)
+            x += width
+        y += row_heights[row_offset]
+
+    image.save(output, format="PNG")
+    return {
+        "path": str(output.resolve()),
+        "sheet": ws.title,
+        "range": f"{ws.cell(min_row, min_col).coordinate}:{ws.cell(max_row, max_col).coordinate}",
+        "width": image_width,
+        "height": image_height,
+        "appearance": "openpyxl_fallback",
+        "format": "png",
+        "fallback": True,
+    }
+
+
+def read_text_from_openpyxl_sheet(ws, text_config=None):
+    text_config = text_config or {}
+    min_row, min_col, max_row, max_col = openpyxl_range_bounds(ws, text_config)
+    lines = []
+    for row in ws.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col, values_only=True):
+        values = [str(value).strip() for value in row if has_value(value)]
+        if values:
+            lines.append(" ".join(values))
+    return "\n".join(lines).strip()
+
+
+def build_message_package_openpyxl(config, base_dir=PROJECT_DIR, fallback_reason=None):
+    from openpyxl import load_workbook
+
+    image_dir, package_file, preview_file = get_output_paths(config, base_dir)
+    default_capture = config.get("capture_defaults", {})
+    package = {
+        "generated_at": datetime.now().isoformat(),
+        "items": [],
+        "fallback": OPENPYXL_FALLBACK_NOTICE,
+        "fallback_reason": str(fallback_reason) if fallback_reason else None,
+    }
+
+    for workbook_index, workbook_config in enumerate(config.get("workbooks", []), start=1):
+        workbook_name = workbook_config.get("name", f"workbook-{workbook_index}")
+        workbook_path = resolve_path(workbook_config["file"], base_dir)
+        workbook = load_workbook(workbook_path, data_only=True)
+        try:
+            for report_index, report in enumerate(workbook_config.get("reports", []), start=1):
+                report_name = report.get("name", f"report-{report_index}")
+                for item_index, item in enumerate(report.get("items", []), start=1):
+                    item_type = item.get("type")
+                    sheet_name = item.get("sheet")
+                    if item_type not in {"image", "text"}:
+                        raise ValueError(f"{workbook_name}/{report_name} 存在不支持的 item.type: {item_type}")
+                    if not sheet_name:
+                        raise ValueError(f"{workbook_name}/{report_name} 的 item 缺少 sheet")
+                    if sheet_name not in workbook.sheetnames:
+                        raise KeyError(f"找不到工作表 {sheet_name!r}，当前工作表: {workbook.sheetnames}")
+
+                    ws = workbook[sheet_name]
+                    package_item = {
+                        "workbook": workbook_name,
+                        "workbook_file": str(workbook_path),
+                        "report": report_name,
+                        "item_index": item_index,
+                        "type": item_type,
+                        "sheet": sheet_name,
+                    }
+                    if item_type == "image":
+                        capture_config = merge_capture_config(default_capture, item.get("capture"))
+                        image_name = item_output_name(
+                            workbook_index,
+                            report_index,
+                            item_index,
+                            workbook_name,
+                            report_name,
+                            sheet_name,
+                        )
+                        image_path = image_dir / image_name
+                        capture_result = render_openpyxl_range_to_png(ws, image_path, capture_config)
+                        image_payload = image_payload_from_file(capture_result["path"])
+                        package_item["capture"] = capture_result
+                        package_item["image"] = image_payload
+                    else:
+                        text = read_text_from_openpyxl_sheet(ws, item.get("text"))
+                        if not text:
+                            raise ValueError(f"{workbook_name}/{report_name}/{sheet_name} 未读取到文字")
+                        package_item["text"] = text
+                        package_item["text_length"] = len(text)
+                    package["items"].append(package_item)
+                    save_package(package_file, package)
+        finally:
+            workbook.close()
+
+    preview_path = build_preview_image(package, preview_file)
+    if preview_path:
+        package["preview_image_file"] = preview_path
+    save_package(package_file, package)
+    return package, str(package_file)
+
+
+def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
     image_dir, package_file, preview_file = get_output_paths(config, base_dir)
     default_capture = config.get("capture_defaults", {})
     workbooks = config.get("workbooks", [])
@@ -356,6 +668,7 @@ def build_message_package(config, base_dir=PROJECT_DIR, visible=False):
     }
 
     excel = open_excel(visible=visible)
+    excel_pid = get_excel_process_id(excel)
     try:
         for workbook_index, workbook_config in enumerate(workbooks, start=1):
             workbook_name = workbook_config.get("name", f"workbook-{workbook_index}")
@@ -423,10 +736,25 @@ def build_message_package(config, base_dir=PROJECT_DIR, visible=False):
                 if workbook is not None:
                     workbook.Close(SaveChanges=False)
     finally:
-        excel.Quit()
+        quit_excel(excel, excel_pid)
 
     preview_path = build_preview_image(package, preview_file)
     if preview_path:
         package["preview_image_file"] = preview_path
     save_package(package_file, package)
     return package, str(package_file)
+
+
+def build_message_package(config, base_dir=PROJECT_DIR, visible=False):
+    if config.get("openpyxl_fallback_only", False):
+        return build_message_package_openpyxl(
+            config,
+            base_dir=base_dir,
+            fallback_reason="openpyxl_fallback_only=true",
+        )
+    try:
+        return build_message_package_com(config, base_dir=base_dir, visible=visible)
+    except Exception as exc:
+        if not config.get("openpyxl_fallback", True):
+            raise
+        return build_message_package_openpyxl(config, base_dir=base_dir, fallback_reason=exc)
