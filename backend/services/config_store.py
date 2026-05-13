@@ -42,10 +42,12 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
         if not isinstance(item, dict):
             continue
         next_item = dict(item)
+        next_item.pop("csrf_headers_from_cookies", None)
         next_item["name"] = next_item.get("name") or f"抓取项-{index}"
         next_item["stage"] = next_item.get("stage") or "report_analysis"
+        if next_item.get("method"):
+            next_item["method"] = str(next_item["method"]).upper()
         next_item["headers"] = next_item.get("headers") or {}
-        next_item["response_mode"] = next_item.get("response_mode") or "file"
         if "data" not in next_item and isinstance(next_item.get("json"), dict):
             next_item["data"] = next_item["json"]
         if "data" not in next_item and next_item.get("body_type") != "raw":
@@ -69,7 +71,7 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
     normalized = dict(data)
     # The React admin edits the modern multi-download shape. Keep legacy input
     # readable, but never write legacy single-section keys back to disk.
-    for legacy_key in ("download", "env"):
+    for legacy_key in ("download", "env", "compare"):
         normalized.pop(legacy_key, None)
     normalized.update(
         {

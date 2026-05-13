@@ -73,7 +73,6 @@ export function RequestParserPanel({ item, onApply }: { item: DownloadItem; onAp
     const ssrToken = findHeader("Ssr-token") || findHeader("ssr-token");
 
     delete next.headers_from_cookies;
-    delete next.csrf_headers_from_cookies;
     delete next.headers_from_session_storage;
     delete next.headers_from_local_storage;
     delete next.headers_from_cookie_string;

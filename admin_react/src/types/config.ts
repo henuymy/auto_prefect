@@ -12,15 +12,14 @@ export interface DownloadItem {
   name: string;
   stage: string;
   auth_preset?: string;
-  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   url: string;
   headers: Record<string, string>;
-  body_type?: BodyType;
+  body_type: BodyType;
   data?: Record<string, unknown>;
   raw_body?: string;
-  response_mode?: ResponseMode;
+  response_mode: ResponseMode;
   headers_from_cookies?: Record<string, string>;
-  csrf_headers_from_cookies?: Record<string, string>;
   headers_from_session_storage?: Record<string, string>;
   headers_from_local_storage?: Record<string, string>;
   headers_from_cookie_string?: Record<string, string>;

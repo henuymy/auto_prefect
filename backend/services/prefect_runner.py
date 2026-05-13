@@ -187,6 +187,7 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
     download_names = set()
     allowed_methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}
     allowed_body_types = {"form", "json", "raw"}
+    allowed_response_modes = {"file", "json_to_excel", "json_drilldown_to_excel"}
     for index, item in enumerate(config.get("downloads") or []):
         if not item.get("name"):
             issues.append({"path": f"/downloads/{index}/name", "message": "下载标识不能为空"})
@@ -206,11 +207,16 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
             issues.append({"path": f"/downloads/{index}/body_type", "message": "载体类型 body_type 不能为空"})
         elif body_type not in allowed_body_types:
             issues.append({"path": f"/downloads/{index}/body_type", "message": f"不支持的载体类型: {body_type}"})
-        if item.get("response_mode") in {"json_to_excel", "json_drilldown_to_excel"}:
+        response_mode = item.get("response_mode")
+        if not response_mode:
+            issues.append({"path": f"/downloads/{index}/response_mode", "message": "响应模式 response_mode 不能为空"})
+        elif response_mode not in allowed_response_modes:
+            issues.append({"path": f"/downloads/{index}/response_mode", "message": f"不支持的响应模式: {response_mode}"})
+        if response_mode in {"json_to_excel", "json_drilldown_to_excel"}:
             columns = ((item.get("excel") or {}).get("columns") or [])
             if not columns:
                 issues.append({"path": f"/downloads/{index}/excel/columns", "message": "JSON 转 Excel 必须配置 excel.columns"})
-        if item.get("response_mode") == "json_drilldown_to_excel":
+        if response_mode == "json_drilldown_to_excel":
             drilldown = item.get("drilldown") or {}
             for field in ["data_path", "request_area_field", "next_area_field"]:
                 if not drilldown.get(field):

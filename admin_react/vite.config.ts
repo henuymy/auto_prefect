@@ -14,4 +14,15 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          validation: ["ajv", "zod", "@hookform/resolvers", "react-hook-form"],
+          ui: ["lucide-react", "react-resizable-panels", "sonner"],
+          monaco: ["@monaco-editor/react", "monaco-editor"],
+        },
+      },
+    },
+  },
 });

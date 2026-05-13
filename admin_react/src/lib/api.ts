@@ -5,7 +5,8 @@ const API_BASE = import.meta.env.VITE_API_BASE || "";
 
 let logs: RunLog[] = [];
 
-type RawReportConfig = ReportConfig & { download?: DownloadItem };
+type RawDownloadItem = Partial<DownloadItem> & { csrf_headers_from_cookies?: unknown };
+type RawReportConfig = ReportConfig & { download?: RawDownloadItem; downloads?: RawDownloadItem[]; env?: unknown; compare?: unknown };
 
 function normalizeAuthPreset(value?: string) {
   if (value === "SSR Cookie") return "报表分析 Ssr-token";
@@ -15,20 +16,23 @@ function normalizeAuthPreset(value?: string) {
 }
 
 export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
-  const { download: legacyDownload, ...rest } = config;
-  const downloads = rest.downloads?.length ? rest.downloads : legacyDownload ? [legacyDownload] : [];
+  const { download: legacyDownload, env: _legacyEnv, compare: _legacyCompare, ...rest } = config;
+  const downloads: RawDownloadItem[] = (rest.downloads?.length ? rest.downloads : legacyDownload ? [legacyDownload] : []) as RawDownloadItem[];
 
   return {
     ...rest,
-    downloads: downloads.map((item, index) => ({
-      ...item,
-      name: item.name || `抓取项-${index + 1}`,
-      stage: item.stage || "report_analysis",
-      auth_preset: normalizeAuthPreset(item.auth_preset),
-      headers: item.headers || {},
-      response_mode: item.response_mode || "file",
-      data: item.body_type === "raw" ? item.data : item.data || {},
-    })),
+    downloads: downloads.map((item, index) => {
+      const { csrf_headers_from_cookies: _legacyCsrf, ...cleanItem } = item;
+      const bodyType = cleanItem.body_type;
+      return {
+        ...cleanItem,
+        name: cleanItem.name || `抓取项-${index + 1}`,
+        stage: cleanItem.stage || "report_analysis",
+        auth_preset: normalizeAuthPreset(cleanItem.auth_preset),
+        headers: cleanItem.headers || {},
+        data: bodyType === "raw" ? cleanItem.data : cleanItem.data || {},
+      } as DownloadItem;
+    }),
     compare_sources: config.compare_sources || [],
     send: {
       webhook_url: config.send?.webhook_url || "",

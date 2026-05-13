@@ -260,7 +260,6 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
     next.data = parseObject(dataText, item.data || {});
     const authMapping = parseObject(authText, getAuthMapping(item)) as Record<string, string>;
     delete next.headers_from_cookies;
-    delete next.csrf_headers_from_cookies;
     delete next.headers_from_session_storage;
     delete next.headers_from_local_storage;
     delete next.headers_from_cookie_string;
@@ -283,7 +282,6 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
     const next = clone(item);
     next.auth_preset = authPreset;
     delete next.headers_from_cookies;
-    delete next.csrf_headers_from_cookies;
     delete next.headers_from_session_storage;
     delete next.headers_from_local_storage;
     delete next.headers_from_cookie_string;
@@ -306,7 +304,7 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
         <button type="button" onClick={() => setOpen((value) => !value)} className="min-w-0 flex-1 text-left">
           <div className="flex items-center gap-2">
             <Badge variant="outline">#{index + 1}</Badge>
-            <Badge>{item.response_mode || "file"}</Badge>
+          <Badge>{item.response_mode || "response_mode 未填"}</Badge>
             <Badge variant="outline">{item.stage}</Badge>
             <ChevronDown className={`h-4 w-4 text-muted-foreground transition ${open ? "rotate-180" : ""}`} />
           </div>
@@ -328,9 +326,9 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
       <div className="grid gap-4 lg:grid-cols-3">
         <Field label="下载标识 name"><Input value={item.name} onChange={(event) => onChange({ ...item, name: event.target.value })} /></Field>
         <Field label="Cookie Stage"><Select value={item.stage} onChange={(event) => onChange({ ...item, stage: event.target.value })}><option>report_analysis</option><option>smart_ops</option><option>city_ops</option><option>data_market</option></Select></Field>
-        <Field label="响应模式 response_mode"><Select value={item.response_mode || "file"} onChange={(event) => onChange({ ...item, response_mode: event.target.value as DownloadItem["response_mode"] })}><option value="file">file</option><option value="json_to_excel">json_to_excel</option><option value="json_drilldown_to_excel">json_drilldown_to_excel</option></Select></Field>
-        <Field label="请求方法 method"><Select value={item.method} onChange={(event) => onChange({ ...item, method: event.target.value as DownloadItem["method"] })}><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option><option>DELETE</option></Select></Field>
-        <Field label="载体类型 body_type"><Select value={item.body_type} onChange={(event) => onChange({ ...item, body_type: event.target.value as DownloadItem["body_type"] })}><option>json</option><option>form</option><option>raw</option></Select></Field>
+        <Field label="响应模式 response_mode"><Select value={item.response_mode || ""} onChange={(event) => onChange({ ...item, response_mode: event.target.value as DownloadItem["response_mode"] })}><option value="" disabled>请选择响应模式</option><option value="file">file</option><option value="json_to_excel">json_to_excel</option><option value="json_drilldown_to_excel">json_drilldown_to_excel</option></Select></Field>
+        <Field label="请求方法 method"><Select value={item.method || ""} onChange={(event) => onChange({ ...item, method: event.target.value as DownloadItem["method"] })}><option value="" disabled>请选择请求方法</option><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option><option>DELETE</option></Select></Field>
+        <Field label="载体类型 body_type"><Select value={item.body_type || ""} onChange={(event) => onChange({ ...item, body_type: event.target.value as DownloadItem["body_type"] })}><option value="" disabled>请选择载体类型</option><option>json</option><option>form</option><option>raw</option></Select></Field>
         <Field label="认证预设 auth_preset">
           <Select value={normalizeAuthPreset(item.auth_preset)} onChange={(event) => applyAuthPreset(event.target.value)}>
             {AUTH_PRESET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -350,7 +348,7 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
 }
 
 function ResponseModeConfig({ item, onChange }: { item: DownloadItem; onChange: (item: DownloadItem) => void }) {
-  const mode = item.response_mode || "file";
+  const mode = item.response_mode;
   if (mode === "file") {
     return (
       <div className="mt-4 rounded-xl border border-border bg-background/60 p-3 text-xs text-muted-foreground">
