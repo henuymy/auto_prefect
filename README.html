@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>自动化通报 Prefect 项目</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: rgba(13, 28, 52, .78);
+      --text: #e7f0ff;
+      --muted: #93a8c5;
+      --line: rgba(99, 208, 255, .22);
+      --cyan: #35e8ff;
+      --blue: #4388ff;
+      --green: #77ffd8;
+      --shadow: 0 24px 80px rgba(0,0,0,.35);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+      background:
+        linear-gradient(rgba(53,232,255,.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(53,232,255,.05) 1px, transparent 1px),
+        radial-gradient(circle at 12% 8%, rgba(53,232,255,.18), transparent 32%),
+        radial-gradient(circle at 88% 12%, rgba(67,136,255,.2), transparent 30%),
+        linear-gradient(135deg, #06101f 0%, #0a1930 52%, #050a14 100%);
+      background-size: 34px 34px, 34px 34px, auto, auto, auto;
+    }
+    .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 26px 18px;
+      border-right: 1px solid var(--line);
+      background: rgba(5, 12, 24, .72);
+      backdrop-filter: blur(16px);
+      overflow: auto;
+    }
+    .brand { font-size: 22px; font-weight: 900; letter-spacing: -.4px; }
+    .brand small { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; font-weight: 500; }
+    nav { margin-top: 24px; display: flex; flex-direction: column; gap: 4px; }
+    nav a { color: #bdd0ef; text-decoration: none; padding: 9px 11px; border-radius: 12px; font-size: 14px; transition: .18s ease; }
+    nav a:hover { color: white; background: rgba(53,232,255,.11); box-shadow: inset 3px 0 0 var(--cyan); }
+    .toc-l1 { padding-left: 24px; font-size: 13px; color: var(--muted); }
+    .toc-l2 { padding-left: 36px; font-size: 12px; color: var(--muted); }
+    main { padding: 42px min(6vw, 72px) 80px; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 34px;
+      border: 1px solid rgba(53,232,255,.32);
+      border-radius: 28px;
+      background: radial-gradient(circle at 80% 0%, rgba(53,232,255,.25), transparent 32%), linear-gradient(135deg, rgba(12,35,72,.92), rgba(7,18,38,.88));
+      box-shadow: var(--shadow), inset 0 0 44px rgba(53,232,255,.07);
+    }
+    .hero h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1.1; }
+    .hero p { max-width: 760px; color: #b9c9e7; }
+    .cards { margin-top: 26px; display: grid; gap: 22px; }
+    .doc-card {
+      scroll-margin-top: 24px;
+      border: 1px solid rgba(99,208,255,.2);
+      border-radius: 26px;
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 20px 70px rgba(0,0,0,.24);
+      overflow: hidden;
+    }
+    .card-head {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 22px 28px;
+      border-bottom: 1px solid rgba(99,208,255,.16);
+      background: linear-gradient(90deg, rgba(53,232,255,.09), transparent);
+    }
+    .card-index {
+      display: inline-grid;
+      place-items: center;
+      min-width: 46px;
+      height: 34px;
+      border-radius: 999px;
+      color: #06101f;
+      background: linear-gradient(135deg, var(--cyan), var(--green));
+      font-weight: 900;
+      box-shadow: 0 0 22px rgba(53,232,255,.24);
+    }
+    .card-head h2 { margin: 0; font-size: 24px; }
+    .card-body { padding: 24px 28px 30px; }
+    h3 { margin-top: 26px; color: #dff8ff; }
+    h4, h5, h6 { color: #dff8ff; }
+    p, li { color: #d5e2f7; line-height: 1.85; }
+    strong { color: white; }
+    code { color: var(--green); background: rgba(119,255,216,.09); border: 1px solid rgba(119,255,216,.16); border-radius: 7px; padding: 2px 6px; font-family: Consolas, "Cascadia Mono", monospace; }
+    .code-wrap { margin: 16px 0; border: 1px solid rgba(53,232,255,.2); border-radius: 18px; overflow: hidden; background: rgba(2, 8, 18, .72); box-shadow: inset 0 0 30px rgba(53,232,255,.04); }
+    .code-lang { padding: 9px 14px; color: var(--cyan); font-size: 12px; border-bottom: 1px solid rgba(53,232,255,.14); background: rgba(53,232,255,.055); text-transform: uppercase; letter-spacing: .08em; }
+    pre { margin: 0; padding: 16px; overflow: auto; }
+    pre code { display: block; padding: 0; border: 0; background: transparent; color: #d8e9ff; line-height: 1.65; }
+    ul, ol { padding-left: 24px; }
+    @media (max-width: 920px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { position: relative; height: auto; }
+      main { padding: 22px; }
+      .doc-card, .hero { border-radius: 22px; }
+      .card-head, .card-body, .hero { padding: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Auto Notify Docs<small>README 分块展示版</small></div>
+      <nav><a class="toc-l0" href="#当前保留的配置">当前保留的配置</a><a class="toc-l0" href="#目录结构">目录结构</a><a class="toc-l0" href="#环境准备">环境准备</a><a class="toc-l0" href="#prefect-数据库">Prefect 数据库</a><a class="toc-l0" href="#启动-prefect-服务">启动 Prefect 服务</a><a class="toc-l1" href="#1-本地调试模式">1. 本地调试模式</a><a class="toc-l1" href="#2-正式调度模式">2. 正式调度模式</a><a class="toc-l0" href="#不用脚本时-如何手动启动">不用脚本时，如何手动启动</a><a class="toc-l1" href="#1-本地调试模式-sqlite">1. 本地调试模式（SQLite）</a><a class="toc-l1" href="#2-正式调度模式-postgresql">2. 正式调度模式（PostgreSQL）</a><a class="toc-l0" href="#部署-flow">部署 Flow</a><a class="toc-l0" href="#streamlit-配置页面">Streamlit 配置页面</a><a class="toc-l0" href="#nicegui-配置页面">NiceGUI 配置页面</a><a class="toc-l0" href="#runtime-运行产物">Runtime 运行产物</a><a class="toc-l0" href="#动态占位符">动态占位符</a><a class="toc-l0" href="#单条命令运行">单条命令运行</a><a class="toc-l0" href="#相关文档">相关文档</a></nav>
+    </aside>
+    <main>
+      <section class="hero">
+        <h1>自动化通报 Prefect 项目</h1>
+        <p>基于 README.md 自动生成，每一个二级标题内容都单独展示为一个文档块，方便阅读、定位和分享。</p>
+      </section>
+      <div class="cards">
+        <section class="doc-card" id="当前保留的配置">
+          <div class="card-head">
+            <span class="card-index">01</span>
+            <h2>当前保留的配置</h2>
+          </div>
+          <div class="card-body"><p>当前只保留日通报这一套业务配置：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>config/reports/日通报.json
+config/tasks/日通报.json</code></pre></div><p>部署入口也只保留一个：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>auto-notify-flow/notify-daily</code></pre></div><p>对应文件：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>prefect.yaml
+flows/notify_single_flow.py</code></pre></div></div>
+        </section><section class="doc-card" id="目录结构">
+          <div class="card-head">
+            <span class="card-index">02</span>
+            <h2>目录结构</h2>
+          </div>
+          <div class="card-body"><div class="code-wrap"><div class="code-lang">text</div><pre><code>.
+├── admin/                    # Streamlit 配置管理页面
+├── config/
+│   ├── modules/              # 通用模块配置
+│   ├── reports/              # 报表业务配置，目前保留日通报
+│   └── tasks/                # Flow 任务配置，目前保留日通报
+├── flows/                    # Prefect flow 编排
+├── services/                 # 业务逻辑
+├── tasks/                    # Prefect task 包装
+├── scripts/                  # Prefect 启停脚本
+├── runtime/                  # 运行产物，不提交
+├── tests/                    # 单元测试
+├── CONFIG_REFERENCE.md       # 配置字段说明
+└── SSO_EXPORT_FLOW.md        # SSO 到导出链路说明</code></pre></div></div>
+        </section><section class="doc-card" id="环境准备">
+          <div class="card-head">
+            <span class="card-index">03</span>
+            <h2>环境准备</h2>
+          </div>
+          <div class="card-body"><p>推荐使用 Conda 环境：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>conda create -n auto-notify python=3.11 -y
+conda activate auto-notify
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn</code></pre></div><p>如果你想“一次配好，后面直接跑”，推荐直接执行：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>pwsh -File scripts\setup_windows_env.ps1</code></pre></div><p>这个脚本会：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>创建或复用 auto-notify conda 环境
+配置 conda 清华镜像
+安装 requirements.txt 依赖
+创建 runtime 目录
+检查 Edge / Excel COM
+把 autologin.json 的 login_command 固定到当前 conda 环境
+执行一次基础 smoke test</code></pre></div><p>常用参数：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>pwsh -File scripts\setup_windows_env.ps1 -EnvName auto-notify
+pwsh -File scripts\setup_windows_env.ps1 -SkipCondaCreate
+pwsh -File scripts\setup_windows_env.ps1 -SkipSmokeTest
+pwsh -File scripts\setup_windows_env.ps1 -SkipCondaMirror</code></pre></div><p>默认会使用清华 <code>pip</code> 镜像：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>https://pypi.tuna.tsinghua.edu.cn/simple</code></pre></div><p>如果你想覆盖成别的源，也可以：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>pwsh -File scripts\setup_windows_env.ps1 -PipIndexUrl &quot;https://mirrors.aliyun.com/pypi/simple/&quot; -PipTrustedHost &quot;mirrors.aliyun.com&quot;</code></pre></div><p><code>setup_windows_env.ps1</code> 默认也会把 <code>conda</code> 切到清华镜像。</p><p>如果你想手动执行，命令如下：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+conda config --set show_channel_urls yes</code></pre></div><p>如果使用 Excel COM、Selenium、企业微信截图发送等能力，请确保：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>Microsoft Excel 已安装
+Microsoft Edge 已安装
+Edge WebDriver 可用</code></pre></div></div>
+        </section><section class="doc-card" id="prefect-数据库">
+          <div class="card-head">
+            <span class="card-index">04</span>
+            <h2>Prefect 数据库</h2>
+          </div>
+          <div class="card-body"><p>Prefect 用到的数据库是它自己的元数据库，只存这些内容：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>deployment
+flow run / task run 状态
+worker 心跳
+调度记录
+日志元数据</code></pre></div><p>它不会改你的业务报表数据，但如果你本地调试也一直连远程 PostgreSQL，测试 run 和日志会一起写进去，库会变脏。</p><p>因此建议分两种模式：</p><ol><li>本地调试：SQLite，本机隔离，不污染远程调度库</li><li>正式调度：PostgreSQL，稳定支撑 server + scheduler + worker</li></ol><p>注意：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>SQLite 不适合长期调度。
+Prefect Server + Scheduler + Worker 会并发写元数据库，Windows 本地 SQLite 容易出现 database is locked。</code></pre></div><p>正式调度请使用 PostgreSQL。</p><p>当前已验证可用的 PostgreSQL 连接格式：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>postgresql+asyncpg://user_rEkhna:password_YSDPae@60.205.108.31:5432/prefect</code></pre></div><p>说明：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>host: 60.205.108.31
+port: 5432
+database: prefect
+user: user_rEkhna
+driver: asyncpg</code></pre></div></div>
+        </section><section class="doc-card" id="启动-prefect-服务">
+          <div class="card-head">
+            <span class="card-index">05</span>
+            <h2>启动 Prefect 服务</h2>
+          </div>
+          <div class="card-body"><p>有两种启动方式，本质上是同一套环境：</p><ol><li>快捷启动</li></ol><p>- 用 <code>scripts\prefect_start.ps1</code></p><p>- 一条命令自动拉起 <code>server + worker</code></p><p>- 适合日常使用</p><ol><li>手动启动</li></ol><p>- 先用 <code>scripts\prefect_env_debug.ps1</code> 或 <code>scripts\prefect_env_prod.ps1</code> 写入环境变量</p><p>- 再自己执行 <code>python -m prefect ...</code></p><p>- 适合排查问题、手工控制每一步</p><p>建议：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>平时正式启动服务：优先用 prefect_start.ps1
+需要排查问题：再用 prefect_env_*.ps1 + python -m prefect ...</code></pre></div><h3 id="1-本地调试模式">1. 本地调试模式</h3><p>适合：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>本地点 UI 看配置
+手动试跑
+不想把测试记录写进远程 PostgreSQL</code></pre></div><p>先停止旧服务：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>pwsh -File scripts\prefect_stop.ps1</code></pre></div><p>再启动本地调试：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>pwsh -File scripts\prefect_start.ps1 -Mode both -Detached -UseSqliteDebug</code></pre></div><p>说明：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>本地调试模式使用 runtime/prefect_home/prefect.db
+会禁用 Prefect 后台 services，适合手动测试，不适合长期调度</code></pre></div><h3 id="2-正式调度模式">2. 正式调度模式</h3><p>适合：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>真正定时跑日通报
+需要 scheduler + worker
+需要长期稳定运行</code></pre></div><p>先停止旧服务和残留锁文件：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>pwsh -File scripts\prefect_stop.ps1</code></pre></div><p>启动 Server + Worker：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>pwsh -File scripts\prefect_start.ps1 -Mode both -Detached</code></pre></div><p>启动后打开：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>http://127.0.0.1:4200</code></pre></div><p>说明：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>scripts\prefect_start.ps1 默认已经写了 PostgreSQL 连接串
+所以通常不需要再手动传 -DatabaseUrl
+只有以后数据库地址、账号或库名变了，才需要显式覆盖</code></pre></div></div>
+        </section><section class="doc-card" id="不用脚本时-如何手动启动">
+          <div class="card-head">
+            <span class="card-index">06</span>
+            <h2>不用脚本时，如何手动启动</h2>
+          </div>
+          <div class="card-body"><p>如果你想自己开终端、逐条执行命令，可以按下面做。</p><h3 id="1-本地调试模式-sqlite">1. 本地调试模式（SQLite）</h3><p>适合：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>本地临时调试
+手动点 UI
+不想污染远程 PostgreSQL 元数据</code></pre></div><p>终端 1：启动 Server</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>conda activate auto-notify
+. .\scripts\prefect_env_debug.ps1
+python -m prefect server start --no-services --workers 1</code></pre></div><p>终端 2：启动 Worker</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>conda activate auto-notify
+. .\scripts\prefect_env_debug.ps1
+python -m prefect worker start --pool default-agent-pool --type process</code></pre></div><h3 id="2-正式调度模式-postgresql">2. 正式调度模式（PostgreSQL）</h3><p>适合：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>要启用 scheduler
+要长期稳定调度
+要避免 SQLite 锁库</code></pre></div><p>终端 1：启动 Server</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>conda activate auto-notify
+. .\scripts\prefect_env_prod.ps1
+python -m prefect server start --workers 1</code></pre></div><p>终端 2：启动 Worker</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>conda activate auto-notify
+. .\scripts\prefect_env_prod.ps1
+python -m prefect worker start --pool default-agent-pool --type process</code></pre></div><p>启动后打开：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>http://127.0.0.1:4200</code></pre></div></div>
+        </section><section class="doc-card" id="部署-flow">
+          <div class="card-head">
+            <span class="card-index">07</span>
+            <h2>部署 Flow</h2>
+          </div>
+          <div class="card-body"><p>服务启动后，优先使用“单条部署”：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>$env:PREFECT_API_URL = &quot;http://127.0.0.1:4200/api&quot;
+$env:PREFECT_API_DATABASE_CONNECTION_URL = &quot;postgresql+asyncpg://user_rEkhna:password_YSDPae@60.205.108.31:5432/prefect&quot;
+$env:PREFECT_SERVER_DATABASE_CONNECTION_URL = $env:PREFECT_API_DATABASE_CONNECTION_URL
+$env:PYTHONUTF8 = &quot;1&quot;
+C:\Users\yuyu\.conda\envs\auto-notify\python.exe -m prefect deploy --name notify-daily</code></pre></div><p>部署成功后，在 Web UI 的 Deployments 中运行：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>auto-notify-flow/notify-daily</code></pre></div><p>如果不用脚本，也可以直接在终端手动部署：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>conda activate auto-notify
+. .\scripts\prefect_env_prod.ps1
+$env:PYTHONUTF8 = &quot;1&quot;
+python -m prefect deploy --name notify-daily</code></pre></div><p>如果你当前启动的是本地 SQLite 调试模式，把上面的数据库连接串替换成：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>. .\scripts\prefect_env_debug.ps1
+$env:PYTHONUTF8 = &quot;1&quot;
+python -m prefect deploy --name notify-daily</code></pre></div><p>如果后面 <code>prefect.yaml</code> 又加回多个 deployment，再使用：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>python -m prefect deploy --all</code></pre></div></div>
+        </section><section class="doc-card" id="streamlit-配置页面">
+          <div class="card-head">
+            <span class="card-index">08</span>
+            <h2>Streamlit 配置页面</h2>
+          </div>
+          <div class="card-body"><p>启动配置管理页面：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>streamlit run admin/app.py</code></pre></div><p>页面可维护：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>下载 URL
+Cookie Stage
+请求 data JSON
+比对参数
+发送 items
+等待重试 wait_for_change</code></pre></div></div>
+        </section><section class="doc-card" id="nicegui-配置页面">
+          <div class="card-head">
+            <span class="card-index">09</span>
+            <h2>NiceGUI 配置页面</h2>
+          </div>
+          <div class="card-body"><p>新版配置页面与 <code>admin/app.py</code> 完全隔离，适合用卡片和弹窗维护复杂下载配置：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>python -m admin_nicegui.app</code></pre></div><p>启动后打开：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>http://127.0.0.1:8080</code></pre></div><p>说明：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>admin/app.py          旧 Streamlit 后台，继续保留
+admin_nicegui/app.py  新 NiceGUI 后台，独立实现，不引用 admin/app.py</code></pre></div><p>NiceGUI 下载项可以混用多种响应处理方式：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>file                    接口直接返回 Excel/文件
+json_to_excel           JSON 响应转 Excel
+json_drilldown_to_excel 地市作战级联下钻后转 Excel</code></pre></div></div>
+        </section><section class="doc-card" id="runtime-运行产物">
+          <div class="card-head">
+            <span class="card-index">10</span>
+            <h2>Runtime 运行产物</h2>
+          </div>
+          <div class="card-body"><p><code>runtime/</code> 是每次运行过程中生成的中间产物和结果文件目录，默认不需要手动编辑。</p><p>常见目录和文件：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>runtime/cookies/cookie_dump.json</code></pre></div><p>保存自动登录后抓取到的 Cookie。下载报表时会根据配置里的 <code>Cookie Stage</code> 从这里取对应 Cookie，例如：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>report_analysis
+smart_ops
+data_market</code></pre></div><div class="code-wrap"><div class="code-lang">text</div><pre><code>runtime/report_downloader/downloads/
+runtime/report_downloader/download_manifest.json</code></pre></div><p>保存下载下来的原始报表文件，以及本次下载清单。<code>download_manifest.json</code> 会记录每个报表的下载路径、URL、状态码、文件大小等信息。</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>runtime/flow/&lt;报表名称&gt;/</code></pre></div><p>保存某个报表 flow 的本次运行产物。例如 <code>爱家V网</code> 会生成：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>runtime/flow/爱家V网/</code></pre></div><p>常见文件：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>runtime/flow/&lt;报表名称&gt;/compare_config.json
+runtime/flow/&lt;报表名称&gt;/template_updater_config.json
+runtime/flow/&lt;报表名称&gt;/update_manifest.json
+runtime/flow/&lt;报表名称&gt;/wecom/send_result.json
+runtime/flow/&lt;报表名称&gt;/commit_manifest.json</code></pre></div><p>说明：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>compare_config.json             Flow 临时生成的比对配置
+template_updater_config.json    Flow 临时生成的模板更新配置
+update_manifest.json            模板更新结果，记录 updated/skipped、更新了哪些 sheet、新模板路径
+wecom/send_result.json          企业微信发送结果
+commit_manifest.json            正式模板提交结果，提交成功后才会生成或更新</code></pre></div><p>更新后的临时模板会保存在：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>runtime/flow/&lt;报表名称&gt;/templates/</code></pre></div><p>例如：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>runtime/flow/爱家V网/templates/爱家亲情网报表_updated_20260427_205924.xlsx</code></pre></div><p>如果流程最后一步 <code>commit_template</code> 失败，但 <code>update_manifest.json</code> 已经是 <code>status: updated</code>，说明：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>下载成功
+比对成功
+临时模板已生成
+正式模板还没有被覆盖提交</code></pre></div><p>这时通常可以根据 <code>update_manifest.json</code> 里的 <code>output_path</code> 找到新模板，确认后再补跑提交模板。</p><p>如果企业微信已经发送成功，但提交模板失败，不建议直接完整重跑，避免重复发送。可以只补跑提交模板：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>python -c &quot;from services.commit_service import commit_template; commit_template({&#x27;update_manifest_path&#x27;:&#x27;runtime/flow/爱家V网/update_manifest.json&#x27;,&#x27;send_result_path&#x27;:&#x27;runtime/flow/爱家V网/wecom/send_result.json&#x27;,&#x27;backup_dir&#x27;:&#x27;runtime/flow/爱家V网/backups&#x27;,&#x27;manifest_path&#x27;:&#x27;runtime/flow/爱家V网/commit_manifest.json&#x27;,&#x27;overwrite&#x27;:True})&quot;</code></pre></div><p>注意：提交正式模板时，如果 <code>templates/&lt;模板文件&gt;.xlsx</code> 正被 Excel/WPS 打开，Windows 会拒绝覆盖，可能出现：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>PermissionError: [Errno 13] Permission denied</code></pre></div><p>关闭占用模板的 Excel/WPS 后，再补跑提交即可。</p></div>
+        </section><section class="doc-card" id="动态占位符">
+          <div class="card-head">
+            <span class="card-index">11</span>
+            <h2>动态占位符</h2>
+          </div>
+          <div class="card-body"><p>下载请求 <code>data</code> 支持动态占位符：</p><div class="code-wrap"><div class="code-lang">text</div><pre><code>${today}              当前日期，YYYY-MM-DD
+${yesterday}          前一天日期，YYYY-MM-DD
+${yesterday_yyyymmdd} 前一天日期，YYYYMMDD
+${hour}               当前小时，0-23
+${hour2}              当前小时，00-23</code></pre></div><p>示例：</p><div class="code-wrap"><div class="code-lang">json</div><pre><code>{
+  &quot;queryDate&quot;: &quot;${yesterday}&quot;,
+  &quot;versionName&quot;: &quot;${yesterday_yyyymmdd}&quot;
+}</code></pre></div><p>如果不写占位符，参数会原样发送。</p></div>
+        </section><section class="doc-card" id="单条命令运行">
+          <div class="card-head">
+            <span class="card-index">12</span>
+            <h2>单条命令运行</h2>
+          </div>
+          <div class="card-body"><p>不走 Prefect Server/Worker，直接跑日通报：</p><div class="code-wrap"><div class="code-lang">powershell</div><pre><code>C:\Users\yuyu\.conda\envs\auto-notify\python.exe -c &quot;from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow(&#x27;config/tasks/日通报.json&#x27;))&quot;</code></pre></div><p>这个方式适合排查业务问题，但不提供 UI 调度能力。</p></div>
+        </section><section class="doc-card" id="相关文档">
+          <div class="card-head">
+            <span class="card-index">13</span>
+            <h2>相关文档</h2>
+          </div>
+          <div class="card-body"><div class="code-wrap"><div class="code-lang">text</div><pre><code>CONFIG_REFERENCE.md   配置字段说明
+SSO_EXPORT_FLOW.md    SSO 登录到报表导出的链路说明
+ARCHITECTURE.md       分层设计约束</code></pre></div></div>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
