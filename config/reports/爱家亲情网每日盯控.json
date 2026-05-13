@@ -1,36 +1,6 @@
 {
   "name": "爱家亲情网每日盯控",
   "template_path": "templates/爱家亲情网每日盯控表.xlsx",
-  "download": {
-    "name": "实时",
-    "stage": "smart_ops",
-    "auth_preset": "自定义高级",
-    "method": "POST",
-    "url": "https://usm.ha.cmcc:19011/zhyypt/smop/export/exportData",
-    "headers": {
-      "Accept": "application/json, text/plain, */*",
-      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-      "Cache-Control": "no-cache",
-      "Content-Type": "application/json",
-      "Origin": "https://usm.ha.cmcc:19011",
-      "Pragma": "no-cache",
-      "Referer": "https://usm.ha.cmcc:19011/zhyypt/dist/",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
-    },
-    "body_type": "json",
-    "headers_from_session_storage": {
-      "User-Info": "zhyyptInfo.accessToken"
-    },
-    "data": {
-      "areaId": "AQ",
-      "dataLevel": "4",
-      "dataType": "real",
-      "queryDate": "${today_yyyymmdd}",
-      "expTypeId": "HOLE_REAL_TC_EXP",
-      "expFileName": "运营总览-业务销量.xlsx",
-      "rankDown": null
-    }
-  },
   "compare": {
     "sheet_mappings": [],
     "header_row": 1,

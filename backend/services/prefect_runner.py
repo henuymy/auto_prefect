@@ -1,0 +1,361 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+WORK_POOL = "default-agent-pool"
+FLOW_ENTRYPOINT = "flows/notify_single_flow.py:auto_notify_flow"
+
+
+def _safe_name(value: str) -> str:
+    cleaned = re.sub(r'[\\/:*?"<>|]+', "_", value).strip()
+    return cleaned or "未命名配置"
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def get_prefect_api_url() -> str:
+    return os.environ.get("PREFECT_API_URL") or "http://127.0.0.1:4200/api"
+
+
+def check_prefect_status(timeout: float = 2.0) -> dict[str, Any]:
+    api_url = get_prefect_api_url().rstrip("/")
+    health_url = f"{api_url}/health"
+    try:
+        with urllib.request.urlopen(health_url, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+        return {
+            "ok": True,
+            "api_url": api_url,
+            "health_url": health_url,
+            "message": body or "Prefect API 可访问",
+        }
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return {
+            "ok": False,
+            "api_url": api_url,
+            "health_url": health_url,
+            "message": str(exc),
+        }
+
+
+def build_task_config(
+    report_name: str,
+    report_config_path: str,
+    dry_run: bool = False,
+    send_dry_run: bool | None = None,
+    commit_enabled: bool | None = None,
+    login_enabled: bool | None = None,
+) -> dict[str, Any]:
+    slug = _safe_name(report_name).replace(" ", "_")
+    send_dry_run = dry_run if send_dry_run is None else send_dry_run
+    commit_enabled = (not dry_run) if commit_enabled is None else commit_enabled
+    login_enabled = (not dry_run) if login_enabled is None else login_enabled
+    return {
+        "flow_name": f"auto-notify-{slug}",
+        "runtime_dir": f"runtime/flow/{slug}",
+        "report_config_path": report_config_path,
+        "wait_for_change": {
+            "enabled": True,
+            "poll_interval_seconds": 300,
+            "max_wait_minutes": 180,
+        },
+        "steps": {
+            "login": {
+                "enabled": login_enabled,
+                "config_path": "config/modules/autologin.json",
+                "force_refresh": False,
+            },
+            "download": {
+                "enabled": True,
+                "config_path": "config/modules/report_downloader.json",
+                "dry_run": dry_run,
+                "debug": dry_run,
+            },
+            "compare": {
+                "enabled": True,
+                "config_path": "config/modules/report_compare.json",
+                "generated_config_path": f"runtime/flow/{slug}/compare_config.json",
+                "download_report_name": report_name,
+            },
+            "update_template": {
+                "enabled": True,
+                "config_path": "config/modules/template_updater.json",
+                "generated_config_path": f"runtime/flow/{slug}/template_updater_config.json",
+                "output_dir": f"runtime/flow/{slug}/templates",
+                "manifest_path": f"runtime/flow/{slug}/update_manifest.json",
+            },
+            "send_wecom": {
+                "enabled": True,
+                "base_config_path": "config/modules/wecom_sender.json",
+                "generated_config_path": f"runtime/flow/{slug}/excel_sender_config.json",
+                "runtime_dir": f"runtime/flow/{slug}/wecom",
+                "dry_run": send_dry_run,
+                "timeout": 30,
+            },
+            "commit_template": {
+                "enabled": commit_enabled,
+                "config_path": "config/modules/template_commit.json",
+                "update_manifest_path": f"runtime/flow/{slug}/update_manifest.json",
+                "send_result_path": f"runtime/flow/{slug}/wecom/send_result.json",
+                "backup_dir": f"runtime/flow/{slug}/backups",
+                "manifest_path": f"runtime/flow/{slug}/commit_manifest.json",
+            },
+        },
+    }
+
+
+def write_task_config(
+    config: dict[str, Any],
+    draft: bool = False,
+    dry_run: bool = False,
+    send_dry_run: bool | None = None,
+    commit_enabled: bool | None = None,
+    login_enabled: bool | None = None,
+    suffix: str | None = None,
+) -> Path:
+    report_name = _safe_name(config.get("name") or config.get("id") or "未命名配置")
+    report_path = f"config/reports/{report_name}.json"
+    task_config = build_task_config(
+        report_name,
+        report_path,
+        dry_run=dry_run,
+        send_dry_run=send_dry_run,
+        commit_enabled=commit_enabled,
+        login_enabled=login_enabled,
+    )
+    if config.get("wait_for_change"):
+        task_config["wait_for_change"] = config["wait_for_change"]
+    target_dir = PROJECT_ROOT / ("runtime/drafts" if draft else "config/tasks")
+    file_suffix = suffix if suffix is not None else (".dry_run.task.json" if dry_run else ".json")
+    return _write_json(target_dir / f"{report_name}{file_suffix}", task_config)
+
+
+def _project_path(path_value: str | None) -> Path | None:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def _known_stages() -> set[str]:
+    stages = set()
+    for path in [PROJECT_ROOT / "config/modules/login_config.json", PROJECT_ROOT / "runtime/cookies/cookie_dump.json"]:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for item in payload.get("usm_cookie_apps", []) or []:
+            if item.get("stage"):
+                stages.add(str(item["stage"]))
+        for item in payload.get("stages", []) or []:
+            if item.get("stage"):
+                stages.add(str(item["stage"]))
+    return stages
+
+
+def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    if not config.get("name"):
+        issues.append({"path": "/name", "message": "配置名称不能为空"})
+    if not config.get("template_path"):
+        issues.append({"path": "/template_path", "message": "模板路径不能为空"})
+    else:
+        template_path = _project_path(config.get("template_path"))
+        if template_path and not template_path.exists():
+            issues.append({"path": "/template_path", "message": f"模板文件不存在: {config.get('template_path')}"})
+
+    if not config.get("downloads"):
+        issues.append({"path": "/downloads", "message": "至少需要一个数据抓取项"})
+    known_stages = _known_stages()
+    download_names = set()
+    allowed_methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+    allowed_body_types = {"form", "json", "raw"}
+    for index, item in enumerate(config.get("downloads") or []):
+        if not item.get("name"):
+            issues.append({"path": f"/downloads/{index}/name", "message": "下载标识不能为空"})
+        else:
+            download_names.add(str(item["name"]))
+        if item.get("stage") and known_stages and item.get("stage") not in known_stages:
+            issues.append({"path": f"/downloads/{index}/stage", "message": f"Cookie Stage 不存在: {item.get('stage')}"})
+        if not item.get("url"):
+            issues.append({"path": f"/downloads/{index}/url", "message": "下载 URL 不能为空"})
+        method = str(item.get("method") or "").upper()
+        if not method:
+            issues.append({"path": f"/downloads/{index}/method", "message": "请求方法 method 不能为空"})
+        elif method not in allowed_methods:
+            issues.append({"path": f"/downloads/{index}/method", "message": f"不支持的请求方法: {item.get('method')}"})
+        body_type = item.get("body_type")
+        if not body_type:
+            issues.append({"path": f"/downloads/{index}/body_type", "message": "载体类型 body_type 不能为空"})
+        elif body_type not in allowed_body_types:
+            issues.append({"path": f"/downloads/{index}/body_type", "message": f"不支持的载体类型: {body_type}"})
+        if item.get("response_mode") in {"json_to_excel", "json_drilldown_to_excel"}:
+            columns = ((item.get("excel") or {}).get("columns") or [])
+            if not columns:
+                issues.append({"path": f"/downloads/{index}/excel/columns", "message": "JSON 转 Excel 必须配置 excel.columns"})
+        if item.get("response_mode") == "json_drilldown_to_excel":
+            drilldown = item.get("drilldown") or {}
+            for field in ["data_path", "request_area_field", "next_area_field"]:
+                if not drilldown.get(field):
+                    issues.append({"path": f"/downloads/{index}/drilldown/{field}", "message": f"级联下钻缺少 {field}"})
+
+    for source_index, source in enumerate(config.get("compare_sources") or []):
+        download_name = source.get("download_name")
+        if download_name and download_name not in download_names:
+            issues.append({"path": f"/compare_sources/{source_index}/download_name", "message": f"比对源找不到对应下载项: {download_name}"})
+        for mapping_index, mapping in enumerate(source.get("sheet_mappings") or []):
+            if not mapping.get("new_sheet_name"):
+                issues.append({"path": f"/compare_sources/{source_index}/sheet_mappings/{mapping_index}/new_sheet_name", "message": "源 sheet 不能为空"})
+            if not mapping.get("template_sheet_name"):
+                issues.append({"path": f"/compare_sources/{source_index}/sheet_mappings/{mapping_index}/template_sheet_name", "message": "模板 sheet 不能为空"})
+
+    send = config.get("send") or {}
+    if not send.get("items"):
+        issues.append({"path": "/send/items", "message": "至少需要一个发送项"})
+    if not send.get("webhook_url"):
+        issues.append({"path": "/send/webhook_url", "message": "企业微信 Webhook 不能为空"})
+    return issues
+
+
+def test_run_config(config: dict[str, Any]) -> dict[str, Any]:
+    task_config_path = write_task_config(config, draft=True, dry_run=True)
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "from flows.notify_single_flow import auto_notify_flow; "
+            f"print(auto_notify_flow(r'{task_config_path.as_posix()}'))"
+        ),
+    ]
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
+    if completed.returncode != 0:
+        raise RuntimeError(output or "测试运行失败")
+    return {
+        "flowRunId": f"manual-{int(datetime.now().timestamp())}",
+        "status": "success",
+        "message": f"安全测试运行完成: {config.get('name', '')}",
+        "taskConfigPath": str(task_config_path.relative_to(PROJECT_ROOT)),
+        "output": output[-4000:],
+    }
+
+
+def real_test_run_config(config: dict[str, Any]) -> dict[str, Any]:
+    task_config_path = write_task_config(
+        config,
+        draft=True,
+        dry_run=False,
+        send_dry_run=True,
+        commit_enabled=False,
+        login_enabled=True,
+        suffix=".real_test.task.json",
+    )
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "from flows.notify_single_flow import auto_notify_flow; "
+            f"print(auto_notify_flow(r'{task_config_path.as_posix()}'))"
+        ),
+    ]
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=900,
+    )
+    output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
+    if completed.returncode != 0:
+        raise RuntimeError(output or "真实试跑失败")
+    return {
+        "flowRunId": f"real-test-{int(datetime.now().timestamp())}",
+        "status": "success",
+        "message": f"真实试跑完成（企业微信 dry-run，未提交正式模板）: {config.get('name', '')}",
+        "taskConfigPath": str(task_config_path.relative_to(PROJECT_ROOT)),
+        "output": output[-4000:],
+    }
+
+
+def publish_config(config: dict[str, Any]) -> dict[str, Any]:
+    task_config_path = write_task_config(config, draft=False, dry_run=False)
+    deployment = config.get("deployment") or {}
+    report_name = _safe_name(config.get("name") or config.get("id") or "未命名配置")
+    command = [
+        sys.executable,
+        "-m",
+        "prefect",
+        "deploy",
+        FLOW_ENTRYPOINT,
+        "--name",
+        f"notify-{report_name}",
+        "--pool",
+        WORK_POOL,
+        "--param",
+        f"config_path={task_config_path.as_posix()}",
+    ]
+    if deployment.get("enabled") and deployment.get("cron"):
+        command.extend(["--cron", deployment["cron"]])
+        if deployment.get("timezone"):
+            command.extend(["--timezone", deployment["timezone"]])
+
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
+    if completed.returncode != 0:
+        raise RuntimeError(output or "Prefect 发布失败")
+    return {
+        "deploymentId": f"deployment-{int(datetime.now().timestamp())}",
+        "status": "success",
+        "message": f"已发布到 Prefect 调度: {config.get('name', '')}",
+        "taskConfigPath": str(task_config_path.relative_to(PROJECT_ROOT)),
+        "cron": deployment.get("cron", ""),
+        "timezone": deployment.get("timezone", "Asia/Shanghai"),
+        "output": output[-4000:],
+    }

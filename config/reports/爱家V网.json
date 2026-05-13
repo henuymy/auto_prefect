@@ -1,26 +1,6 @@
 {
   "name": "爱家V网",
   "template_path": "templates/爱家亲情网报表.xlsx",
-  "download": {
-    "name": "335837",
-    "stage": "report_analysis",
-    "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
-    "data": {
-      "area": "371017",
-      "templateId": "85479",
-      "sheetIndex": "-1",
-      "sheetName": "新增",
-      "type": "excel",
-      "versionName": "${yesterday_yyyymmdd}",
-      "resId": "335837",
-      "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
-      "param_key": "key",
-      "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
-      "key": "0000",
-      "protectValue": "",
-      "downloadXlsx": "false"
-    }
-  },
   "compare": {
     "sheet_mappings": [],
     "header_row": 1,
@@ -29,7 +9,7 @@
   },
   "send": {
     "webhook_url": "",
-    "workbook_name": "",
+    "workbook_name": "爱家V网",
     "items": [
       {
         "type": "image",
@@ -46,7 +26,8 @@
   },
   "template_update": {
     "update_condition": "all_changed",
-    "write_sheets": "changed"
+    "write_sheets": "changed",
+    "send_when_same": true
   },
   "downloads": [
     {
@@ -133,5 +114,19 @@
         }
       ]
     }
-  ]
+  ],
+  "id": "爱家V网",
+  "enabled": true,
+  "description": "",
+  "wait_for_change": {
+    "enabled": false,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "deployment": {
+    "enabled": false,
+    "cron": "",
+    "timezone": "Asia/Shanghai"
+  },
+  "updatedAt": "2026-05-13 15:22:53"
 }

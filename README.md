@@ -40,6 +40,8 @@ flows/notify_single_flow.py
 ```text
 .
 ├── admin/                    # Streamlit 配置管理页面
+├── admin_react/              # React 配置中心前端
+├── backend/                  # FastAPI 配置中心后端
 ├── config/
 │   ├── modules/              # 通用模块配置
 │   ├── reports/              # 报表业务配置，目前保留日通报
@@ -52,6 +54,58 @@ flows/notify_single_flow.py
 ├── tests/                    # 单元测试
 ├── CONFIG_REFERENCE.md       # 配置字段说明
 └── SSO_EXPORT_FLOW.md        # SSO 到导出链路说明
+```
+
+## React 配置中心
+
+React 配置中心用于可视化编辑 `config/reports/*.json`，并通过后端完成草稿保存、正式保存、Runtime 浏览清理、测试运行和发布到 Prefect 调度。
+
+启动前先安装前端依赖：
+
+```powershell
+cd admin_react
+npm install
+cd ..
+```
+
+一键启动后端和前端：
+
+```powershell
+pwsh -File scripts\admin_react_start.ps1 -Mode both
+```
+
+也可以分开启动：
+
+```powershell
+python -m uvicorn backend.app:app --reload --port 8000
+```
+
+```powershell
+cd admin_react
+npm run dev
+```
+
+访问地址：
+
+```text
+http://127.0.0.1:5173
+```
+
+按钮含义：
+
+```text
+保存草稿   -> runtime/drafts/*.json
+保存配置   -> config/reports/*.json
+校验配置   -> 后端检查必要字段
+测试运行   -> 生成 dry-run task 配置并安全执行，不下载、不发送
+发布到调度 -> 生成 config/tasks/*.json 并执行 prefect deploy
+```
+
+注意：
+
+```text
+发布到调度前，需要 Prefect Server 可访问，并且 Worker 所在 work pool 为 default-agent-pool。
+Runtime 文件管理会保护 runtime/prefect_home、runtime/cookies、runtime/locks，避免误删关键运行数据。
 ```
 
 ## 环境准备
