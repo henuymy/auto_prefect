@@ -1,6 +1,6 @@
 # 自动化通报 Prefect 项目
 
-这是一个基于 Prefect 的自动化通报项目，当前主流程聚焦 **日通报**：
+这是一个基于 Prefect 的自动化通报项目，当前主流程支持多套通报配置，例如 **爱家V网**、**爱家亲情网每日盯控**、**爱家亲情网营业厅每日盯控**：
 
 ```text
 自动登录/复用 Cookie
@@ -13,25 +13,26 @@
 → 发送成功后提交正式模板
 ```
 
-## 当前保留的配置
+## 当前配置
 
-当前只保留日通报这一套业务配置：
+业务配置主要分两类：
 
 ```text
-config/reports/日通报.json
-config/tasks/日通报.json
+config/reports/*.json   # 报表业务配置，React 配置中心主要编辑这里
+config/tasks/*.json     # Prefect flow 入参配置，发布/测试时由后端生成或更新
 ```
 
-部署入口也只保留一个：
+当前已有示例配置：
 
 ```text
-auto-notify-flow/notify-daily
+config/reports/爱家V网.json
+config/reports/爱家亲情网每日盯控.json
+config/reports/爱家亲情网营业厅每日盯控.json
 ```
 
-对应文件：
+主执行入口：
 
 ```text
-prefect.yaml
 flows/notify_single_flow.py
 ```
 
@@ -44,8 +45,8 @@ flows/notify_single_flow.py
 ├── backend/                  # FastAPI 配置中心后端
 ├── config/
 │   ├── modules/              # 通用模块配置
-│   ├── reports/              # 报表业务配置，目前保留日通报
-│   └── tasks/                # Flow 任务配置，目前保留日通报
+│   ├── reports/              # 报表业务配置，React 配置中心正式保存到这里
+│   └── tasks/                # Flow 任务配置，发布到调度后写入这里
 ├── flows/                    # Prefect flow 编排
 ├── services/                 # 业务逻辑
 ├── tasks/                    # Prefect task 包装
@@ -58,7 +59,7 @@ flows/notify_single_flow.py
 
 ## React 配置中心
 
-React 配置中心用于可视化编辑 `config/reports/*.json`，并通过后端完成草稿保存、正式保存、Runtime 浏览清理、测试运行和发布到 Prefect 调度。
+React 配置中心用于可视化编辑 `config/reports/*.json`，并通过后端完成草稿保存、正式保存、Runtime 浏览清理、配置校验、安全测试、真实试跑和发布到 Prefect 调度。
 
 启动前先安装前端依赖：
 
@@ -94,11 +95,13 @@ http://127.0.0.1:5173
 按钮含义：
 
 ```text
-保存草稿   -> runtime/drafts/*.json
-保存配置   -> config/reports/*.json
-校验配置   -> 后端检查必要字段
-测试运行   -> 生成 dry-run task 配置并安全执行，不下载、不发送
-发布到调度 -> 生成 config/tasks/*.json 并执行 prefect deploy
+保存草稿   -> 写入 runtime/drafts/，不影响正式配置
+保存配置   -> 写入 config/reports/*.json，成为正式配置
+校验配置   -> 后端按当前 schema 和执行层要求检查必要字段
+安全测试   -> 使用当前页面配置生成 dry-run 任务，不真实下载、不发送、不提交模板
+真实试跑   -> 使用当前页面配置真实下载、比对、截图并发送企业微信，但不提交正式模板
+发布到调度 -> 写入 config/tasks/*.json，并执行 prefect deploy 发布 deployment
+查看运行日志 -> 查看保存、校验、测试、发布、清理 runtime 等后台操作记录
 ```
 
 注意：
@@ -106,6 +109,7 @@ http://127.0.0.1:5173
 ```text
 发布到调度前，需要 Prefect Server 可访问，并且 Worker 所在 work pool 为 default-agent-pool。
 Runtime 文件管理会保护 runtime/prefect_home、runtime/cookies、runtime/locks，避免误删关键运行数据。
+真实试跑会真实发送企业微信，请确认 webhook 和发送内容无误后再执行。
 ```
 
 ## 环境准备
@@ -275,7 +279,7 @@ pwsh -File scripts\prefect_start.ps1 -Mode both -Detached -UseSqliteDebug
 适合：
 
 ```text
-真正定时跑日通报
+真正定时跑自动通报配置
 需要 scheduler + worker
 需要长期稳定运行
 ```
@@ -368,45 +372,53 @@ python -m prefect worker start --pool default-agent-pool --type process
 http://127.0.0.1:4200
 ```
 
-## 部署 Flow
+## 发布到 Prefect 调度
 
-服务启动后，优先使用“单条部署”：
-
-```powershell
-$env:PREFECT_API_URL = "http://127.0.0.1:4200/api"
-$env:PREFECT_API_DATABASE_CONNECTION_URL = "postgresql+asyncpg://user_rEkhna:password_YSDPae@60.205.108.31:5432/prefect"
-$env:PREFECT_SERVER_DATABASE_CONNECTION_URL = $env:PREFECT_API_DATABASE_CONNECTION_URL
-$env:PYTHONUTF8 = "1"
-C:\Users\yuyu\.conda\envs\auto-notify\python.exe -m prefect deploy --name notify-daily
-```
-
-部署成功后，在 Web UI 的 Deployments 中运行：
+推荐直接在 React 配置中心点击：
 
 ```text
-auto-notify-flow/notify-daily
+发布到调度
 ```
 
-如果不用脚本，也可以直接在终端手动部署：
+后端会先保存当前配置，再生成对应任务配置：
+
+```text
+config/tasks/<配置名称>.json
+```
+
+然后执行类似命令：
+
+```powershell
+python -m prefect deploy flows/notify_single_flow.py:auto_notify_flow --name notify-<配置名称> --pool default-agent-pool --param config_path=config/tasks/<配置名称>.json
+```
+
+如果配置里启用了定时部署，并填写了 Cron：
+
+```json
+{
+  "deployment": {
+    "enabled": true,
+    "cron": "0 9-18 * * *",
+    "timezone": "Asia/Shanghai"
+  }
+}
+```
+
+发布时会把 Cron 和时区一起传给 Prefect。
+
+如果你想手动发布，也可以先写入 Prefect 环境变量：
 
 ```powershell
 conda activate auto-notify
 . .\scripts\prefect_env_prod.ps1
 $env:PYTHONUTF8 = "1"
-python -m prefect deploy --name notify-daily
+python -m prefect deploy flows/notify_single_flow.py:auto_notify_flow --name notify-爱家V网 --pool default-agent-pool --param config_path=config/tasks/爱家V网.json
 ```
 
-如果你当前启动的是本地 SQLite 调试模式，把上面的数据库连接串替换成：
+说明：
 
-```powershell
-. .\scripts\prefect_env_debug.ps1
-$env:PYTHONUTF8 = "1"
-python -m prefect deploy --name notify-daily
-```
-
-如果后面 `prefect.yaml` 又加回多个 deployment，再使用：
-
-```powershell
-python -m prefect deploy --all
+```text
+prefect.yaml 仍可作为兼容入口，但当前推荐以 React 配置中心发布为主。
 ```
 
 ## Streamlit 配置页面
@@ -430,7 +442,7 @@ Cookie Stage
 
 ## NiceGUI 配置页面
 
-新版配置页面与 `admin/app.py` 完全隔离，适合用卡片和弹窗维护复杂下载配置：
+NiceGUI 是曾经尝试过的独立后台页面，当前不作为主线维护。日常建议使用 React 配置中心。
 
 ```powershell
 python -m admin_nicegui.app
@@ -457,6 +469,158 @@ json_to_excel           JSON 响应转 Excel
 json_drilldown_to_excel 地市作战级联下钻后转 Excel
 ```
 
+## 新版报表配置结构
+
+React 配置中心保存的是 `config/reports/*.json`，核心结构如下：
+
+```json
+{
+  "name": "爱家V网",
+  "template_path": "templates/爱家亲情网报表.xlsx",
+  "downloads": [],
+  "compare_sources": [],
+  "send": {
+    "webhook_url": "",
+    "workbook_name": "爱家V网",
+    "items": []
+  },
+  "template_update": {
+    "update_condition": "any_changed",
+    "write_sheets": "all_compared",
+    "send_when_same": true
+  },
+  "wait_for_change": {
+    "enabled": false,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "deployment": {
+    "enabled": false,
+    "cron": "",
+    "timezone": "Asia/Shanghai"
+  }
+}
+```
+
+注意：
+
+```text
+新配置只使用 downloads[]，不再使用旧字段 download。
+新配置只使用 compare_sources[]，不再使用旧字段 compare。
+新配置不再保存 env。
+新配置不再使用 csrf_headers_from_cookies。
+```
+
+每个下载项必须包含：
+
+```text
+name
+stage
+method
+url
+body_type
+response_mode
+```
+
+`response_mode` 支持：
+
+```text
+file                    接口直接返回 Excel/文件
+json_to_excel           JSON 响应转 Excel
+json_drilldown_to_excel 地市作战级联下钻后转 Excel
+```
+
+`body_type` 支持：
+
+```text
+form  application/x-www-form-urlencoded，使用 data= 发送
+json  application/json，使用 json= 发送
+raw   原始字符串，使用 data=raw_body 发送
+```
+
+## 下载认证规则
+
+下载服务统一从 `runtime/cookies/cookie_dump.json` 读取 Cookie 和 Storage。配置里的 `stage` 决定使用哪一套登录会话。
+
+常用 stage：
+
+```text
+report_analysis  报表分析系统
+smart_ops        智慧运营平台
+city_ops         地市作战平台
+data_market      数据超市
+```
+
+### 报表分析系统
+
+报表分析 Excel 下载一般使用：
+
+```json
+{
+  "stage": "report_analysis",
+  "method": "POST",
+  "body_type": "form",
+  "response_mode": "file",
+  "headers": {
+    "Content-Type": "application/x-www-form-urlencoded"
+  },
+  "headers_from_cookies": {
+    "Ssr-token": "ssr-token"
+  }
+}
+```
+
+说明：
+
+```text
+Cookie 不建议写死到配置里。
+程序会自动把 report_analysis stage 下的 Cookie 拼到 requests.Session。
+headers_from_cookies 会从 Cookie 中取 ssr-token，并生成请求头 Ssr-token。
+```
+
+如果接口返回 `HTTP 302` 且 Location 是登录/SSO/UAC 地址，下载服务会认为 session 已过期，flow 会强制重新登录后自动重试一次。
+
+### 智慧运营平台
+
+智慧运营常用：
+
+```json
+{
+  "stage": "smart_ops",
+  "body_type": "json",
+  "headers_from_session_storage": {
+    "User-Info": "zhyyptInfo.accessToken"
+  }
+}
+```
+
+含义：
+
+```text
+从 smart_ops 的 sessionStorage.zhyyptInfo.accessToken 取值，写入请求头 User-Info。
+```
+
+### 地市作战平台
+
+地市作战常用：
+
+```json
+{
+  "stage": "city_ops",
+  "body_type": "json",
+  "headers_from_session_storage": {
+    "uapToken": "uapToken"
+  }
+}
+```
+
+含义：
+
+```text
+从 city_ops 的 sessionStorage.uapToken 取值，写入请求头 uapToken。
+这个值通常本身就是一整段 Cookie 风格字符串，按浏览器原样保存和发送。
+```
+
 ## Runtime 运行产物
 
 `runtime/` 是每次运行过程中生成的中间产物和结果文件目录，默认不需要手动编辑。
@@ -472,6 +636,7 @@ runtime/cookies/cookie_dump.json
 ```text
 report_analysis
 smart_ops
+city_ops
 data_market
 ```
 
@@ -481,6 +646,18 @@ runtime/report_downloader/download_manifest.json
 ```
 
 保存下载下来的原始报表文件，以及本次下载清单。`download_manifest.json` 会记录每个报表的下载路径、URL、状态码、文件大小等信息。
+
+```text
+runtime/drafts/
+```
+
+保存 React 配置中心的草稿配置、测试运行临时 report 配置和 task 配置。草稿不会影响正式 `config/reports/*.json`。
+
+```text
+runtime/logs/admin_react_runs.jsonl
+```
+
+保存 React 配置中心的后台操作记录，例如保存草稿、保存配置、校验配置、安全测试、真实试跑、发布到调度、Runtime 清理等。
 
 ```text
 runtime/flow/<报表名称>/
@@ -551,14 +728,17 @@ PermissionError: [Errno 13] Permission denied
 
 ## 动态占位符
 
-下载请求 `data` 支持动态占位符：
+下载请求 `url`、`headers`、`data`、`raw_body` 支持动态占位符：
 
 ```text
 ${today}              当前日期，YYYY-MM-DD
+${today_yyyymmdd}     当前日期，YYYYMMDD
 ${yesterday}          前一天日期，YYYY-MM-DD
 ${yesterday_yyyymmdd} 前一天日期，YYYYMMDD
 ${hour}               当前小时，0-23
 ${hour2}              当前小时，00-23
+${session_storage:xxx} 从当前 stage 的 sessionStorage 读取字段
+${local_storage:xxx}   从当前 stage 的 localStorage 读取字段
 ```
 
 示例：
@@ -574,10 +754,10 @@ ${hour2}              当前小时，00-23
 
 ## 单条命令运行
 
-不走 Prefect Server/Worker，直接跑日通报：
+不走 Prefect Server/Worker，直接跑某个配置：
 
 ```powershell
-C:\Users\yuyu\.conda\envs\auto-notify\python.exe -c "from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow('config/tasks/日通报.json'))"
+C:\Users\yuyu\.conda\envs\auto-notify\python.exe -c "from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow('config/tasks/爱家V网.json'))"
 ```
 
 这个方式适合排查业务问题，但不提供 UI 调度能力。
