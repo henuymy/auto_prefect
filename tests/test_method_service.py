@@ -44,14 +44,12 @@ def test_find_stage_and_build_headers_from_cookies():
     report = {
         "headers": {"Content-Type": "application/x-www-form-urlencoded"},
         "headers_from_cookies": {"ssr-token": "ssr-token"},
-        "csrf_headers_from_cookies": {"ssr-header": "ssr-token"},
     }
 
     stage = find_stage(cookie_dump, "report_analysis")
     headers = build_headers(report, stage)
 
     assert headers["ssr-token"] == "token-value"
-    assert headers["X-CSRF-TOKEN"] == "token-value"
 
 
 def test_build_headers_from_session_storage_json_path():
@@ -173,12 +171,14 @@ class FakeRequest:
 
 
 class FakeResponse:
-    def __init__(self, status_code, text, url="https://example/export"):
+    def __init__(self, status_code, text, url="https://example/export", headers=None):
         self.status_code = status_code
         self.text = text
         self.content = text.encode("utf-8")
         self.url = url
         self.headers = {"Content-Type": "application/json"}
+        if headers:
+            self.headers.update(headers)
         self.request = FakeRequest()
 
     def raise_for_status(self):
@@ -202,6 +202,38 @@ def test_raise_for_status_treats_401_json_login_as_session_expired():
         raise AssertionError("expected RuntimeError")
 
 
+def test_raise_for_status_treats_302_login_redirect_as_session_expired():
+    response = FakeResponse(
+        302,
+        "",
+        headers={"Location": "http://ngbossgq.ha.cmcc/uac/web3/jsp/login/login.jsp"},
+    )
+
+    try:
+        raise_for_status_with_context(response)
+    except RuntimeError as exc:
+        assert "session 已过期" in str(exc)
+        assert "location=" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
+def test_raise_for_status_reports_non_auth_redirect_location():
+    response = FakeResponse(
+        302,
+        "",
+        headers={"Location": "https://example.com/download/file.xlsx"},
+    )
+
+    try:
+        raise_for_status_with_context(response)
+    except RuntimeError as exc:
+        assert "不是明确登录地址" in str(exc)
+        assert "file.xlsx" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
 def test_build_request_kwargs_sends_raw_body_as_data():
     stage = {"cookies": []}
     report = {
@@ -216,13 +248,14 @@ def test_build_request_kwargs_sends_raw_body_as_data():
     assert "json" not in kwargs
 
 
-def test_build_request_kwargs_keeps_legacy_data_form_behavior():
+def test_build_request_kwargs_sends_form_body_type_as_data():
     stage = {"cookies": []}
-    report = {"data": {"templateId": "85479"}}
+    report = {"body_type": "form", "data": {"templateId": "85479"}}
 
     kwargs = build_request_kwargs(report, stage, 30, False, None)
 
     assert kwargs["data"] == {"templateId": "85479"}
+    assert "json" not in kwargs
 
 
 def test_download_reports_dry_run_writes_manifest():
@@ -255,6 +288,8 @@ def test_download_reports_dry_run_writes_manifest():
                         "stage": "report_analysis",
                         "method": "POST",
                         "url": "https://example/export",
+                        "body_type": "form",
+                        "response_mode": "file",
                     }
                 ],
             },

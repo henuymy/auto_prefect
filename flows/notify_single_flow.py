@@ -96,56 +96,50 @@ def resolve_dynamic_structure(payload, now=None):
     return resolve_dynamic_placeholders(payload, now=now)
 
 
-def is_complete_download_config(report_override):
-    return any(
-        key in report_override
-        for key in (
-            "method",
-            "body_type",
-            "headers",
-            "headers_from_session_storage",
-            "headers_from_local_storage",
-            "headers_from_cookie_string",
-            "response_mode",
-            "excel",
-            "drilldown",
-            "json",
-            "raw_body",
-        )
-    )
+def assert_report_schema_contract(report_cfg):
+    if "download" in report_cfg:
+        raise ValueError("report config 仍包含旧字段 download，请保存为 schema 新结构")
+    if "compare" in report_cfg:
+        raise ValueError("report config 仍包含旧字段 compare，请使用 compare_sources[]")
+    if "env" in report_cfg:
+        raise ValueError("report config 仍包含旧字段 env，请从配置中移除")
+    if not report_cfg.get("downloads"):
+        raise ValueError("report config 缺少 downloads，React 配置中心要求使用 downloads[]")
 
+    required_download_fields = ("name", "stage", "method", "url", "body_type", "response_mode")
+    for index, item in enumerate(report_cfg.get("downloads") or [], start=1):
+        if "csrf_headers_from_cookies" in item:
+            raise ValueError(f"downloads[{index}] 包含旧字段 csrf_headers_from_cookies，请使用 headers_from_cookies 或动态认证字段")
+        for field in required_download_fields:
+            if not item.get(field):
+                raise ValueError(f"downloads[{index}] 缺少必填字段 {field}")
+        response_mode = item.get("response_mode")
+        if response_mode in {"json_to_excel", "json_drilldown_to_excel"}:
+            columns = ((item.get("excel") or {}).get("columns") or [])
+            if not columns:
+                raise ValueError(f"downloads[{index}] response_mode={response_mode} 时必须配置 excel.columns")
+        if response_mode == "json_drilldown_to_excel":
+            drilldown = item.get("drilldown") or {}
+            for field in ("data_path", "request_area_field", "next_area_field"):
+                if not drilldown.get(field):
+                    raise ValueError(f"downloads[{index}] json_drilldown_to_excel 缺少 drilldown.{field}")
 
-def merge_download_defaults(download_defaults, report_override):
-    if not is_complete_download_config(report_override):
-        return deep_merge(download_defaults, report_override)
-    safe_defaults = {
-        key: value
-        for key, value in download_defaults.items()
-        if key not in {
-            "headers",
-            "headers_from_cookies",
-            "csrf_headers_from_cookies",
-            "headers_from_session_storage",
-            "headers_from_local_storage",
-            "headers_from_cookie_string",
-            "data",
-            "json",
-            "raw_body",
-            "body_type",
-            "response_mode",
-            "excel",
-            "drilldown",
-        }
-    }
-    return deep_merge(safe_defaults, report_override)
+    for source_index, source in enumerate(report_cfg.get("compare_sources") or [], start=1):
+        if not source.get("download_name"):
+            raise ValueError(f"compare_sources[{source_index}] 缺少 download_name")
+        for mapping_index, mapping in enumerate(source.get("sheet_mappings") or [], start=1):
+            if not mapping.get("new_sheet_name"):
+                raise ValueError(f"compare_sources[{source_index}].sheet_mappings[{mapping_index}] 缺少 new_sheet_name")
+            if not mapping.get("template_sheet_name"):
+                raise ValueError(f"compare_sources[{source_index}].sheet_mappings[{mapping_index}] 缺少 template_sheet_name")
 
 
 def build_download_config(base_config, report_cfg):
-    download_defaults = base_config.get("report_defaults", {})
-    report_overrides = report_cfg.get("downloads") or [report_cfg.get("download", {})]
+    assert_report_schema_contract(report_cfg)
+    report_overrides = report_cfg.get("downloads") or []
     merged_reports = []
     for index, report_override in enumerate(report_overrides, start=1):
-        merged_report = merge_download_defaults(download_defaults, report_override)
+        merged_report = copy.deepcopy(report_override)
         merged_report["name"] = (
             merged_report.get("name")
             or report_cfg.get("name")
@@ -158,10 +152,7 @@ def build_download_config(base_config, report_cfg):
 
 
 def build_compare_config(base_config, report_cfg):
-    return deep_merge(base_config, {
-        "template_path": report_cfg.get("template_path"),
-        **report_cfg.get("compare", {}),
-    })
+    raise ValueError("旧 compare 配置已不再支持，请使用 compare_sources[]")
 
 
 def build_send_config(base_config, report_cfg, workbook_file):
@@ -214,20 +205,11 @@ def downloaded_report_path_map(download_manifest):
 
 
 def build_compare_source_configs(base_config, report_cfg, download_manifest, compare_step, flow_runtime_dir):
+    assert_report_schema_contract(report_cfg)
     template_path = report_cfg.get("template_path")
     compare_sources = report_cfg.get("compare_sources") or []
     if not compare_sources:
-        compare_config = build_compare_config(base_config, report_cfg)
-        if download_manifest:
-            compare_config["new_report_path"] = select_downloaded_report_path(
-                download_manifest,
-                report_name=compare_step.get("download_report_name"),
-            )
-        return [{
-            "name": compare_step.get("download_report_name") or report_cfg.get("name"),
-            "download_name": compare_step.get("download_report_name") or report_cfg.get("name"),
-            "config": compare_config,
-        }]
+        raise ValueError("report config 缺少 compare_sources，React 配置中心要求明确配置比对源")
 
     paths_by_name = downloaded_report_path_map(download_manifest or {})
     configs = []
@@ -337,6 +319,7 @@ def auto_notify_flow(config_path=None):
     )
 
     report_cfg = read_json(config["report_config_path"]) if config.get("report_config_path") else {}
+    assert_report_schema_contract(report_cfg)
 
     if steps.get("login", {}).get("enabled", False):
         session_result = prepare_session_task(

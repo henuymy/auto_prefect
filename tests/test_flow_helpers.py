@@ -99,22 +99,26 @@ def test_resolve_dynamic_placeholders_supports_today_and_hour():
 def test_build_download_config_resolves_dynamic_tokens():
     base = {
         "cookie_dump_path": "runtime/cookies/cookie_dump.json",
-        "report_defaults": {
-            "enabled": True,
-            "method": "POST",
-            "url": "https://example/export",
-        },
+        "report_defaults": {},
     }
     report_cfg = {
         "name": "PK小时通报",
-        "download": {
-            "data": {
-                "queryDate": "${yesterday}",
-                "versionName": "${yesterday_yyyymmdd}",
-                "hour": "${hour}",
-                "queryHour2": "${hour2}",
+        "downloads": [
+            {
+                "name": "PK小时通报",
+                "stage": "report_analysis",
+                "method": "POST",
+                "url": "https://example/export",
+                "body_type": "json",
+                "response_mode": "file",
+                "data": {
+                    "queryDate": "${yesterday}",
+                    "versionName": "${yesterday_yyyymmdd}",
+                    "hour": "${hour}",
+                    "queryHour2": "${hour2}",
+                },
             }
-        },
+        ],
     }
 
     config = build_download_config(base, report_cfg)
@@ -128,17 +132,29 @@ def test_build_download_config_resolves_dynamic_tokens():
 
 def test_build_download_config_supports_multiple_downloads():
     base = {
-        "report_defaults": {
-            "enabled": True,
-            "method": "POST",
-            "url": "https://example/export",
-        },
+        "report_defaults": {},
     }
     report_cfg = {
         "name": "多源通报",
         "downloads": [
-            {"name": "报表A", "data": {"sheetName": "A"}},
-            {"name": "报表B", "data": {"sheetName": "B"}},
+            {
+                "name": "报表A",
+                "stage": "report_analysis",
+                "method": "POST",
+                "url": "https://example/export-a",
+                "body_type": "json",
+                "response_mode": "file",
+                "data": {"sheetName": "A"},
+            },
+            {
+                "name": "报表B",
+                "stage": "report_analysis",
+                "method": "POST",
+                "url": "https://example/export-b",
+                "body_type": "json",
+                "response_mode": "file",
+                "data": {"sheetName": "B"},
+            },
         ],
     }
 
@@ -151,28 +167,26 @@ def test_build_download_config_supports_multiple_downloads():
 
 def test_build_download_config_complete_request_does_not_inherit_ssr_headers():
     base = {
-        "report_defaults": {
-            "enabled": True,
-            "method": "POST",
-            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
-            "headers_from_cookies": {"ssr-token": "ssr-token"},
-            "csrf_headers_from_cookies": {"ssr-header": "ssr-token"},
-            "allow_redirects": True,
-        },
+        "report_defaults": {},
     }
     report_cfg = {
-        "download": {
-            "name": "智慧运营",
-            "method": "POST",
-            "url": "https://example/exportData",
-            "headers": {
-                "Content-Type": "application/json",
-                "User-Info": "abc",
-            },
-            "headers_from_session_storage": {"User-Info": "zhyyptInfo.accessToken"},
-            "body_type": "json",
-            "data": {"date": "${today}"},
-        }
+        "downloads": [
+            {
+                "name": "智慧运营",
+                "stage": "smart_ops",
+                "method": "POST",
+                "url": "https://example/exportData",
+                "headers": {
+                    "Content-Type": "application/json",
+                    "User-Info": "abc",
+                },
+                "headers_from_session_storage": {"User-Info": "zhyyptInfo.accessToken"},
+                "body_type": "json",
+                "response_mode": "file",
+                "data": {"date": "${today}"},
+                "allow_redirects": True,
+            }
+        ]
     }
 
     config = build_download_config(base, report_cfg)
@@ -188,6 +202,36 @@ def test_build_download_config_complete_request_does_not_inherit_ssr_headers():
     assert report["allow_redirects"] is True
 
 
+def test_build_download_config_rejects_legacy_download_key():
+    with pytest.raises(ValueError, match="旧字段 download"):
+        build_download_config(
+            {"report_defaults": {}},
+            {
+                "name": "旧配置",
+                "download": {"name": "旧下载"},
+            },
+        )
+
+
+def test_build_download_config_requires_schema_fields():
+    with pytest.raises(ValueError, match="缺少必填字段 response_mode"):
+        build_download_config(
+            {"report_defaults": {}},
+            {
+                "name": "缺字段",
+                "downloads": [
+                    {
+                        "name": "下载",
+                        "stage": "report_analysis",
+                        "method": "POST",
+                        "url": "https://example/export",
+                        "body_type": "json",
+                    }
+                ],
+            },
+        )
+
+
 
 def test_build_compare_source_configs_maps_download_outputs():
     manifest = {
@@ -198,6 +242,24 @@ def test_build_compare_source_configs_maps_download_outputs():
     }
     report_cfg = {
         "template_path": "templates/template.xlsx",
+        "downloads": [
+            {
+                "name": "报表A",
+                "stage": "report_analysis",
+                "method": "POST",
+                "url": "https://example/export-a",
+                "body_type": "json",
+                "response_mode": "file",
+            },
+            {
+                "name": "报表B",
+                "stage": "report_analysis",
+                "method": "POST",
+                "url": "https://example/export-b",
+                "body_type": "json",
+                "response_mode": "file",
+            },
+        ],
         "compare_sources": [
             {
                 "download_name": "报表A",

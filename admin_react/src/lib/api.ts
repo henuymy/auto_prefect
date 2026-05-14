@@ -165,6 +165,12 @@ export async function publishConfig(config: ReportConfig) {
 }
 
 export async function listRunLogs() {
+  try {
+    const backendLogs = await request<RunLog[]>("/api/run-logs");
+    logs = backendLogs.length ? backendLogs : logs;
+  } catch {
+    // Keep the local in-memory fallback useful if the backend is not running.
+  }
   return structuredClone(logs);
 }
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from backend.services import config_store, prefect_runner
+from backend.services.run_log_store import append_log
 
 
 router = APIRouter(prefix="/api/configs", tags=["configs"])
@@ -23,26 +24,34 @@ def get_config(config_id: str):
 
 @router.post("")
 def create_config(config: dict):
-    return config_store.create_config(config)
+    saved = config_store.create_config(config)
+    append_log("success", "新建配置", f"已创建 {saved.get('name', '')}")
+    return saved
 
 
 @router.put("/{config_id}")
 def save_config(config_id: str, config: dict):
-    return config_store.save_config(config_id, config)
+    saved = config_store.save_config(config_id, config)
+    append_log("success", "保存配置", f"已写入 config/reports/{saved.get('name', '')}.json")
+    return saved
 
 
 @router.delete("/{config_id}")
 def delete_config(config_id: str):
     try:
         deleted = config_store.delete_config(config_id)
+        append_log("success", "删除配置", f"已删除配置 {config_id}", "\n".join(deleted))
         return {"ok": True, "deleted": deleted}
     except FileNotFoundError as exc:
+        append_log("failed", "删除配置失败", str(exc))
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{config_id}/draft")
 def save_draft(config_id: str, config: dict):
-    return config_store.save_draft(config_id, config)
+    saved = config_store.save_draft(config_id, config)
+    append_log("success", "保存草稿", f"已写入 runtime/drafts/{saved.get('name', '')}.json")
+    return saved
 
 
 @router.get("/{config_id}/versions")
@@ -61,24 +70,33 @@ def get_version(config_id: str, version_id: str):
 @router.post("/{config_id}/versions/{version_id}/restore")
 def restore_version(config_id: str, version_id: str):
     try:
-        return config_store.restore_version(config_id, version_id)
+        restored = config_store.restore_version(config_id, version_id)
+        append_log("success", "恢复配置版本", f"已恢复 {config_id} -> {version_id}")
+        return restored
     except FileNotFoundError as exc:
+        append_log("failed", "恢复配置版本失败", str(exc))
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{config_id}/validate")
 def validate_config(config_id: str, config: dict):
-    return {"issues": prefect_runner.validate_config(config)}
+    issues = prefect_runner.validate_config(config)
+    append_log("failed" if issues else "success", "配置校验", f"发现 {len(issues)} 个问题" if issues else "配置校验通过")
+    return {"issues": issues}
 
 
 @router.post("/{config_id}/test-run")
 def test_run_config(config_id: str, config: dict):
     issues = prefect_runner.validate_config(config)
     if issues:
+        append_log("failed", "安全测试失败", f"配置校验失败，发现 {len(issues)} 个问题")
         raise HTTPException(status_code=400, detail={"issues": issues})
     try:
-        return prefect_runner.test_run_config(config)
+        result = prefect_runner.test_run_config(config)
+        append_log("success", "安全测试", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
+        return result
     except RuntimeError as exc:
+        append_log("failed", "安全测试失败", str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -86,10 +104,14 @@ def test_run_config(config_id: str, config: dict):
 def real_test_run_config(config_id: str, config: dict):
     issues = prefect_runner.validate_config(config)
     if issues:
+        append_log("failed", "真实试跑失败", f"配置校验失败，发现 {len(issues)} 个问题")
         raise HTTPException(status_code=400, detail={"issues": issues})
     try:
-        return prefect_runner.real_test_run_config(config)
+        result = prefect_runner.real_test_run_config(config)
+        append_log("success", "真实试跑", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
+        return result
     except RuntimeError as exc:
+        append_log("failed", "真实试跑失败", str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -97,9 +119,13 @@ def real_test_run_config(config_id: str, config: dict):
 def publish_config(config_id: str, config: dict):
     issues = prefect_runner.validate_config(config)
     if issues:
+        append_log("failed", "发布到调度失败", f"配置校验失败，发现 {len(issues)} 个问题")
         raise HTTPException(status_code=400, detail={"issues": issues})
     saved = config_store.save_config(config_id, config)
     try:
-        return prefect_runner.publish_config(saved)
+        result = prefect_runner.publish_config(saved)
+        append_log("success", "发布到调度", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
+        return result
     except RuntimeError as exc:
+        append_log("failed", "发布到调度失败", str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc

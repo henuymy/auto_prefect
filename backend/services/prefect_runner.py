@@ -130,6 +130,11 @@ def write_task_config(
 ) -> Path:
     report_name = _safe_name(config.get("name") or config.get("id") or "未命名配置")
     report_path = f"config/reports/{report_name}.json"
+    if draft:
+        report_suffix = suffix if suffix is not None else (".dry_run" if dry_run else "")
+        report_config_path = PROJECT_ROOT / "runtime" / "drafts" / f"{report_name}{report_suffix}.report.json"
+        _write_json(report_config_path, config)
+        report_path = str(report_config_path.relative_to(PROJECT_ROOT)).replace("\\", "/")
     task_config = build_task_config(
         report_name,
         report_path,
@@ -172,6 +177,9 @@ def _known_stages() -> set[str]:
 
 def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
+    for legacy_key in ("download", "compare", "env"):
+        if legacy_key in config:
+            issues.append({"path": f"/{legacy_key}", "message": f"旧字段 {legacy_key} 已不再支持，请使用新 Schema"})
     if not config.get("name"):
         issues.append({"path": "/name", "message": "配置名称不能为空"})
     if not config.get("template_path"):
@@ -189,6 +197,8 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
     allowed_body_types = {"form", "json", "raw"}
     allowed_response_modes = {"file", "json_to_excel", "json_drilldown_to_excel"}
     for index, item in enumerate(config.get("downloads") or []):
+        if "csrf_headers_from_cookies" in item:
+            issues.append({"path": f"/downloads/{index}/csrf_headers_from_cookies", "message": "旧动态 CSRF 字段已移除"})
         if not item.get("name"):
             issues.append({"path": f"/downloads/{index}/name", "message": "下载标识不能为空"})
         else:
@@ -235,8 +245,6 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
     send = config.get("send") or {}
     if not send.get("items"):
         issues.append({"path": "/send/items", "message": "至少需要一个发送项"})
-    if not send.get("webhook_url"):
-        issues.append({"path": "/send/webhook_url", "message": "企业微信 Webhook 不能为空"})
     return issues
 
 
@@ -280,7 +288,7 @@ def real_test_run_config(config: dict[str, Any]) -> dict[str, Any]:
         config,
         draft=True,
         dry_run=False,
-        send_dry_run=True,
+        send_dry_run=False,
         commit_enabled=False,
         login_enabled=True,
         suffix=".real_test.task.json",
@@ -312,7 +320,7 @@ def real_test_run_config(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "flowRunId": f"real-test-{int(datetime.now().timestamp())}",
         "status": "success",
-        "message": f"真实试跑完成（企业微信 dry-run，未提交正式模板）: {config.get('name', '')}",
+        "message": f"真实试跑完成（已发送企业微信，未提交正式模板）: {config.get('name', '')}",
         "taskConfigPath": str(task_config_path.relative_to(PROJECT_ROOT)),
         "output": output[-4000:],
     }

@@ -268,7 +268,7 @@ export default function App() {
   async function realTestRun() {
     if (!config) return;
     if (blockIfInvalid("真实试跑")) return;
-    if (!window.confirm("真实试跑会真实下载、比对和生成截图，但不会发送企业微信，也不会提交正式模板。确定继续吗？")) return;
+    if (!window.confirm("真实试跑会真实下载、比对、生成截图并发送企业微信，但不会提交正式模板。确定继续吗？")) return;
     try {
       await realTestRunConfig(config);
       setLogs(await listRunLogs());
@@ -414,6 +414,15 @@ export default function App() {
     void openRuntime(parts.join("/"));
   }
 
+  async function openRunLogs() {
+    try {
+      setLogs(await listRunLogs());
+      setLogsOpen(true);
+    } catch (error) {
+      toast.error("读取运行日志失败", { description: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   if (!config) {
     return <div className="app-shell flex h-screen items-center justify-center text-muted-foreground">正在加载配置中心...</div>;
   }
@@ -465,7 +474,7 @@ export default function App() {
             <Button variant="ghost" size="sm" onClick={() => void refreshStatus()}>刷新状态</Button>
             <Button variant="ghost" size="sm" onClick={() => void openVersions()}><GitBranch className="h-4 w-4" />版本历史</Button>
             <Button variant="ghost" size="sm" onClick={() => void openRuntime("")}><FolderClock className="h-4 w-4" />Runtime 文件</Button>
-            <Button variant="ghost" size="sm" onClick={() => setLogsOpen(true)}><History className="h-4 w-4" />查看运行日志</Button>
+            <Button variant="ghost" size="sm" onClick={() => void openRunLogs()}><History className="h-4 w-4" />查看运行日志</Button>
           </div>
         </div>
       </main>

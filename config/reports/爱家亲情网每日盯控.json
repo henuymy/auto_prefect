@@ -1,12 +1,6 @@
 {
   "name": "爱家亲情网每日盯控",
   "template_path": "templates/爱家亲情网每日盯控表.xlsx",
-  "compare": {
-    "sheet_mappings": [],
-    "header_row": 1,
-    "ignore_columns": [],
-    "key_columns": []
-  },
   "send": {
     "webhook_url": "",
     "workbook_name": "爱家亲情网每日盯控",
@@ -58,7 +52,8 @@
         "expTypeId": "HOLE_REAL_TC_EXP",
         "expFileName": "运营总览-业务销量.xlsx",
         "rankDown": null
-      }
+      },
+      "response_mode": "file"
     },
     {
       "name": "日累计",
@@ -88,7 +83,8 @@
         "expTypeId": "HOLE_REAL_TC_EXP",
         "expFileName": "运营总览-业务销量.xlsx",
         "rankDown": null
-      }
+      },
+      "response_mode": "file"
     }
   ],
   "compare_sources": [

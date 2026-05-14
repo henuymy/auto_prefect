@@ -23,6 +23,13 @@ requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+AUTH_REDIRECT_KEYWORDS = (
+    "login",
+    "sso",
+    "cas",
+    "uac",
+    "ticket",
+)
 
 
 def load_json(path):
@@ -192,11 +199,6 @@ def build_headers(report, stage):
         if not cookie_string:
             raise RuntimeError(f"动态请求头 {header_name} 未能从 Cookie 生成，session 已过期或 Cookie 为空")
         headers[header_name] = cookie_string
-    for header_cookie_name, value_cookie_name in (report.get("csrf_headers_from_cookies") or {}).items():
-        header_name = find_cookie_value(stage, header_cookie_name)
-        header_value = find_cookie_value(stage, value_cookie_name)
-        if header_name and header_value:
-            headers[header_name] = header_value
     return headers
 
 
@@ -210,12 +212,12 @@ def summarize_request(report, stage):
         )
     ]
     return {
-        "method": report.get("method", "GET").upper(),
+        "method": report["method"].upper(),
         "url": report.get("url"),
         "headers": sorted(headers.keys()),
         "cookies": cookie_names,
-        "body_type": report.get("body_type") or ("json" if "json" in report else "form"),
-        "response_mode": report.get("response_mode", "file"),
+        "body_type": report["body_type"],
+        "response_mode": report["response_mode"],
         "data_keys": list((report.get("data") or {}).keys()),
     }
 
@@ -262,6 +264,7 @@ def output_filename_for_report(report, response_filename):
 
 
 def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
+    body_type = report["body_type"].lower().strip()
     kwargs = {
         "headers": build_headers(report, stage),
         "params": resolve_storage_references(report.get("params"), stage) or None,
@@ -272,20 +275,19 @@ def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
     if proxies:
         kwargs["proxies"] = proxies
 
-    body_type = (report.get("body_type") or "").lower().strip()
-    if "json" in report:
-        kwargs["json"] = resolve_storage_references(report["json"], stage)
-    elif body_type == "json":
+    if body_type == "json":
         kwargs["json"] = resolve_storage_references(report.get("data", {}), stage)
     elif body_type == "raw":
         kwargs["data"] = resolve_storage_references(report.get("raw_body", ""), stage)
-    elif "data" in report:
-        kwargs["data"] = resolve_storage_references(report["data"], stage)
+    elif body_type == "form":
+        kwargs["data"] = resolve_storage_references(report.get("data", {}), stage)
+    else:
+        raise ValueError(f"body_type 只支持 form/json/raw: {body_type}")
     return kwargs
 
 
 def request_report(session, report, stage, timeout, verify_ssl, proxies):
-    method = report.get("method", "GET").upper()
+    method = report["method"].upper()
     url = report["url"]
     kwargs = build_request_kwargs(report, stage, timeout, verify_ssl, proxies)
     return session.request(method, url, **kwargs)
@@ -307,6 +309,20 @@ def raise_for_status_with_context(response):
         return
     body_preview = response.text[:500].replace("\r", " ").replace("\n", " ")
     lowered_preview = body_preview.lower()
+    location = response.headers.get("Location", "")
+    lowered_location = location.lower()
+    if response.status_code in {301, 302, 303, 307, 308}:
+        if any(keyword in lowered_location for keyword in AUTH_REDIRECT_KEYWORDS):
+            raise RuntimeError(
+                "下载认证失效（session 已过期），需要重新登录后重试: "
+                f"HTTP {response.status_code} {response.request.method} {response.url}; "
+                f"location={location}; body_preview={body_preview}"
+            )
+        raise RuntimeError(
+            "下载接口返回重定向但不是明确登录地址: "
+            f"HTTP {response.status_code} {response.request.method} {response.url}; "
+            f"location={location}; body_preview={body_preview}"
+        )
     if response.status_code in {401, 403} or "unauthorized" in lowered_preview or "login.jsp" in lowered_preview:
         raise RuntimeError(
             "下载认证失效（session 已过期），需要重新登录后重试: "
@@ -322,6 +338,7 @@ def raise_for_status_with_context(response):
             "url": response.url,
             "allow": response.headers.get("Allow"),
             "content_type": response.headers.get("Content-Type"),
+            "location": location,
             "body_preview": body_preview,
         }
         raise RuntimeError(f"下载接口返回错误: {details}") from exc
@@ -348,7 +365,7 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     if not response.content:
         raise RuntimeError(f"下载响应为空: HTTP {response.status_code} {response.url}")
 
-    response_mode = (report.get("response_mode") or "file").strip().lower()
+    response_mode = str(report["response_mode"]).strip().lower()
     if response_mode in {"json_to_excel", "json_drilldown_to_excel"}:
         report_name = safe_filename(report.get("name") or "json-report")
         output_path = output_dir / f"{report_name}.xlsx"
@@ -360,7 +377,7 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
             )
         else:
             initial_response_json = response_json_with_context(response)
-            initial_payload = copy.deepcopy(report.get("data") or report.get("json") or {})
+            initial_payload = copy.deepcopy(report.get("data") or {})
 
             def fetch_next(payload_override):
                 next_report = copy.deepcopy(report)

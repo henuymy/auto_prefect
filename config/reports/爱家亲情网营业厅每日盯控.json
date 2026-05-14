@@ -1,12 +1,6 @@
 {
   "name": "爱家亲情网营业厅每日盯控",
   "template_path": "templates/爱家亲情网营业厅每日盯控表.xlsx",
-  "compare": {
-    "sheet_mappings": [],
-    "header_row": 1,
-    "ignore_columns": [],
-    "key_columns": []
-  },
   "send": {
     "webhook_url": "",
     "workbook_name": "爱家亲情网营业厅每日盯控",
@@ -29,7 +23,6 @@
     "write_sheets": "all_compared",
     "send_when_same": true
   },
-  "download_mode": "级联下钻JSON转Excel",
   "downloads": [
     {
       "name": "实时",
