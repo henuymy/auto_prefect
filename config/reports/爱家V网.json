@@ -19,6 +19,7 @@
     ]
   },
   "template_update": {
+    "engine": "hybrid",
     "update_condition": "all_changed",
     "write_sheets": "changed",
     "send_when_same": true
@@ -41,7 +42,7 @@
         "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
         "key": "0000",
         "protectValue": "",
-        "downloadXlsx": "false"
+        "downloadXlsx": "true"
       },
       "method": "POST",
       "body_type": "form",
@@ -71,7 +72,7 @@
         "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
         "key": "0000",
         "protectValue": "",
-        "downloadXlsx": "false"
+        "downloadXlsx": "true"
       },
       "method": "POST",
       "body_type": "form",
@@ -142,5 +143,7 @@
     "cron": "",
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-14 11:15:34"
+  "updatedAt": "2026-05-15 22:00:25",
+  "source": "published",
+  "has_draft": false
 }

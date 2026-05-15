@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import json
+from zipfile import BadZipFile
 from dataclasses import asdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
+
 from models.compare_result import CompareResult, WorkbookCompareResult
 from infrastructure.excel_client import require_win32, get_sheet, sheet_names as workbook_sheet_names
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+COMPARE_ENGINES = {"openpyxl", "com"}
 
 
 def load_json(path):
@@ -91,10 +96,27 @@ def values_to_matrix(values):
     return [list(row) for row in values]
 
 
-def read_sheet_table(workbook, sheet_name, range_address=None):
+def read_sheet_table_com(workbook, sheet_name, range_address=None):
     sheet = get_sheet(workbook, sheet_name)
     rng = sheet.Range(range_address) if range_address else sheet.UsedRange
     return trim_empty_edges(normalize_matrix(values_to_matrix(rng.Value)))
+
+
+def worksheet_range_values(sheet, range_address=None):
+    if range_address:
+        cells = sheet[range_address]
+        if not isinstance(cells, tuple):
+            return [[cells.value]]
+        if cells and not isinstance(cells[0], tuple):
+            return [[cell.value for cell in cells]]
+        return [[cell.value for cell in row] for row in cells]
+    return [list(row) for row in sheet.iter_rows(values_only=True)]
+
+
+def read_sheet_table_openpyxl(workbook, sheet_name, range_address=None):
+    if sheet_name not in workbook.sheetnames:
+        raise KeyError(f"工作表不存在: {sheet_name}")
+    return trim_empty_edges(normalize_matrix(worksheet_range_values(workbook[sheet_name], range_address)))
 
 
 def split_header_rows(rows, header_row=1):
@@ -270,7 +292,7 @@ def normalize_sheet_mapping(item):
     }
 
 
-def build_sheet_mappings(config, new_workbook, template_workbook):
+def build_sheet_mappings_from_names(config, new_sheet_names, template_sheet_names):
     if config.get("sheet_mappings"):
         return [normalize_sheet_mapping(item) for item in config["sheet_mappings"]]
 
@@ -288,9 +310,9 @@ def build_sheet_mappings(config, new_workbook, template_workbook):
         }]
 
     skip_sheets = set(config.get("skip_sheets") or [])
-    template_sheet_names = set(workbook_sheet_names(template_workbook))
+    template_sheet_names = set(template_sheet_names)
     mappings = []
-    for sheet_name in workbook_sheet_names(new_workbook):
+    for sheet_name in new_sheet_names:
         if sheet_name in skip_sheets:
             continue
         mappings.append({
@@ -300,6 +322,14 @@ def build_sheet_mappings(config, new_workbook, template_workbook):
             "missing_template_sheet": sheet_name not in template_sheet_names,
         })
     return mappings
+
+
+def build_sheet_mappings(config, new_workbook, template_workbook):
+    return build_sheet_mappings_from_names(
+        config,
+        workbook_sheet_names(new_workbook),
+        workbook_sheet_names(template_workbook),
+    )
 
 
 def merge_sheet_config(config, mapping):
@@ -329,7 +359,67 @@ def validate_config(config):
         raise ValueError(f"缺少必要配置: {missing}")
 
 
-def compare_workbook(config):
+def normalize_compare_engine(engine):
+    normalized = str(engine or "openpyxl").strip().lower()
+    if normalized not in COMPARE_ENGINES:
+        raise ValueError("compare.engine 只支持 openpyxl 或 com")
+    return normalized
+
+
+def compare_sheet_mappings(config, mappings, template_sheet_names, read_new_sheet, read_template_sheet):
+    sheet_results = []
+    for mapping in mappings:
+        new_sheet_name = mapping["new_sheet_name"]
+        template_sheet_name = mapping["template_sheet_name"]
+        if template_sheet_name not in template_sheet_names:
+            sheet_results.append({
+                "name": mapping.get("name") or new_sheet_name,
+                "new_sheet_name": new_sheet_name,
+                "template_sheet_name": template_sheet_name,
+                "result": "invalid",
+                "message": f"模板缺少对应工作表: {template_sheet_name}",
+            })
+            continue
+
+        options = merge_sheet_config(config, mapping)
+        result = compare_tables(
+            read_new_sheet(new_sheet_name, mapping.get("new_range")),
+            read_template_sheet(template_sheet_name, mapping.get("template_range")),
+            header_row=options["header_row"],
+            ignore_columns=options["ignore_columns"],
+            key_columns=options["key_columns"],
+            sample_limit=options["sample_limit"],
+        )
+        payload = asdict(result)
+        payload.update({
+            "name": mapping.get("name") or new_sheet_name,
+            "new_sheet_name": new_sheet_name,
+            "template_sheet_name": template_sheet_name,
+        })
+        sheet_results.append(payload)
+    return sheet_results
+
+
+def summarize_workbook_compare(sheet_results):
+    summary = {
+        "same": sum(1 for item in sheet_results if item.get("result") == "same"),
+        "changed": sum(1 for item in sheet_results if item.get("result") == "changed"),
+        "invalid": sum(1 for item in sheet_results if item.get("result") == "invalid"),
+        "total": len(sheet_results),
+    }
+    if summary["invalid"]:
+        result = "invalid"
+        message = "存在无法比对的工作表"
+    elif summary["changed"]:
+        result = "changed"
+        message = "至少一个工作表数据有变化"
+    else:
+        result = "same"
+        message = "所有工作表数据一致"
+    return WorkbookCompareResult(result=result, sheets=sheet_results, summary=summary, message=message)
+
+
+def compare_workbook_com(config):
     config = resolve_compare_config(config)
     validate_config(config)
     new_path = Path(config["new_report_path"]).resolve()
@@ -360,37 +450,15 @@ def compare_workbook(config):
             ReadOnly=True,
             IgnoreReadOnlyRecommended=True,
         )
-        mappings = build_sheet_mappings(config, new_workbook, template_workbook)
         template_sheet_names = set(workbook_sheet_names(template_workbook))
-        for mapping in mappings:
-            new_sheet_name = mapping["new_sheet_name"]
-            template_sheet_name = mapping["template_sheet_name"]
-            if template_sheet_name not in template_sheet_names:
-                sheet_results.append({
-                    "name": mapping.get("name") or new_sheet_name,
-                    "new_sheet_name": new_sheet_name,
-                    "template_sheet_name": template_sheet_name,
-                    "result": "invalid",
-                    "message": f"模板缺少对应工作表: {template_sheet_name}",
-                })
-                continue
-
-            options = merge_sheet_config(config, mapping)
-            result = compare_tables(
-                read_sheet_table(new_workbook, new_sheet_name, range_address=mapping.get("new_range")),
-                read_sheet_table(template_workbook, template_sheet_name, range_address=mapping.get("template_range")),
-                header_row=options["header_row"],
-                ignore_columns=options["ignore_columns"],
-                key_columns=options["key_columns"],
-                sample_limit=options["sample_limit"],
-            )
-            payload = asdict(result)
-            payload.update({
-                "name": mapping.get("name") or new_sheet_name,
-                "new_sheet_name": new_sheet_name,
-                "template_sheet_name": template_sheet_name,
-            })
-            sheet_results.append(payload)
+        mappings = build_sheet_mappings(config, new_workbook, template_workbook)
+        sheet_results = compare_sheet_mappings(
+            config,
+            mappings,
+            template_sheet_names,
+            lambda sheet_name, range_address=None: read_sheet_table_com(new_workbook, sheet_name, range_address),
+            lambda sheet_name, range_address=None: read_sheet_table_com(template_workbook, sheet_name, range_address),
+        )
     finally:
         if new_workbook is not None:
             new_workbook.Close(SaveChanges=False)
@@ -398,22 +466,48 @@ def compare_workbook(config):
             template_workbook.Close(SaveChanges=False)
         excel.Quit()
 
-    summary = {
-        "same": sum(1 for item in sheet_results if item.get("result") == "same"),
-        "changed": sum(1 for item in sheet_results if item.get("result") == "changed"),
-        "invalid": sum(1 for item in sheet_results if item.get("result") == "invalid"),
-        "total": len(sheet_results),
-    }
-    if summary["invalid"]:
-        result = "invalid"
-        message = "存在无法比对的工作表"
-    elif summary["changed"]:
-        result = "changed"
-        message = "至少一个工作表数据有变化"
-    else:
-        result = "same"
-        message = "所有工作表数据一致"
-    return WorkbookCompareResult(result=result, sheets=sheet_results, summary=summary, message=message)
+    return summarize_workbook_compare(sheet_results)
+
+
+def compare_workbook_openpyxl(config):
+    config = resolve_compare_config(config)
+    validate_config(config)
+    new_path = Path(config["new_report_path"]).resolve()
+    template_path = Path(config["template_path"]).resolve()
+    if not new_path.exists():
+        raise FileNotFoundError(f"新报表不存在: {new_path}")
+    if not template_path.exists():
+        raise FileNotFoundError(f"模板文件不存在: {template_path}")
+
+    keep_vba_new = new_path.suffix.lower() == ".xlsm"
+    keep_vba_template = template_path.suffix.lower() == ".xlsm"
+    new_workbook = load_workbook(new_path, data_only=True, read_only=True, keep_vba=keep_vba_new)
+    template_workbook = load_workbook(template_path, data_only=True, read_only=True, keep_vba=keep_vba_template)
+    try:
+        template_sheet_names = set(template_workbook.sheetnames)
+        mappings = build_sheet_mappings_from_names(config, new_workbook.sheetnames, template_workbook.sheetnames)
+        sheet_results = compare_sheet_mappings(
+            config,
+            mappings,
+            template_sheet_names,
+            lambda sheet_name, range_address=None: read_sheet_table_openpyxl(new_workbook, sheet_name, range_address),
+            lambda sheet_name, range_address=None: read_sheet_table_openpyxl(template_workbook, sheet_name, range_address),
+        )
+    finally:
+        new_workbook.close()
+        template_workbook.close()
+
+    return summarize_workbook_compare(sheet_results)
+
+
+def compare_workbook(config):
+    engine = normalize_compare_engine(config.get("engine"))
+    if engine == "com":
+        return compare_workbook_com(config)
+    try:
+        return compare_workbook_openpyxl(config)
+    except (InvalidFileException, BadZipFile, OSError):
+        return compare_workbook_com(config)
 
 
 def result_to_dict(result):

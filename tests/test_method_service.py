@@ -12,6 +12,7 @@ from services.method_service import (
     download_reports,
     filename_from_content_disposition,
     find_stage,
+    normalize_downloaded_excel,
     output_filename_for_report,
     raise_for_status_with_context,
 )
@@ -131,6 +132,21 @@ def test_output_filename_for_report_keeps_existing_prefix():
     filename = output_filename_for_report({"name": "新增"}, "新增__报表.xlsx")
 
     assert filename == "新增__报表.xlsx"
+
+
+def test_normalize_downloaded_excel_copies_misnamed_xlsx():
+    work_dir = make_work_dir()
+    try:
+        source_path = work_dir / "报表.xls"
+        source_path.write_bytes(b"PK\x03\x04fake-xlsx")
+
+        normalized_path = normalize_downloaded_excel(source_path)
+
+        assert normalized_path.suffix == ".xlsx"
+        assert normalized_path.exists()
+        assert source_path.exists()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def test_build_request_kwargs_sends_json_body_type_as_json():
@@ -367,6 +383,68 @@ def test_download_reports_json_to_excel_writes_output(monkeypatch):
         result = manifest["results"][0]
         assert result["response_mode"] == "json_to_excel"
         assert result["rows"] == 1
+        assert Path(result["output_path"]).exists()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_download_reports_file_converts_xls_output_path(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        manifest_path = work_dir / "manifest.json"
+        output_dir = work_dir / "downloads"
+        write_json(cookie_dump_path, {"stages": [{"stage": "report_analysis", "cookies": []}]})
+
+        class FakeSession:
+            trust_env = False
+
+            def __init__(self):
+                self.cookies = requests.cookies.RequestsCookieJar()
+                self.headers = {}
+
+            def request(self, method, url, **kwargs):
+                response = FakeResponse(
+                    200,
+                    "xls-content",
+                    url=url,
+                    headers={"Content-Disposition": "attachment; filename=日报.xls"},
+                )
+                response.request.method = method
+                return response
+
+        def fake_normalize(output_path, visible=False):
+            output_path = Path(output_path)
+            converted_path = output_path.with_suffix(".xlsx")
+            converted_path.write_text("xlsx-content", encoding="utf-8")
+            return converted_path
+
+        monkeypatch.setattr("services.method_service.requests.Session", FakeSession)
+        monkeypatch.setattr("services.method_service.normalize_downloaded_excel", fake_normalize)
+
+        manifest = download_reports(
+            {
+                "cookie_dump_path": str(cookie_dump_path),
+                "manifest_path": str(manifest_path),
+                "output_dir": str(output_dir),
+                "reports": [
+                    {
+                        "enabled": True,
+                        "name": "日报",
+                        "stage": "report_analysis",
+                        "method": "POST",
+                        "url": "https://example/export",
+                        "body_type": "form",
+                        "response_mode": "file",
+                    }
+                ],
+            }
+        )
+
+        result = manifest["results"][0]
+        assert result["output_path"].endswith(".xlsx")
+        assert result["original_output_path"].endswith(".xls")
+        assert result["converted_to_xlsx"] is True
         assert Path(result["output_path"]).exists()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

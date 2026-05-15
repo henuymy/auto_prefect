@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import copy
+import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from urllib.parse import unquote, urlparse
 import requests
 from urllib3.exceptions import InsecureRequestWarning
 
+from infrastructure.excel_client import require_win32
 from services.json_excel_service import (
     drilldown_json_to_excel,
     get_by_path,
@@ -31,6 +33,10 @@ AUTH_REDIRECT_KEYWORDS = (
     "uac",
     "ticket",
 )
+MODERN_EXCEL_SUFFIXES = {".xlsx", ".xlsm", ".xltx", ".xltm"}
+OLE_EXCEL_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+ZIP_MAGIC = b"PK\x03\x04"
+XL_OPENXML_WORKBOOK = 51
 
 
 def load_json(path):
@@ -264,6 +270,68 @@ def output_filename_for_report(report, response_filename):
     return f"{report_name}__{response_filename}"
 
 
+def unique_sibling_path(path):
+    if not path.exists():
+        return path
+    for index in range(1, 1000):
+        candidate = path.with_name(f"{path.stem}_{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"无法生成不冲突的文件名: {path}")
+
+
+def file_starts_with(path, magic):
+    try:
+        with Path(path).open("rb") as f:
+            return f.read(len(magic)) == magic
+    except FileNotFoundError:
+        return False
+
+
+def convert_xls_to_xlsx(source_path, visible=False):
+    source_path = Path(source_path)
+    target_path = unique_sibling_path(source_path.with_suffix(".xlsx"))
+    win32com = require_win32()
+    excel = win32com.DispatchEx("Excel.Application")
+    workbook = None
+    try:
+        try:
+            excel.Visible = bool(visible)
+            excel.DisplayAlerts = False
+            excel.AskToUpdateLinks = False
+        except Exception:
+            pass
+        workbook = excel.Workbooks.Open(
+            str(source_path),
+            UpdateLinks=0,
+            ReadOnly=True,
+            IgnoreReadOnlyRecommended=True,
+        )
+        workbook.SaveAs(str(target_path), FileFormat=XL_OPENXML_WORKBOOK)
+    finally:
+        if workbook is not None:
+            workbook.Close(SaveChanges=False)
+        excel.Quit()
+    return target_path
+
+
+def normalize_downloaded_excel(output_path, visible=False):
+    output_path = Path(output_path)
+    suffix = output_path.suffix.lower()
+    if suffix in MODERN_EXCEL_SUFFIXES:
+        return output_path
+
+    if file_starts_with(output_path, ZIP_MAGIC):
+        target_path = unique_sibling_path(output_path.with_suffix(".xlsx"))
+        shutil.copy2(output_path, target_path)
+        return target_path
+
+    if suffix == ".xls" or file_starts_with(output_path, OLE_EXCEL_MAGIC):
+        return convert_xls_to_xlsx(output_path, visible=visible)
+
+    return output_path
+
+
 def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
     body_type = report["body_type"].lower().strip()
     kwargs = {
@@ -436,15 +504,19 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     output_path = output_dir / filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(response.content)
+    normalized_output_path = normalize_downloaded_excel(output_path, visible=bool(report.get("visible", False)))
+    converted_to_xlsx = normalized_output_path != output_path
+    final_output_path = normalized_output_path
     return {
         "name": report.get("name"),
         "stage": report.get("stage"),
         "transport": "requests",
         "url": response.url,
         "status_code": response.status_code,
-        "bytes": len(response.content),
+        "bytes": final_output_path.stat().st_size,
         "response_filename": response_filename,
-        "output_path": str(output_path),
+        "output_path": str(final_output_path),
+        **({"original_output_path": str(output_path), "converted_to_xlsx": True} if converted_to_xlsx else {}),
         "downloaded_at": datetime.now().isoformat(),
     }
 
