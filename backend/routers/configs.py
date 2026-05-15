@@ -9,6 +9,18 @@ from backend.services.run_log_store import append_log
 router = APIRouter(prefix="/api/configs", tags=["configs"])
 
 
+def _split_error_detail(error: str, fallback_message: str) -> tuple[str, str]:
+    text = str(error or "").strip()
+    if not text:
+        return fallback_message, ""
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    summary = next((line for line in lines if line.startswith("RuntimeError(")), "") or lines[0]
+    if len(summary) > 160:
+        summary = f"{summary[:157]}..."
+    return summary, text[-8000:]
+
+
 @router.get("")
 def list_configs():
     return config_store.list_configs()
@@ -96,7 +108,8 @@ def test_run_config(config_id: str, config: dict):
         append_log("success", "安全测试", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
         return result
     except RuntimeError as exc:
-        append_log("failed", "安全测试失败", str(exc))
+        message, details = _split_error_detail(str(exc), "安全测试运行失败")
+        append_log("failed", "安全测试失败", message, details)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -111,7 +124,8 @@ def real_test_run_config(config_id: str, config: dict):
         append_log("success", "真实试跑", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
         return result
     except RuntimeError as exc:
-        append_log("failed", "真实试跑失败", str(exc))
+        message, details = _split_error_detail(str(exc), "真实试跑运行失败")
+        append_log("failed", "真实试跑失败", message, details)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -127,5 +141,6 @@ def publish_config(config_id: str, config: dict):
         append_log("success", "发布到调度", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
         return result
     except RuntimeError as exc:
-        append_log("failed", "发布到调度失败", str(exc))
+        message, details = _split_error_detail(str(exc), "发布到调度失败")
+        append_log("failed", "发布到调度失败", message, details)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

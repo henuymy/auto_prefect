@@ -7,6 +7,6 @@ import "./index.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
-    <Toaster richColors position="top-right" />
+    <Toaster richColors position="top-right" duration={1600} closeButton />
   </React.StrictMode>,
 );

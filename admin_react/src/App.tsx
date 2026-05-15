@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { toast } from "sonner";
-import { FolderClock, GitBranch, History } from "lucide-react";
+import { FileSpreadsheet, FolderClock, GitBranch, History } from "lucide-react";
 import { ConfigForm } from "@/components/config-form/ConfigForm";
+import type { ConfigFormTab } from "@/components/config-form/ConfigForm";
 import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { JsonPanel } from "@/components/json-panel/JsonPanel";
 import { RunLogDrawer } from "@/components/run-log/RunLogDrawer";
 import { RuntimeDrawer } from "@/components/runtime/RuntimeDrawer";
+import { TemplateDrawer } from "@/components/templates/TemplateDrawer";
 import { VersionDrawer } from "@/components/versions/VersionDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +17,20 @@ import { createConfig, deleteConfig, deleteRuntime, getConfig, getSystemStatus, 
 import { uid } from "@/lib/utils";
 import { validateReportConfig } from "@/schemas/reportConfigSchema";
 import type { ConfigVersion, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => (typeof window === "undefined" ? false : window.matchMedia(query).matches));
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const updateMatches = () => setMatches(media.matches);
+    updateMatches();
+    media.addEventListener("change", updateMatches);
+    return () => media.removeEventListener("change", updateMatches);
+  }, [query]);
+
+  return matches;
+}
 
 function emptyConfig(): ReportConfig {
   return {
@@ -97,6 +113,11 @@ function findFirstDiffPath(before: unknown, after: unknown, path: JsonPath = [])
   return path;
 }
 
+function toastDescription(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length > 180 ? `${message.slice(0, 177)}...` : message;
+}
+
 export default function App() {
   const [configs, setConfigs] = useState<ReportConfig[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -104,6 +125,7 @@ export default function App() {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [logs, setLogs] = useState<RunLog[]>([]);
   const [logsOpen, setLogsOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const [runtimePath, setRuntimePath] = useState("");
   const [runtimeItems, setRuntimeItems] = useState<RuntimeEntry[]>([]);
@@ -114,7 +136,9 @@ export default function App() {
   const [versions, setVersions] = useState<ConfigVersion[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [jsonFocusPath, setJsonFocusPath] = useState<JsonPath>([]);
+  const [activeConfigTab, setActiveConfigTab] = useState<ConfigFormTab>("base");
   const [dark, setDark] = useState(false);
+  const wideLayout = useMediaQuery("(min-width: 1280px)");
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -123,6 +147,26 @@ export default function App() {
   useEffect(() => {
     void bootstrap();
   }, []);
+
+  useEffect(() => {
+    if (!logsOpen) return;
+
+    let cancelled = false;
+    const refreshLogs = async () => {
+      const nextLogs = await listRunLogs();
+      if (!cancelled) {
+        setLogs(nextLogs);
+      }
+    };
+
+    void refreshLogs();
+    const timer = window.setInterval(() => void refreshLogs(), 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [logsOpen]);
 
   const liveIssues = useMemo(() => (config ? validateReportConfig(config) : []), [config]);
   const persistedConfigs = useMemo(() => configs.filter((item) => !isTemporaryConfigId(item.id)), [configs]);
@@ -161,7 +205,7 @@ export default function App() {
       setSystemStatus(await getSystemStatus());
       toast.success("系统状态已刷新");
     } catch (error) {
-      toast.error("系统状态读取失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("系统状态读取失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -216,7 +260,7 @@ export default function App() {
       setLogs(await listRunLogs());
       toast.success("草稿已保存", { description: `runtime/drafts/${saved.name}.json` });
     } catch (error) {
-      toast.error("保存草稿失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("保存草稿失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -231,7 +275,7 @@ export default function App() {
       setLogs(await listRunLogs());
       toast.success("配置已保存", { description: `config/reports/${saved.name}.json` });
     } catch (error) {
-      toast.error("保存配置失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("保存配置失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -248,7 +292,7 @@ export default function App() {
         toast.success("配置校验通过");
       }
     } catch (error) {
-      toast.error("配置校验失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("配置校验失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -261,7 +305,7 @@ export default function App() {
       setLogsOpen(true);
       toast.info("已创建测试运行请求");
     } catch (error) {
-      toast.error("测试运行失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("测试运行失败，详情见运行日志", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -275,7 +319,7 @@ export default function App() {
       setLogsOpen(true);
       toast.success("真实试跑完成");
     } catch (error) {
-      toast.error("真实试跑失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("真实试跑失败，详情见运行日志", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -301,7 +345,7 @@ export default function App() {
       }
       toast.success("配置已删除", { description: `同步清理 ${result.deleted?.length || 0} 个配置文件` });
     } catch (error) {
-      toast.error("删除配置失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("删除配置失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -327,7 +371,7 @@ export default function App() {
       setLogsOpen(true);
       toast.success("已提交发布到调度");
     } catch (error) {
-      toast.error("发布失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("发布失败，详情见运行日志", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -340,7 +384,7 @@ export default function App() {
       setCleanupPreview(null);
       setRuntimeOpen(true);
     } catch (error) {
-      toast.error("读取 runtime 失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("读取 runtime 失败", { description: toastDescription(error), duration: 2400 });
     } finally {
       setRuntimeLoading(false);
     }
@@ -354,7 +398,7 @@ export default function App() {
       setLogs(await listRunLogs());
       toast.success("runtime 文件已删除");
     } catch (error) {
-      toast.error("删除失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("删除失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -364,7 +408,7 @@ export default function App() {
       setCleanupPreview(preview);
       toast.info("清理预览已生成", { description: `将清理 ${preview.count} 项` });
     } catch (error) {
-      toast.error("清理预览失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("清理预览失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -378,7 +422,7 @@ export default function App() {
       setLogs(await listRunLogs());
       toast.success("Runtime 清理完成", { description: `已删除 ${result.deleted?.length || 0} 项` });
     } catch (error) {
-      toast.error("Runtime 清理失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("Runtime 清理失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -388,7 +432,7 @@ export default function App() {
       setVersions(await listConfigVersions(config.id));
       setVersionsOpen(true);
     } catch (error) {
-      toast.error("读取版本历史失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("读取版本历史失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -403,7 +447,7 @@ export default function App() {
       setVersions(await listConfigVersions(restored.id));
       toast.success("配置版本已恢复");
     } catch (error) {
-      toast.error("恢复版本失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("恢复版本失败", { description: toastDescription(error), duration: 2400 });
     }
   }
 
@@ -419,7 +463,13 @@ export default function App() {
       setLogs(await listRunLogs());
       setLogsOpen(true);
     } catch (error) {
-      toast.error("读取运行日志失败", { description: error instanceof Error ? error.message : String(error) });
+      toast.error("读取运行日志失败", { description: toastDescription(error), duration: 2400 });
+    }
+  }
+
+  function handleTemplateDeleted(path: string) {
+    if (config?.template_path === path) {
+      setConfig({ ...config, template_path: "" });
     }
   }
 
@@ -427,9 +477,28 @@ export default function App() {
     return <div className="app-shell flex h-screen items-center justify-center text-muted-foreground">正在加载配置中心...</div>;
   }
 
+  const jsonPanel = (
+    <JsonPanel
+      config={config}
+      issues={issues.length ? issues : liveIssues}
+      focusPath={jsonFocusPath}
+      onJsonApply={(next) => {
+        setConfig(next);
+        setIssues(validateReportConfig(next));
+      }}
+    />
+  );
+
   return (
-    <div className="app-shell flex h-screen overflow-hidden">
-      <Sidebar configs={sidebarConfigs} selectedId={selectedId} onSelect={selectConfig} onCreate={createLocalConfig} />
+    <div className="app-shell flex min-h-dvh flex-col overflow-x-hidden xl:h-dvh xl:flex-row xl:overflow-hidden">
+      <Sidebar
+        configs={sidebarConfigs}
+        selectedId={selectedId}
+        activeTab={activeConfigTab}
+        onTabChange={setActiveConfigTab}
+        onSelect={selectConfig}
+        onCreate={createLocalConfig}
+      />
       <main className="flex min-w-0 flex-1 flex-col">
         <Header
           dark={dark}
@@ -443,23 +512,28 @@ export default function App() {
           canDelete={isPersistedConfig}
           onPublish={publish}
         />
-        <div className="min-h-0 flex-1 p-5">
-          <PanelGroup direction="horizontal" className="h-full rounded-3xl border border-border/70 bg-background/40 p-2 backdrop-blur-xl">
-            <Panel defaultSize={58} minSize={38}>
-              <div className="h-full overflow-auto p-3">
-                <ConfigForm config={config} onChange={updateConfigFromForm} />
-              </div>
-            </Panel>
-            <PanelResizeHandle className="mx-2 w-1 rounded-full bg-border transition hover:bg-primary" />
-            <Panel defaultSize={42} minSize={30}>
-              <div className="h-full p-3">
-                <JsonPanel config={config} issues={issues.length ? issues : liveIssues} focusPath={jsonFocusPath} onJsonApply={(next) => { setConfig(next); setIssues(validateReportConfig(next)); }} />
-              </div>
-            </Panel>
-          </PanelGroup>
+        <div className="min-h-0 flex-1 p-3 sm:p-4 lg:p-5">
+          {wideLayout ? (
+            <PanelGroup direction="horizontal" className="h-full rounded-2xl border border-border/70 bg-background/40 p-2 backdrop-blur-xl">
+              <Panel defaultSize={58} minSize={38}>
+                <div className="h-full overflow-auto p-3">
+                  <ConfigForm config={config} tab={activeConfigTab} onTabChange={setActiveConfigTab} onChange={updateConfigFromForm} />
+                </div>
+              </Panel>
+              <PanelResizeHandle className="mx-2 w-1 rounded-full bg-border transition hover:bg-primary" />
+              <Panel defaultSize={42} minSize={30}>
+                <div className="h-full p-3">{jsonPanel}</div>
+              </Panel>
+            </PanelGroup>
+          ) : (
+            <div className="space-y-4 rounded-2xl border border-border/70 bg-background/40 p-3 backdrop-blur-xl">
+              <ConfigForm config={config} tab={activeConfigTab} onTabChange={setActiveConfigTab} onChange={updateConfigFromForm} />
+              <div className="h-[70dvh] min-h-[520px]">{jsonPanel}</div>
+            </div>
+          )}
         </div>
-        <div className="flex h-12 items-center justify-between border-t border-border/70 bg-card/70 px-5 text-xs text-muted-foreground backdrop-blur-xl">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-h-12 flex-col gap-3 border-t border-border/70 bg-card/70 px-3 py-3 text-xs text-muted-foreground backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between lg:px-5">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span>真实 API 模式：配置写入 config/reports，草稿写入 runtime/drafts。</span>
             {systemStatus && (
               <>
@@ -470,15 +544,21 @@ export default function App() {
               </>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => void refreshStatus()}>刷新状态</Button>
             <Button variant="ghost" size="sm" onClick={() => void openVersions()}><GitBranch className="h-4 w-4" />版本历史</Button>
+            <Button variant="ghost" size="sm" onClick={() => setTemplatesOpen(true)}><FileSpreadsheet className="h-4 w-4" />模板管理</Button>
             <Button variant="ghost" size="sm" onClick={() => void openRuntime("")}><FolderClock className="h-4 w-4" />Runtime 文件</Button>
             <Button variant="ghost" size="sm" onClick={() => void openRunLogs()}><History className="h-4 w-4" />查看运行日志</Button>
           </div>
         </div>
       </main>
       <RunLogDrawer open={logsOpen} logs={logs} onClose={() => setLogsOpen(false)} />
+      <TemplateDrawer
+        open={templatesOpen}
+        onClose={() => setTemplatesOpen(false)}
+        onDeleted={handleTemplateDeleted}
+      />
       <RuntimeDrawer
         open={runtimeOpen}
         currentPath={runtimePath}

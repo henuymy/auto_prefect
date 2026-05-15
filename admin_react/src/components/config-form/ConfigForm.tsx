@@ -1,14 +1,16 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { AlertCircle, Bell, CalendarClock, ChevronDown, CloudDownload, GitCompareArrows, Info, Plus, Settings, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { AlertCircle, Bell, CalendarClock, ChevronDown, CloudDownload, GitCompareArrows, Info, Plus, Settings, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RequestParserPanel } from "@/components/config-form/RequestParserPanel";
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tabs } from "@/components/ui/tabs";
+import { listTemplates, uploadTemplate } from "@/lib/api";
 import { parseJsonSafe, prettyJson } from "@/lib/utils";
 import type { CompareSource, DownloadItem, ExcelColumn, ReportConfig, SendItem } from "@/types/config";
 
@@ -20,6 +22,7 @@ const basicSchema = z.object({
 });
 
 type BasicForm = z.infer<typeof basicSchema>;
+export type ConfigFormTab = "base" | "downloads" | "compare" | "send" | "advanced";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -80,8 +83,17 @@ function getAuthTargetLabel(item: DownloadItem) {
   return "当前不写入动态认证字段";
 }
 
-export function ConfigForm({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
-  const [tab, setTab] = useState("base");
+export function ConfigForm({
+  config,
+  tab,
+  onTabChange,
+  onChange,
+}: {
+  config: ReportConfig;
+  tab: ConfigFormTab;
+  onTabChange: (tab: ConfigFormTab) => void;
+  onChange: (config: ReportConfig) => void;
+}) {
   const tabs = [
     { value: "base", label: "基础信息", icon: <Info className="h-4 w-4" /> },
     { value: "downloads", label: "数据抓取", icon: <CloudDownload className="h-4 w-4" /> },
@@ -92,7 +104,7 @@ export function ConfigForm({ config, onChange }: { config: ReportConfig; onChang
 
   return (
     <div className="space-y-5">
-      <Tabs tabs={tabs} value={tab} onChange={setTab} />
+      <Tabs tabs={tabs} value={tab} onChange={(value) => onTabChange(value as ConfigFormTab)} />
       {tab === "base" && <BaseTab config={config} onChange={onChange} />}
       {tab === "downloads" && <DownloadsTab config={config} onChange={onChange} />}
       {tab === "compare" && <CompareTab config={config} onChange={onChange} />}
@@ -103,7 +115,11 @@ export function ConfigForm({ config, onChange }: { config: ReportConfig; onChang
 }
 
 function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
-  const { control, register, formState } = useForm<BasicForm>({
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templates, setTemplates] = useState<Array<{ filename: string; path: string; size: number; modifiedAt: number }>>([]);
+  const { register, formState } = useForm<BasicForm>({
     resolver: zodResolver(basicSchema),
     values: {
       name: config.name,
@@ -113,6 +129,37 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
     },
   });
 
+  useEffect(() => {
+    void refreshTemplates();
+  }, []);
+
+  async function refreshTemplates() {
+    setTemplatesLoading(true);
+    try {
+      setTemplates(await listTemplates());
+    } catch {
+      // Keep manual typing possible when backend is not available.
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }
+
+  async function handleTemplateUpload(file: File | undefined) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const result = await uploadTemplate(file);
+      onChange({ ...config, template_path: result.path });
+      await refreshTemplates();
+      toast.success("模板已上传", { description: result.path });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error("模板上传失败", { description: message.length > 180 ? `${message.slice(0, 177)}...` : message, duration: 2400 });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   return (
     <Card>
@@ -125,13 +172,42 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
           <Input {...register("name")} onChange={(event) => onChange({ ...config, name: event.target.value })} />
         </Field>
         <Field label="模板路径 template_path" error={formState.errors.template_path?.message}>
-          <Input {...register("template_path")} onChange={(event) => onChange({ ...config, template_path: event.target.value })} />
+          <Select
+            value={config.template_path}
+            onFocus={() => void refreshTemplates()}
+            onChange={(event) => onChange({ ...config, template_path: event.target.value })}
+            disabled={templatesLoading && !templates.length}
+          >
+            <option value="">{templatesLoading ? "正在读取模板..." : "请选择模板"}</option>
+            {config.template_path && !templates.some((template) => template.path === config.template_path) && (
+              <option value={config.template_path}>{config.template_path}</option>
+            )}
+            {templates.map((template) => (
+              <option key={template.path} value={template.path}>
+                {template.filename}
+              </option>
+            ))}
+          </Select>
+          {config.template_path && <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{config.template_path}</p>}
         </Field>
         <Field label="是否启用 enabled">
           <label className="flex h-10 items-center gap-3 rounded-lg border border-border px-3">
             <input type="checkbox" checked={config.enabled !== false} onChange={(event) => onChange({ ...config, enabled: event.target.checked })} />
             <span className="text-sm text-muted-foreground">启用后允许发布和测试运行</span>
           </label>
+        </Field>
+        <Field label="模板上传">
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".xlsx,.xlsm,.xls"
+            onChange={(event) => void handleTemplateUpload(event.target.files?.[0])}
+          />
+          <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+            <Upload className="h-4 w-4" />
+            {uploading ? "上传中" : "上传模板"}
+          </Button>
         </Field>
         <Field label="描述 description" className="md:col-span-2">
           <Textarea {...register("description")} value={config.description || ""} onChange={(event) => onChange({ ...config, description: event.target.value })} />
@@ -159,12 +235,12 @@ function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (c
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-4">
-        <div>
+      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <CardTitle>数据抓取</CardTitle>
           <CardDescription>每一张卡就是一个下载/JSON 转 Excel 请求，支持 Cookie Stage 和动态认证。</CardDescription>
         </div>
-        <Button variant="outline" onClick={add}><Plus className="h-4 w-4" />添加抓取项</Button>
+        <Button className="self-start sm:self-auto" variant="outline" onClick={add}><Plus className="h-4 w-4" />添加抓取项</Button>
       </CardHeader>
       <CardContent className="space-y-4">
         <PlaceholderGuide />
@@ -184,16 +260,16 @@ function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (c
 
 function PlaceholderGuide() {
   return (
-    <details className="group overflow-hidden rounded-2xl border border-dashed border-sky-200/80 bg-gradient-to-r from-sky-50/80 via-background to-cyan-50/60 text-xs text-muted-foreground dark:border-sky-500/30 dark:from-sky-950/25 dark:via-background dark:to-cyan-950/20">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-300">{"{}"}</span>
-          <div>
+    <details className="group overflow-hidden rounded-xl border border-dashed border-sky-200/80 bg-gradient-to-r from-sky-50/80 via-background to-cyan-50/60 text-xs text-muted-foreground dark:border-sky-500/30 dark:from-sky-950/25 dark:via-background dark:to-cyan-950/20">
+      <summary className="flex cursor-pointer list-none flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-300">{"{}"}</span>
+          <div className="min-w-0">
             <div className="font-semibold text-foreground">可用占位符</div>
             <div>用于下载 URL、请求头、请求体和动态认证配置。</div>
           </div>
         </div>
-        <span className="rounded-full border border-border bg-background px-2 py-1 text-[11px] transition group-open:bg-sky-500 group-open:text-white">
+        <span className="self-start rounded-full border border-border bg-background px-2 py-1 text-[11px] transition group-open:bg-sky-500 group-open:text-white sm:self-auto">
           展开查看
         </span>
       </summary>
@@ -224,8 +300,8 @@ function PlaceholderGuide() {
             <div className="font-semibold text-foreground">认证预设说明</div>
             <div className="mt-2 space-y-1.5">
               {AUTH_PRESET_OPTIONS.map((option) => (
-                <div key={option.value} className="flex gap-2 leading-5">
-                  <Badge variant="outline">{option.label}</Badge>
+                <div key={option.value} className="flex min-w-0 flex-wrap gap-2 leading-5">
+                  <Badge className="shrink-0" variant="outline">{option.label}</Badge>
                   <span>{option.desc}</span>
                 </div>
               ))}
@@ -299,10 +375,10 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
   };
 
   return (
-    <div className="rounded-2xl border border-border bg-muted/20 p-4">
+    <div className="rounded-xl border border-border bg-muted/20 p-3 sm:p-4">
       <div className="mb-4 flex items-start justify-between gap-4">
         <button type="button" onClick={() => setOpen((value) => !value)} className="min-w-0 flex-1 text-left">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">#{index + 1}</Badge>
           <Badge>{item.response_mode || "response_mode 未填"}</Badge>
             <Badge variant="outline">{item.stage}</Badge>
@@ -489,22 +565,22 @@ function CompareTab({ config, onChange }: { config: ReportConfig; onChange: (con
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-4">
-        <div>
+      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <CardTitle>报表比对</CardTitle>
           <CardDescription>把下载结果中的 sheet 映射到模板 sheet，决定后续更新和发送内容。</CardDescription>
         </div>
-        <Button variant="outline" onClick={add}><Plus className="h-4 w-4" />添加比对源</Button>
+        <Button className="self-start sm:self-auto" variant="outline" onClick={add}><Plus className="h-4 w-4" />添加比对源</Button>
       </CardHeader>
       <CardContent className="space-y-4">
         {config.compare_sources.map((source, sourceIndex) => (
-          <div key={sourceIndex} className="rounded-2xl border border-border bg-muted/20 p-4">
+          <div key={sourceIndex} className="rounded-xl border border-border bg-muted/20 p-3 sm:p-4">
             <div className="mb-4 grid gap-4 md:grid-cols-[1fr_auto]">
               <Field label="对应下载标识"><Select value={source.download_name} onChange={(event) => onChange({ ...config, compare_sources: updateAt(config.compare_sources, sourceIndex, { ...source, download_name: event.target.value }) })}>{config.downloads.map((item) => <option key={item.name}>{item.name}</option>)}</Select></Field>
               <Button variant="ghost" size="icon" onClick={() => onChange({ ...config, compare_sources: config.compare_sources.filter((_, index) => index !== sourceIndex) })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
             </div>
             {source.sheet_mappings.map((mapping, mappingIndex) => (
-              <div key={mappingIndex} className="mb-3 grid gap-3 rounded-xl bg-background/70 p-3 lg:grid-cols-5">
+              <div key={mappingIndex} className="mb-3 grid gap-3 rounded-xl bg-background/70 p-3 sm:grid-cols-2 xl:grid-cols-5">
                 <Input placeholder="映射备注" value={mapping.name || ""} onChange={(event) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, name: event.target.value })} />
                 <Input placeholder="源 sheet" value={mapping.new_sheet_name} onChange={(event) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, new_sheet_name: event.target.value })} />
                 <Input placeholder="模板 sheet" value={mapping.template_sheet_name} onChange={(event) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, template_sheet_name: event.target.value })} />
@@ -546,7 +622,7 @@ function SendTab({ config, onChange }: { config: ReportConfig; onChange: (config
         </div>
         <div className="space-y-3">
           {send.items.map((item, index) => (
-            <div key={index} className="grid gap-3 rounded-xl border border-border bg-muted/20 p-3 md:grid-cols-[160px_1fr_180px_auto]">
+            <div key={index} className="grid gap-3 rounded-xl border border-border bg-muted/20 p-3 sm:grid-cols-[minmax(120px,160px)_1fr] lg:grid-cols-[160px_1fr_180px_auto]">
               <Select value={item.type} onChange={(event) => updateItem(index, { ...item, type: event.target.value as SendItem["type"] })}><option value="image">image</option><option value="text">text</option></Select>
               <Input placeholder="sheet" value={item.sheet} onChange={(event) => updateItem(index, { ...item, sheet: event.target.value })} />
               <Select value={item.text?.mode || "none"} onChange={(event) => updateItem(index, { ...item, text: { mode: event.target.value as "used_range" | "none" } })}><option value="none">none</option><option value="used_range">used_range</option></Select>
@@ -596,7 +672,7 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
 
 function Field({ label, hint, error, className, children }: { label: string; hint?: string; error?: string; className?: string; children: ReactNode }) {
   return (
-    <div className={className}>
+    <div className={`min-w-0 ${className || ""}`}>
       <Label>{label}</Label>
       <div className="mt-2">{children}</div>
       {hint && <p className="mt-1 text-xs leading-5 text-muted-foreground">{hint}</p>}

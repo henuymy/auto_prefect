@@ -62,9 +62,9 @@ export function JsonPanel({
 
   return (
     <Card className="devtools-panel flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="border-b border-border/70 p-4">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
+      <div className="border-b border-border/70 p-3 sm:p-4">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <div className="text-base font-black">开发者 JSON 面板</div>
             <div className="text-xs text-muted-foreground">表单和源码双向查看，第一版使用 mock 校验。</div>
           </div>
@@ -75,7 +75,7 @@ export function JsonPanel({
         </div>
         <Tabs tabs={tabs} value={tab} onChange={(value) => { setTab(value); if (value === "source") setSource(jsonText); }} />
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden p-4">
+      <div className="min-h-0 flex-1 overflow-hidden p-3 sm:p-4">
         {tab === "preview" && <JsonPreview value={config} focusPath={focusPath} />}
         {tab === "source" && (
           <div className="flex h-full min-h-0 flex-col gap-3">

@@ -174,6 +174,41 @@ export async function listRunLogs() {
   return structuredClone(logs);
 }
 
+export async function uploadTemplate(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`${API_BASE}/api/templates/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    try {
+      const payload = JSON.parse(text);
+      const detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail || payload);
+      throw new Error(detail || `上传失败: ${response.status}`);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(text || `上传失败: ${response.status}`);
+      }
+      throw error;
+    }
+  }
+  const result = await response.json() as { filename: string; path: string; size: number };
+  pushLog("success", "上传模板", `已上传 ${result.path}`);
+  return result;
+}
+
+export async function listTemplates() {
+  return request<Array<{ filename: string; path: string; size: number; modifiedAt: number }>>("/api/templates");
+}
+
+export async function deleteTemplate(filename: string) {
+  const result = await request<{ ok: boolean; path: string }>(`/api/templates?filename=${encodeURIComponent(filename)}`, { method: "DELETE" });
+  pushLog("success", "删除模板", `已删除 ${result.path}`);
+  return result;
+}
+
 export async function listRuntime(path = "") {
   return request<{ current: RuntimeEntry; items: RuntimeEntry[] }>(`/api/runtime?path=${encodeURIComponent(path)}`);
 }

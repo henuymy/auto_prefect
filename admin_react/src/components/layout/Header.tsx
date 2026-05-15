@@ -25,12 +25,12 @@ export function Header({
   onPublish: () => void;
 }) {
   return (
-    <header className="flex h-16 items-center justify-between border-b border-border/70 bg-card/75 px-5 backdrop-blur-xl">
-      <div>
-        <h1 className="text-xl font-black tracking-tight">基于 Prefect 的自动化任务配置中心</h1>
+    <header className="flex min-h-16 flex-col gap-3 border-b border-border/70 bg-card/75 px-3 py-3 backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between lg:px-5">
+      <div className="min-w-0">
+        <h1 className="text-lg font-black tracking-tight sm:text-xl">基于 Prefect 的自动化任务配置中心</h1>
         <p className="text-xs text-muted-foreground">可视化编辑报表配置 JSON，发布到自动化调度流程</p>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" onClick={onDarkToggle} size="icon" title="切换主题">
           {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>

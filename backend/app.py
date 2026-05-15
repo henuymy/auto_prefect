@@ -7,6 +7,7 @@ from backend.routers.configs import router as configs_router
 from backend.routers.runtime import router as runtime_router
 from backend.routers.run_logs import router as run_logs_router
 from backend.routers.status import router as status_router
+from backend.routers.templates import router as templates_router
 
 
 app = FastAPI(title="自动化任务配置中心 API")
@@ -23,6 +24,7 @@ app.include_router(configs_router)
 app.include_router(runtime_router)
 app.include_router(run_logs_router)
 app.include_router(status_router)
+app.include_router(templates_router)
 
 
 @app.get("/api/health")
