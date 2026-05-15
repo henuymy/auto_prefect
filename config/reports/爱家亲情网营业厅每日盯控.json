@@ -27,7 +27,7 @@
     {
       "name": "实时",
       "stage": "city_ops",
-      "auth_preset": "自定义高级",
+      "auth_preset": "自定义",
       "method": "POST",
       "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailByAreaAndIndex",
       "headers": {
@@ -92,13 +92,14 @@
           "渠道/门店",
           "人员"
         ],
-        "max_requests": 1000
+        "max_requests": 1000,
+        "max_workers": 32
       }
     },
     {
       "name": "日累计",
       "stage": "city_ops",
-      "auth_preset": "自定义高级",
+      "auth_preset": "自定义",
       "method": "POST",
       "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailsByDateAndArea",
       "headers": {
@@ -164,7 +165,8 @@
           "渠道/门店",
           "人员"
         ],
-        "max_requests": 1000
+        "max_requests": 1000,
+        "max_workers": 6
       }
     }
   ],
@@ -195,5 +197,21 @@
         }
       ]
     }
-  ]
+  ],
+  "id": "爱家亲情网营业厅每日盯控",
+  "enabled": true,
+  "description": "",
+  "wait_for_change": {
+    "enabled": false,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "deployment": {
+    "enabled": false,
+    "cron": "",
+    "timezone": "Asia/Shanghai"
+  },
+  "updatedAt": "2026-05-15 17:51:10",
+  "source": "published",
+  "has_draft": false
 }

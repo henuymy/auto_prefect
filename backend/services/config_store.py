@@ -67,6 +67,7 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
     template_update = data.get("template_update") if isinstance(data.get("template_update"), dict) else {}
     wait_for_change = data.get("wait_for_change") if isinstance(data.get("wait_for_change"), dict) else {}
     deployment = data.get("deployment") if isinstance(data.get("deployment"), dict) else {}
+    cron = str(deployment.get("cron") or "").strip()
 
     normalized = dict(data)
     # The React admin edits the modern multi-download shape. Keep legacy input
@@ -98,8 +99,8 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
                 "max_wait_minutes": wait_for_change.get("max_wait_minutes", 180),
             },
             "deployment": {
-                "enabled": deployment.get("enabled", False),
-                "cron": deployment.get("cron", ""),
+                "enabled": bool(cron),
+                "cron": cron,
                 "timezone": deployment.get("timezone", "Asia/Shanghai"),
             },
             "updatedAt": updated_at or data.get("updatedAt"),
@@ -108,39 +109,67 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
     return normalized
 
 
+def _broken_config(path: Path, exc: Exception, source: str, has_draft: bool = False) -> dict[str, Any]:
+    return {
+        "id": path.stem,
+        "name": path.stem,
+        "template_path": "",
+        "enabled": False,
+        "description": f"读取失败: {exc}",
+        "downloads": [],
+        "compare_sources": [],
+        "send": {"webhook_url": "", "workbook_name": path.stem, "items": []},
+        "template_update": {"update_condition": "any_changed", "write_sheets": "all_compared", "send_when_same": True},
+        "wait_for_change": {"enabled": False, "poll_interval_seconds": 300, "max_wait_minutes": 180},
+        "deployment": {"enabled": False, "cron": "", "timezone": "Asia/Shanghai"},
+        "lastRun": "failed",
+        "updatedAt": _mtime_text(path),
+        "source": source,
+        "has_draft": has_draft,
+    }
+
+
 def list_configs() -> list[dict[str, Any]]:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
     configs: list[dict[str, Any]] = []
-    for path in sorted(REPORTS_DIR.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+    report_paths = {path.stem: path for path in REPORTS_DIR.glob("*.json")}
+    draft_paths = {path.stem: path for path in DRAFTS_DIR.glob("*.json") if not path.name.endswith((".task.json", ".report.json"))}
+    entries = []
+    for name, path in report_paths.items():
+        sort_time = max(path.stat().st_mtime, draft_paths[name].stat().st_mtime if name in draft_paths else path.stat().st_mtime)
+        entries.append((path, sort_time))
+    entries.extend((path, path.stat().st_mtime) for name, path in draft_paths.items() if name not in report_paths)
+    paths = [
+        path
+        for path, _sort_time in sorted(
+            entries,
+            key=lambda item: item[1],
+            reverse=True,
+        )
+    ]
+    for path in paths:
+        source = "published" if path.parent == REPORTS_DIR else "draft"
+        has_draft = path.stem in draft_paths
         try:
             config = normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
+            config["source"] = source
+            config["has_draft"] = has_draft
             configs.append(config)
         except Exception as exc:  # Keep a broken file visible instead of hiding it.
-            configs.append(
-                {
-                    "id": path.stem,
-                    "name": path.stem,
-                    "template_path": "",
-                    "enabled": False,
-                    "description": f"读取失败: {exc}",
-                    "downloads": [],
-                    "compare_sources": [],
-                    "send": {"webhook_url": "", "workbook_name": path.stem, "items": []},
-                    "template_update": {"update_condition": "any_changed", "write_sheets": "all_compared", "send_when_same": True},
-                    "wait_for_change": {"enabled": False, "poll_interval_seconds": 300, "max_wait_minutes": 180},
-                    "deployment": {"enabled": False, "cron": "", "timezone": "Asia/Shanghai"},
-                    "lastRun": "failed",
-                    "updatedAt": _mtime_text(path),
-                }
-            )
+            configs.append(_broken_config(path, exc, source, has_draft))
     return configs
 
 
-def get_config(config_id: str) -> dict[str, Any]:
-    path = REPORTS_DIR / f"{_safe_name(config_id)}.json"
+def get_config(config_id: str, source: str = "published") -> dict[str, Any]:
+    base_dir = DRAFTS_DIR if source == "draft" else REPORTS_DIR
+    path = base_dir / f"{_safe_name(config_id)}.json"
     if not path.exists():
         raise FileNotFoundError(f"配置不存在: {config_id}")
-    return normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
+    config = normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
+    config["source"] = source
+    config["has_draft"] = (DRAFTS_DIR / f"{path.stem}.json").exists()
+    return config
 
 
 def save_config(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
@@ -156,7 +185,17 @@ def save_config(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
         old_path = REPORTS_DIR / f"{_safe_name(config_id)}.json"
         if old_path.exists() and old_path != path:
             old_path.unlink()
-    return normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
+    draft_path = DRAFTS_DIR / f"{name}.json"
+    if draft_path.exists():
+        draft_path.unlink()
+    if config_id != name:
+        old_draft_path = DRAFTS_DIR / f"{_safe_name(config_id)}.json"
+        if old_draft_path.exists() and old_draft_path != draft_path:
+            old_draft_path.unlink()
+    saved = normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
+    saved["source"] = "published"
+    saved["has_draft"] = False
+    return saved
 
 
 def list_versions(config_id: str) -> list[dict[str, Any]]:
@@ -195,23 +234,36 @@ def save_draft(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
     path = DRAFTS_DIR / f"{name}.json"
     normalized = normalize_config(config, config_id=name)
     _write_json(path, normalized)
-    return normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
+    if config_id != name:
+        old_path = DRAFTS_DIR / f"{_safe_name(config_id)}.json"
+        if old_path.exists() and old_path != path:
+            old_path.unlink()
+    saved = normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
+    saved["source"] = "draft"
+    saved["has_draft"] = True
+    return saved
 
 
 def create_config(config: dict[str, Any]) -> dict[str, Any]:
     return save_config(_safe_name(config.get("name") or "新建通报配置"), config)
 
 
-def delete_config(config_id: str) -> list[str]:
+def delete_config(config_id: str, source: str = "published") -> list[str]:
     name = _safe_name(config_id)
     report_path = REPORTS_DIR / f"{name}.json"
+    draft_path = DRAFTS_DIR / f"{name}.json"
+    if source == "draft":
+        if not draft_path.exists():
+            raise FileNotFoundError(f"草稿不存在: {config_id}")
+        draft_path.unlink()
+        return [str(draft_path.relative_to(PROJECT_ROOT))]
     if not report_path.exists():
         raise FileNotFoundError(f"配置不存在: {config_id}")
 
     candidates = [
         report_path,
         TASKS_DIR / f"{name}.json",
-        DRAFTS_DIR / f"{name}.json",
+        draft_path,
         DRAFTS_DIR / f"{name}.dry_run.task.json",
         DRAFTS_DIR / f"{name}.real_test.task.json",
     ]

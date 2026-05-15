@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { toast } from "sonner";
-import { AlertCircle, Bell, CalendarClock, ChevronDown, CloudDownload, GitCompareArrows, Info, Plus, Settings, Trash2, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bell, CalendarClock, ChevronDown, CloudDownload, GitCompareArrows, Info, Plus, Settings, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RequestParserPanel } from "@/components/config-form/RequestParserPanel";
+import { ResponseParserPanel } from "@/components/config-form/ResponseParserPanel";
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tabs } from "@/components/ui/tabs";
 import { listTemplates, uploadTemplate } from "@/lib/api";
@@ -34,6 +35,34 @@ function updateAt<T>(items: T[], index: number, next: T): T[] {
 
 function removeAt<T>(items: T[], index: number): T[] {
   return items.filter((_, itemIndex) => itemIndex !== index);
+}
+
+function moveAt<T>(items: T[], fromIndex: number, toIndex: number): T[] {
+  if (toIndex < 0 || toIndex >= items.length || fromIndex === toIndex) return items;
+  const next = [...items];
+  const [item] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, item);
+  return next;
+}
+
+const FIXED_DRILLDOWN = {
+  data_path: "result.tableData",
+  request_area_field: "areaId",
+  next_area_field: "areaCode",
+  levels: ["区县", "网格", "渠道/门店", "人员"],
+};
+
+function defaultDrilldownConfig(max_requests = 1000, max_workers = 6): NonNullable<DownloadItem["drilldown"]> {
+  return {
+    ...FIXED_DRILLDOWN,
+    max_requests,
+    max_workers,
+  };
+}
+
+function ensureDrilldown(item: DownloadItem): DownloadItem {
+  if (item.response_mode !== "json_drilldown_to_excel" || item.drilldown) return item;
+  return { ...item, drilldown: defaultDrilldownConfig() };
 }
 
 function parseObject(text: string, fallback: Record<string, unknown>) {
@@ -119,6 +148,8 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
   const [uploading, setUploading] = useState(false);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templates, setTemplates] = useState<Array<{ filename: string; path: string; size: number; modifiedAt: number }>>([]);
+  const [nameDraft, setNameDraft] = useState(config.name);
+  const [descriptionDraft, setDescriptionDraft] = useState(config.description || "");
   const { register, formState } = useForm<BasicForm>({
     resolver: zodResolver(basicSchema),
     values: {
@@ -132,6 +163,22 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
   useEffect(() => {
     void refreshTemplates();
   }, []);
+
+  useEffect(() => {
+    setNameDraft(config.name);
+    setDescriptionDraft(config.description || "");
+  }, [config.id, config.name, config.description]);
+
+  function commitBaseDrafts() {
+    const nextName = nameDraft.trim() || config.name;
+    const nextDescription = descriptionDraft;
+    if (nextName !== config.name || nextDescription !== (config.description || "")) {
+      onChange({ ...config, name: nextName, description: nextDescription });
+      if (nextName !== nameDraft) {
+        setNameDraft(nextName);
+      }
+    }
+  }
 
   async function refreshTemplates() {
     setTemplatesLoading(true);
@@ -169,7 +216,11 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
       </CardHeader>
       <CardContent className="grid gap-5 md:grid-cols-2">
         <Field label="配置名称 name" error={formState.errors.name?.message}>
-          <Input {...register("name")} onChange={(event) => onChange({ ...config, name: event.target.value })} />
+          <Input
+            value={nameDraft}
+            onChange={(event) => setNameDraft(event.target.value)}
+            onBlur={commitBaseDrafts}
+          />
         </Field>
         <Field label="模板路径 template_path" error={formState.errors.template_path?.message}>
           <Select
@@ -190,10 +241,10 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
           </Select>
           {config.template_path && <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{config.template_path}</p>}
         </Field>
-        <Field label="是否启用 enabled">
+        <Field label="启用定时调度">
           <label className="flex h-10 items-center gap-3 rounded-lg border border-border px-3">
             <input type="checkbox" checked={config.enabled !== false} onChange={(event) => onChange({ ...config, enabled: event.target.checked })} />
-            <span className="text-sm text-muted-foreground">启用后允许发布和测试运行</span>
+            <span className="text-sm text-muted-foreground">{config.enabled === false ? "关闭后保留配置，但不会自动定时运行" : "开启后会按 Cron 自动运行"}</span>
           </label>
         </Field>
         <Field label="模板上传">
@@ -210,7 +261,11 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
           </Button>
         </Field>
         <Field label="描述 description" className="md:col-span-2">
-          <Textarea {...register("description")} value={config.description || ""} onChange={(event) => onChange({ ...config, description: event.target.value })} />
+          <Textarea
+            value={descriptionDraft}
+            onChange={(event) => setDescriptionDraft(event.target.value)}
+            onBlur={commitBaseDrafts}
+          />
         </Field>
       </CardContent>
     </Card>
@@ -399,10 +454,11 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
       {open && (
         <>
       <RequestParserPanel item={item} onApply={onChange} />
+      <ResponseParserPanel item={item} onApply={onChange} />
       <div className="grid gap-4 lg:grid-cols-3">
-        <Field label="下载标识 name"><Input value={item.name} onChange={(event) => onChange({ ...item, name: event.target.value })} /></Field>
+        <Field label="下载标识 name"><DraftInput value={item.name} onCommit={(value) => onChange({ ...item, name: value })} /></Field>
         <Field label="Cookie Stage"><Select value={item.stage} onChange={(event) => onChange({ ...item, stage: event.target.value })}><option>report_analysis</option><option>smart_ops</option><option>city_ops</option><option>data_market</option></Select></Field>
-        <Field label="响应模式 response_mode"><Select value={item.response_mode || ""} onChange={(event) => onChange({ ...item, response_mode: event.target.value as DownloadItem["response_mode"] })}><option value="" disabled>请选择响应模式</option><option value="file">file</option><option value="json_to_excel">json_to_excel</option><option value="json_drilldown_to_excel">json_drilldown_to_excel</option></Select></Field>
+        <Field label="响应模式 response_mode"><Select value={item.response_mode || ""} onChange={(event) => onChange(ensureDrilldown({ ...item, response_mode: event.target.value as DownloadItem["response_mode"] }))}><option value="" disabled>请选择响应模式</option><option value="file">file</option><option value="json_to_excel">json_to_excel</option><option value="json_drilldown_to_excel">json_drilldown_to_excel</option></Select></Field>
         <Field label="请求方法 method"><Select value={item.method || ""} onChange={(event) => onChange({ ...item, method: event.target.value as DownloadItem["method"] })}><option value="" disabled>请选择请求方法</option><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option><option>DELETE</option></Select></Field>
         <Field label="载体类型 body_type"><Select value={item.body_type || ""} onChange={(event) => onChange({ ...item, body_type: event.target.value as DownloadItem["body_type"] })}><option value="" disabled>请选择载体类型</option><option>json</option><option>form</option><option>raw</option></Select></Field>
         <Field label="认证预设 auth_preset">
@@ -411,7 +467,7 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
           </Select>
           <p className="mt-1 text-xs text-muted-foreground">{getAuthTargetLabel(item)}</p>
         </Field>
-        <Field label="下载 URL" hint="可以写占位符，例如 queryDate=${today_yyyymmdd}" className="lg:col-span-3"><Input value={item.url} onChange={(event) => onChange({ ...item, url: event.target.value })} /></Field>
+        <Field label="下载 URL" hint="可以写占位符，例如 queryDate=${today_yyyymmdd}" className="lg:col-span-3"><DraftInput value={item.url} onCommit={(value) => onChange({ ...item, url: value })} /></Field>
         <JsonTextField label="请求头 Headers JSON" value={headersText} error={headersError} onChange={setHeadersText} onBlur={applyJsonTexts} />
         <JsonTextField label="请求体 data/json" value={dataText} error={dataError} onChange={setDataText} onBlur={applyJsonTexts} />
         <JsonTextField label="动态认证 JSON" value={authText} error={authError} onChange={setAuthText} onBlur={applyJsonTexts} />
@@ -446,10 +502,10 @@ function ResponseModeConfig({ item, onChange }: { item: DownloadItem; onChange: 
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="数据路径 excel.data_path" hint="例如 result.tableData，表示从响应 JSON 的 result.tableData 读取数组。">
-          <Input value={excel.data_path || ""} onChange={(event) => updateExcel({ ...excel, data_path: event.target.value })} />
+          <DraftInput value={excel.data_path || ""} onCommit={(value) => updateExcel({ ...excel, data_path: value })} />
         </Field>
         <Field label="Excel Sheet">
-          <Input value={excel.sheet_name || ""} onChange={(event) => updateExcel({ ...excel, sheet_name: event.target.value })} />
+          <DraftInput value={excel.sheet_name || ""} onCommit={(value) => updateExcel({ ...excel, sheet_name: value })} />
         </Field>
       </div>
 
@@ -462,16 +518,22 @@ function ResponseModeConfig({ item, onChange }: { item: DownloadItem; onChange: 
         </div>
         <div className="space-y-2">
           {columns.map((column, index) => (
-            <div key={index} className="grid gap-2 rounded-xl border border-border bg-muted/20 p-2 md:grid-cols-[1fr_1fr_auto]">
-              <Input
+            <div key={index} className="grid gap-2 rounded-xl border border-border bg-muted/20 p-2 md:grid-cols-[1fr_1fr_auto_auto_auto]">
+              <DraftInput
                 placeholder="JSON 字段，如 areaName"
                 value={column.field}
                 readOnly={isSystemExcelField(column.field)}
                 title={isSystemExcelField(column.field) ? "系统下钻字段，字段名固定，只能修改右侧表头" : ""}
-                onChange={(event) => updateColumn(index, { ...column, field: event.target.value })}
+                onCommit={(value) => updateColumn(index, { ...column, field: value })}
                 className={isSystemExcelField(column.field) ? "bg-muted/70 font-mono text-muted-foreground" : ""}
               />
-              <Input placeholder="Excel 表头，如 名称" value={column.header} onChange={(event) => updateColumn(index, { ...column, header: event.target.value })} />
+              <DraftInput placeholder="Excel 表头，如 名称" value={column.header} onCommit={(value) => updateColumn(index, { ...column, header: value })} />
+              <Button variant="ghost" size="icon" title="上移" onClick={() => updateExcel({ ...excel, columns: moveAt(columns, index, index - 1) })} disabled={index === 0}>
+                <ArrowUp className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" title="下移" onClick={() => updateExcel({ ...excel, columns: moveAt(columns, index, index + 1) })} disabled={index === columns.length - 1}>
+                <ArrowDown className="h-4 w-4" />
+              </Button>
               <Button variant="ghost" size="icon" onClick={() => updateExcel({ ...excel, columns: removeAt(columns, index) })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
             </div>
           ))}
@@ -488,22 +550,13 @@ function isSystemExcelField(field: string) {
   return ["__level_name", "__parent_area_id", "__request_area_id"].includes(field);
 }
 
-const FIXED_DRILLDOWN = {
-  data_path: "result.tableData",
-  request_area_field: "areaId",
-  next_area_field: "areaCode",
-  levels: ["区县", "网格", "渠道/门店", "人员"],
-};
-
 function DrilldownConfig({ item, onChange }: { item: DownloadItem; onChange: (item: DownloadItem) => void }) {
-  const drilldown = item.drilldown || {};
+  const drilldown = item.drilldown || defaultDrilldownConfig();
   const updateDrilldown = (nextDrilldown: NonNullable<DownloadItem["drilldown"]>) => onChange({ ...item, drilldown: nextDrilldown });
   const maxRequests = drilldown.max_requests || 1000;
+  const maxWorkers = drilldown.max_workers || 6;
   const applyFixedDrilldown = (max_requests: number) => {
-    updateDrilldown({
-      ...FIXED_DRILLDOWN,
-      max_requests,
-    });
+    updateDrilldown(defaultDrilldownConfig(max_requests, maxWorkers));
   };
 
   return (
@@ -519,13 +572,20 @@ function DrilldownConfig({ item, onChange }: { item: DownloadItem; onChange: (it
           <Input value={FIXED_DRILLDOWN.data_path} readOnly className="bg-muted/70 font-mono text-muted-foreground" />
         </Field>
         <Field label="最大请求数">
-          <Input type="number" value={maxRequests} onChange={(event) => applyFixedDrilldown(Number(event.target.value || 0))} />
+          <DraftInput type="number" value={maxRequests} onCommit={(value) => applyFixedDrilldown(Number(value || 0))} />
         </Field>
         <Field label="请求体字段">
           <Input value={FIXED_DRILLDOWN.request_area_field} readOnly className="bg-muted/70 font-mono text-muted-foreground" />
         </Field>
         <Field label="下一层编码字段">
           <Input value={FIXED_DRILLDOWN.next_area_field} readOnly className="bg-muted/70 font-mono text-muted-foreground" />
+        </Field>
+        <Field label="并发请求数">
+          <DraftInput
+            type="number"
+            value={maxWorkers}
+            onCommit={(value) => updateDrilldown({ ...defaultDrilldownConfig(maxRequests, Number(value || 1)) })}
+          />
         </Field>
       </div>
       <div className="space-y-2">
@@ -556,6 +616,70 @@ function JsonTextField({ label, value, error, onChange, onBlur }: { label: strin
   );
 }
 
+function DraftInput({
+  value,
+  onCommit,
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "onBlur"> & {
+  value: string | number;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(String(value ?? ""));
+
+  useEffect(() => {
+    setDraft(String(value ?? ""));
+  }, [value]);
+
+  function commit() {
+    if (draft !== String(value ?? "")) {
+      onCommit(draft);
+    }
+  }
+
+  return (
+    <Input
+      {...props}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          commit();
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
+function DraftTextarea({
+  value,
+  onCommit,
+  ...props
+}: Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChange" | "onBlur"> & {
+  value: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? "");
+
+  useEffect(() => {
+    setDraft(value ?? "");
+  }, [value]);
+
+  return (
+    <Textarea
+      {...props}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        if (draft !== (value ?? "")) {
+          onCommit(draft);
+        }
+      }}
+    />
+  );
+}
+
 function CompareTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
   const add = () => {
     const firstDownload = config.downloads[0]?.name || "";
@@ -581,11 +705,11 @@ function CompareTab({ config, onChange }: { config: ReportConfig; onChange: (con
             </div>
             {source.sheet_mappings.map((mapping, mappingIndex) => (
               <div key={mappingIndex} className="mb-3 grid gap-3 rounded-xl bg-background/70 p-3 sm:grid-cols-2 xl:grid-cols-5">
-                <Input placeholder="映射备注" value={mapping.name || ""} onChange={(event) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, name: event.target.value })} />
-                <Input placeholder="源 sheet" value={mapping.new_sheet_name} onChange={(event) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, new_sheet_name: event.target.value })} />
-                <Input placeholder="模板 sheet" value={mapping.template_sheet_name} onChange={(event) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, template_sheet_name: event.target.value })} />
-                <Input type="number" placeholder="表头行" value={mapping.header_row || 1} onChange={(event) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, header_row: Number(event.target.value || 1) })} />
-                <Input placeholder="主键列，逗号分隔" value={(mapping.key_columns || []).join(",")} onChange={(event) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, key_columns: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} />
+                <DraftInput placeholder="映射备注" value={mapping.name || ""} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, name: value })} />
+                <DraftInput placeholder="源 sheet" value={mapping.new_sheet_name} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, new_sheet_name: value })} />
+                <DraftInput placeholder="模板 sheet" value={mapping.template_sheet_name} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, template_sheet_name: value })} />
+                <DraftInput type="number" placeholder="表头行" value={mapping.header_row || 1} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, header_row: Number(value || 1) })} />
+                <DraftInput placeholder="主键列，逗号分隔" value={(mapping.key_columns || []).join(",")} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, key_columns: value.split(",").map((item) => item.trim()).filter(Boolean) })} />
               </div>
             ))}
             <Button variant="outline" size="sm" onClick={() => {
@@ -617,14 +741,14 @@ function SendTab({ config, onChange }: { config: ReportConfig; onChange: (config
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="grid gap-4 md:grid-cols-2">
-          <Field label="Workbook 名称"><Input value={send.workbook_name} onChange={(event) => onChange({ ...config, send: { ...send, workbook_name: event.target.value } })} /></Field>
-          <Field label="企业微信 Webhook"><Input value={send.webhook_url} onChange={(event) => onChange({ ...config, send: { ...send, webhook_url: event.target.value } })} /></Field>
+          <Field label="Workbook 名称"><DraftInput value={send.workbook_name} onCommit={(value) => onChange({ ...config, send: { ...send, workbook_name: value } })} /></Field>
+          <Field label="企业微信 Webhook"><DraftInput value={send.webhook_url} onCommit={(value) => onChange({ ...config, send: { ...send, webhook_url: value } })} /></Field>
         </div>
         <div className="space-y-3">
           {send.items.map((item, index) => (
             <div key={index} className="grid gap-3 rounded-xl border border-border bg-muted/20 p-3 sm:grid-cols-[minmax(120px,160px)_1fr] lg:grid-cols-[160px_1fr_180px_auto]">
               <Select value={item.type} onChange={(event) => updateItem(index, { ...item, type: event.target.value as SendItem["type"] })}><option value="image">image</option><option value="text">text</option></Select>
-              <Input placeholder="sheet" value={item.sheet} onChange={(event) => updateItem(index, { ...item, sheet: event.target.value })} />
+              <DraftInput placeholder="sheet" value={item.sheet} onCommit={(value) => updateItem(index, { ...item, sheet: value })} />
               <Select value={item.text?.mode || "none"} onChange={(event) => updateItem(index, { ...item, text: { mode: event.target.value as "used_range" | "none" } })}><option value="none">none</option><option value="used_range">used_range</option></Select>
               <Button variant="ghost" size="icon" onClick={() => onChange({ ...config, send: { ...send, items: send.items.filter((_, itemIndex) => itemIndex !== index) } })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
             </div>
@@ -640,6 +764,10 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
   const update = config.template_update;
   const wait = config.wait_for_change;
   const deployment = config.deployment;
+  const updateDeployment = (next: ReportConfig["deployment"]) => {
+    const cron = next.cron.trim();
+    onChange({ ...config, deployment: { ...next, cron, enabled: Boolean(cron) } });
+  };
   return (
     <div className="grid gap-5 xl:grid-cols-2">
       <Card>
@@ -654,16 +782,15 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
         <CardHeader><CardTitle>等待重试</CardTitle><CardDescription>数据未变化时按间隔等待，再重新下载比对。</CardDescription></CardHeader>
         <CardContent className="space-y-4">
           <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={wait.enabled} onChange={(event) => onChange({ ...config, wait_for_change: { ...wait, enabled: event.target.checked } })} /> 启用 same 自动重试</label>
-          <Field label="重试间隔秒"><Input type="number" value={wait.poll_interval_seconds} onChange={(event) => onChange({ ...config, wait_for_change: { ...wait, poll_interval_seconds: Number(event.target.value || 0) } })} /></Field>
-          <Field label="最大等待分钟"><Input type="number" value={wait.max_wait_minutes} onChange={(event) => onChange({ ...config, wait_for_change: { ...wait, max_wait_minutes: Number(event.target.value || 0) } })} /></Field>
+          <Field label="重试间隔秒"><DraftInput type="number" value={wait.poll_interval_seconds} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, poll_interval_seconds: Number(value || 0) } })} /></Field>
+          <Field label="最大等待分钟"><DraftInput type="number" value={wait.max_wait_minutes} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, max_wait_minutes: Number(value || 0) } })} /></Field>
         </CardContent>
       </Card>
       <Card className="xl:col-span-2">
-        <CardHeader><CardTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5" />Prefect 定时部署</CardTitle><CardDescription>第一版只保存配置，后续由后端接入 Prefect deployment。</CardDescription></CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-3">
-          <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={deployment.enabled} onChange={(event) => onChange({ ...config, deployment: { ...deployment, enabled: event.target.checked } })} /> 启用部署</label>
-          <Field label="Cron"><Input value={deployment.cron} onChange={(event) => onChange({ ...config, deployment: { ...deployment, cron: event.target.value } })} /></Field>
-          <Field label="时区"><Input value={deployment.timezone} onChange={(event) => onChange({ ...config, deployment: { ...deployment, timezone: event.target.value } })} /></Field>
+        <CardHeader><CardTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5" />Prefect 定时部署</CardTitle><CardDescription>Cron 为空时只保存部署；Cron 有值时由基础信息里的“启用定时调度”控制是否自动运行。</CardDescription></CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          <Field label="Cron"><DraftInput value={deployment.cron} onCommit={(value) => updateDeployment({ ...deployment, cron: value })} /></Field>
+          <Field label="时区"><DraftInput value={deployment.timezone} onCommit={(value) => updateDeployment({ ...deployment, timezone: value })} /></Field>
         </CardContent>
       </Card>
     </div>

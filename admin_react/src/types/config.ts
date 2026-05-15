@@ -34,6 +34,7 @@ export interface DownloadItem {
     next_area_field?: string;
     levels?: string[];
     max_requests?: number;
+    max_workers?: number;
   };
 }
 
@@ -64,6 +65,8 @@ export interface ReportConfig {
   name: string;
   template_path: string;
   enabled?: boolean;
+  source?: "published" | "draft";
+  has_draft?: boolean;
   description?: string;
   downloads: DownloadItem[];
   compare_sources: CompareSource[];

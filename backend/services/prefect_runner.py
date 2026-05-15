@@ -15,6 +15,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORK_POOL = "default-agent-pool"
 FLOW_ENTRYPOINT = "flows/notify_single_flow.py:auto_notify_flow"
+FLOW_NAME = "auto-notify-flow"
 
 
 def _safe_name(value: str) -> str:
@@ -330,6 +331,9 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
     task_config_path = write_task_config(config, draft=False, dry_run=False)
     deployment = config.get("deployment") or {}
     report_name = _safe_name(config.get("name") or config.get("id") or "未命名配置")
+    deployment_name = f"notify-{report_name}"
+    cron = str(deployment.get("cron") or "").strip()
+    schedule_enabled = config.get("enabled", True) is not False
     command = [
         sys.executable,
         "-m",
@@ -337,14 +341,14 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
         "deploy",
         FLOW_ENTRYPOINT,
         "--name",
-        f"notify-{report_name}",
+        deployment_name,
         "--pool",
         WORK_POOL,
         "--param",
         f"config_path={task_config_path.as_posix()}",
     ]
-    if deployment.get("enabled") and deployment.get("cron"):
-        command.extend(["--cron", deployment["cron"]])
+    if cron:
+        command.extend(["--cron", cron])
         if deployment.get("timezone"):
             command.extend(["--timezone", deployment["timezone"]])
 
@@ -364,12 +368,42 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
     output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
     if completed.returncode != 0:
         raise RuntimeError(output or "Prefect 发布失败")
+    schedule_output = ""
+    schedule_status = "none"
+    if cron:
+        schedule_action = "resume" if schedule_enabled else "pause"
+        schedule_command = [
+            sys.executable,
+            "-m",
+            "prefect",
+            "deployment",
+            "schedule",
+            schedule_action,
+            f"{FLOW_NAME}/{deployment_name}",
+            "--all",
+        ]
+        schedule_completed = subprocess.run(
+            schedule_command,
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+        )
+        schedule_output = "\n".join(part for part in [schedule_completed.stdout, schedule_completed.stderr] if part)
+        if schedule_completed.returncode != 0:
+            raise RuntimeError("\n".join(part for part in [output, schedule_output, f"Prefect 调度{('启用' if schedule_enabled else '停用')}失败"] if part))
+        schedule_status = "enabled" if schedule_enabled else "disabled"
+        output = "\n".join(part for part in [output, schedule_output] if part)
     return {
         "deploymentId": f"deployment-{int(datetime.now().timestamp())}",
         "status": "success",
         "message": f"已发布到 Prefect 调度: {config.get('name', '')}",
         "taskConfigPath": str(task_config_path.relative_to(PROJECT_ROOT)),
-        "cron": deployment.get("cron", ""),
+        "cron": cron,
         "timezone": deployment.get("timezone", "Asia/Shanghai"),
+        "scheduleStatus": schedule_status,
         "output": output[-4000:],
     }

@@ -59,6 +59,7 @@ export const reportConfigJsonSchema = {
               next_area_field: { type: "string", minLength: 1 },
               levels: { type: "array", items: { type: "string", minLength: 1 } },
               max_requests: { type: "number", minimum: 1 },
+              max_workers: { type: "number", minimum: 1 },
             },
             additionalProperties: false,
           },

@@ -82,9 +82,13 @@ export function Sidebar({
           >
             <div className="mb-2 flex items-start justify-between gap-2">
               <div className="line-clamp-2 text-sm font-bold">{config.name}</div>
-              <Badge variant={config.enabled === false ? "disabled" : "success"}>
-                {config.enabled === false ? "停用" : "启用"}
-              </Badge>
+              <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                {config.source === "draft" && <Badge variant="outline">草稿</Badge>}
+                {config.has_draft && config.source !== "draft" && <Badge variant="running">有草稿</Badge>}
+                <Badge variant={config.enabled === false ? "disabled" : "success"}>
+                  {config.enabled === false ? "调度停用" : "调度启用"}
+                </Badge>
+              </div>
             </div>
             <div className="text-xs text-muted-foreground">{config.downloads.length} 个抓取项 · {config.compare_sources.length} 个比对源</div>
           </button>

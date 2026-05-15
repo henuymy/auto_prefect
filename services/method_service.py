@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import copy
+import threading
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -378,6 +379,17 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
         else:
             initial_response_json = response_json_with_context(response)
             initial_payload = copy.deepcopy(report.get("data") or {})
+            thread_local = threading.local()
+
+            def drilldown_session():
+                worker_session = getattr(thread_local, "session", None)
+                if worker_session is None:
+                    worker_session = requests.Session()
+                    worker_session.trust_env = trust_env
+                    worker_session.cookies.update(build_cookie_jar(stage, cookie_names=report.get("cookie_names")))
+                    worker_session.headers.update({"User-Agent": "report-downloader/1.0"})
+                    thread_local.session = worker_session
+                return worker_session
 
             def fetch_next(payload_override):
                 next_report = copy.deepcopy(report)
@@ -385,7 +397,7 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
                     raise RuntimeError("json_drilldown_to_excel 不支持 raw 请求体")
                 next_report["data"] = payload_override
                 next_report.pop("json", None)
-                next_response = request_report(session, next_report, stage, timeout, verify_ssl, proxies)
+                next_response = request_report(drilldown_session(), next_report, stage, timeout, verify_ssl, proxies)
                 raise_for_status_with_context(next_response)
                 if is_html_response(next_response):
                     raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {next_response.url}")

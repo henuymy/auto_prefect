@@ -7,6 +7,7 @@ let logs: RunLog[] = [];
 
 type RawDownloadItem = Partial<DownloadItem> & { csrf_headers_from_cookies?: unknown };
 type RawReportConfig = ReportConfig & { download?: RawDownloadItem; downloads?: RawDownloadItem[]; env?: unknown; compare?: unknown };
+export type ConfigSource = NonNullable<ReportConfig["source"]>;
 
 function normalizeAuthPreset(value?: string) {
   if (value === "SSR Cookie") return "报表分析 Ssr-token";
@@ -50,8 +51,8 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
       max_wait_minutes: config.wait_for_change?.max_wait_minutes || 180,
     },
     deployment: {
-      enabled: config.deployment?.enabled ?? false,
-      cron: config.deployment?.cron || "",
+      enabled: Boolean(config.deployment?.cron),
+      cron: config.deployment?.cron?.trim() || "",
       timezone: config.deployment?.timezone || "Asia/Shanghai",
     },
   };
@@ -99,8 +100,8 @@ export async function listConfigs() {
   return configs.map(normalizeReportConfig);
 }
 
-export async function getConfig(id: string) {
-  return normalizeReportConfig(await request<ReportConfig>(`/api/configs/${encodeURIComponent(id)}`));
+export async function getConfig(id: string, source: ConfigSource = "published") {
+  return normalizeReportConfig(await request<ReportConfig>(`/api/configs/${encodeURIComponent(id)}?source=${source}`));
 }
 
 export async function createConfig(config: ReportConfig) {
@@ -121,8 +122,8 @@ export async function saveDraftConfig(id: string, config: ReportConfig) {
   return saved;
 }
 
-export async function deleteConfig(id: string) {
-  const result = await request<{ ok: boolean; deleted?: string[] }>(`/api/configs/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function deleteConfig(id: string, source: ConfigSource = "published") {
+  const result = await request<{ ok: boolean; deleted?: string[] }>(`/api/configs/${encodeURIComponent(id)}?source=${source}`, { method: "DELETE" });
   const deleted = result.deleted?.join("\n");
   pushLog("success", "删除配置", `已删除配置 ${id}`, deleted);
   return result;

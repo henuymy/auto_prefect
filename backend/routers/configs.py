@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from backend.services import config_store, prefect_runner
 from backend.services.run_log_store import append_log
@@ -27,9 +27,9 @@ def list_configs():
 
 
 @router.get("/{config_id}")
-def get_config(config_id: str):
+def get_config(config_id: str, source: str = Query("published", pattern="^(published|draft)$")):
     try:
-        return config_store.get_config(config_id)
+        return config_store.get_config(config_id, source=source)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -49,9 +49,9 @@ def save_config(config_id: str, config: dict):
 
 
 @router.delete("/{config_id}")
-def delete_config(config_id: str):
+def delete_config(config_id: str, source: str = Query("published", pattern="^(published|draft)$")):
     try:
-        deleted = config_store.delete_config(config_id)
+        deleted = config_store.delete_config(config_id, source=source)
         append_log("success", "删除配置", f"已删除配置 {config_id}", "\n".join(deleted))
         return {"ok": True, "deleted": deleted}
     except FileNotFoundError as exc:

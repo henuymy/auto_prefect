@@ -14,6 +14,7 @@ import { VersionDrawer } from "@/components/versions/VersionDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { createConfig, deleteConfig, deleteRuntime, getConfig, getSystemStatus, listConfigVersions, listConfigs, listRunLogs, listRuntime, previewRuntimeCleanup, publishConfig, realTestRunConfig, restoreConfigVersion, runRuntimeCleanup, saveDraftConfig, testRunConfig, updateConfig, validateConfig } from "@/lib/api";
+import type { ConfigSource } from "@/lib/api";
 import { uid } from "@/lib/utils";
 import { validateReportConfig } from "@/schemas/reportConfigSchema";
 import type { ConfigVersion, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
@@ -170,15 +171,21 @@ export default function App() {
 
   const liveIssues = useMemo(() => (config ? validateReportConfig(config) : []), [config]);
   const persistedConfigs = useMemo(() => configs.filter((item) => !isTemporaryConfigId(item.id)), [configs]);
-  const isPersistedConfig = useMemo(() => {
+  const publishedConfigs = useMemo(() => configs.filter((item) => item.source !== "draft"), [configs]);
+  const isListedConfig = useMemo(() => {
     if (!config) return false;
     if (isTemporaryConfigId(config.id)) return false;
     return persistedConfigs.some((item) => item.id === config.id);
   }, [config, persistedConfigs]);
+  const isPersistedConfig = useMemo(() => {
+    if (!config) return false;
+    if (isTemporaryConfigId(config.id)) return false;
+    return publishedConfigs.some((item) => item.id === config.id);
+  }, [config, publishedConfigs]);
   const sidebarConfigs = useMemo(() => {
-    if (!config || isPersistedConfig) return persistedConfigs;
+    if (!config || isListedConfig) return persistedConfigs;
     return [config, ...persistedConfigs];
-  }, [config, persistedConfigs, isPersistedConfig]);
+  }, [config, persistedConfigs, isListedConfig]);
 
   async function bootstrap() {
     try {
@@ -188,7 +195,7 @@ export default function App() {
       setSystemStatus(loadedStatus);
       if (loadedConfigs[0]) {
         setSelectedId(loadedConfigs[0].id);
-        const first = await getConfig(loadedConfigs[0].id);
+        const first = await getConfig(loadedConfigs[0].id, configSourceForLoad(loadedConfigs[0]));
         setConfig(first);
         setIssues(validateReportConfig(first));
       } else {
@@ -216,9 +223,14 @@ export default function App() {
       return;
     }
     setSelectedId(id);
-    const loaded = await getConfig(id);
+    const selected = configs.find((item) => item.id === id);
+    const loaded = await getConfig(id, configSourceForLoad(selected));
     setConfig(loaded);
     setIssues(validateReportConfig(loaded));
+  }
+
+  function configSourceForLoad(item?: ReportConfig): ConfigSource {
+    return item?.has_draft || item?.source === "draft" ? "draft" : "published";
   }
 
   function createLocalConfig() {
@@ -254,11 +266,23 @@ export default function App() {
 
   async function saveDraft() {
     if (!config) return;
+    const nextIssues = validateReportConfig(config);
+    setIssues(nextIssues);
     try {
       const saved = await saveDraftConfig(config.id, config);
+      const nextConfigs = await listConfigs();
       setConfig(saved);
+      setSelectedId(saved.id);
+      setConfigs(nextConfigs);
       setLogs(await listRunLogs());
-      toast.success("草稿已保存", { description: `runtime/drafts/${saved.name}.json` });
+      if (nextIssues.length) {
+        toast.warning("草稿已保存，但配置还需要修正", {
+          description: `${nextIssues[0].path}: ${nextIssues[0].message}`,
+          duration: 2400,
+        });
+      } else {
+        toast.success("草稿已保存", { description: `runtime/drafts/${saved.name}.json` });
+      }
     } catch (error) {
       toast.error("保存草稿失败", { description: toastDescription(error), duration: 2400 });
     }
@@ -269,9 +293,10 @@ export default function App() {
     if (blockIfInvalid("保存配置")) return;
     try {
       const saved = isPersistedConfig ? await updateConfig(config.id, config) : await createConfig(config);
+      const nextConfigs = await listConfigs();
       setSelectedId(saved.id);
       setConfig(saved);
-      setConfigs(await listConfigs());
+      setConfigs(nextConfigs);
       setLogs(await listRunLogs());
       toast.success("配置已保存", { description: `config/reports/${saved.name}.json` });
     } catch (error) {
@@ -325,19 +350,23 @@ export default function App() {
 
   async function deleteCurrentConfig() {
     if (!config) return;
-    if (!isPersistedConfig || isTemporaryConfigId(config.id)) {
+    if (isTemporaryConfigId(config.id)) {
       toast.info("当前是未保存的新建配置", { description: "不会删除任何文件；如果不需要，直接切换到其他配置即可。" });
       return;
     }
-    if (!window.confirm(`确定删除配置「${config.name}」吗？该操作会同步删除 config/reports、config/tasks 和 runtime/drafts 中的同名配置文件。`)) return;
+    const deleteSource: ConfigSource = isPersistedConfig ? "published" : "draft";
+    const confirmText = deleteSource === "draft"
+      ? `确定删除草稿「${config.name}」吗？正式配置不会受影响。`
+      : `确定删除配置「${config.name}」吗？该操作会同步删除 config/reports、config/tasks 和 runtime/drafts 中的同名配置文件。`;
+    if (!window.confirm(confirmText)) return;
     try {
-      const result = await deleteConfig(config.id);
+      const result = await deleteConfig(config.id, deleteSource);
       const nextConfigs = (await listConfigs()).filter((item) => !isTemporaryConfigId(item.id));
       setConfigs(nextConfigs);
       setLogs(await listRunLogs());
       if (nextConfigs[0]) {
         setSelectedId(nextConfigs[0].id);
-        const next = await getConfig(nextConfigs[0].id);
+        const next = await getConfig(nextConfigs[0].id, configSourceForLoad(nextConfigs[0]));
         setConfig(next);
         setIssues(validateReportConfig(next));
       } else {
@@ -366,7 +395,13 @@ export default function App() {
         return;
       }
       await publishConfig(config);
-      setConfigs(await listConfigs());
+      const nextConfigs = await listConfigs();
+      setConfigs(nextConfigs);
+      const selected = nextConfigs.find((item) => item.id === config.id);
+      if (selected) {
+        const next = await getConfig(selected.id, configSourceForLoad(selected));
+        setConfig(next);
+      }
       setLogs(await listRunLogs());
       setLogsOpen(true);
       toast.success("已提交发布到调度");
@@ -509,7 +544,7 @@ export default function App() {
           onTestRun={testRun}
           onRealTestRun={realTestRun}
           onDelete={deleteCurrentConfig}
-          canDelete={isPersistedConfig}
+          canDelete={!isTemporaryConfigId(config.id)}
           onPublish={publish}
         />
         <div className="min-h-0 flex-1 p-3 sm:p-4 lg:p-5">
@@ -553,7 +588,7 @@ export default function App() {
           </div>
         </div>
       </main>
-      <RunLogDrawer open={logsOpen} logs={logs} onClose={() => setLogsOpen(false)} />
+      <RunLogDrawer open={logsOpen} logs={logs} onClose={() => setLogsOpen(false)} onLogsChange={setLogs} />
       <TemplateDrawer
         open={templatesOpen}
         onClose={() => setTemplatesOpen(false)}

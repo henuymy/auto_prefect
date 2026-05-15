@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
@@ -113,6 +114,8 @@ def drilldown_json_to_excel(
     request_area_field = drilldown_config.get("request_area_field") or "areaId"
     levels = drilldown_config.get("levels") or ["区县", "网格", "渠道/门店", "人员"]
     max_requests = int(drilldown_config.get("max_requests") or 1000)
+    max_workers = int(drilldown_config.get("max_workers") or drilldown_config.get("concurrency") or 6)
+    max_workers = max(1, min(max_workers, 32))
 
     initial_area_id = get_by_path(initial_payload, request_area_field)
     queue = deque([
@@ -131,49 +134,61 @@ def drilldown_json_to_excel(
     all_rows = []
     request_count = 0
     while queue:
-        item = queue.popleft()
-        level_index = int(item["level_index"])
-        level_name = levels[level_index] if level_index < len(levels) else f"层级{level_index + 1}"
-        response_json = item.get("response")
-        if response_json is None:
-            response_json = fetch_next(item["payload"])
-            request_count += 1
-        if request_count > max_requests:
+        current_level = []
+        first_level_index = int(queue[0]["level_index"])
+        while queue and int(queue[0]["level_index"]) == first_level_index:
+            current_level.append(queue.popleft())
+
+        fetch_items = [item for item in current_level if item.get("response") is None]
+        if request_count + len(fetch_items) > max_requests:
             raise RuntimeError(f"级联下钻超过最大请求数: {max_requests}")
+        if fetch_items:
+            if max_workers == 1 or len(fetch_items) == 1:
+                fetched_responses = [fetch_next(item["payload"]) for item in fetch_items]
+            else:
+                with ThreadPoolExecutor(max_workers=min(max_workers, len(fetch_items))) as executor:
+                    fetched_responses = list(executor.map(lambda item: fetch_next(item["payload"]), fetch_items))
+            for item, response_json in zip(fetch_items, fetched_responses):
+                item["response"] = response_json
+            request_count += len(fetch_items)
 
-        rows = extract_rows(response_json, data_path)
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            enriched = {
-                **row,
-                "__level_index": level_index,
-                "__level_name": level_name,
-                "__parent_area_id": item.get("parent_area_id") or "",
-                "__request_area_id": item.get("request_area_id") or "",
-            }
-            all_rows.append(enriched)
+        for item in current_level:
+            level_index = int(item["level_index"])
+            level_name = levels[level_index] if level_index < len(levels) else f"层级{level_index + 1}"
+            rows = extract_rows(item.get("response"), data_path)
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                enriched = {
+                    **row,
+                    "__level_index": level_index,
+                    "__level_name": level_name,
+                    "__parent_area_id": item.get("parent_area_id") or "",
+                    "__request_area_id": item.get("request_area_id") or "",
+                }
+                all_rows.append(enriched)
 
-            next_area_id = row.get(next_area_field)
-            if level_index >= len(levels) - 1 or not next_area_id:
-                continue
-            next_area_id = str(next_area_id)
-            if next_area_id in requested:
-                continue
-            requested.add(next_area_id)
-            next_payload = copy.deepcopy(item["payload"])
-            set_by_path(next_payload, request_area_field, next_area_id)
-            queue.append({
-                "payload": next_payload,
-                "level_index": level_index + 1,
-                "parent_area_id": item.get("request_area_id") or "",
-                "request_area_id": next_area_id,
-                "response": None,
-            })
+                next_area_id = row.get(next_area_field)
+                if level_index >= len(levels) - 1 or not next_area_id:
+                    continue
+                next_area_id = str(next_area_id)
+                if next_area_id in requested:
+                    continue
+                requested.add(next_area_id)
+                next_payload = copy.deepcopy(item["payload"])
+                set_by_path(next_payload, request_area_field, next_area_id)
+                queue.append({
+                    "payload": next_payload,
+                    "level_index": level_index + 1,
+                    "parent_area_id": item.get("request_area_id") or "",
+                    "request_area_id": next_area_id,
+                    "response": None,
+                })
 
     write_result = write_rows_to_excel(all_rows, output_path, excel_config)
     return {
         **write_result,
         "requests": request_count,
+        "max_workers": max_workers,
         "levels": levels,
     }
