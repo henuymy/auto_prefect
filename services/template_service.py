@@ -7,10 +7,23 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from openpyxl.cell.cell import MergedCell
+from openpyxl import load_workbook
+
 
 from infrastructure.excel_client import require_win32, get_sheet
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+TEMPLATE_UPDATE_ENGINES = {"hybrid", "com_copy"}
+XL_CALCULATION_MANUAL = -4135
+
+
+def try_set_excel_property(excel, name, value):
+    try:
+        setattr(excel, name, value)
+        return True
+    except Exception:
+        return False
 
 
 def load_json(path):
@@ -82,6 +95,109 @@ def copy_sheet_content(source_sheet, target_sheet):
     clear_target_sheet(target_sheet)
     source_sheet.UsedRange.Copy()
     target_sheet.Range("A1").PasteSpecial(Paste=-4104)
+
+
+def normalize_template_update_engine(engine):
+    normalized = str(engine or "hybrid").strip().lower()
+    if normalized not in TEMPLATE_UPDATE_ENGINES:
+        raise ValueError("template_update.engine 只支持 hybrid 或 com_copy")
+    return normalized
+
+
+def worksheet_value_bounds(sheet):
+    max_row = 0
+    max_column = 0
+    for row in sheet.iter_rows():
+        row_has_value = False
+        for cell in row:
+            if cell.value is not None:
+                row_has_value = True
+                max_column = max(max_column, cell.column)
+        if row_has_value:
+            max_row = max(max_row, row[0].row)
+    return max_row, max_column
+
+
+def worksheet_values(sheet):
+    max_row, max_column = worksheet_value_bounds(sheet)
+    if not max_row or not max_column:
+        return []
+    return [
+        [sheet.cell(row=row_index, column=column_index).value for column_index in range(1, max_column + 1)]
+        for row_index in range(1, max_row + 1)
+    ]
+
+
+def clear_target_data_area(sheet, rows, columns):
+    for row_index in range(1, rows + 1):
+        for column_index in range(1, columns + 1):
+            cell = sheet.cell(row=row_index, column=column_index)
+            if not isinstance(cell, MergedCell) and cell.data_type != "f":
+                cell.value = None
+
+
+def write_values_to_target_sheet(source_sheet, target_sheet):
+    values = worksheet_values(source_sheet)
+    source_rows = len(values)
+    source_columns = max((len(row) for row in values), default=0)
+    target_rows, target_columns = worksheet_value_bounds(target_sheet)
+    clear_target_data_area(
+        target_sheet,
+        max(source_rows, target_rows),
+        max(source_columns, target_columns),
+    )
+    for row_index, row_values in enumerate(values, start=1):
+        for column_index, value in enumerate(row_values, start=1):
+            cell = target_sheet.cell(row=row_index, column=column_index)
+            if not isinstance(cell, MergedCell):
+                cell.value = value
+
+
+def refresh_workbook_with_excel(output_path, visible=False):
+    win32com = require_win32()
+    excel = win32com.DispatchEx("Excel.Application")
+    workbook = None
+    original = {}
+    try:
+        for name in ("ScreenUpdating", "EnableEvents", "DisplayAlerts", "Calculation"):
+            try:
+                original[name] = getattr(excel, name)
+            except Exception:
+                pass
+        try_set_excel_property(excel, "Visible", bool(visible))
+        try_set_excel_property(excel, "DisplayAlerts", False)
+        try_set_excel_property(excel, "AskToUpdateLinks", False)
+        try_set_excel_property(excel, "ScreenUpdating", False)
+        try_set_excel_property(excel, "EnableEvents", False)
+        try_set_excel_property(excel, "Calculation", XL_CALCULATION_MANUAL)
+        workbook = excel.Workbooks.Open(
+            str(output_path),
+            UpdateLinks=0,
+            ReadOnly=False,
+            IgnoreReadOnlyRecommended=True,
+        )
+        try:
+            workbook.RefreshAll()
+        except Exception:
+            pass
+        try:
+            excel.CalculateUntilAsyncQueriesDone()
+        except Exception:
+            pass
+        try:
+            excel.CalculateFullRebuild()
+        except Exception:
+            try:
+                workbook.Application.Calculate()
+            except Exception:
+                pass
+        workbook.Save()
+    finally:
+        if workbook is not None:
+            workbook.Close(SaveChanges=False)
+        for name, value in original.items():
+            try_set_excel_property(excel, name, value)
+        excel.Quit()
 
 
 def update_condition_met(sheet_results, update_condition):
@@ -209,6 +325,57 @@ def update_template_copy_multi(source_report_path, template_path, output_path, s
     return updated_sheets
 
 
+def update_template_hybrid(source_report_path, template_path, output_path, sheet_results, write_sheets, visible=False):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(template_path, output_path)
+
+    keep_vba = output_path.suffix.lower() == ".xlsm"
+    target_workbook = load_workbook(output_path, keep_vba=keep_vba)
+    source_workbooks = {}
+    updated_sheets = []
+    try:
+        for sheet_result in sheet_results:
+            if not should_write_sheet(sheet_result, write_sheets):
+                continue
+            source_path = resolve_path(sheet_result.get("source_report_path") or source_report_path)
+            if not source_path:
+                raise ValueError(f"缺少 sheet 的 source_report_path: {sheet_result}")
+            source_key = str(source_path)
+            if source_key not in source_workbooks:
+                source_workbooks[source_key] = load_workbook(
+                    source_key,
+                    data_only=True,
+                    keep_vba=Path(source_key).suffix.lower() == ".xlsm",
+                )
+            source_sheet_name = sheet_result["new_sheet_name"]
+            target_sheet_name = sheet_result["template_sheet_name"]
+            if source_sheet_name not in source_workbooks[source_key].sheetnames:
+                raise ValueError(f"源报表缺少 sheet: {source_sheet_name}")
+            if target_sheet_name not in target_workbook.sheetnames:
+                raise ValueError(f"模板缺少 sheet: {target_sheet_name}")
+            write_values_to_target_sheet(
+                source_workbooks[source_key][source_sheet_name],
+                target_workbook[target_sheet_name],
+            )
+            updated_sheets.append({
+                "name": sheet_result.get("name") or source_sheet_name,
+                "download_name": sheet_result.get("download_name"),
+                "source_report_path": source_key,
+                "source_sheet_name": source_sheet_name,
+                "template_sheet_name": target_sheet_name,
+                "compare_result": sheet_result.get("result"),
+            })
+
+        target_workbook.save(output_path)
+    finally:
+        target_workbook.close()
+        for workbook in source_workbooks.values():
+            workbook.close()
+
+    refresh_workbook_with_excel(output_path, visible=visible)
+    return updated_sheets
+
+
 def write_manifest(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -220,6 +387,7 @@ def update_template(config, base_dir=PROJECT_DIR):
 
     manifest_path = resolve_path(config.get("manifest_path", "runtime/template_updater/update_manifest.json"), base_dir)
     output_dir = resolve_path(config.get("output_dir", "runtime/template_updater/templates"), base_dir)
+    engine = normalize_template_update_engine(config.get("engine"))
     write_sheets = config.get("write_sheets", "changed")
     update_condition = config.get("update_condition", "any_changed")
     allow_same_update = bool(config.get("allow_same_update", False))
@@ -231,6 +399,7 @@ def update_template(config, base_dir=PROJECT_DIR):
         manifest = {
             "status": "skipped",
             "reason": "compare_result_same",
+            "engine": engine,
             "update_condition": update_condition,
             "source_report_path": str(source_report_path),
             "template_path": str(template_path),
@@ -244,6 +413,7 @@ def update_template(config, base_dir=PROJECT_DIR):
         manifest = {
             "status": "skipped",
             "reason": "update_condition_not_met",
+            "engine": engine,
             "update_condition": update_condition,
             "source_report_path": str(source_report_path),
             "template_path": str(template_path),
@@ -257,7 +427,8 @@ def update_template(config, base_dir=PROJECT_DIR):
         raise RuntimeError(f"不支持的比对结果: {result}")
 
     output_path = output_template_path(template_path, output_dir)
-    updated_sheets = update_template_copy_multi(
+    updater = update_template_copy_multi if engine == "com_copy" else update_template_hybrid
+    updated_sheets = updater(
         source_report_path,
         template_path,
         output_path,
@@ -267,6 +438,7 @@ def update_template(config, base_dir=PROJECT_DIR):
     )
     manifest = {
         "status": "updated",
+        "engine": engine,
         "source_report_path": str(source_report_path),
         "template_path": str(template_path),
         "output_path": str(output_path),

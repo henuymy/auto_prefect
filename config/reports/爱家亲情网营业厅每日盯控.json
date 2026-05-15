@@ -19,6 +19,7 @@
     ]
   },
   "template_update": {
+    "engine": "hybrid",
     "update_condition": "any_changed",
     "write_sheets": "all_compared",
     "send_when_same": true
@@ -211,7 +212,7 @@
     "cron": "",
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-15 17:51:10",
+  "updatedAt": "2026-05-15 17:58:10",
   "source": "published",
   "has_draft": false
 }

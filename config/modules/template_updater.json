@@ -5,6 +5,7 @@
   "template_path": null,
   "output_dir": "runtime/template_updater/templates",
   "manifest_path": "runtime/template_updater/update_manifest.json",
+  "engine": "hybrid",
   "write_sheets": "changed",
   "copy_mode": "all",
   "visible": false

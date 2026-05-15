@@ -146,6 +146,7 @@ export const reportConfigJsonSchema = {
       type: "object",
       required: ["update_condition", "write_sheets", "send_when_same"],
       properties: {
+        engine: { enum: ["hybrid", "com_copy"] },
         update_condition: { enum: ["any_changed", "all_changed"] },
         write_sheets: { enum: ["changed", "all_compared"] },
         send_when_same: { type: "boolean" },

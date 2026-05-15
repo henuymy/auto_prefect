@@ -76,6 +76,7 @@ export interface ReportConfig {
     items: SendItem[];
   };
   template_update: {
+    engine?: "hybrid" | "com_copy";
     update_condition: "any_changed" | "all_changed";
     write_sheets: "changed" | "all_compared";
     send_when_same: boolean;

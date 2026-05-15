@@ -773,6 +773,7 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
       <Card>
         <CardHeader><CardTitle>模板更新策略</CardTitle><CardDescription>控制 same/changed 时怎么更新模板和发送。</CardDescription></CardHeader>
         <CardContent className="space-y-4">
+          <Field label="更新引擎"><Select value={update.engine || "hybrid"} onChange={(event) => onChange({ ...config, template_update: { ...update, engine: event.target.value as NonNullable<typeof update.engine> } })}><option value="hybrid">hybrid</option><option value="com_copy">com_copy</option></Select></Field>
           <Field label="changed 判断条件"><Select value={update.update_condition} onChange={(event) => onChange({ ...config, template_update: { ...update, update_condition: event.target.value as typeof update.update_condition } })}><option value="any_changed">any_changed</option><option value="all_changed">all_changed</option></Select></Field>
           <Field label="写入范围"><Select value={update.write_sheets} onChange={(event) => onChange({ ...config, template_update: { ...update, write_sheets: event.target.value as typeof update.write_sheets } })}><option value="changed">changed</option><option value="all_compared">all_compared</option></Select></Field>
           <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={update.send_when_same} onChange={(event) => onChange({ ...config, template_update: { ...update, send_when_same: event.target.checked } })} /> same 时直接发送当前通报</label>

@@ -41,6 +41,7 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
       items: config.send?.items || [],
     },
     template_update: {
+      engine: config.template_update?.engine || "hybrid",
       update_condition: config.template_update?.update_condition || "any_changed",
       write_sheets: config.template_update?.write_sheets || "all_compared",
       send_when_same: config.template_update?.send_when_same ?? true,

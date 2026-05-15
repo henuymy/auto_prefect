@@ -89,6 +89,7 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
                 "items": send.get("items") or [],
             },
             "template_update": {
+                "engine": template_update.get("engine", "hybrid"),
                 "update_condition": template_update.get("update_condition", "any_changed"),
                 "write_sheets": template_update.get("write_sheets", "all_compared"),
                 "send_when_same": template_update.get("send_when_same", True),
@@ -119,7 +120,7 @@ def _broken_config(path: Path, exc: Exception, source: str, has_draft: bool = Fa
         "downloads": [],
         "compare_sources": [],
         "send": {"webhook_url": "", "workbook_name": path.stem, "items": []},
-        "template_update": {"update_condition": "any_changed", "write_sheets": "all_compared", "send_when_same": True},
+        "template_update": {"engine": "hybrid", "update_condition": "any_changed", "write_sheets": "all_compared", "send_when_same": True},
         "wait_for_change": {"enabled": False, "poll_interval_seconds": 300, "max_wait_minutes": 180},
         "deployment": {"enabled": False, "cron": "", "timezone": "Asia/Shanghai"},
         "lastRun": "failed",

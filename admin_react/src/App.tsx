@@ -60,6 +60,7 @@ function emptyConfig(): ReportConfig {
       items: [{ type: "image", sheet: "通报" }],
     },
     template_update: {
+      engine: "hybrid",
       update_condition: "any_changed",
       write_sheets: "all_compared",
       send_when_same: true,

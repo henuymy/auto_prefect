@@ -88,6 +88,7 @@ export const mockConfigs: ReportConfig[] = [
       ],
     },
     template_update: {
+      engine: "hybrid",
       update_condition: "any_changed",
       write_sheets: "all_compared",
       send_when_same: true,
@@ -171,7 +172,7 @@ export const mockConfigs: ReportConfig[] = [
         { type: "text", sheet: "营业厅通报文字", text: { mode: "used_range" } },
       ],
     },
-    template_update: { update_condition: "any_changed", write_sheets: "all_compared", send_when_same: true },
+    template_update: { engine: "hybrid", update_condition: "any_changed", write_sheets: "all_compared", send_when_same: true },
     wait_for_change: { enabled: false, poll_interval_seconds: 300, max_wait_minutes: 180 },
     deployment: { enabled: false, cron: "", timezone: "Asia/Shanghai" },
   },
