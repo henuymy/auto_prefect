@@ -1,7 +1,7 @@
 import pytest
 
 from services.notify_service import send_package
-from services.screenshot_service import item_output_name
+from services.screenshot_service import item_output_name, package_has_only_text_items
 
 
 def test_send_package_dry_run_preserves_order():
@@ -44,3 +44,12 @@ def test_item_output_name_removes_invalid_filename_chars():
 
     assert name.startswith("01_02_03_work_book_report_name_sheet_name")
     assert name.endswith(".png")
+
+
+def test_package_has_only_text_items():
+    assert package_has_only_text_items({
+        "workbooks": [{"reports": [{"items": [{"type": "text", "sheet": "文字"}]}]}]
+    }) is True
+    assert package_has_only_text_items({
+        "workbooks": [{"reports": [{"items": [{"type": "image", "sheet": "通报"}]}]}]
+    }) is False

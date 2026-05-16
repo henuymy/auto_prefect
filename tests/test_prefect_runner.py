@@ -57,3 +57,33 @@ def test_publish_with_disabled_schedule_pauses(monkeypatch, tmp_path):
     assert commands[1][3:6] == ["deployment", "schedule", "pause"]
     assert commands[1][-2:] == ["auto-notify-flow/notify-日报", "--all"]
     assert result["scheduleStatus"] == "disabled"
+
+
+def test_validate_config_requires_compare_engine_and_workers():
+    issues = prefect_runner.validate_config(
+        {
+            "name": "日报",
+            "template_path": "templates/missing.xlsx",
+            "downloads": [
+                {
+                    "name": "下载",
+                    "stage": "report_analysis",
+                    "method": "POST",
+                    "url": "https://example/export",
+                    "body_type": "form",
+                    "response_mode": "file",
+                }
+            ],
+            "compare_sources": [
+                {
+                    "download_name": "下载",
+                    "sheet_mappings": [{"new_sheet_name": "源", "template_sheet_name": "模板"}],
+                }
+            ],
+            "send": {"items": [{"type": "image", "sheet": "通报"}]},
+        }
+    )
+
+    paths = {issue["path"] for issue in issues}
+    assert "/compare_sources/0/engine" in paths
+    assert "/compare_sources/0/max_workers" in paths

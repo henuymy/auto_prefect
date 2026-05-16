@@ -234,6 +234,20 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
                     issues.append({"path": f"/downloads/{index}/drilldown/{field}", "message": f"级联下钻缺少 {field}"})
 
     for source_index, source in enumerate(config.get("compare_sources") or []):
+        engine = source.get("engine")
+        if not engine:
+            issues.append({"path": f"/compare_sources/{source_index}/engine", "message": "比对引擎不能为空"})
+        elif engine not in {"openpyxl", "com"}:
+            issues.append({"path": f"/compare_sources/{source_index}/engine", "message": f"不支持的比对引擎: {engine}"})
+        max_workers = source.get("max_workers")
+        if max_workers is None:
+            issues.append({"path": f"/compare_sources/{source_index}/max_workers", "message": "并发 Sheet 数不能为空"})
+        else:
+            try:
+                if int(max_workers) < 1:
+                    issues.append({"path": f"/compare_sources/{source_index}/max_workers", "message": "并发 Sheet 数必须大于等于 1"})
+            except (TypeError, ValueError):
+                issues.append({"path": f"/compare_sources/{source_index}/max_workers", "message": "并发 Sheet 数必须是数字"})
         download_name = source.get("download_name")
         if download_name and download_name not in download_names:
             issues.append({"path": f"/compare_sources/{source_index}/download_name", "message": f"比对源找不到对应下载项: {download_name}"})

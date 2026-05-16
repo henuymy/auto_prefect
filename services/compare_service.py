@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from zipfile import BadZipFile
 from dataclasses import asdict
+from time import perf_counter
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -113,6 +116,38 @@ def worksheet_range_values(sheet, range_address=None):
     return [list(row) for row in sheet.iter_rows(values_only=True)]
 
 
+def iter_worksheet_rows(sheet, range_address=None):
+    if range_address:
+        yield from worksheet_range_values(sheet, range_address)
+    else:
+        for row in sheet.iter_rows(values_only=True):
+            yield list(row)
+
+
+def stream_sheet_hash_openpyxl(workbook, sheet_name, range_address=None):
+    if sheet_name not in workbook.sheetnames:
+        raise KeyError(f"工作表不存在: {sheet_name}")
+    digest = hashlib.sha256()
+    non_empty_rows = 0
+    for row in iter_worksheet_rows(workbook[sheet_name], range_address):
+        normalized = [normalize_cell(cell) for cell in row]
+        if not is_empty_row(normalized):
+            non_empty_rows += 1
+        digest.update(str(len(normalized)).encode("ascii"))
+        digest.update(b"\x1e")
+        for cell in normalized:
+            encoded = cell.encode("utf-8")
+            digest.update(str(len(encoded)).encode("ascii"))
+            digest.update(b"\x1f")
+            digest.update(encoded)
+            digest.update(b"\x1d")
+        digest.update(b"\x1c")
+    return {
+        "hash": digest.hexdigest(),
+        "non_empty_rows": non_empty_rows,
+    }
+
+
 def read_sheet_table_openpyxl(workbook, sheet_name, range_address=None):
     if sheet_name not in workbook.sheetnames:
         raise KeyError(f"工作表不存在: {sheet_name}")
@@ -219,6 +254,11 @@ def compare_with_key(headers, new_rows, old_rows, key_columns, sample_limit):
     }
 
 
+def table_hash(headers, rows):
+    payload = json.dumps([headers, rows], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def compare_tables(new_table, old_table, header_row=1, ignore_columns=None, key_columns=None, sample_limit=10):
     new_rows = trim_empty_edges(normalize_matrix(new_table))
     old_rows = trim_empty_edges(normalize_matrix(old_table))
@@ -246,6 +286,23 @@ def compare_tables(new_table, old_table, header_row=1, ignore_columns=None, key_
             new_row_count=len(new_data),
             old_row_count=len(old_data),
             message="新报表和模板旧数据字段不一致",
+        )
+
+    new_hash = table_hash(new_headers, new_data)
+    old_hash = table_hash(old_headers, old_data)
+    if new_hash == old_hash:
+        return CompareResult(
+            "same",
+            diff_summary={
+                "added_rows": 0,
+                "removed_rows": 0,
+                "changed_rows": 0,
+                "content_hash": new_hash,
+                "fast_path": "hash_equal",
+            },
+            new_row_count=len(new_data),
+            old_row_count=len(old_data),
+            message="数据一致",
         )
 
     if key_columns:
@@ -366,6 +423,80 @@ def normalize_compare_engine(engine):
     return normalized
 
 
+def compare_sheet_mapping_openpyxl(config, mapping, template_sheet_names, new_workbook, template_workbook):
+    new_sheet_name = mapping["new_sheet_name"]
+    template_sheet_name = mapping["template_sheet_name"]
+    if template_sheet_name not in template_sheet_names:
+        return {
+            "name": mapping.get("name") or new_sheet_name,
+            "new_sheet_name": new_sheet_name,
+            "template_sheet_name": template_sheet_name,
+            "result": "invalid",
+            "message": f"模板缺少对应工作表: {template_sheet_name}",
+        }
+
+    options = merge_sheet_config(config, mapping)
+    new_stream = stream_sheet_hash_openpyxl(new_workbook, new_sheet_name, mapping.get("new_range"))
+    old_stream = stream_sheet_hash_openpyxl(template_workbook, template_sheet_name, mapping.get("template_range"))
+    if (
+        new_stream["hash"] == old_stream["hash"]
+        and new_stream["non_empty_rows"] >= options["header_row"]
+        and old_stream["non_empty_rows"] >= options["header_row"]
+    ):
+        data_rows = max(new_stream["non_empty_rows"] - options["header_row"], 0)
+        payload = asdict(CompareResult(
+            "same",
+            diff_summary={
+                "added_rows": 0,
+                "removed_rows": 0,
+                "changed_rows": 0,
+                "content_hash": new_stream["hash"],
+                "fast_path": "stream_hash_equal",
+            },
+            new_row_count=data_rows,
+            old_row_count=data_rows,
+            message="数据一致",
+        ))
+    else:
+        payload = asdict(compare_tables(
+            read_sheet_table_openpyxl(new_workbook, new_sheet_name, mapping.get("new_range")),
+            read_sheet_table_openpyxl(template_workbook, template_sheet_name, mapping.get("template_range")),
+            header_row=options["header_row"],
+            ignore_columns=options["ignore_columns"],
+            key_columns=options["key_columns"],
+            sample_limit=options["sample_limit"],
+        ))
+    payload.update({
+        "name": mapping.get("name") or new_sheet_name,
+        "new_sheet_name": new_sheet_name,
+        "template_sheet_name": template_sheet_name,
+    })
+    return payload
+
+
+def compare_sheet_mapping_openpyxl_by_path(config, mapping, template_sheet_names, new_path, template_path):
+    keep_vba_new = new_path.suffix.lower() == ".xlsm"
+    keep_vba_template = template_path.suffix.lower() == ".xlsm"
+    new_workbook = load_workbook(new_path, data_only=True, read_only=True, keep_vba=keep_vba_new)
+    template_workbook = load_workbook(template_path, data_only=True, read_only=True, keep_vba=keep_vba_template)
+    try:
+        return compare_sheet_mapping_openpyxl(config, mapping, template_sheet_names, new_workbook, template_workbook)
+    finally:
+        new_workbook.close()
+        template_workbook.close()
+
+
+def normalize_max_workers(value, item_count):
+    try:
+        workers = int(value or 1)
+    except (TypeError, ValueError):
+        workers = 1
+    workers = max(1, min(workers, 16))
+    if item_count:
+        workers = min(workers, item_count)
+    return workers
+
+
 def compare_sheet_mappings(config, mappings, template_sheet_names, read_new_sheet, read_template_sheet):
     sheet_results = []
     for mapping in mappings:
@@ -481,23 +612,44 @@ def compare_workbook_openpyxl(config):
 
     keep_vba_new = new_path.suffix.lower() == ".xlsm"
     keep_vba_template = template_path.suffix.lower() == ".xlsm"
+    new_workbook = None
+    template_workbook = None
     new_workbook = load_workbook(new_path, data_only=True, read_only=True, keep_vba=keep_vba_new)
     template_workbook = load_workbook(template_path, data_only=True, read_only=True, keep_vba=keep_vba_template)
     try:
         template_sheet_names = set(template_workbook.sheetnames)
         mappings = build_sheet_mappings_from_names(config, new_workbook.sheetnames, template_workbook.sheetnames)
-        sheet_results = compare_sheet_mappings(
-            config,
-            mappings,
-            template_sheet_names,
-            lambda sheet_name, range_address=None: read_sheet_table_openpyxl(new_workbook, sheet_name, range_address),
-            lambda sheet_name, range_address=None: read_sheet_table_openpyxl(template_workbook, sheet_name, range_address),
-        )
+        max_workers = normalize_max_workers(config.get("max_workers"), len(mappings))
+        if max_workers > 1:
+            new_workbook.close()
+            template_workbook.close()
+            new_workbook = None
+            template_workbook = None
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                sheet_results = list(executor.map(
+                    lambda mapping: compare_sheet_mapping_openpyxl_by_path(
+                        config,
+                        mapping,
+                        template_sheet_names,
+                        new_path,
+                        template_path,
+                    ),
+                    mappings,
+                ))
+        else:
+            sheet_results = [
+                compare_sheet_mapping_openpyxl(config, mapping, template_sheet_names, new_workbook, template_workbook)
+                for mapping in mappings
+            ]
     finally:
-        new_workbook.close()
-        template_workbook.close()
+        if new_workbook is not None:
+            new_workbook.close()
+        if template_workbook is not None:
+            template_workbook.close()
 
-    return summarize_workbook_compare(sheet_results)
+    result = summarize_workbook_compare(sheet_results)
+    result.summary["max_workers"] = max_workers
+    return result
 
 
 def compare_workbook(config):
@@ -517,17 +669,25 @@ def result_to_dict(result):
 def write_result(output_path, result):
     path = Path(output_path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload = result if isinstance(result, dict) else result_to_dict(result)
     with path.open("w", encoding="utf-8") as f:
-        json.dump(result_to_dict(result), f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
     return path
 
 
 def compare_report(config, base_dir=PROJECT_DIR):
     config = resolve_compare_config(config, base_dir)
+    started = perf_counter()
     result = compare_workbook(config)
+    payload = result_to_dict(result)
+    payload["engine"] = normalize_compare_engine(config.get("engine"))
+    payload["max_workers"] = normalize_max_workers(config.get("max_workers"), payload.get("summary", {}).get("total", 0))
+    payload["timings"] = {
+        "total_seconds": round(perf_counter() - started, 3),
+    }
     if config.get("output_path"):
-        write_result(config["output_path"], result)
-    return result_to_dict(result)
+        write_result(config["output_path"], payload)
+    return payload
 
 
 def compare_report_from_config(config_path, base_dir=PROJECT_DIR):

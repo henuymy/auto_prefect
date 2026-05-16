@@ -34,7 +34,12 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
         data: bodyType === "raw" ? cleanItem.data : cleanItem.data || {},
       } as DownloadItem;
     }),
-    compare_sources: config.compare_sources || [],
+    compare_sources: (config.compare_sources || []).map((source) => ({
+      ...source,
+      engine: source.engine || "openpyxl",
+      max_workers: source.max_workers || 4,
+      sheet_mappings: source.sheet_mappings || [],
+    })),
     send: {
       webhook_url: config.send?.webhook_url || "",
       workbook_name: config.send?.workbook_name || config.name || "",

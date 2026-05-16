@@ -587,6 +587,7 @@ def read_text_from_openpyxl_sheet(ws, text_config=None):
 def build_message_package_openpyxl(config, base_dir=PROJECT_DIR, fallback_reason=None):
     from openpyxl import load_workbook
 
+    started = time.perf_counter()
     image_dir, package_file, preview_file = get_output_paths(config, base_dir)
     default_capture = config.get("capture_defaults", {})
     package = {
@@ -651,11 +652,16 @@ def build_message_package_openpyxl(config, base_dir=PROJECT_DIR, fallback_reason
     preview_path = build_preview_image(package, preview_file)
     if preview_path:
         package["preview_image_file"] = preview_path
+    package["timings"] = {
+        "total_seconds": round(time.perf_counter() - started, 3),
+        "engine": "openpyxl",
+    }
     save_package(package_file, package)
     return package, str(package_file)
 
 
 def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
+    started = time.perf_counter()
     image_dir, package_file, preview_file = get_output_paths(config, base_dir)
     default_capture = config.get("capture_defaults", {})
     workbooks = config.get("workbooks", [])
@@ -741,8 +747,23 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
     preview_path = build_preview_image(package, preview_file)
     if preview_path:
         package["preview_image_file"] = preview_path
+    package["timings"] = {
+        "total_seconds": round(time.perf_counter() - started, 3),
+        "engine": "com",
+    }
     save_package(package_file, package)
     return package, str(package_file)
+
+
+def package_has_only_text_items(config):
+    has_items = False
+    for workbook_config in config.get("workbooks", []):
+        for report in workbook_config.get("reports", []):
+            for item in report.get("items", []):
+                has_items = True
+                if item.get("type") != "text":
+                    return False
+    return has_items
 
 
 def build_message_package(config, base_dir=PROJECT_DIR, visible=False):
@@ -751,6 +772,12 @@ def build_message_package(config, base_dir=PROJECT_DIR, visible=False):
             config,
             base_dir=base_dir,
             fallback_reason="openpyxl_fallback_only=true",
+        )
+    if package_has_only_text_items(config):
+        return build_message_package_openpyxl(
+            config,
+            base_dir=base_dir,
+            fallback_reason="text_only_openpyxl_fast_path",
         )
     try:
         return build_message_package_com(config, base_dir=base_dir, visible=visible)

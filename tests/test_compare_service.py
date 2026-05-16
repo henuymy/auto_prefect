@@ -97,3 +97,67 @@ def test_compare_report_uses_openpyxl_engine_by_default():
         assert json.loads(output_path.read_text(encoding="utf-8"))["result"] == "changed"
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_compare_report_stream_hash_fast_path_for_same_sheet():
+    work_dir = make_work_dir()
+    try:
+        new_report_path = work_dir / "new.xlsx"
+        template_path = work_dir / "template.xlsx"
+        rows = [["name", "count"], ["A", 1], ["B", 2]]
+        create_workbook(new_report_path, {"明细": rows})
+        create_workbook(template_path, {"明细": rows})
+
+        result = compare_report(
+            {
+                "new_report_path": str(new_report_path),
+                "template_path": str(template_path),
+                "sheet_mappings": ["明细"],
+            }
+        )
+
+        assert result["result"] == "same"
+        assert result["sheets"][0]["diff_summary"]["fast_path"] == "stream_hash_equal"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_compare_report_openpyxl_parallel_multiple_sheets():
+    work_dir = make_work_dir()
+    try:
+        new_report_path = work_dir / "new.xlsx"
+        template_path = work_dir / "template.xlsx"
+        create_workbook(
+            new_report_path,
+            {
+                "一": [["name", "count"], ["A", 1]],
+                "二": [["name", "count"], ["B", 3]],
+                "三": [["name", "count"], ["C", 5]],
+            },
+        )
+        create_workbook(
+            template_path,
+            {
+                "一": [["name", "count"], ["A", 1]],
+                "二": [["name", "count"], ["B", 2]],
+                "三": [["name", "count"], ["C", 5]],
+            },
+        )
+
+        result = compare_report(
+            {
+                "new_report_path": str(new_report_path),
+                "template_path": str(template_path),
+                "sheet_mappings": ["一", "二", "三"],
+                "max_workers": 2,
+            }
+        )
+
+        assert result["result"] == "changed"
+        assert result["summary"]["same"] == 2
+        assert result["summary"]["changed"] == 1
+        assert result["summary"]["max_workers"] == 2
+        assert result["max_workers"] == 2
+        assert [item["name"] for item in result["sheets"]] == ["一", "二", "三"]
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)

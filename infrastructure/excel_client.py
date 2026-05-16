@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+XL_CALCULATION_MANUAL = -4135
+
 
 def require_win32():
     try:
@@ -11,21 +13,40 @@ def require_win32():
     return win32com.client
 
 
-def open_excel(visible=False):
+def try_set_excel_property(excel, name, value):
+    try:
+        setattr(excel, name, value)
+        return True
+    except Exception:
+        return False
+
+
+def safe_configure_excel(excel, visible=False, manual_calculation=False):
+    applied = {}
+    applied["Visible"] = try_set_excel_property(excel, "Visible", bool(visible))
+    applied["DisplayAlerts"] = try_set_excel_property(excel, "DisplayAlerts", False)
+    applied["AskToUpdateLinks"] = try_set_excel_property(excel, "AskToUpdateLinks", False)
+    applied["ScreenUpdating"] = try_set_excel_property(excel, "ScreenUpdating", False)
+    applied["EnableEvents"] = try_set_excel_property(excel, "EnableEvents", False)
+    if manual_calculation:
+        applied["Calculation"] = try_set_excel_property(excel, "Calculation", XL_CALCULATION_MANUAL)
+    return applied
+
+
+def open_excel(visible=False, manual_calculation=False):
     win32com = require_win32()
     excel = win32com.DispatchEx("Excel.Application")
-    excel.Visible = bool(visible)
-    excel.DisplayAlerts = False
-    excel.AskToUpdateLinks = False
+    safe_configure_excel(excel, visible=visible, manual_calculation=manual_calculation)
     return excel
 
 
-def open_workbook(excel, path, update_links=False, read_only=True):
+def open_workbook(excel, path, update_links=False, read_only=True, ignore_read_only_recommended=True):
     from pathlib import Path
     return excel.Workbooks.Open(
         str(Path(path).resolve()),
         UpdateLinks=3 if update_links else 0,
         ReadOnly=read_only,
+        IgnoreReadOnlyRecommended=ignore_read_only_recommended,
     )
 
 

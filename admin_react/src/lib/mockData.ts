@@ -68,12 +68,16 @@ export const mockConfigs: ReportConfig[] = [
     compare_sources: [
       {
         download_name: "实时",
+        engine: "openpyxl",
+        max_workers: 4,
         sheet_mappings: [
           { name: "业务销量", new_sheet_name: "业务销量", template_sheet_name: "实时业务销量", header_row: 1, ignore_columns: [], key_columns: [] },
         ],
       },
       {
         download_name: "日累计",
+        engine: "openpyxl",
+        max_workers: 4,
         sheet_mappings: [
           { name: "业务销量", new_sheet_name: "业务销量", template_sheet_name: "日累计业务销量", header_row: 1, ignore_columns: [], key_columns: [] },
         ],
@@ -159,6 +163,8 @@ export const mockConfigs: ReportConfig[] = [
     compare_sources: [
       {
         download_name: "实时",
+        engine: "openpyxl",
+        max_workers: 4,
         sheet_mappings: [
           { name: "实时", new_sheet_name: "地市作战实时明细", template_sheet_name: "营业厅实时销量", header_row: 1, ignore_columns: [], key_columns: [] },
         ],

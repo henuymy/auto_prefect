@@ -683,7 +683,7 @@ function DraftTextarea({
 function CompareTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
   const add = () => {
     const firstDownload = config.downloads[0]?.name || "";
-    const next: CompareSource = { download_name: firstDownload, sheet_mappings: [{ name: "", new_sheet_name: "", template_sheet_name: "", header_row: 1, ignore_columns: [], key_columns: [] }] };
+    const next: CompareSource = { download_name: firstDownload, engine: "openpyxl", max_workers: 4, sheet_mappings: [{ name: "", new_sheet_name: "", template_sheet_name: "", header_row: 1, ignore_columns: [], key_columns: [] }] };
     onChange({ ...config, compare_sources: [...config.compare_sources, next] });
   };
 
@@ -699,8 +699,10 @@ function CompareTab({ config, onChange }: { config: ReportConfig; onChange: (con
       <CardContent className="space-y-4">
         {config.compare_sources.map((source, sourceIndex) => (
           <div key={sourceIndex} className="rounded-xl border border-border bg-muted/20 p-3 sm:p-4">
-            <div className="mb-4 grid gap-4 md:grid-cols-[1fr_auto]">
+            <div className="mb-4 grid gap-4 md:grid-cols-[1fr_160px_160px_auto]">
               <Field label="对应下载标识"><Select value={source.download_name} onChange={(event) => onChange({ ...config, compare_sources: updateAt(config.compare_sources, sourceIndex, { ...source, download_name: event.target.value }) })}>{config.downloads.map((item) => <option key={item.name}>{item.name}</option>)}</Select></Field>
+              <Field label="比对引擎"><Select value={source.engine || "openpyxl"} onChange={(event) => onChange({ ...config, compare_sources: updateAt(config.compare_sources, sourceIndex, { ...source, engine: event.target.value as NonNullable<CompareSource["engine"]> }) })}><option value="openpyxl">openpyxl</option><option value="com">com</option></Select></Field>
+              <Field label="并发 Sheet 数"><DraftInput type="number" value={source.max_workers || 4} onCommit={(value) => onChange({ ...config, compare_sources: updateAt(config.compare_sources, sourceIndex, { ...source, max_workers: Number(value || 1) }) })} /></Field>
               <Button variant="ghost" size="icon" onClick={() => onChange({ ...config, compare_sources: config.compare_sources.filter((_, index) => index !== sourceIndex) })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
             </div>
             {source.sheet_mappings.map((mapping, mappingIndex) => (

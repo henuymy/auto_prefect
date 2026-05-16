@@ -62,6 +62,16 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
         compare_sources = []
         if sheet_mappings:
             compare_sources = [{"download_name": downloads[0].get("name", "") if downloads else "", "sheet_mappings": sheet_mappings}]
+    normalized_compare_sources = []
+    for item in compare_sources or []:
+        if not isinstance(item, dict):
+            continue
+        next_source = dict(item)
+        next_source["engine"] = next_source.get("engine") or "openpyxl"
+        next_source["max_workers"] = next_source.get("max_workers") or 4
+        next_source["sheet_mappings"] = next_source.get("sheet_mappings") or []
+        normalized_compare_sources.append(next_source)
+    compare_sources = normalized_compare_sources
 
     send = data.get("send") if isinstance(data.get("send"), dict) else {}
     template_update = data.get("template_update") if isinstance(data.get("template_update"), dict) else {}

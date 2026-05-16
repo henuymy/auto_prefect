@@ -91,9 +91,11 @@ export const reportConfigJsonSchema = {
       type: "array",
       items: {
         type: "object",
-        required: ["download_name", "sheet_mappings"],
+        required: ["download_name", "engine", "max_workers", "sheet_mappings"],
         properties: {
           download_name: { type: "string", minLength: 1 },
+          engine: { enum: ["openpyxl", "com"] },
+          max_workers: { type: "number", minimum: 1 },
           sheet_mappings: {
             type: "array",
             items: {

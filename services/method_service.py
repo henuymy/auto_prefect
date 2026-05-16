@@ -7,6 +7,7 @@ import re
 import copy
 import shutil
 import threading
+from time import perf_counter
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -14,7 +15,7 @@ from urllib.parse import unquote, urlparse
 import requests
 from urllib3.exceptions import InsecureRequestWarning
 
-from infrastructure.excel_client import require_win32
+from infrastructure.excel_client import open_excel
 from services.json_excel_service import (
     drilldown_json_to_excel,
     get_by_path,
@@ -291,16 +292,9 @@ def file_starts_with(path, magic):
 def convert_xls_to_xlsx(source_path, visible=False):
     source_path = Path(source_path)
     target_path = unique_sibling_path(source_path.with_suffix(".xlsx"))
-    win32com = require_win32()
-    excel = win32com.DispatchEx("Excel.Application")
+    excel = open_excel(visible=visible)
     workbook = None
     try:
-        try:
-            excel.Visible = bool(visible)
-            excel.DisplayAlerts = False
-            excel.AskToUpdateLinks = False
-        except Exception:
-            pass
         workbook = excel.Workbooks.Open(
             str(source_path),
             UpdateLinks=0,
@@ -423,6 +417,7 @@ def is_html_response(response):
 
 
 def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, proxies):
+    started = perf_counter()
     session = requests.Session()
     session.trust_env = trust_env
     session.cookies.update(build_cookie_jar(stage, cookie_names=report.get("cookie_names")))
@@ -495,6 +490,7 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
             "sheet_name": convert_result.get("sheet_name"),
             "output_path": str(output_path),
             "downloaded_at": datetime.now().isoformat(),
+            "timings": {"total_seconds": round(perf_counter() - started, 3)},
         }
     if response_mode != "file":
         raise ValueError(f"response_mode 只支持 file/json_to_excel/json_drilldown_to_excel: {response_mode}")
@@ -504,7 +500,9 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     output_path = output_dir / filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(response.content)
+    normalize_started = perf_counter()
     normalized_output_path = normalize_downloaded_excel(output_path, visible=bool(report.get("visible", False)))
+    normalize_seconds = round(perf_counter() - normalize_started, 3)
     converted_to_xlsx = normalized_output_path != output_path
     final_output_path = normalized_output_path
     return {
@@ -518,6 +516,10 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
         "output_path": str(final_output_path),
         **({"original_output_path": str(output_path), "converted_to_xlsx": True} if converted_to_xlsx else {}),
         "downloaded_at": datetime.now().isoformat(),
+        "timings": {
+            "normalize_excel_seconds": normalize_seconds,
+            "total_seconds": round(perf_counter() - started, 3),
+        },
     }
 
 

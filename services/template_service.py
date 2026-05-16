@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from time import perf_counter
 from datetime import datetime
 from pathlib import Path
 
@@ -11,19 +12,10 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl import load_workbook
 
 
-from infrastructure.excel_client import require_win32, get_sheet
+from infrastructure.excel_client import get_sheet, open_excel
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_UPDATE_ENGINES = {"hybrid", "com_copy"}
-XL_CALCULATION_MANUAL = -4135
-
-
-def try_set_excel_property(excel, name, value):
-    try:
-        setattr(excel, name, value)
-        return True
-    except Exception:
-        return False
 
 
 def load_json(path):
@@ -154,22 +146,9 @@ def write_values_to_target_sheet(source_sheet, target_sheet):
 
 
 def refresh_workbook_with_excel(output_path, visible=False):
-    win32com = require_win32()
-    excel = win32com.DispatchEx("Excel.Application")
+    excel = open_excel(visible=visible, manual_calculation=True)
     workbook = None
-    original = {}
     try:
-        for name in ("ScreenUpdating", "EnableEvents", "DisplayAlerts", "Calculation"):
-            try:
-                original[name] = getattr(excel, name)
-            except Exception:
-                pass
-        try_set_excel_property(excel, "Visible", bool(visible))
-        try_set_excel_property(excel, "DisplayAlerts", False)
-        try_set_excel_property(excel, "AskToUpdateLinks", False)
-        try_set_excel_property(excel, "ScreenUpdating", False)
-        try_set_excel_property(excel, "EnableEvents", False)
-        try_set_excel_property(excel, "Calculation", XL_CALCULATION_MANUAL)
         workbook = excel.Workbooks.Open(
             str(output_path),
             UpdateLinks=0,
@@ -195,8 +174,6 @@ def refresh_workbook_with_excel(output_path, visible=False):
     finally:
         if workbook is not None:
             workbook.Close(SaveChanges=False)
-        for name, value in original.items():
-            try_set_excel_property(excel, name, value)
         excel.Quit()
 
 
@@ -212,11 +189,7 @@ def update_template_copy(source_report_path, template_path, output_path, sheet_r
     output_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(template_path, output_path)
 
-    win32com = require_win32()
-    excel = win32com.DispatchEx("Excel.Application")
-    excel.Visible = bool(visible)
-    excel.DisplayAlerts = False
-    excel.AskToUpdateLinks = False
+    excel = open_excel(visible=visible)
     source_workbook = None
     target_workbook = None
     updated_sheets = []
@@ -267,11 +240,7 @@ def update_template_copy_multi(source_report_path, template_path, output_path, s
     output_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(template_path, output_path)
 
-    win32com = require_win32()
-    excel = win32com.DispatchEx("Excel.Application")
-    excel.Visible = bool(visible)
-    excel.DisplayAlerts = False
-    excel.AskToUpdateLinks = False
+    excel = open_excel(visible=visible)
     target_workbook = None
     source_workbooks = {}
     updated_sheets = []
@@ -326,9 +295,13 @@ def update_template_copy_multi(source_report_path, template_path, output_path, s
 
 
 def update_template_hybrid(source_report_path, template_path, output_path, sheet_results, write_sheets, visible=False):
+    timings = {}
+    started = perf_counter()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(template_path, output_path)
+    timings["copy_template_seconds"] = round(perf_counter() - started, 3)
 
+    write_started = perf_counter()
     keep_vba = output_path.suffix.lower() == ".xlsm"
     target_workbook = load_workbook(output_path, keep_vba=keep_vba)
     source_workbooks = {}
@@ -371,9 +344,13 @@ def update_template_hybrid(source_report_path, template_path, output_path, sheet
         target_workbook.close()
         for workbook in source_workbooks.values():
             workbook.close()
+    timings["write_values_seconds"] = round(perf_counter() - write_started, 3)
 
+    refresh_started = perf_counter()
     refresh_workbook_with_excel(output_path, visible=visible)
-    return updated_sheets
+    timings["excel_refresh_seconds"] = round(perf_counter() - refresh_started, 3)
+    timings["total_seconds"] = round(sum(timings.values()), 3)
+    return updated_sheets, timings
 
 
 def write_manifest(path, payload):
@@ -428,7 +405,8 @@ def update_template(config, base_dir=PROJECT_DIR):
 
     output_path = output_template_path(template_path, output_dir)
     updater = update_template_copy_multi if engine == "com_copy" else update_template_hybrid
-    updated_sheets = updater(
+    update_started = perf_counter()
+    update_result = updater(
         source_report_path,
         template_path,
         output_path,
@@ -436,6 +414,11 @@ def update_template(config, base_dir=PROJECT_DIR):
         write_sheets,
         visible=bool(config.get("visible", False)),
     )
+    if isinstance(update_result, tuple):
+        updated_sheets, timings = update_result
+    else:
+        updated_sheets = update_result
+        timings = {"total_seconds": round(perf_counter() - update_started, 3)}
     manifest = {
         "status": "updated",
         "engine": engine,
@@ -445,6 +428,7 @@ def update_template(config, base_dir=PROJECT_DIR):
         "write_sheets": write_sheets,
         "update_condition": update_condition,
         "updated_sheets": updated_sheets,
+        "timings": timings,
         "generated_at": datetime.now().isoformat(),
     }
     write_manifest(manifest_path, manifest)

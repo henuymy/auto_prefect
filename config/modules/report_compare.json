@@ -1,5 +1,6 @@
 {
   "engine": "openpyxl",
+  "max_workers": 4,
   "output_path": "runtime/report_compare/compare_result.json",
   "sample_limit": 10,
   "visible": false

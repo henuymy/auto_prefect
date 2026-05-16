@@ -49,6 +49,8 @@ export interface SheetMapping {
 
 export interface CompareSource {
   download_name: string;
+  engine: "openpyxl" | "com";
+  max_workers: number;
   sheet_mappings: SheetMapping[];
 }
 

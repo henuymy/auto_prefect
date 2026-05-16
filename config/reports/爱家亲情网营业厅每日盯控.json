@@ -183,7 +183,9 @@
           "ignore_columns": [],
           "key_columns": []
         }
-      ]
+      ],
+      "max_workers": 2,
+      "engine": "openpyxl"
     },
     {
       "download_name": "日累计",
@@ -196,7 +198,9 @@
           "ignore_columns": [],
           "key_columns": []
         }
-      ]
+      ],
+      "max_workers": 2,
+      "engine": "openpyxl"
     }
   ],
   "id": "爱家亲情网营业厅每日盯控",
@@ -212,7 +216,7 @@
     "cron": "",
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-15 17:58:10",
+  "updatedAt": "2026-05-15 22:48:16",
   "source": "published",
   "has_draft": false
 }

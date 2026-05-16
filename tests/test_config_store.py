@@ -74,3 +74,18 @@ def test_save_config_removes_same_name_draft(monkeypatch, tmp_path):
     assert saved["has_draft"] is False
     assert (config_store.REPORTS_DIR / "同名.json").exists()
     assert not (config_store.DRAFTS_DIR / "同名.json").exists()
+
+
+def test_normalize_config_fills_compare_defaults():
+    normalized = config_store.normalize_config(
+        {
+            "name": "日报",
+            "template_path": "templates/a.xlsx",
+            "downloads": [{"name": "下载"}],
+            "compare_sources": [{"download_name": "下载", "sheet_mappings": []}],
+        }
+    )
+
+    source = normalized["compare_sources"][0]
+    assert source["engine"] == "openpyxl"
+    assert source["max_workers"] == 4

@@ -19,6 +19,7 @@
     ]
   },
   "template_update": {
+    "engine": "hybrid",
     "update_condition": "any_changed",
     "write_sheets": "all_compared",
     "send_when_same": true
@@ -90,6 +91,8 @@
   "compare_sources": [
     {
       "download_name": "实时",
+      "engine": "openpyxl",
+      "max_workers": 4,
       "sheet_mappings": [
         {
           "name": "业务销量",
@@ -103,6 +106,8 @@
     },
     {
       "download_name": "日累计",
+      "engine": "openpyxl",
+      "max_workers": 4,
       "sheet_mappings": [
         {
           "name": "业务销量",
