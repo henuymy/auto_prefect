@@ -3,7 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { toast } from "sonner";
-import { AlertCircle, ArrowDown, ArrowUp, Bell, CalendarClock, ChevronDown, CloudDownload, GitCompareArrows, Info, Plus, Settings, Trash2, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bell, CalendarClock, ChevronDown, CloudDownload, Download, FilePlus2, GitCompareArrows, Info, Plus, Settings, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import { RequestParserPanel } from "@/components/config-form/RequestParserPanel"
 import { ResponseParserPanel } from "@/components/config-form/ResponseParserPanel";
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tabs } from "@/components/ui/tabs";
-import { listTemplates, uploadTemplate } from "@/lib/api";
+import { generateStarterTemplate, listTemplates, templateDownloadUrl, uploadTemplate } from "@/lib/api";
 import { parseJsonSafe, prettyJson } from "@/lib/utils";
 import type { CompareSource, DownloadItem, ExcelColumn, ReportConfig, SendItem } from "@/types/config";
 
@@ -87,6 +87,8 @@ const AUTH_PRESET_OPTIONS = [
   { value: "无", label: "无", desc: "清空动态认证配置，只使用 Cookie Stage 自动带 Cookie。" },
 ];
 
+const STARTER_TEMPLATE_STEPS = ["校验配置", "准备登录", "下载数据", "合并模板", "生成完成"];
+
 function normalizeAuthPreset(value?: string) {
   if (value === "SSR Cookie") return "报表分析 Ssr-token";
   if (value === "地市作战 uapToken") return "地市平台 Uaptoken";
@@ -146,6 +148,8 @@ export function ConfigForm({
 function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [generatingStarter, setGeneratingStarter] = useState(false);
+  const [starterStep, setStarterStep] = useState(0);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templates, setTemplates] = useState<Array<{ filename: string; path: string; size: number; modifiedAt: number }>>([]);
   const [nameDraft, setNameDraft] = useState(config.name);
@@ -168,6 +172,15 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
     setNameDraft(config.name);
     setDescriptionDraft(config.description || "");
   }, [config.id, config.name, config.description]);
+
+  useEffect(() => {
+    if (!generatingStarter) return;
+    setStarterStep(0);
+    const timer = window.setInterval(() => {
+      setStarterStep((step) => Math.min(step + 1, STARTER_TEMPLATE_STEPS.length - 2));
+    }, 4500);
+    return () => window.clearInterval(timer);
+  }, [generatingStarter]);
 
   function commitBaseDrafts() {
     const nextName = nameDraft.trim() || config.name;
@@ -205,6 +218,33 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleGenerateStarterTemplate() {
+    const confirmed = window.confirm(
+      "将真实登录并下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n不会发送企业微信，也不会提交正式模板。确定继续吗？",
+    );
+    if (!confirmed) return;
+    setStarterStep(0);
+    setGeneratingStarter(true);
+    try {
+      const result = await generateStarterTemplate(config);
+      setStarterStep(STARTER_TEMPLATE_STEPS.length - 1);
+      onChange({ ...config, template_path: result.template_path });
+      await refreshTemplates();
+      toast.success("新手模板已生成", {
+        description: result.template_path,
+        action: {
+          label: "下载模板",
+          onClick: () => window.open(templateDownloadUrl(result.filename), "_blank", "noopener,noreferrer"),
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error("新手模板生成失败", { description: message.length > 180 ? `${message.slice(0, 177)}...` : message, duration: 3200 });
+    } finally {
+      setGeneratingStarter(false);
     }
   }
 
@@ -248,17 +288,37 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
           </label>
         </Field>
         <Field label="模板上传">
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            accept=".xlsx,.xlsm,.xls"
-            onChange={(event) => void handleTemplateUpload(event.target.files?.[0])}
-          />
-          <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-            <Upload className="h-4 w-4" />
-            {uploading ? "上传中" : "上传模板"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".xlsx,.xlsm,.xls"
+              onChange={(event) => void handleTemplateUpload(event.target.files?.[0])}
+            />
+            <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={uploading || generatingStarter}>
+              <Upload className="h-4 w-4" />
+              {uploading ? "上传中" : "上传模板"}
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => void handleGenerateStarterTemplate()} disabled={uploading || generatingStarter}>
+              <FilePlus2 className="h-4 w-4" />
+              {generatingStarter ? "生成中" : "生成新手模板"}
+            </Button>
+            {config.template_path && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => window.open(templateDownloadUrl(config.template_path.split("/").pop() || config.template_path), "_blank", "noopener,noreferrer")}
+                title="下载当前模板"
+              >
+                <Download className="h-4 w-4" />
+                下载模板
+              </Button>
+            )}
+          </div>
+          {generatingStarter && (
+            <StarterTemplateProgress currentStep={starterStep} />
+          )}
         </Field>
         <Field label="描述 description" className="md:col-span-2">
           <Textarea
@@ -269,6 +329,40 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
         </Field>
       </CardContent>
     </Card>
+  );
+}
+
+function StarterTemplateProgress({ currentStep }: { currentStep: number }) {
+  return (
+    <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-xs dark:border-sky-500/30 dark:bg-sky-950/25">
+      <div className="flex items-center justify-between gap-3">
+        <div className="font-semibold text-sky-700 dark:text-sky-200">正在生成新手模板</div>
+        <Badge variant="running">{STARTER_TEMPLATE_STEPS[currentStep]}</Badge>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-5">
+        {STARTER_TEMPLATE_STEPS.map((step, index) => {
+          const done = index < currentStep;
+          const active = index === currentStep;
+          return (
+            <div
+              key={step}
+              className={`rounded-lg border px-2 py-2 text-center ${
+                done
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-200"
+                  : active
+                    ? "border-sky-300 bg-white text-sky-700 shadow-sm dark:border-sky-500/50 dark:bg-sky-950/50 dark:text-sky-100"
+                    : "border-border bg-background/60 text-muted-foreground"
+              }`}
+            >
+              {done ? "已完成" : active ? "进行中" : "等待中"} · {step}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 text-muted-foreground">
+        这个过程会真实登录和下载数据。详细阶段也会写入“查看运行日志”。
+      </div>
+    </div>
   );
 }
 

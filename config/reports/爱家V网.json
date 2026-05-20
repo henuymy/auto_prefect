@@ -35,7 +35,7 @@
         "sheetIndex": "-1",
         "sheetName": "新增",
         "type": "excel",
-        "versionName": "20260512",
+        "versionName": "${yesterday_yyyymmdd}",
         "resId": "335837",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
@@ -65,7 +65,7 @@
         "sheetIndex": "-1",
         "sheetName": "整体",
         "type": "excel",
-        "versionName": "20260512",
+        "versionName": "${yesterday_yyyymmdd}",
         "resId": "338462",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
@@ -147,7 +147,7 @@
     "cron": "",
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-15 22:00:25",
+  "updatedAt": "2026-05-15 23:13:18",
   "source": "published",
   "has_draft": false
 }

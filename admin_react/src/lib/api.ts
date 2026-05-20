@@ -163,7 +163,16 @@ export async function realTestRunConfig(config: ReportConfig) {
 }
 
 export async function publishConfig(config: ReportConfig) {
-  const result = await request<{ deploymentId: string; status: string; message: string; output?: string; taskConfigPath?: string }>(`/api/configs/${encodeURIComponent(config.id)}/publish`, {
+  const result = await request<{
+    deploymentId: string;
+    status: string;
+    message: string;
+    output?: string;
+    taskConfigPath?: string;
+    cron?: string;
+    timezone?: string;
+    scheduleStatus?: "enabled" | "disabled" | "none";
+  }>(`/api/configs/${encodeURIComponent(config.id)}/publish`, {
     method: "POST",
     body: JSON.stringify(normalizeReportConfig(config)),
   });
@@ -213,6 +222,31 @@ export async function listTemplates() {
 export async function deleteTemplate(filename: string) {
   const result = await request<{ ok: boolean; path: string }>(`/api/templates?filename=${encodeURIComponent(filename)}`, { method: "DELETE" });
   pushLog("success", "删除模板", `已删除 ${result.path}`);
+  return result;
+}
+
+export function templateDownloadUrl(filename: string) {
+  return `${API_BASE}/api/templates/download?filename=${encodeURIComponent(filename)}`;
+}
+
+export async function generateStarterTemplate(config: ReportConfig) {
+  const result = await request<{
+    status: "success";
+    filename: string;
+    template_path: string;
+    required_stages: string[];
+    merged_sheets: Array<{
+      stage: string;
+      download_name: string;
+      source_sheet_name: string;
+      template_sheet_name: string;
+      source_path: string;
+    }>;
+  }>(`/api/configs/${encodeURIComponent(config.id)}/starter-template`, {
+    method: "POST",
+    body: JSON.stringify(normalizeReportConfig(config)),
+  });
+  pushLog("success", "生成新手模板", `已生成 ${result.template_path}`);
   return result;
 }
 

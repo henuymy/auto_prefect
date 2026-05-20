@@ -54,6 +54,15 @@ def check_prefect_status(timeout: float = 2.0) -> dict[str, Any]:
         }
 
 
+def _schedule_action_already_done(schedule_action: str, output: str) -> bool:
+    lowered = output.lower()
+    if schedule_action == "resume":
+        return "already active" in lowered
+    if schedule_action == "pause":
+        return "already paused" in lowered or "already inactive" in lowered
+    return False
+
+
 def build_task_config(
     report_name: str,
     report_config_path: str,
@@ -386,18 +395,20 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
     schedule_status = "none"
     if cron:
         schedule_action = "resume" if schedule_enabled else "pause"
-        schedule_command = [
+        deployment_full_name = f"{FLOW_NAME}/{deployment_name}"
+        schedule_list_command = [
             sys.executable,
             "-m",
             "prefect",
             "deployment",
             "schedule",
-            schedule_action,
-            f"{FLOW_NAME}/{deployment_name}",
-            "--all",
+            "ls",
+            deployment_full_name,
+            "-o",
+            "json",
         ]
-        schedule_completed = subprocess.run(
-            schedule_command,
+        schedule_list_completed = subprocess.run(
+            schedule_list_command,
             cwd=PROJECT_ROOT,
             env=env,
             text=True,
@@ -406,9 +417,44 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
             errors="replace",
             timeout=180,
         )
-        schedule_output = "\n".join(part for part in [schedule_completed.stdout, schedule_completed.stderr] if part)
-        if schedule_completed.returncode != 0:
-            raise RuntimeError("\n".join(part for part in [output, schedule_output, f"Prefect 调度{('启用' if schedule_enabled else '停用')}失败"] if part))
+        schedule_list_output = "\n".join(part for part in [schedule_list_completed.stdout, schedule_list_completed.stderr] if part)
+        if schedule_list_completed.returncode != 0:
+            raise RuntimeError("\n".join(part for part in [output, schedule_list_output, "Prefect 调度列表读取失败"] if part))
+        try:
+            schedules = json.loads(schedule_list_completed.stdout or "[]")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("\n".join(part for part in [output, schedule_list_output, "Prefect 调度列表解析失败"] if part)) from exc
+        schedule_ids = [item.get("id") for item in schedules if item.get("id")]
+        if not schedule_ids:
+            raise RuntimeError("\n".join(part for part in [output, schedule_list_output, "Prefect 调度启用失败: 未找到 deployment schedule ID"] if part))
+
+        schedule_outputs = [schedule_list_output]
+        for schedule_id in schedule_ids:
+            schedule_command = [
+                sys.executable,
+                "-m",
+                "prefect",
+                "deployment",
+                "schedule",
+                schedule_action,
+                deployment_full_name,
+                schedule_id,
+            ]
+            schedule_completed = subprocess.run(
+                schedule_command,
+                cwd=PROJECT_ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=180,
+            )
+            schedule_item_output = "\n".join(part for part in [schedule_completed.stdout, schedule_completed.stderr] if part)
+            schedule_outputs.append(schedule_item_output)
+            if schedule_completed.returncode != 0 and not _schedule_action_already_done(schedule_action, schedule_item_output):
+                raise RuntimeError("\n".join(part for part in [output, *schedule_outputs, f"Prefect 调度{('启用' if schedule_enabled else '停用')}失败"] if part))
+        schedule_output = "\n".join(part for part in schedule_outputs if part)
         schedule_status = "enabled" if schedule_enabled else "disabled"
         output = "\n".join(part for part in [output, schedule_output] if part)
     return {

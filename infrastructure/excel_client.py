@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+import sys
+from pathlib import Path
+
 XL_CALCULATION_MANUAL = -4135
 
 
@@ -33,9 +37,51 @@ def safe_configure_excel(excel, visible=False, manual_calculation=False):
     return applied
 
 
+def is_broken_gencache_error(exc):
+    text = str(exc)
+    return "CLSIDToClassMap" in text or "win32com.gen_py" in text
+
+
+def clear_win32com_gencache(win32com):
+    try:
+        from win32com.client import gencache  # type: ignore
+    except Exception:
+        return None
+
+    cache_path = Path(gencache.GetGeneratePath())
+    for module_name in list(sys.modules):
+        if module_name.startswith("win32com.gen_py"):
+            sys.modules.pop(module_name, None)
+    shutil.rmtree(cache_path, ignore_errors=True)
+    try:
+        gencache.is_readonly = False
+        gencache.Rebuild()
+    except Exception:
+        pass
+    return cache_path
+
+
+def dispatch_excel_dynamic(win32com):
+    import pythoncom  # type: ignore
+
+    dispatch = pythoncom.CoCreateInstance(
+        "Excel.Application",
+        None,
+        pythoncom.CLSCTX_SERVER,
+        pythoncom.IID_IDispatch,
+    )
+    return win32com.dynamic.Dispatch(dispatch)
+
+
 def open_excel(visible=False, manual_calculation=False):
     win32com = require_win32()
-    excel = win32com.DispatchEx("Excel.Application")
+    try:
+        excel = win32com.DispatchEx("Excel.Application")
+    except AttributeError as exc:
+        if not is_broken_gencache_error(exc):
+            raise
+        clear_win32com_gencache(win32com)
+        excel = dispatch_excel_dynamic(win32com)
     safe_configure_excel(excel, visible=visible, manual_calculation=manual_calculation)
     return excel
 

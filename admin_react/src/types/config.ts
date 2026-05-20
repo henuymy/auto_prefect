@@ -10,6 +10,7 @@ export interface ExcelColumn {
 
 export interface DownloadItem {
   name: string;
+  enabled?: boolean;
   stage: string;
   auth_preset?: string;
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";

@@ -1,4 +1,4 @@
-import { CheckCircle2, CloudUpload, FileCheck2, Moon, Play, Save, ShieldCheck, Sun, Trash2, Zap } from "lucide-react";
+import { CheckCircle2, CloudUpload, FileCheck2, Loader2, Moon, Play, Save, ShieldCheck, Sun, Trash2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function Header({
@@ -12,6 +12,7 @@ export function Header({
   onDelete,
   canDelete,
   onPublish,
+  publishing,
 }: {
   dark: boolean;
   onDarkToggle: () => void;
@@ -23,6 +24,7 @@ export function Header({
   onDelete: () => void;
   canDelete: boolean;
   onPublish: () => void;
+  publishing: boolean;
 }) {
   return (
     <header className="flex min-h-16 flex-col gap-3 border-b border-border/70 bg-card/75 px-3 py-3 backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between lg:px-5">
@@ -39,7 +41,10 @@ export function Header({
         <Button variant="outline" onClick={onValidate}><ShieldCheck className="h-4 w-4" />校验配置</Button>
         <Button variant="secondary" onClick={onTestRun}><Play className="h-4 w-4" />安全测试</Button>
         <Button variant="secondary" onClick={onRealTestRun}><Zap className="h-4 w-4" />真实试跑</Button>
-        <Button onClick={onPublish}><CloudUpload className="h-4 w-4" />发布到调度</Button>
+        <Button onClick={onPublish} disabled={publishing}>
+          {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
+          {publishing ? "发布中" : "发布到调度"}
+        </Button>
         <Button
           variant="ghost"
           size="icon"

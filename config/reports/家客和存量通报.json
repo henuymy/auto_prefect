@@ -1,0 +1,200 @@
+{
+  "id": "家客和存量通报",
+  "name": "家客和存量通报",
+  "template_path": "templates/家客存量通报模板.xlsx",
+  "enabled": true,
+  "description": "",
+  "downloads": [
+    {
+      "name": "家客存量地市",
+      "stage": "city_ops",
+      "auth_preset": "地市平台 Uaptoken",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailByAreaAndIndex",
+      "headers": {
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+      },
+      "body_type": "json",
+      "response_mode": "json_drilldown_to_excel",
+      "data": {
+        "indCodes": "HKXZ,FKXZ,5R_DSBL,5R_KDBL,5R_KDBL_XY,5R_KDBL_FXY",
+        "areaId": "AQ",
+        "diyCodes": "5R_KDBL_FXY,sgs_zj_fttr,sgs_YDYDN_260410,sgs_LXPING_260410,sgs_zj_wifi,sgs_20240618afxzhd,sgs_20240618afxfhd,371_gqdscqb,sgs_zj_xcpbl,1B_TCSD,371_llb0409,371_pkhdict0317,sgs_xywdlxs,371_qqthd0128,sgs_HDICTETC_260204",
+        "areaType": null,
+        "queryDate": "${today_yyyymmdd}"
+      },
+      "raw_body": "",
+      "excel": {
+        "sheet_name": "地市作战实时明细",
+        "data_path": "result.tableData",
+        "columns": [
+          {
+            "field": "__level_name",
+            "header": "层级"
+          },
+          {
+            "field": "__parent_area_id",
+            "header": "父级areaId"
+          },
+          {
+            "field": "__request_area_id",
+            "header": "请求areaId"
+          },
+          {
+            "field": "areaCode",
+            "header": "areaCode"
+          },
+          {
+            "field": "areaName",
+            "header": "areaName"
+          },
+          {
+            "field": "5R_KDBL_FXY",
+            "header": "宽带下单_非校园"
+          },
+          {
+            "field": "sgs_zj_fttr",
+            "header": "智家_FTTR办理量"
+          },
+          {
+            "field": "sgs_YDYDN_260410",
+            "header": "移动云电脑"
+          },
+          {
+            "field": "sgs_LXPING_260410",
+            "header": "灵犀屏"
+          },
+          {
+            "field": "sgs_zj_wifi",
+            "header": "智家_智能组网"
+          },
+          {
+            "field": "sgs_20240618afxzhd",
+            "header": "安防新增活动（出硬件）"
+          },
+          {
+            "field": "sgs_20240618afxfhd",
+            "header": "安防续费活动（剔除1元续费）"
+          },
+          {
+            "field": "371_gqdscqb",
+            "header": "郑州_高清电视_长期包"
+          },
+          {
+            "field": "sgs_zj_xcpbl",
+            "header": "智家_新产品办理量"
+          },
+          {
+            "field": "1B_TCSD",
+            "header": "套餐升档"
+          },
+          {
+            "field": "371_llb0409",
+            "header": "郑州_流量包"
+          },
+          {
+            "field": "371_pkhdict0317",
+            "header": "郑州_3月PK赛HDICT产品"
+          },
+          {
+            "field": "sgs_xywdlxs",
+            "header": "新业务独立销售"
+          },
+          {
+            "field": "371_qqthd0128",
+            "header": "郑州_全球通预存送活动"
+          },
+          {
+            "field": "sgs_HDICTETC_260204",
+            "header": "ETC产品"
+          }
+        ]
+      },
+      "drilldown": {
+        "data_path": "result.tableData",
+        "request_area_field": "areaId",
+        "next_area_field": "areaCode",
+        "levels": [
+          "区县",
+          "网格",
+          "渠道/门店",
+          "人员"
+        ],
+        "max_requests": 1000
+      },
+      "headers_from_session_storage": {
+        "Uaptoken": "uapToken"
+      }
+    }
+  ],
+  "compare_sources": [
+    {
+      "download_name": "家客存量地市",
+      "sheet_mappings": [
+        {
+          "name": "地市作战实时明细",
+          "new_sheet_name": "地市作战实时明细",
+          "template_sheet_name": "地市作战实时明细",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ],
+      "engine": "openpyxl",
+      "max_workers": 4
+    }
+  ],
+  "send": {
+    "webhook_url": "",
+    "workbook_name": "家客和存量通报",
+    "items": [
+      {
+        "type": "image",
+        "sheet": "家客通报"
+      },
+      {
+        "type": "text",
+        "sheet": "家客通报文字",
+        "text": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "image",
+        "sheet": "存量通报"
+      },
+      {
+        "type": "text",
+        "sheet": "存量通报文字",
+        "text": {
+          "mode": "used_range"
+        }
+      }
+    ]
+  },
+  "template_update": {
+    "engine": "hybrid",
+    "update_condition": "any_changed",
+    "write_sheets": "all_compared",
+    "send_when_same": true
+  },
+  "wait_for_change": {
+    "enabled": false,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "deployment": {
+    "enabled": true,
+    "cron": "0 11,15,17,18 * * *",
+    "timezone": "Asia/Shanghai"
+  },
+  "lastRun": "disabled",
+  "updatedAt": "2026-05-19 15:40:44",
+  "source": "published",
+  "has_draft": false
+}

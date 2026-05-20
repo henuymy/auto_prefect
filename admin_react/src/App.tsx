@@ -139,6 +139,7 @@ export default function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [jsonFocusPath, setJsonFocusPath] = useState<JsonPath>([]);
   const [activeConfigTab, setActiveConfigTab] = useState<ConfigFormTab>("base");
+  const [publishing, setPublishing] = useState(false);
   const [dark, setDark] = useState(false);
   const wideLayout = useMediaQuery("(min-width: 1280px)");
 
@@ -382,20 +383,24 @@ export default function App() {
   async function publish() {
     if (!config) return;
     if (blockIfInvalid("发布到调度")) return;
+    const toastId = toast.loading("正在发布到调度", { description: "检查 Prefect 服务状态..." });
+    setPublishing(true);
     try {
       const status = await getSystemStatus();
       setSystemStatus(status);
       if (!status.prefect.ok) {
-        toast.error("Prefect 未连接，不能发布到调度", { description: status.prefect.api_url });
+        toast.error("Prefect 未连接，不能发布到调度", { id: toastId, description: status.prefect.api_url, duration: 3600 });
         return;
       }
+      toast.loading("正在发布到调度", { id: toastId, description: "校验配置..." });
       const nextIssues = await validateConfig(config);
       setIssues(nextIssues);
       if (nextIssues.length) {
-        toast.error("发布前请先修复校验错误");
+        toast.error("发布前请先修复校验错误", { id: toastId, description: `发现 ${nextIssues.length} 个问题`, duration: 3600 });
         return;
       }
-      await publishConfig(config);
+      toast.loading("正在发布到调度", { id: toastId, description: "创建 Prefect deployment 并启用调度..." });
+      const result = await publishConfig(config);
       const nextConfigs = await listConfigs();
       setConfigs(nextConfigs);
       const selected = nextConfigs.find((item) => item.id === config.id);
@@ -405,9 +410,18 @@ export default function App() {
       }
       setLogs(await listRunLogs());
       setLogsOpen(true);
-      toast.success("已提交发布到调度");
+      const scheduleText = result.scheduleStatus === "enabled"
+        ? `定时已启用：${result.cron || config.deployment.cron} (${result.timezone || config.deployment.timezone})`
+        : result.scheduleStatus === "disabled"
+          ? "部署已创建，定时调度已停用"
+          : "部署已创建，未配置 Cron";
+      toast.success("已发布到调度", { id: toastId, description: scheduleText, duration: 4200 });
     } catch (error) {
-      toast.error("发布失败，详情见运行日志", { description: toastDescription(error), duration: 2400 });
+      setLogs(await listRunLogs());
+      setLogsOpen(true);
+      toast.error("发布失败，详情见运行日志", { id: toastId, description: toastDescription(error), duration: 5200 });
+    } finally {
+      setPublishing(false);
     }
   }
 
@@ -547,6 +561,7 @@ export default function App() {
           onDelete={deleteCurrentConfig}
           canDelete={!isTemporaryConfigId(config.id)}
           onPublish={publish}
+          publishing={publishing}
         />
         <div className="min-h-0 flex-1 p-3 sm:p-4 lg:p-5">
           {wideLayout ? (

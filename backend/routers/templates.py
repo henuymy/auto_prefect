@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 
 from backend.services.run_log_store import append_log
 
@@ -48,6 +49,18 @@ def list_templates():
             }
         )
     return templates
+
+
+@router.get("/download")
+def download_template(filename: str = Query(..., min_length=1)):
+    target = _template_path(filename)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail=f"模板文件不存在: {filename}")
+    return FileResponse(
+        target,
+        filename=target.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @router.post("/upload")

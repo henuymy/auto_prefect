@@ -39,7 +39,7 @@ $env:PREFECT_SERVER_DATABASE_CONNECTION_URL = $DatabaseUrl
 $env:PREFECT_API_DATABASE_TIMEOUT = "60"
 $env:PREFECT_SERVER_DATABASE_TIMEOUT = "60"
 $env:PREFECT_API_SERVICES_SCHEDULER_ENABLED = if ($UseSqliteDebug) { "False" } else { "True" }
-$env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = if ($UseSqliteDebug) { "False" } else { "True" }
+$env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = "False"
 $env:PREFECT_SERVER_ANALYTICS_ENABLED = "False"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
@@ -50,6 +50,7 @@ Write-Host "PREFECT_HOME   : $($env:PREFECT_HOME)"
 Write-Host "PREFECT_API_URL: $($env:PREFECT_API_URL)"
 Write-Host "DatabaseUrl    : $DatabaseUrl"
 Write-Host "DebugSqlite    : $UseSqliteDebug"
+Write-Host "LateRuns       : $($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)"
 Write-Host "Mode           : $Mode"
 Write-Host ""
 
