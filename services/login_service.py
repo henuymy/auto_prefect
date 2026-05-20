@@ -12,6 +12,7 @@ from selenium.common.exceptions import TimeoutException
 
 from services.cookie_recorder import CookieRecorder, resolve_cookie_dump_path
 from services.otp_service import delete_message, prepare_wait_context, wait_for_otp
+from utils.config_loader import load_json_with_local_override
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -45,7 +46,7 @@ def popup_input(prompt: str, title: str = "输入") -> str:
 class AutoLogin:
     def __init__(self, config_path=None):
         self.config_path = Path(config_path).resolve() if config_path else PROJECT_DIR / "legacy_modules/modules/autologin/config.json"
-        self.config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.config, _ = load_json_with_local_override(self.config_path)
         self.driver = None
         self.pending_otp_message_id = None
         self.otp_wait_context = None

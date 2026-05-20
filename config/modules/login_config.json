@@ -2,16 +2,16 @@
   "login_url": "http://ngboss.ha.cmcc/uac/web3/jsp/login/login.jsp",
   "usm_host": "usm.ha.cmcc",
   "credentials": {
-    "username": "yumingyang8",
-    "password": "Aa202605*"
+    "username": "",
+    "password": ""
   },
   "app_login_entry": {
     "name": "大数据分析平台"
   },
   "otp_mode": "gotify",
   "otp_config": {
-    "gotify_url": "http://60.205.108.31:40266",
-    "client_token": "CWwEearcwevAO93",
+    "gotify_url": "",
+    "client_token": "",
     "title_prefix": "10658221",
     "allowed_senders": ["10658221"],
     "required_keywords": ["动态密钥"],

@@ -5,7 +5,7 @@ param(
     [string]$WorkPool = "default-agent-pool",
     [string]$PrefectHome = "",
     [string]$PythonExe = "",
-    [string]$DatabaseUrl = "postgresql+asyncpg://user_rEkhna:password_YSDPae@60.205.108.31:5432/prefect",
+    [string]$DatabaseUrl = "",
     [switch]$UseSqliteDebug,
     [switch]$Detached
 )
@@ -13,6 +13,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+$LocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
+if (Test-Path -LiteralPath $LocalEnvPath) {
+    . $LocalEnvPath
+}
 if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 }
@@ -25,6 +29,12 @@ if (-not (Test-Path -LiteralPath $PythonExe)) {
 
 if ($UseSqliteDebug) {
     $DatabaseUrl = "sqlite+aiosqlite:///" + (($PrefectHome -replace "\\", "/") + "/prefect.db")
+}
+elseif (-not $DatabaseUrl) {
+    $DatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
+    if (-not $DatabaseUrl) {
+        throw "缺少 Prefect 数据库连接串，请传入 -DatabaseUrl 或在 scripts\prefect_env_prod.local.ps1 中设置 `$env:AUTO_NOTIFY_PREFECT_DATABASE_URL"
+    }
 }
 elseif ($DatabaseUrl -notlike "postgresql+asyncpg://*") {
     throw "DatabaseUrl 必须是 PostgreSQL asyncpg 连接串，例如 postgresql+asyncpg://user:password@host:5432/prefect"
@@ -48,7 +58,7 @@ Write-Host "RepoRoot       : $RepoRoot"
 Write-Host "PythonExe      : $PythonExe"
 Write-Host "PREFECT_HOME   : $($env:PREFECT_HOME)"
 Write-Host "PREFECT_API_URL: $($env:PREFECT_API_URL)"
-Write-Host "DatabaseUrl    : $DatabaseUrl"
+Write-Host "DatabaseUrl    : $(if ($UseSqliteDebug) { 'SQLite 调试库' } else { '已从参数或本机 local 配置加载' })"
 Write-Host "DebugSqlite    : $UseSqliteDebug"
 Write-Host "LateRuns       : $($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)"
 Write-Host "Mode           : $Mode"

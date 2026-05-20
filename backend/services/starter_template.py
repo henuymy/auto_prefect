@@ -11,6 +11,7 @@ from openpyxl import Workbook, load_workbook
 
 from services.method_service import download_reports
 from services.session_manager import prepare_session
+from utils.config_loader import load_json_with_local_override
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -25,7 +26,8 @@ def _safe_name(value: str) -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload, _ = load_json_with_local_override(path)
+    return payload
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

@@ -5,7 +5,9 @@ from flows.notify_single_flow import (
     aggregate_compare_results,
     build_download_config,
     build_compare_source_configs,
+    build_login_config,
     parse_wait_for_change_config,
+    required_stages_for_report,
     resolve_dynamic_placeholders,
     select_downloaded_report_path,
     should_send_when_same,
@@ -163,6 +165,36 @@ def test_build_download_config_supports_multiple_downloads():
     assert [item["name"] for item in config["reports"]] == ["报表A", "报表B"]
     assert config["reports"][0]["method"] == "POST"
     assert config["reports"][1]["data"]["sheetName"] == "B"
+
+
+def test_required_stages_for_report_uses_enabled_downloads_only():
+    report_cfg = {
+        "downloads": [
+            {"name": "A", "stage": "city_ops", "enabled": True},
+            {"name": "B", "stage": "smart_ops", "enabled": False},
+            {"name": "C", "stage": "city_ops"},
+            {"name": "D", "stage": "report_analysis"},
+        ]
+    }
+
+    assert required_stages_for_report(report_cfg) == ["city_ops", "report_analysis"]
+
+
+def test_build_login_config_overrides_required_stages_from_report():
+    base = {
+        "required_stages": ["report_analysis", "smart_ops", "city_ops", "data_market"],
+        "stage_probes": {"city_ops": {"enabled": True}},
+    }
+    report_cfg = {
+        "downloads": [
+            {"name": "A", "stage": "city_ops"},
+        ]
+    }
+
+    config = build_login_config(base, report_cfg)
+
+    assert config["required_stages"] == ["city_ops"]
+    assert config["stage_probes"] == {"city_ops": {"enabled": True}}
 
 
 def test_build_download_config_complete_request_does_not_inherit_ssr_headers():

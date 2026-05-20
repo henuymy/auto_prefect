@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>自动通报完整流程图</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #182230;
+      --muted: #667085;
+      --line: #cbd5e1;
+      --green: #12b76a;
+      --blue: #2e90fa;
+      --amber: #f79009;
+      --red: #f04438;
+      --violet: #7a5af8;
+      --shadow: 0 10px 28px rgba(16, 24, 40, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      line-height: 1.55;
+    }
+
+    header {
+      padding: 28px 36px 18px;
+      background: linear-gradient(90deg, #102a43, #184e77);
+      color: white;
+    }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+
+    header p {
+      margin: 0;
+      color: #dbeafe;
+      font-size: 14px;
+    }
+
+    main {
+      padding: 28px 36px 48px;
+      max-width: 1480px;
+      margin: 0 auto;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid #e2e8f0;
+      color: var(--muted);
+      font-size: 12px;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .dot.green { background: var(--green); }
+    .dot.blue { background: var(--blue); }
+    .dot.amber { background: var(--amber); }
+    .dot.red { background: var(--red); }
+    .dot.violet { background: var(--violet); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(250px, 1fr));
+      gap: 18px;
+      align-items: start;
+    }
+
+    .lane {
+      background: rgba(255, 255, 255, 0.6);
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 14px;
+      min-height: 100%;
+    }
+
+    .lane h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      color: #344054;
+    }
+
+    .node {
+      position: relative;
+      padding: 13px 14px;
+      margin: 0 0 18px;
+      border-radius: 12px;
+      background: var(--panel);
+      border: 1px solid #e5e7eb;
+      box-shadow: var(--shadow);
+    }
+
+    .node::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -19px;
+      width: 2px;
+      height: 18px;
+      background: var(--line);
+    }
+
+    .node:last-child::after { display: none; }
+
+    .node h3 {
+      margin: 0 0 6px;
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .node p,
+    .node li {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .node ul {
+      margin: 6px 0 0;
+      padding-left: 18px;
+    }
+
+    .node.green { border-left: 5px solid var(--green); }
+    .node.blue { border-left: 5px solid var(--blue); }
+    .node.amber { border-left: 5px solid var(--amber); }
+    .node.red { border-left: 5px solid var(--red); }
+    .node.violet { border-left: 5px solid var(--violet); }
+
+    .decision {
+      border-radius: 18px;
+      border-style: dashed;
+      background: #fffbeb;
+    }
+
+    .wide {
+      margin-top: 22px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 9px 10px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    th {
+      color: #344054;
+      background: #f8fafc;
+    }
+
+    code {
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: #eef2ff;
+      color: #3730a3;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    .arrow-note {
+      margin: 14px 0;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #fde68a;
+      background: #fffbeb;
+      color: #92400e;
+      font-size: 13px;
+    }
+
+    @media (max-width: 1100px) {
+      .flow, .wide { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>自动通报完整流程图</h1>
+    <p>覆盖 Prefect 调度、Stage 级 Session 探活、下载重试、比对、模板更新、企业微信发送与模板提交。</p>
+  </header>
+
+  <main>
+    <div class="legend">
+      <span class="tag"><span class="dot blue"></span>流程控制</span>
+      <span class="tag"><span class="dot green"></span>成功路径</span>
+      <span class="tag"><span class="dot amber"></span>判断 / 等待 / 重试</span>
+      <span class="tag"><span class="dot red"></span>失败终止</span>
+      <span class="tag"><span class="dot violet"></span>外部系统 / 文件</span>
+    </div>
+
+    <section class="flow">
+      <div class="lane">
+        <h2>1. 调度与配置</h2>
+        <div class="node blue">
+          <h3>Prefect Cron 触发 Deployment</h3>
+          <p>多个 deployment 可以共用 <code>auto_notify_flow</code>，通过不同 <code>config_path</code> 区分任务。</p>
+        </div>
+        <div class="node blue">
+          <h3>读取任务配置</h3>
+          <ul>
+            <li><code>config/tasks/*.json</code></li>
+            <li>读取 <code>report_config_path</code></li>
+            <li>生成本次 <code>runtime_dir</code></li>
+          </ul>
+        </div>
+        <div class="node amber decision">
+          <h3>校验报表 Schema</h3>
+          <p>必须使用 <code>downloads[]</code>、<code>compare_sources[]</code> 新结构。</p>
+        </div>
+        <div class="node blue">
+          <h3>提取本次需要的 Stage</h3>
+          <p>只从启用的 <code>downloads[].stage</code> 去重，例如只需要 <code>city_ops</code> 就不检查其他 stage。</p>
+        </div>
+      </div>
+
+      <div class="lane">
+        <h2>2. 登录态准备与探活</h2>
+        <div class="node blue">
+          <h3>构建 Login Config</h3>
+          <p>读取 <code>autologin.json</code>，用本次实际 stage 覆盖 <code>required_stages</code>。</p>
+        </div>
+        <div class="node amber decision">
+          <h3>静态检查 Cookie Dump</h3>
+          <ul>
+            <li>文件是否存在</li>
+            <li>stage 是否齐全</li>
+            <li>Cookie 是否过期或快过期</li>
+            <li>cookie_dump 是否超过最大年龄</li>
+          </ul>
+        </div>
+        <div class="node amber decision">
+          <h3>Stage Probe 真实探活</h3>
+          <p>静态检查通过后，按 stage 请求轻量接口验证服务端是否还认当前 session。</p>
+        </div>
+        <div class="node green">
+          <h3>探活成功</h3>
+          <p>返回 <code>reused</code> 或 <code>reused_after_wait</code>，进入下载。</p>
+        </div>
+        <div class="node amber decision">
+          <h3>探活失败 / Cookie 不可用</h3>
+          <p>进入 <code>runtime/locks/login.lock</code> 登录锁，同一时间只允许一个流程执行自动登录。</p>
+        </div>
+        <div class="node violet">
+          <h3>自动登录并重新 Dump Cookie</h3>
+          <p>执行 <code>login_command</code>，Selenium 登录 NGBOSS/USM 并刷新 <code>runtime/cookies/cookie_dump.json</code>。</p>
+        </div>
+        <div class="node amber decision">
+          <h3>登录后再次校验 + 探活</h3>
+          <p>仍失败则终止；成功则返回 <code>refreshed</code>。</p>
+        </div>
+      </div>
+
+      <div class="lane">
+        <h2>3. 下载与重试</h2>
+        <div class="node blue">
+          <h3>构建下载配置</h3>
+          <p>把报表 <code>downloads[]</code> 合并为 <code>download_reports_task</code> 的 <code>reports[]</code>。</p>
+        </div>
+        <div class="node violet">
+          <h3>按 Stage 取 Cookie / Storage</h3>
+          <ul>
+            <li>Cookie header</li>
+            <li><code>headers_from_cookies</code></li>
+            <li><code>headers_from_session_storage</code></li>
+            <li><code>headers_from_local_storage</code></li>
+          </ul>
+        </div>
+        <div class="node amber decision">
+          <h3>请求下载接口</h3>
+          <p>支持文件下载、JSON 转 Excel、JSON 下钻转 Excel。</p>
+        </div>
+        <div class="node red">
+          <h3>发现 Session 过期</h3>
+          <p>识别 <code>401/403</code>、<code>login.jsp</code>、<code>reCode=1101</code>、登录超时等。</p>
+        </div>
+        <div class="node amber decision">
+          <h3>强制重新登录后重试一次</h3>
+          <p>调用 <code>prepare_session(force_refresh=True)</code>，成功后重新执行下载。</p>
+        </div>
+        <div class="node green">
+          <h3>下载 Manifest</h3>
+          <p>写出下载结果、输出文件路径、行数、耗时等信息。</p>
+        </div>
+      </div>
+
+      <div class="lane">
+        <h2>4. 后处理与发送</h2>
+        <div class="node blue">
+          <h3>构建比对配置</h3>
+          <p>根据 <code>compare_sources[]</code> 和下载 manifest 找到新报表路径。</p>
+        </div>
+        <div class="node amber decision">
+          <h3>执行报表比对</h3>
+          <p>使用 <code>openpyxl</code> 或 <code>com</code>，判断 <code>same/changed/invalid</code>。</p>
+        </div>
+        <div class="node amber decision">
+          <h3>等待变化策略</h3>
+          <p>如果启用 <code>wait_for_change</code> 且结果仍是 same，会按间隔重新下载和比对，直到变化或超时。</p>
+        </div>
+        <div class="node green">
+          <h3>更新模板</h3>
+          <p>按变更结果写入模板，必要时通过 Excel COM 刷新公式。Excel COM 使用全局锁排队。</p>
+        </div>
+        <div class="node green">
+          <h3>生成企业微信消息包</h3>
+          <p>截图、文本读取、预览图和 package 文件。</p>
+        </div>
+        <div class="node green">
+          <h3>发送并提交模板</h3>
+          <p>发送企业微信；成功后按配置提交正式模板并备份。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="wide">
+      <div class="card">
+        <h2>Stage 探活接口</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Stage</th>
+              <th>接口</th>
+              <th>成功条件</th>
+              <th>动态认证来源</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>report_analysis</code></td>
+              <td><code>POST /bicpreport/client/getLoginName</code></td>
+              <td><code>returnCode == "0"</code></td>
+              <td>Cookie <code>ssr-token</code> → Header <code>Ssr-Token</code></td>
+            </tr>
+            <tr>
+              <td><code>city_ops</code></td>
+              <td><code>POST /dszzCombat/.../base/getUserInfo</code></td>
+              <td><code>reCode == "0000"</code></td>
+              <td>sessionStorage <code>uapToken</code> → Header <code>uapToken</code></td>
+            </tr>
+            <tr>
+              <td><code>smart_ops</code></td>
+              <td><code>GET /zhyypt/smop/base/refresh</code></td>
+              <td>HTTP 200，允许空响应体</td>
+              <td>sessionStorage <code>zhyyptInfo.accessToken</code> → Header <code>user-info</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>失败与兜底规则</h2>
+        <div class="arrow-note">
+          探活不是保活。它只判断当前 dump_cookie 是否仍被服务端认可；失败后必须重新登录并重新 dump。
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>信号</th>
+              <th>处理</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>401 / 403</code></td>
+              <td>判定 session 失效，强制重新登录。</td>
+            </tr>
+            <tr>
+              <td>URL 包含 <code>login.jsp</code>、<code>logout.action</code>、<code>kickedOut</code></td>
+              <td>判定被踢或回登录页，强制重新登录。</td>
+            </tr>
+            <tr>
+              <td>JSON <code>reCode=1101</code></td>
+              <td>判定单点登录超时，强制重新登录。</td>
+            </tr>
+            <tr>
+              <td>下载阶段仍失败</td>
+              <td>保留现有兜底：重新登录后再下载一次；第二次仍失败则终止。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

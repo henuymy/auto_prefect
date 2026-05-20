@@ -110,7 +110,8 @@ function normalizeLogForDisplay(log: RunLog): RunLog {
   const lines = log.message.split(/\r?\n/).filter((line) => line.trim());
   if (lines.length < 2) return log;
 
-  const summary = lines.find((line) => line.includes("RuntimeError(")) || lines[0];
+  const probeLine = lines.find((line) => line.includes("session 探活") || line.includes("探活失败"));
+  const summary = probeLine || lines.find((line) => line.includes("RuntimeError(")) || lines[0];
   return {
     ...log,
     message: summary.length > 160 ? `${summary.slice(0, 157)}...` : summary,

@@ -39,7 +39,7 @@
   ],
   "wecom": {
     "mode": "webhook",
-    "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=0a613685-fc29-4e80-894b-ddaa165afbce"
+    "webhook_url": ""
   },
   "output": {
     "runtime_dir": "runtime/excel_sender_wx",

@@ -7,13 +7,66 @@
     "city_ops",
     "data_market"
   ],
-  "min_ttl_seconds": 300,
-  "max_age_seconds": 14400,
   "allow_login": true,
   "login_timeout_seconds": 600,
   "login_lock_path": "runtime/locks/login.lock",
   "login_lock_wait_seconds": 300,
   "login_lock_poll_seconds": 5,
   "login_lock_stale_seconds": 600,
+  "stage_probes": {
+    "report_analysis": {
+      "enabled": true,
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/client/getLoginName",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/index.html"
+      },
+      "headers_from_cookies": {
+        "Ssr-Token": "ssr-token"
+      },
+      "body_type": "form",
+      "data": {},
+      "success_json_path": "returnCode",
+      "success_value": "0",
+      "timeout_seconds": 8
+    },
+    "city_ops": {
+      "enabled": true,
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/base/getUserInfo",
+      "headers": {
+        "Accept": "*/*",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/"
+      },
+      "headers_from_session_storage": {
+        "uapToken": "uapToken"
+      },
+      "body_type": "json",
+      "data": {},
+      "success_json_path": "reCode",
+      "success_value": "0000",
+      "timeout_seconds": 8
+    },
+    "smart_ops": {
+      "enabled": true,
+      "method": "GET",
+      "url": "https://usm.ha.cmcc:19011/zhyypt/smop/base/refresh",
+      "headers": {
+        "Accept": "*/*",
+        "Referer": "https://usm.ha.cmcc:19011/zhyypt/dist/"
+      },
+      "headers_from_session_storage": {
+        "user-info": "zhyyptInfo.accessToken"
+      },
+      "success_status_codes": [200],
+      "allow_empty_body": true,
+      "timeout_seconds": 8
+    }
+  },
   "login_command": "\"C:\\Users\\yuyu\\.conda\\envs\\auto-notify\\python.exe\" -c \"from services.login_service import run_login; run_login('config/modules/login_config.json')\""
 }

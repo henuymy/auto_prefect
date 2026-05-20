@@ -11,6 +11,7 @@ XL_CALCULATION_MANUAL = -4135
 DEFAULT_EXCEL_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "locks" / "excel_com.lock"
 DEFAULT_EXCEL_LOCK_TIMEOUT_SECONDS = 900
 DEFAULT_EXCEL_LOCK_POLL_SECONDS = 2
+DEFAULT_EXCEL_LOCK_STALE_SECONDS = 180
 
 
 class ExcelComLockTimeout(RuntimeError):
@@ -18,11 +19,24 @@ class ExcelComLockTimeout(RuntimeError):
 
 
 class FileLock:
-    def __init__(self, path=DEFAULT_EXCEL_LOCK_PATH, timeout_seconds=DEFAULT_EXCEL_LOCK_TIMEOUT_SECONDS, poll_seconds=DEFAULT_EXCEL_LOCK_POLL_SECONDS):
+    def __init__(
+        self,
+        path=DEFAULT_EXCEL_LOCK_PATH,
+        timeout_seconds=DEFAULT_EXCEL_LOCK_TIMEOUT_SECONDS,
+        poll_seconds=DEFAULT_EXCEL_LOCK_POLL_SECONDS,
+        stale_seconds=DEFAULT_EXCEL_LOCK_STALE_SECONDS,
+    ):
         self.path = Path(path)
         self.timeout_seconds = timeout_seconds
         self.poll_seconds = poll_seconds
+        self.stale_seconds = stale_seconds
         self.handle = None
+
+    def is_stale(self):
+        try:
+            return time.time() - self.path.stat().st_mtime > self.stale_seconds
+        except FileNotFoundError:
+            return False
 
     def acquire(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -34,6 +48,12 @@ class FileLock:
                 self.handle.flush()
                 return self
             except FileExistsError:
+                if self.is_stale():
+                    try:
+                        self.path.unlink()
+                        continue
+                    except FileNotFoundError:
+                        continue
                 if time.monotonic() >= deadline:
                     lock_info = ""
                     try:

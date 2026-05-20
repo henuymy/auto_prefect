@@ -11,11 +11,19 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
+
+from services.json_excel_service import get_by_path
+from services.method_service import build_cookie_jar, build_headers, resolve_storage_references
+
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_LOCK_STALE_SECONDS = 30 * 60
 DEFAULT_LOCK_WAIT_SECONDS = 20 * 60
 DEFAULT_LOCK_POLL_SECONDS = 5
+SESSION_EXPIRED_RE_CODES = {"1101", "401", "403"}
+SESSION_EXPIRED_URL_KEYWORDS = ("login.jsp", "logout.action", "kickedout")
+SESSION_EXPIRED_BODY_KEYWORDS = ("单点登录超时", "请登录", "logging down", "login.jsp")
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
@@ -168,6 +176,153 @@ def validate_cookie_dump(cookie_dump, required_stages=None, min_ttl_seconds=0, m
     }
 
 
+def response_has_session_expired(response, payload=None):
+    lowered_url = str(getattr(response, "url", "") or "").lower()
+    if any(keyword in lowered_url for keyword in SESSION_EXPIRED_URL_KEYWORDS):
+        return True
+    if getattr(response, "status_code", None) in {401, 403}:
+        return True
+
+    body = str(getattr(response, "text", "") or "")
+    lowered_body = body.lower()
+    if any(keyword in lowered_body for keyword in SESSION_EXPIRED_BODY_KEYWORDS):
+        return True
+
+    if isinstance(payload, dict):
+        re_code = str(payload.get("reCode") or payload.get("status") or "")
+        re_msg = str(payload.get("reMsg") or payload.get("message") or "")
+        if re_code in SESSION_EXPIRED_RE_CODES:
+            return True
+        if "登录" in re_msg or "超时" in re_msg:
+            return True
+    return False
+
+
+def response_json_or_none(response):
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def build_probe_request_kwargs(probe, stage):
+    timeout = int(probe.get("timeout_seconds", 8) or 8)
+    kwargs = {
+        "headers": build_headers(probe, stage),
+        "params": resolve_storage_references(probe.get("params"), stage) or None,
+        "timeout": timeout,
+        "verify": bool(probe.get("verify_ssl", False)),
+        "allow_redirects": bool(probe.get("allow_redirects", False)),
+    }
+    body_type = str(probe.get("body_type") or "").strip().lower()
+    if body_type == "json":
+        kwargs["json"] = resolve_storage_references(probe.get("data", {}), stage)
+    elif body_type == "form":
+        kwargs["data"] = resolve_storage_references(probe.get("data", {}), stage)
+    elif body_type == "raw":
+        kwargs["data"] = resolve_storage_references(probe.get("raw_body", ""), stage)
+    elif body_type:
+        raise ValueError(f"probe body_type 只支持 form/json/raw: {body_type}")
+    return kwargs
+
+
+def execute_stage_probe(stage_name, probe, stage):
+    session = requests.Session()
+    session.trust_env = bool(probe.get("trust_env", False))
+    session.cookies.update(build_cookie_jar(stage, cookie_names=probe.get("cookie_names")))
+    session.headers.update({"User-Agent": "session-probe/1.0"})
+    method = str(probe.get("method") or "GET").upper()
+    response = session.request(method, probe["url"], **build_probe_request_kwargs(probe, stage))
+    payload = response_json_or_none(response)
+
+    status_codes = probe.get("success_status_codes") or list(range(200, 300))
+    status_ok = response.status_code in {int(code) for code in status_codes}
+    expired = response_has_session_expired(response, payload=payload)
+    result = {
+        "stage": stage_name,
+        "enabled": True,
+        "url": response.url,
+        "status_code": response.status_code,
+        "ok": False,
+    }
+    if expired:
+        result["reason"] = "session_expired"
+        return result
+    if not status_ok:
+        result["reason"] = "status_not_allowed"
+        return result
+
+    success_json_path = probe.get("success_json_path")
+    if success_json_path:
+        if not isinstance(payload, dict):
+            result["reason"] = "json_required"
+            return result
+        actual_value = get_by_path(payload, success_json_path)
+        expected_value = probe.get("success_value")
+        if expected_value is not None and str(actual_value) != str(expected_value):
+            result["reason"] = "json_value_mismatch"
+            result["actual_value"] = actual_value
+            result["expected_value"] = expected_value
+            return result
+
+    if not response.content and not probe.get("allow_empty_body", False) and not success_json_path:
+        result["reason"] = "empty_body"
+        return result
+
+    result["ok"] = True
+    return result
+
+
+def validate_stage_probes(cookie_dump, required_stages=None, stage_probes=None):
+    required_stages = required_stages or []
+    stage_probes = stage_probes or {}
+    results = []
+    for stage_name in required_stages:
+        probe = stage_probes.get(stage_name) or {}
+        if not probe or probe.get("enabled", True) is False:
+            results.append({"stage": stage_name, "enabled": False, "ok": True, "reason": "no_probe"})
+            continue
+        stage = find_stage(cookie_dump, stage_name)
+        if not stage:
+            results.append({"stage": stage_name, "enabled": True, "ok": False, "reason": "missing_stage"})
+            continue
+        try:
+            results.append(execute_stage_probe(stage_name, probe, stage))
+        except Exception as exc:
+            results.append({"stage": stage_name, "enabled": True, "ok": False, "reason": "probe_error", "error": str(exc)})
+    return {
+        "valid": all(item.get("ok") for item in results),
+        "results": results,
+    }
+
+
+def format_probe_failure(item):
+    stage = item.get("stage") or "unknown"
+    reason = item.get("reason") or "unknown"
+    parts = [f"{stage} 探活失败", f"原因={reason}"]
+    if item.get("status_code") is not None:
+        parts.append(f"HTTP={item.get('status_code')}")
+    if item.get("actual_value") is not None or item.get("expected_value") is not None:
+        parts.append(f"实际值={item.get('actual_value')!r}")
+        parts.append(f"期望值={item.get('expected_value')!r}")
+    if item.get("error"):
+        parts.append(f"错误={item.get('error')}")
+    if item.get("url"):
+        parts.append(f"URL={item.get('url')}")
+    return "，".join(parts)
+
+
+def format_probe_validation_error(probe_validation):
+    failures = [
+        format_probe_failure(item)
+        for item in (probe_validation or {}).get("results", [])
+        if not item.get("ok")
+    ]
+    if not failures:
+        return "session 探活失败，但未返回具体失败项"
+    return "；".join(failures)
+
+
 def sync_cookie_dump(source_path, target_path):
     source = Path(source_path).resolve()
     target = Path(target_path).resolve()
@@ -214,6 +369,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
     cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/cookies/cookie_dump.json"), base_dir)
     legacy_cookie_dump_path = resolve_path(config.get("legacy_cookie_dump_path"), base_dir)
     required_stages = config.get("required_stages") or []
+    stage_probes = config.get("stage_probes") or {}
     min_ttl_seconds = int(config.get("min_ttl_seconds", 0) or 0)
     max_age_seconds = config.get("max_age_seconds")
     if max_age_seconds is not None:
@@ -227,11 +383,15 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
     if cookie_dump and not force_refresh:
         validation = validate_cookie_dump(cookie_dump, required_stages, min_ttl_seconds=min_ttl_seconds, max_age_seconds=max_age_seconds)
         if validation["valid"]:
-            return {
-                "status": "reused",
-                "cookie_dump_path": str(cookie_dump_path),
-                "validation": validation,
-            }
+            probe_validation = validate_stage_probes(cookie_dump, required_stages, stage_probes)
+            validation["probe_validation"] = probe_validation
+            if probe_validation["valid"]:
+                validation["probe_validation"] = probe_validation
+                return {
+                    "status": "reused",
+                    "cookie_dump_path": str(cookie_dump_path),
+                    "validation": validation,
+                }
     else:
         validation = {
             "valid": False,
@@ -276,12 +436,15 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
                 max_age_seconds=max_age_seconds,
             )
             if waited_validation["valid"]:
-                return {
-                    "status": "reused_after_wait",
-                    "cookie_dump_path": str(cookie_dump_path),
-                    "validation": waited_validation,
-                    "lock": lock_result,
-                }
+                waited_probe_validation = validate_stage_probes(waited_cookie_dump or {}, required_stages, stage_probes)
+                waited_validation["probe_validation"] = waited_probe_validation
+                if waited_probe_validation["valid"]:
+                    return {
+                        "status": "reused_after_wait",
+                        "cookie_dump_path": str(cookie_dump_path),
+                        "validation": waited_validation,
+                        "lock": lock_result,
+                    }
 
         command_result = run_login_command(command, cwd=base_dir, timeout_seconds=login_timeout_seconds)
         source_path = legacy_cookie_dump_path or cookie_dump_path
@@ -294,6 +457,10 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
         )
         if not refreshed_validation["valid"]:
             raise RuntimeError(f"登录后 Cookie 仍不可用: {refreshed_validation}")
+        refreshed_probe_validation = validate_stage_probes(refreshed_cookie_dump or {}, required_stages, stage_probes)
+        refreshed_validation["probe_validation"] = refreshed_probe_validation
+        if not refreshed_probe_validation["valid"]:
+            raise RuntimeError(f"登录后 session 探活仍不可用: {format_probe_validation_error(refreshed_probe_validation)}")
 
     return {
         "status": "refreshed",

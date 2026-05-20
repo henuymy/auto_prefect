@@ -19,6 +19,7 @@ from tasks.method_tasks import download_reports_task
 from tasks.notify_tasks import build_message_package_task, send_notification_package_task
 from tasks.session_tasks import prepare_session_task
 from tasks.template_tasks import update_template_task
+from utils.config_loader import load_json_with_local_override
 
 try:
     from prefect import flow, get_run_logger, task
@@ -47,8 +48,8 @@ def resolve_project_path(path):
 
 def read_json(path):
     resolved = resolve_project_path(path)
-    with resolved.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    payload, _ = load_json_with_local_override(resolved)
+    return payload
 
 
 def write_json(path, payload):
@@ -148,6 +149,33 @@ def build_download_config(base_config, report_cfg):
         merged_reports.append(resolve_dynamic_structure(merged_report))
     config = {k: v for k, v in base_config.items() if k != "report_defaults"}
     config["reports"] = merged_reports
+    return config
+
+
+def enabled_downloads(report_cfg):
+    return [
+        item
+        for item in (report_cfg.get("downloads") or [])
+        if item.get("enabled", True) is not False
+    ]
+
+
+def required_stages_for_report(report_cfg):
+    stages = []
+    seen = set()
+    for item in enabled_downloads(report_cfg):
+        stage = str(item.get("stage") or "").strip()
+        if stage and stage not in seen:
+            stages.append(stage)
+            seen.add(stage)
+    return stages
+
+
+def build_login_config(base_config, report_cfg):
+    config = copy.deepcopy(base_config)
+    stages = required_stages_for_report(report_cfg)
+    if stages:
+        config["required_stages"] = stages
     return config
 
 
@@ -320,10 +348,13 @@ def auto_notify_flow(config_path=None):
 
     report_cfg = read_json(config["report_config_path"]) if config.get("report_config_path") else {}
     assert_report_schema_contract(report_cfg)
+    login_config = None
+    if steps.get("login", {}).get("enabled", False):
+        login_config = build_login_config(read_json(steps["login"]["config_path"]), report_cfg)
 
     if steps.get("login", {}).get("enabled", False):
         session_result = prepare_session_task(
-            read_json(steps["login"]["config_path"]),
+            login_config,
             force_refresh=bool(steps["login"].get("force_refresh", False)),
         )
         if session_result.get("status") == "invalid":
@@ -347,7 +378,7 @@ def auto_notify_flow(config_path=None):
                 raise
             logger.warning("下载失败（session 过期），强制重新登录后重试")
             session_result = prepare_session_task(
-                read_json(steps["login"]["config_path"]),
+                login_config,
                 force_refresh=True,
             )
             if session_result.get("status") == "invalid":
