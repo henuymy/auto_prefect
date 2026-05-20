@@ -17,7 +17,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
 from models.compare_result import CompareResult, WorkbookCompareResult
-from infrastructure.excel_client import require_win32, get_sheet, sheet_names as workbook_sheet_names
+from infrastructure.excel_client import get_sheet, open_excel, sheet_names as workbook_sheet_names
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -560,11 +560,7 @@ def compare_workbook_com(config):
     if not template_path.exists():
         raise FileNotFoundError(f"模板文件不存在: {template_path}")
 
-    win32com = require_win32()
-    excel = win32com.DispatchEx("Excel.Application")
-    excel.Visible = bool(config.get("visible", False))
-    excel.DisplayAlerts = False
-    excel.AskToUpdateLinks = False
+    excel = open_excel(visible=bool(config.get("visible", False)))
     new_workbook = None
     template_workbook = None
     sheet_results = []

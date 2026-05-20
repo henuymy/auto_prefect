@@ -64,6 +64,8 @@ foreach ($homePath in @($PrefectHome, (Join-Path $env:USERPROFILE ".prefect"))) 
     Remove-Item -LiteralPath (Join-Path $homePath "prefect.db-shm") -Force -ErrorAction SilentlyContinue
 }
 
+Remove-Item -LiteralPath (Join-Path $RepoRoot "runtime\locks\excel_com.lock") -Force -ErrorAction SilentlyContinue
+
 Write-Host "Stopped by port: $($killedByPort -join ',')"
 Write-Host "Stopped python : $($killedPython -join ',')"
 Write-Host "Stopped shell  : $($killedShell -join ',')"

@@ -4,9 +4,85 @@ from __future__ import annotations
 
 import shutil
 import sys
+import time
 from pathlib import Path
 
 XL_CALCULATION_MANUAL = -4135
+DEFAULT_EXCEL_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "locks" / "excel_com.lock"
+DEFAULT_EXCEL_LOCK_TIMEOUT_SECONDS = 900
+DEFAULT_EXCEL_LOCK_POLL_SECONDS = 2
+
+
+class ExcelComLockTimeout(RuntimeError):
+    pass
+
+
+class FileLock:
+    def __init__(self, path=DEFAULT_EXCEL_LOCK_PATH, timeout_seconds=DEFAULT_EXCEL_LOCK_TIMEOUT_SECONDS, poll_seconds=DEFAULT_EXCEL_LOCK_POLL_SECONDS):
+        self.path = Path(path)
+        self.timeout_seconds = timeout_seconds
+        self.poll_seconds = poll_seconds
+        self.handle = None
+
+    def acquire(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + self.timeout_seconds
+        while True:
+            try:
+                self.handle = self.path.open("x", encoding="utf-8")
+                self.handle.write(f"pid={_current_pid()} acquired_at={time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                self.handle.flush()
+                return self
+            except FileExistsError:
+                if time.monotonic() >= deadline:
+                    lock_info = ""
+                    try:
+                        lock_info = self.path.read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        pass
+                    raise ExcelComLockTimeout(f"等待 Excel COM 锁超时: {self.path}, lock_info={lock_info}")
+                time.sleep(self.poll_seconds)
+
+    def release(self):
+        if self.handle is not None:
+            try:
+                self.handle.close()
+            finally:
+                self.handle = None
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+class LockedExcel:
+    def __init__(self, excel, lock):
+        self._excel = excel
+        self._lock = lock
+        self._released = False
+
+    def __getattr__(self, name):
+        return getattr(self._excel, name)
+
+    def Quit(self):
+        try:
+            return self._excel.Quit()
+        finally:
+            self.release_lock()
+
+    def release_lock(self):
+        if self._released:
+            return
+        self._released = True
+        self._lock.release()
+
+
+def _current_pid():
+    try:
+        import os
+        return os.getpid()
+    except Exception:
+        return "unknown"
 
 
 def require_win32():
@@ -73,17 +149,23 @@ def dispatch_excel_dynamic(win32com):
     return win32com.dynamic.Dispatch(dispatch)
 
 
-def open_excel(visible=False, manual_calculation=False):
+def open_excel(visible=False, manual_calculation=False, use_lock=True):
     win32com = require_win32()
+    lock = FileLock().acquire() if use_lock else None
     try:
-        excel = win32com.DispatchEx("Excel.Application")
-    except AttributeError as exc:
-        if not is_broken_gencache_error(exc):
-            raise
-        clear_win32com_gencache(win32com)
-        excel = dispatch_excel_dynamic(win32com)
-    safe_configure_excel(excel, visible=visible, manual_calculation=manual_calculation)
-    return excel
+        try:
+            excel = win32com.DispatchEx("Excel.Application")
+        except AttributeError as exc:
+            if not is_broken_gencache_error(exc):
+                raise
+            clear_win32com_gencache(win32com)
+            excel = dispatch_excel_dynamic(win32com)
+        safe_configure_excel(excel, visible=visible, manual_calculation=manual_calculation)
+        return LockedExcel(excel, lock) if lock else excel
+    except Exception:
+        if lock is not None:
+            lock.release()
+        raise
 
 
 def open_workbook(excel, path, update_links=False, read_only=True, ignore_read_only_recommended=True):
