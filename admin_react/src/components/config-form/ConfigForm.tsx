@@ -612,7 +612,7 @@ function ResponseModeConfig({ item, onChange }: { item: DownloadItem; onChange: 
         </div>
         <div className="space-y-2">
           {columns.map((column, index) => (
-            <div key={index} className="grid gap-2 rounded-xl border border-border bg-muted/20 p-2 md:grid-cols-[1fr_1fr_auto_auto_auto]">
+            <div key={index} className="grid gap-2 rounded-xl border border-border bg-muted/20 p-2 md:grid-cols-[1fr_1fr_120px_auto_auto_auto]">
               <DraftInput
                 placeholder="JSON 字段，如 areaName"
                 value={column.field}
@@ -622,6 +622,10 @@ function ResponseModeConfig({ item, onChange }: { item: DownloadItem; onChange: 
                 className={isSystemExcelField(column.field) ? "bg-muted/70 font-mono text-muted-foreground" : ""}
               />
               <DraftInput placeholder="Excel 表头，如 名称" value={column.header} onCommit={(value) => updateColumn(index, { ...column, header: value })} />
+              <Select value={column.type || ""} onChange={(event) => updateColumn(index, { ...column, type: event.target.value as ExcelColumn["type"] })}>
+                <option value="">文本/原样</option>
+                <option value="number">数字</option>
+              </Select>
               <Button variant="ghost" size="icon" title="上移" onClick={() => updateExcel({ ...excel, columns: moveAt(columns, index, index - 1) })} disabled={index === 0}>
                 <ArrowUp className="h-4 w-4" />
               </Button>

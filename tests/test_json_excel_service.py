@@ -65,6 +65,46 @@ def test_json_response_to_excel_writes_configured_columns():
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def test_json_response_to_excel_converts_configured_number_columns():
+    work_dir = make_work_dir()
+    output_path = work_dir / "numbers.xlsx"
+    payload = {
+        "reCode": "0000",
+        "result": {
+            "tableData": [
+                {
+                    "areaCode": "AQ701",
+                    "sgs_ajvwdz": "7",
+                    "decimal_value": "12.5",
+                }
+            ]
+        },
+    }
+
+    try:
+        json_response_to_excel(
+            payload,
+            output_path,
+            {
+                "data_path": "result.tableData",
+                "columns": [
+                    {"field": "areaCode", "header": "编码"},
+                    {"field": "sgs_ajvwdz", "header": "爱家亲情网(V网版)", "type": "number"},
+                    {"field": "decimal_value", "header": "小数", "type": "number"},
+                ],
+            },
+        )
+
+        worksheet = load_workbook(output_path).active
+        assert worksheet["A2"].value == "AQ701"
+        assert worksheet["B2"].value == 7
+        assert worksheet["B2"].data_type == "n"
+        assert worksheet["C2"].value == 12.5
+        assert worksheet["C2"].data_type == "n"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def test_drilldown_json_to_excel_uses_area_code_for_next_request():
     work_dir = make_work_dir()
     output_path = work_dir / "drilldown.xlsx"

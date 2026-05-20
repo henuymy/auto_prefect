@@ -55,63 +55,78 @@
           },
           {
             "field": "5R_KDBL_FXY",
-            "header": "宽带下单_非校园"
+            "header": "宽带下单_非校园",
+            "type": "number"
           },
           {
             "field": "sgs_zj_fttr",
-            "header": "智家_FTTR办理量"
+            "header": "智家_FTTR办理量",
+            "type": "number"
           },
           {
             "field": "sgs_YDYDN_260410",
-            "header": "移动云电脑"
+            "header": "移动云电脑",
+            "type": "number"
           },
           {
             "field": "sgs_LXPING_260410",
-            "header": "灵犀屏"
+            "header": "灵犀屏",
+            "type": "number"
           },
           {
             "field": "sgs_zj_wifi",
-            "header": "智家_智能组网"
+            "header": "智家_智能组网",
+            "type": "number"
           },
           {
             "field": "sgs_20240618afxzhd",
-            "header": "安防新增活动（出硬件）"
+            "header": "安防新增活动（出硬件）",
+            "type": "number"
           },
           {
             "field": "sgs_20240618afxfhd",
-            "header": "安防续费活动（剔除1元续费）"
+            "header": "安防续费活动（剔除1元续费）",
+            "type": "number"
           },
           {
             "field": "371_gqdscqb",
-            "header": "郑州_高清电视_长期包"
+            "header": "郑州_高清电视_长期包",
+            "type": "number"
           },
           {
             "field": "sgs_zj_xcpbl",
-            "header": "智家_新产品办理量"
+            "header": "智家_新产品办理量",
+            "type": "number"
           },
           {
             "field": "1B_TCSD",
-            "header": "套餐升档"
+            "header": "套餐升档",
+            "type": "number"
           },
           {
             "field": "371_llb0409",
-            "header": "郑州_流量包"
+            "header": "郑州_流量包",
+            "type": "number"
           },
           {
             "field": "371_pkhdict0317",
-            "header": "郑州_3月PK赛HDICT产品"
+            "header": "郑州_3月PK赛HDICT产品",
+            "type": "number"
           },
           {
             "field": "sgs_xywdlxs",
-            "header": "新业务独立销售"
+            "header": "新业务独立销售",
+            "type": "number"
           },
           {
             "field": "371_qqthd0128",
-            "header": "郑州_全球通预存送活动"
+            "header": "郑州_全球通预存送活动",
+            "type": "number"
           },
           {
             "field": "sgs_HDICTETC_260204",
-            "header": "ETC产品"
+            "header": "ETC产品",
+            "type": "number"
           }
         ]
       },

@@ -6,6 +6,7 @@ export type ScheduleMode = "manual" | "daily" | "weekly" | "cron";
 export interface ExcelColumn {
   field: string;
   header: string;
+  type?: "number" | "";
 }
 
 export interface DownloadItem {

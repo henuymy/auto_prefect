@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import copy
+import re
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
 from openpyxl import Workbook
+
+
+NUMERIC_TEXT_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 
 
 def get_by_path(payload, path: str):
@@ -44,10 +48,35 @@ def normalize_columns(excel_config: dict):
         field = (column.get("field") or "").strip()
         header = (column.get("header") or field).strip()
         if field:
-            normalized.append({"field": field, "header": header})
+            normalized.append({
+                "field": field,
+                "header": header,
+                "type": str(column.get("type") or "").strip().lower(),
+            })
     if not normalized:
         raise ValueError("excel.columns 不能为空")
     return normalized
+
+
+def coerce_excel_value(value, column: dict):
+    if column.get("type") != "number":
+        return value
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    text = value.strip().replace(",", "")
+    if not text:
+        return None
+    if not NUMERIC_TEXT_PATTERN.match(text):
+        return value
+    number = float(text)
+    return int(number) if number.is_integer() else number
 
 
 def extract_rows(payload, data_path: str):
@@ -71,7 +100,10 @@ def write_rows_to_excel(rows: list[dict], output_path, excel_config: dict):
     worksheet.title = str(sheet_name)[:31] or "Sheet1"
     worksheet.append([column["header"] for column in columns])
     for row in rows:
-        worksheet.append([get_by_path(row, column["field"]) for column in columns])
+        worksheet.append([
+            coerce_excel_value(get_by_path(row, column["field"]), column)
+            for column in columns
+        ])
     workbook.save(output_path)
     return {
         "rows": len(rows),

@@ -44,6 +44,7 @@ export const reportConfigJsonSchema = {
                   properties: {
                     field: { type: "string", minLength: 1 },
                     header: { type: "string", minLength: 1 },
+                    type: { enum: ["number", ""] },
                   },
                   additionalProperties: false,
                 },

@@ -79,7 +79,8 @@
           },
           {
             "field": "sgs_ajvwdz",
-            "header": "爱家亲情网(V网版)"
+            "header": "爱家亲情网(V网版)",
+            "type": "number"
           }
         ]
       },
@@ -152,7 +153,8 @@
           },
           {
             "field": "sgs_ajvwdz",
-            "header": "爱家亲情网(V网版)"
+            "header": "爱家亲情网(V网版)",
+            "type": "number"
           }
         ]
       },
