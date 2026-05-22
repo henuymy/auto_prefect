@@ -175,6 +175,50 @@ def test_drilldown_json_to_excel_uses_area_code_for_next_request():
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def test_drilldown_json_to_excel_skips_self_summary_row():
+    work_dir = make_work_dir()
+    output_path = work_dir / "drilldown_skip_self.xlsx"
+    initial_payload = {"areaId": "AQ"}
+    response = {
+        "reCode": "0000",
+        "result": {
+            "tableData": [
+                {"areaName": "领水网格", "areaCode": "AQ701", "sgs_ajvwdz": "7"},
+                {"areaName": "中原", "areaCode": "AQ", "sgs_ajvwdz": "3370"},
+            ]
+        },
+    }
+
+    try:
+        result = drilldown_json_to_excel(
+            initial_payload,
+            lambda payload: {"reCode": "0000", "result": {"tableData": []}},
+            output_path,
+            {
+                "data_path": "result.tableData",
+                "request_area_field": "areaId",
+                "next_area_field": "areaCode",
+                "levels": ["网格", "渠道经理"],
+                "skip_self_row": True,
+            },
+            {
+                "sheet_name": "地市作战明细",
+                "columns": [
+                    {"field": "__level_name", "header": "层级"},
+                    {"field": "areaName", "header": "名称"},
+                    {"field": "areaCode", "header": "编码"},
+                ],
+            },
+            initial_response_json=response,
+        )
+
+        rows = list(load_workbook(output_path)["地市作战明细"].iter_rows(values_only=True))
+        assert result["rows"] == 1
+        assert rows[1:] == [("网格", "领水网格", "AQ701")]
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def test_drilldown_json_to_excel_fetches_same_level_in_parallel():
     work_dir = make_work_dir()
     output_path = work_dir / "drilldown_parallel.xlsx"

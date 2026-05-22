@@ -135,12 +135,13 @@
         "request_area_field": "areaId",
         "next_area_field": "areaCode",
         "levels": [
-          "区县",
           "网格",
-          "渠道/门店",
+          "渠道经理",
+          "渠道",
           "人员"
         ],
-        "max_requests": 1000
+        "max_requests": 1000,
+        "skip_self_row": true
       },
       "headers_from_session_storage": {
         "Uaptoken": "uapToken"

@@ -144,8 +144,11 @@ function findLineForPath(lines: string[], path: JsonPath) {
 
   for (const segment of path) {
     if (typeof segment === "number") {
-      cursor = findArrayItemLine(lines, cursor, segment);
-      if (cursor >= 0) matched = cursor;
+      const next = findArrayItemLine(lines, cursor, segment);
+      if (next >= 0) {
+        matched = next;
+        cursor = next + 1;
+      }
       continue;
     }
 
@@ -166,15 +169,34 @@ function findLineForPath(lines: string[], path: JsonPath) {
 }
 
 function findArrayItemLine(lines: string[], start: number, itemIndex: number) {
+  const arrayStart = findArrayStartLine(lines, start);
+  if (arrayStart < 0) return -1;
+
+  const arrayIndent = leadingSpaces(lines[arrayStart]);
+  const itemIndent = arrayIndent + 2;
   let seen = -1;
-  for (let index = start; index < lines.length; index += 1) {
-    const trimmed = lines[index].trim();
-    if (trimmed === "{" || trimmed === "{") {
-      seen += 1;
-      if (seen === itemIndex) return index;
-    }
+  for (let index = arrayStart + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (leadingSpaces(line) <= arrayIndent && trimmed.startsWith("]")) break;
+    if (leadingSpaces(line) !== itemIndent) continue;
+    if (trimmed === "]," || trimmed === "]") break;
+    seen += 1;
+    if (seen === itemIndex) return index;
   }
-  return start;
+  return -1;
+}
+
+function findArrayStartLine(lines: string[], start: number) {
+  for (let index = Math.max(0, start - 1); index < lines.length; index += 1) {
+    if (lines[index].includes("[")) return index;
+  }
+  return -1;
+}
+
+function leadingSpaces(line: string) {
+  return line.length - line.trimStart().length;
 }
 
 function ValidationView({ issues }: { issues: ValidationIssue[] }) {

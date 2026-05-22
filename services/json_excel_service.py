@@ -148,6 +148,7 @@ def drilldown_json_to_excel(
     max_requests = int(drilldown_config.get("max_requests") or 1000)
     max_workers = int(drilldown_config.get("max_workers") or drilldown_config.get("concurrency") or 6)
     max_workers = max(1, min(max_workers, 32))
+    skip_self_row = bool(drilldown_config.get("skip_self_row", False))
 
     initial_area_id = get_by_path(initial_payload, request_area_field)
     queue = deque([
@@ -198,9 +199,11 @@ def drilldown_json_to_excel(
                     "__parent_area_id": item.get("parent_area_id") or "",
                     "__request_area_id": item.get("request_area_id") or "",
                 }
-                all_rows.append(enriched)
 
                 next_area_id = row.get(next_area_field)
+                if skip_self_row and str(next_area_id or "") == str(item.get("request_area_id") or ""):
+                    continue
+                all_rows.append(enriched)
                 if level_index >= len(levels) - 1 or not next_area_id:
                     continue
                 next_area_id = str(next_area_id)

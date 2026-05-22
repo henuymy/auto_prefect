@@ -49,7 +49,8 @@ const FIXED_DRILLDOWN = {
   data_path: "result.tableData",
   request_area_field: "areaId",
   next_area_field: "areaCode",
-  levels: ["区县", "网格", "渠道/门店", "人员"],
+  levels: ["网格", "渠道经理", "渠道", "人员"],
+  skip_self_row: true,
 };
 
 function defaultDrilldownConfig(max_requests = 1000, max_workers = 6): NonNullable<DownloadItem["drilldown"]> {
@@ -653,18 +654,22 @@ function DrilldownConfig({ item, onChange }: { item: DownloadItem; onChange: (it
   const updateDrilldown = (nextDrilldown: NonNullable<DownloadItem["drilldown"]>) => onChange({ ...item, drilldown: nextDrilldown });
   const maxRequests = drilldown.max_requests || 1000;
   const maxWorkers = drilldown.max_workers || 6;
+  const levels = drilldown.levels?.length ? drilldown.levels : FIXED_DRILLDOWN.levels;
   const applyFixedDrilldown = (max_requests: number) => {
     updateDrilldown(defaultDrilldownConfig(max_requests, maxWorkers));
+  };
+  const updateLevel = (index: number, value: string) => {
+    updateDrilldown({ ...drilldown, levels: updateAt(levels, index, value || `层级${index + 1}`) });
   };
 
   return (
     <div className="space-y-4 rounded-2xl border border-dashed border-primary/25 bg-primary/5 p-4">
-      <div>
-        <div className="text-sm font-black">级联下钻配置</div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          地市作战下钻规则已固定：从响应的 result.tableData 取数据，用 areaCode 替换下一轮请求体里的 areaId，按区县、网格、渠道/门店、人员逐层拉取。
-        </p>
-      </div>
+        <div>
+          <div className="text-sm font-black">级联下钻配置</div>
+          <p className="mt-1 text-xs text-muted-foreground">
+          地市作战下钻规则默认从响应的 result.tableData 取数据，用 areaCode 替换下一轮请求体里的 areaId，层级顺序可按实际接口调整。
+          </p>
+        </div>
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="下钻数据路径">
           <Input value={FIXED_DRILLDOWN.data_path} readOnly className="bg-muted/70 font-mono text-muted-foreground" />
@@ -685,13 +690,37 @@ function DrilldownConfig({ item, onChange }: { item: DownloadItem; onChange: (it
             onCommit={(value) => updateDrilldown({ ...defaultDrilldownConfig(maxRequests, Number(value || 1)) })}
           />
         </Field>
+        <Field label="过滤自身汇总行">
+          <label className="flex min-h-10 items-center gap-3 rounded-lg border border-input bg-background px-3 text-sm">
+            <input
+              type="checkbox"
+              checked={drilldown.skip_self_row !== false}
+              onChange={(event) => updateDrilldown({ ...drilldown, skip_self_row: event.target.checked })}
+            />
+            <span>跳过 areaCode 等于当前请求 areaId 的汇总行</span>
+          </label>
+        </Field>
       </div>
       <div className="space-y-2">
-        <div className="text-sm font-semibold">层级顺序</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-semibold">层级顺序</div>
+          <Button variant="outline" size="sm" onClick={() => updateDrilldown({ ...drilldown, levels: [...levels, `层级${levels.length + 1}`] })}>
+            <Plus className="h-4 w-4" />添加层级
+          </Button>
+        </div>
         <div className="grid gap-2 md:grid-cols-2">
-          {FIXED_DRILLDOWN.levels.map((level, index) => (
-            <div key={level} className="rounded-xl border border-border bg-background/80 p-2">
-              <Input value={`${index + 1}. ${level}`} readOnly className="bg-muted/70 font-semibold text-muted-foreground" />
+          {levels.map((level, index) => (
+            <div key={`${level}-${index}`} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 rounded-xl border border-border bg-background/80 p-2">
+              <DraftInput value={level} onCommit={(value) => updateLevel(index, value)} />
+              <Button variant="ghost" size="icon" title="上移" onClick={() => updateDrilldown({ ...drilldown, levels: moveAt(levels, index, index - 1) })} disabled={index === 0}>
+                <ArrowUp className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" title="下移" onClick={() => updateDrilldown({ ...drilldown, levels: moveAt(levels, index, index + 1) })} disabled={index === levels.length - 1}>
+                <ArrowDown className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" title="删除" onClick={() => updateDrilldown({ ...drilldown, levels: removeAt(levels, index) })} disabled={levels.length <= 1}>
+                <Trash2 className="h-4 w-4 text-red-500" />
+              </Button>
             </div>
           ))}
         </div>

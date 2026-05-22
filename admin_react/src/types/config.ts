@@ -37,6 +37,7 @@ export interface DownloadItem {
     levels?: string[];
     max_requests?: number;
     max_workers?: number;
+    skip_self_row?: boolean;
   };
 }
 

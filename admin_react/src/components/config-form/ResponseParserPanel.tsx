@@ -11,7 +11,8 @@ const DEFAULT_DRILLDOWN = {
   data_path: "result.tableData",
   request_area_field: "areaId",
   next_area_field: "areaCode",
-  levels: ["区县", "网格", "渠道/门店", "人员"],
+  levels: ["网格", "渠道经理", "渠道", "人员"],
+  skip_self_row: true,
   max_requests: 1000,
 };
 
