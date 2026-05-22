@@ -241,7 +241,12 @@ class AutoLogin:
                     if retry_index < max_request_count - 1:
                         print(f"[WARN] 本轮 Gotify 验证码等待超时，{retry_interval_seconds} 秒后重新触发短信...")
                         time.sleep(retry_interval_seconds)
-            raise TimeoutError(f"多次重新发送验证码后仍未获取到 Gotify 动态密钥: {last_error}")
+            raise TimeoutError(
+                f"多次重新发送验证码后仍未获取到 Gotify 动态密钥：已尝试 {max_request_count} 轮。"
+                "请确认手机已开机、SMSForwarder 正在运行、Gotify 服务可访问；"
+                "如果手机已经收到短信但未转发，请打开 SMSForwarder 后重新运行本次流程。"
+                f"最后错误: {last_error}"
+            )
         sms_code = None
         while not sms_code:
             sms_code = popup_input("请输入短信验证码:", "短信验证码")
@@ -559,6 +564,7 @@ class AutoLogin:
             print(f"\n[ERROR] 执行过程中出错: {e}")
             import traceback
             traceback.print_exc()
+            raise
         finally:
             self.close()
 

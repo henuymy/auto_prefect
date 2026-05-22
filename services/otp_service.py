@@ -235,9 +235,17 @@ def wait_for_otp(
         time.sleep(poll_interval)
 
     if last_error:
-        raise TimeoutError(f"等待 Gotify 验证码超时，最后错误: {last_error}")
+        raise TimeoutError(
+            f"等待 Gotify 验证码超时：{timeout_seconds} 秒内未收到可用短信转发。"
+            "请确认手机已开机、SMSForwarder 正在运行、Gotify 服务可访问，且短信规则能匹配验证码。"
+            f"最后错误: {last_error}"
+        )
     if last_messages:
         print("[WARN] Gotify 最近消息脱敏诊断:")
         for item in summarize_messages(last_messages, otp_config, latest_message_id):
             print(f"[WARN] {item}")
-    raise TimeoutError("等待 Gotify 验证码超时")
+    raise TimeoutError(
+        f"等待 Gotify 验证码超时：{timeout_seconds} 秒内未收到可用短信转发。"
+        "请确认手机已开机、SMSForwarder 正在运行、Gotify 服务可访问；"
+        "如果刚打开 SMSForwarder，下一轮会重新触发短信验证码。"
+    )
