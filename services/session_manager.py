@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import time
+import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,7 @@ from services.method_service import build_cookie_jar, build_headers, resolve_sto
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+LOGGER = logging.getLogger(__name__)
 DEFAULT_LOCK_STALE_SECONDS = 30 * 60
 DEFAULT_LOCK_WAIT_SECONDS = 20 * 60
 DEFAULT_LOCK_POLL_SECONDS = 5
@@ -365,7 +367,7 @@ def load_cookie_dump_if_exists(path):
     return payload
 
 
-def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
+def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None):
     cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/cookies/cookie_dump.json"), base_dir)
     legacy_cookie_dump_path = resolve_path(config.get("legacy_cookie_dump_path"), base_dir)
     required_stages = config.get("required_stages") or []
@@ -374,6 +376,11 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
     max_age_seconds = config.get("max_age_seconds")
     if max_age_seconds is not None:
         max_age_seconds = int(max_age_seconds)
+
+    def warn(message, *args):
+        LOGGER.warning(message, *args)
+        if event_logger:
+            event_logger.warning(message, *args)
 
     cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
     if not cookie_dump and legacy_cookie_dump_path and legacy_cookie_dump_path.exists():
@@ -392,6 +399,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
                     "cookie_dump_path": str(cookie_dump_path),
                     "validation": validation,
                 }
+            warn("已有 Cookie 探活失败，将重新登录: %s", format_probe_validation_error(probe_validation))
+        else:
+            warn("已有 Cookie 静态检查失败，将重新登录: %s", validation)
     else:
         validation = {
             "valid": False,
@@ -445,6 +455,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False):
                         "validation": waited_validation,
                         "lock": lock_result,
                     }
+                warn("等待登录锁后 Cookie 探活仍失败，将自行重新登录: %s", format_probe_validation_error(waited_probe_validation))
+            else:
+                warn("等待登录锁后 Cookie 静态检查仍失败，将自行重新登录: %s", waited_validation)
 
         command_result = run_login_command(command, cwd=base_dir, timeout_seconds=login_timeout_seconds)
         source_path = legacy_cookie_dump_path or cookie_dump_path

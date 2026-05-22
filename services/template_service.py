@@ -145,6 +145,25 @@ def write_values_to_target_sheet(source_sheet, target_sheet):
                 cell.value = value
 
 
+def refresh_open_workbook(excel, workbook):
+    try:
+        workbook.RefreshAll()
+    except Exception:
+        pass
+    try:
+        excel.CalculateUntilAsyncQueriesDone()
+    except Exception:
+        pass
+    try:
+        excel.CalculateFullRebuild()
+    except Exception:
+        try:
+            workbook.Application.Calculate()
+        except Exception:
+            pass
+    workbook.Save()
+
+
 def refresh_workbook_with_excel(output_path, visible=False):
     excel = open_excel(visible=visible, manual_calculation=True)
     workbook = None
@@ -155,22 +174,7 @@ def refresh_workbook_with_excel(output_path, visible=False):
             ReadOnly=False,
             IgnoreReadOnlyRecommended=True,
         )
-        try:
-            workbook.RefreshAll()
-        except Exception:
-            pass
-        try:
-            excel.CalculateUntilAsyncQueriesDone()
-        except Exception:
-            pass
-        try:
-            excel.CalculateFullRebuild()
-        except Exception:
-            try:
-                workbook.Application.Calculate()
-            except Exception:
-                pass
-        workbook.Save()
+        refresh_open_workbook(excel, workbook)
     finally:
         if workbook is not None:
             workbook.Close(SaveChanges=False)
@@ -222,7 +226,7 @@ def update_template_copy(source_report_path, template_path, output_path, sheet_r
                 "compare_result": sheet_result.get("result"),
             })
 
-        target_workbook.Save()
+        refresh_open_workbook(excel, target_workbook)
     finally:
         try:
             excel.CutCopyMode = False
