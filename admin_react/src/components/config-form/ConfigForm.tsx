@@ -88,7 +88,7 @@ const AUTH_PRESET_OPTIONS = [
   { value: "无", label: "无", desc: "清空动态认证配置，只使用 Cookie Stage 自动带 Cookie。" },
 ];
 
-const STARTER_TEMPLATE_STEPS = ["校验配置", "准备登录", "下载数据", "合并模板", "生成完成"];
+const STARTER_TEMPLATE_STEPS = ["校验配置", "探活/登录", "下载数据", "合并模板", "生成完成"];
 
 function normalizeAuthPreset(value?: string) {
   if (value === "SSR Cookie") return "报表分析 Ssr-token";
@@ -224,7 +224,7 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
 
   async function handleGenerateStarterTemplate() {
     const confirmed = window.confirm(
-      "将真实登录并下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n不会发送企业微信，也不会提交正式模板。确定继续吗？",
+      "将真实下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n会先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会关闭旧自动登录浏览器并重新登录。登录成功后会保留浏览器，供下次运行继续探活复用。\n\n不会发送企业微信，也不会提交正式模板。确定继续吗？",
     );
     if (!confirmed) return;
     setStarterStep(0);

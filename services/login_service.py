@@ -12,6 +12,7 @@ from selenium.common.exceptions import TimeoutException
 
 from services.cookie_recorder import CookieRecorder, resolve_cookie_dump_path
 from services.otp_service import delete_message, prepare_wait_context, wait_for_otp
+from services.browser_session import browser_config, record_browser_session
 from utils.config_loader import load_json_with_local_override
 
 
@@ -98,6 +99,12 @@ class AutoLogin:
 
     def init_driver(self):
         options = Options()
+        browser = browser_config(self.config)
+        if browser["user_data_dir"]:
+            browser["user_data_dir"].mkdir(parents=True, exist_ok=True)
+            options.add_argument(f"--user-data-dir={browser['user_data_dir']}")
+        if browser["keep_open_after_login"]:
+            options.add_experimental_option("detach", True)
         options.add_argument('--ignore-certificate-errors')
         options.add_argument('--allow-insecure-localhost')
         options.add_argument('--disable-web-security')
@@ -109,8 +116,29 @@ class AutoLogin:
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         self.driver = webdriver.Edge(options=options)
-        self.driver.implicitly_wait(10)
+        self.driver.implicitly_wait(int((self.config.get("browser") or {}).get("implicit_wait", 10) or 10))
         print("[INFO] Edge浏览器已启动（有头模式，已忽略SSL证书错误）")
+
+    def keep_open_after_login(self):
+        return browser_config(self.config)["keep_open_after_login"]
+
+    def record_browser_session(self):
+        if not self.driver:
+            return None
+        browser = browser_config(self.config)
+        driver_pid = None
+        try:
+            driver_pid = self.driver.service.process.pid
+        except Exception:
+            pass
+        path = record_browser_session(
+            browser["session_state_path"],
+            browser["user_data_dir"],
+            driver_pid=driver_pid,
+            config_path=self.config_path,
+        )
+        print(f"[INFO] 已保留自动登录浏览器会话: {path}")
+        return path
 
     def fill_login_credentials(self):
         wait = WebDriverWait(self.driver, 30)
@@ -552,11 +580,13 @@ class AutoLogin:
             self.driver = None
 
     def run(self):
+        success = False
         try:
             print("=" * 60)
             print("自动登录系统 - 开始执行")
             print("=" * 60)
             self.login_and_capture_cookies()
+            success = True
             print("\n" + "=" * 60)
             print("执行完成！")
             print("=" * 60)
@@ -566,7 +596,11 @@ class AutoLogin:
             traceback.print_exc()
             raise
         finally:
-            self.close()
+            if success and self.keep_open_after_login():
+                self.record_browser_session()
+                self.driver = None
+            else:
+                self.close()
 
 
 def run_login(config_path):

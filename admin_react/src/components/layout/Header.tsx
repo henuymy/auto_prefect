@@ -8,7 +8,9 @@ export function Header({
   onSaveConfig,
   onValidate,
   onTestRun,
+  testing,
   onRealTestRun,
+  realTesting,
   onDelete,
   canDelete,
   onPublish,
@@ -20,7 +22,9 @@ export function Header({
   onSaveConfig: () => void;
   onValidate: () => void;
   onTestRun: () => void;
+  testing: boolean;
   onRealTestRun: () => void;
+  realTesting: boolean;
   onDelete: () => void;
   canDelete: boolean;
   onPublish: () => void;
@@ -39,8 +43,14 @@ export function Header({
         <Button variant="outline" onClick={onSaveDraft}><Save className="h-4 w-4" />保存草稿</Button>
         <Button variant="outline" onClick={onSaveConfig}><FileCheck2 className="h-4 w-4" />保存配置</Button>
         <Button variant="outline" onClick={onValidate}><ShieldCheck className="h-4 w-4" />校验配置</Button>
-        <Button variant="secondary" onClick={onTestRun}><Play className="h-4 w-4" />安全测试</Button>
-        <Button variant="secondary" onClick={onRealTestRun}><Zap className="h-4 w-4" />真实试跑</Button>
+        <Button variant="secondary" onClick={onTestRun} disabled={testing || realTesting}>
+          {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          {testing ? "测试中" : "安全测试"}
+        </Button>
+        <Button variant="secondary" onClick={onRealTestRun} disabled={testing || realTesting}>
+          {realTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+          {realTesting ? "试跑中" : "真实试跑"}
+        </Button>
         <Button onClick={onPublish} disabled={publishing}>
           {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
           {publishing ? "发布中" : "发布到调度"}

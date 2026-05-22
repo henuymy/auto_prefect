@@ -13,6 +13,7 @@
   "login_lock_wait_seconds": 300,
   "login_lock_poll_seconds": 5,
   "login_lock_stale_seconds": 600,
+  "browser_session_state_path": "runtime/browser_session/session.json",
   "stage_probes": {
     "report_analysis": {
       "enabled": true,

@@ -66,6 +66,14 @@ foreach ($homePath in @($PrefectHome, (Join-Path $env:USERPROFILE ".prefect"))) 
 
 Remove-Item -LiteralPath (Join-Path $RepoRoot "runtime\locks\excel_com.lock") -Force -ErrorAction SilentlyContinue
 
+$CleanupPython = if (Test-Path -LiteralPath $AutoNotifyPython) { $AutoNotifyPython } else { "python" }
+Push-Location $RepoRoot
+try {
+    & $CleanupPython -c "from services.browser_session import close_recorded_browser_session; print(close_recorded_browser_session())" 2>$null
+} finally {
+    Pop-Location
+}
+
 Write-Host "Stopped by port: $($killedByPort -join ',')"
 Write-Host "Stopped python : $($killedPython -join ',')"
 Write-Host "Stopped shell  : $($killedShell -join ',')"

@@ -19,6 +19,9 @@ import { uid } from "@/lib/utils";
 import { validateReportConfig } from "@/schemas/reportConfigSchema";
 import type { ConfigVersion, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
 
+const SAFETY_TEST_STEPS = ["配置校验", "生成临时配置", "执行 dry-run", "读取日志"];
+const REAL_TEST_STEPS = ["配置校验", "会话探活/登录", "下载比对", "截图发送", "读取日志"];
+
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => (typeof window === "undefined" ? false : window.matchMedia(query).matches));
 
@@ -140,6 +143,10 @@ export default function App() {
   const [jsonFocusPath, setJsonFocusPath] = useState<JsonPath>([]);
   const [activeConfigTab, setActiveConfigTab] = useState<ConfigFormTab>("base");
   const [publishing, setPublishing] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testStep, setTestStep] = useState(0);
+  const [realTesting, setRealTesting] = useState(false);
+  const [realTestStep, setRealTestStep] = useState(0);
   const [dark, setDark] = useState(false);
   const wideLayout = useMediaQuery("(min-width: 1280px)");
 
@@ -170,6 +177,24 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, [logsOpen]);
+
+  useEffect(() => {
+    if (!testing) return;
+    setTestStep(0);
+    const timer = window.setInterval(() => {
+      setTestStep((step) => Math.min(step + 1, SAFETY_TEST_STEPS.length - 1));
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [testing]);
+
+  useEffect(() => {
+    if (!realTesting) return;
+    setRealTestStep(0);
+    const timer = window.setInterval(() => {
+      setRealTestStep((step) => Math.min(step + 1, REAL_TEST_STEPS.length - 1));
+    }, 4500);
+    return () => window.clearInterval(timer);
+  }, [realTesting]);
 
   const liveIssues = useMemo(() => (config ? validateReportConfig(config) : []), [config]);
   const persistedConfigs = useMemo(() => configs.filter((item) => !isTemporaryConfigId(item.id)), [configs]);
@@ -326,27 +351,43 @@ export default function App() {
   async function testRun() {
     if (!config) return;
     if (blockIfInvalid("安全测试")) return;
+    setTesting(true);
+    setTestStep(0);
+    setLogsOpen(true);
     try {
+      setLogs(await listRunLogs());
       await testRunConfig(config);
       setLogs(await listRunLogs());
       setLogsOpen(true);
       toast.info("已创建测试运行请求");
     } catch (error) {
+      setLogs(await listRunLogs());
+      setLogsOpen(true);
       toast.error("测试运行失败，详情见运行日志", { description: toastDescription(error), duration: 2400 });
+    } finally {
+      setTesting(false);
     }
   }
 
   async function realTestRun() {
     if (!config) return;
     if (blockIfInvalid("真实试跑")) return;
-    if (!window.confirm("真实试跑会真实下载、比对、生成截图并发送企业微信，但不会提交正式模板。确定继续吗？")) return;
+    if (!window.confirm("真实试跑会真实下载、比对、生成截图并发送企业微信，但不会提交正式模板。\n\n会先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会关闭旧自动登录浏览器并重新登录。登录成功后会保留浏览器，供下次运行继续探活复用。确定继续吗？")) return;
+    setRealTesting(true);
+    setRealTestStep(0);
+    setLogsOpen(true);
     try {
+      setLogs(await listRunLogs());
       await realTestRunConfig(config);
       setLogs(await listRunLogs());
       setLogsOpen(true);
       toast.success("真实试跑完成");
     } catch (error) {
+      setLogs(await listRunLogs());
+      setLogsOpen(true);
       toast.error("真实试跑失败，详情见运行日志", { description: toastDescription(error), duration: 2400 });
+    } finally {
+      setRealTesting(false);
     }
   }
 
@@ -557,12 +598,38 @@ export default function App() {
           onSaveConfig={saveConfig}
           onValidate={validate}
           onTestRun={testRun}
+          testing={testing}
           onRealTestRun={realTestRun}
+          realTesting={realTesting}
           onDelete={deleteCurrentConfig}
           canDelete={!isTemporaryConfigId(config.id)}
           onPublish={publish}
           publishing={publishing}
         />
+        {testing && (
+          <div className="border-b border-sky-200 bg-sky-50/90 px-3 py-3 text-xs text-sky-900 dark:border-sky-500/30 dark:bg-sky-950/35 dark:text-sky-100 lg:px-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="font-semibold">安全测试正在运行：{SAFETY_TEST_STEPS[testStep]}</div>
+              <div className="flex flex-wrap gap-2">
+                {SAFETY_TEST_STEPS.map((step, index) => (
+                  <Badge key={step} variant={index <= testStep ? "running" : "default"}>{index + 1}. {step}</Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {realTesting && (
+          <div className="border-b border-amber-200 bg-amber-50/90 px-3 py-3 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/35 dark:text-amber-100 lg:px-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="font-semibold">真实试跑正在运行：{REAL_TEST_STEPS[realTestStep]}</div>
+              <div className="flex flex-wrap gap-2">
+                {REAL_TEST_STEPS.map((step, index) => (
+                  <Badge key={step} variant={index <= realTestStep ? "running" : "default"}>{index + 1}. {step}</Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
         <div className="min-h-0 flex-1 p-3 sm:p-4 lg:p-5">
           {wideLayout ? (
             <PanelGroup direction="horizontal" className="h-full rounded-2xl border border-border/70 bg-background/40 p-2 backdrop-blur-xl">

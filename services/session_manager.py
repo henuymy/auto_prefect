@@ -14,6 +14,7 @@ from pathlib import Path
 
 import requests
 
+from services.browser_session import close_recorded_browser_session
 from services.json_excel_service import get_by_path
 from services.method_service import build_cookie_jar, build_headers, resolve_storage_references
 
@@ -421,6 +422,10 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
     command = config.get("login_command")
     if not command:
         raise ValueError("Cookie 无效且未配置 login_command")
+    browser_session_state_path = resolve_path(
+        config.get("browser_session_state_path", "runtime/browser_session/session.json"),
+        base_dir,
+    )
 
     login_timeout_seconds = config.get("login_timeout_seconds")
     if login_timeout_seconds is not None:
@@ -459,6 +464,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             else:
                 warn("等待登录锁后 Cookie 静态检查仍失败，将自行重新登录: %s", waited_validation)
 
+        close_result = close_recorded_browser_session(browser_session_state_path)
+        if close_result.get("stopped_pids"):
+            warn("重新登录前已关闭旧自动登录浏览器: %s", close_result)
         command_result = run_login_command(command, cwd=base_dir, timeout_seconds=login_timeout_seconds)
         source_path = legacy_cookie_dump_path or cookie_dump_path
         sync_cookie_dump(source_path, cookie_dump_path)

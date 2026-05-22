@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -272,8 +272,12 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
     return issues
 
 
-def test_run_config(config: dict[str, Any]) -> dict[str, Any]:
+def test_run_config(config: dict[str, Any], progress: Callable[[str, str], None] | None = None) -> dict[str, Any]:
+    if progress:
+        progress("生成临时配置", "正在写入安全测试专用的 dry-run 配置")
     task_config_path = write_task_config(config, draft=True, dry_run=True)
+    if progress:
+        progress("启动 dry-run", f"即将执行安全测试流程: {task_config_path.relative_to(PROJECT_ROOT)}")
     command = [
         sys.executable,
         "-c",
@@ -297,7 +301,11 @@ def test_run_config(config: dict[str, Any]) -> dict[str, Any]:
     )
     output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
     if completed.returncode != 0:
+        if progress:
+            progress("安全测试失败", "dry-run 流程返回失败，详情见日志")
         raise RuntimeError(output or "测试运行失败")
+    if progress:
+        progress("安全测试完成", "配置 dry-run 已完成，不会发送企业微信，也不会提交模板")
     return {
         "flowRunId": f"manual-{int(datetime.now().timestamp())}",
         "status": "success",
@@ -307,7 +315,9 @@ def test_run_config(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def real_test_run_config(config: dict[str, Any]) -> dict[str, Any]:
+def real_test_run_config(config: dict[str, Any], progress: Callable[[str, str], None] | None = None) -> dict[str, Any]:
+    if progress:
+        progress("生成临时配置", "正在写入真实试跑专用配置：真实下载和发送，跳过正式模板提交")
     task_config_path = write_task_config(
         config,
         draft=True,
@@ -317,6 +327,8 @@ def real_test_run_config(config: dict[str, Any]) -> dict[str, Any]:
         login_enabled=True,
         suffix=".real_test.task.json",
     )
+    if progress:
+        progress("启动真实流程", f"即将执行真实试跑流程: {task_config_path.relative_to(PROJECT_ROOT)}")
     command = [
         sys.executable,
         "-c",
@@ -340,7 +352,11 @@ def real_test_run_config(config: dict[str, Any]) -> dict[str, Any]:
     )
     output = "\n".join(part for part in [completed.stdout, completed.stderr] if part)
     if completed.returncode != 0:
+        if progress:
+            progress("真实试跑失败", "真实流程返回失败，详情见日志")
         raise RuntimeError(output or "真实试跑失败")
+    if progress:
+        progress("真实试跑完成", "已完成真实下载、比对、截图和企业微信发送；正式模板未提交")
     return {
         "flowRunId": f"real-test-{int(datetime.now().timestamp())}",
         "status": "success",

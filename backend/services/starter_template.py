@@ -126,6 +126,17 @@ def _prepare_required_session_with_refresh(stages: list[str], force_refresh: boo
     return prepare_session(config, base_dir=PROJECT_ROOT, force_refresh=force_refresh)
 
 
+def _session_status_message(session_result: dict[str, Any]) -> str:
+    status = session_result.get("status")
+    if status in {"reused", "reused_after_wait"}:
+        return "session 探活通过，复用已有自动登录会话"
+    if status == "refreshed":
+        return "session 探活失败或不可用，已关闭旧自动登录浏览器并重新登录，登录浏览器已保留"
+    if status == "invalid":
+        return f"session 不可用: {session_result.get('reason')}"
+    return f"session 状态: {status or 'unknown'}"
+
+
 def _is_session_expired_error(exc: RuntimeError) -> bool:
     text = str(exc)
     return "session 已过期" in text or "登录超时" in text or "请登录后重新跳转" in text
@@ -228,8 +239,9 @@ def generate_starter_template(config: dict[str, Any], progress: Callable[[str, s
     template_path = TEMPLATES_DIR / template_filename
 
     stages = _required_stages(downloads)
-    _emit_progress(progress, "准备登录", f"正在准备下载所需会话: {', '.join(stages)}")
+    _emit_progress(progress, "探活/登录", f"正在探活本次下载所需 stage: {', '.join(stages) or '无'}")
     session_result = _prepare_required_session(stages)
+    _emit_progress(progress, "探活/登录", _session_status_message(session_result))
     if session_result.get("status") == "invalid":
         raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
 

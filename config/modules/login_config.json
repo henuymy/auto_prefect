@@ -56,6 +56,9 @@
     "output_file": "runtime/cookies/cookie_dump.json"
   },
   "browser": {
+    "keep_open_after_login": true,
+    "session_state_path": "runtime/browser_session/session.json",
+    "user_data_dir": "runtime/browser_session/edge_profile_auto_login",
     "window_width": 1920,
     "window_height": 1080,
     "implicit_wait": 10

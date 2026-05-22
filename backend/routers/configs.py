@@ -103,6 +103,11 @@ def generate_starter_template(config_id: str, config: dict):
         def progress(title: str, message: str) -> None:
             append_log("running", f"生成新手模板 - {title}", message)
 
+        append_log(
+            "running",
+            "生成新手模板 - 会话策略",
+            "先探活本次抓取项需要的 stage；探活失败才关闭旧自动登录浏览器并重新登录，登录成功后保留浏览器。",
+        )
         result = starter_template.generate_starter_template(config, progress=progress)
         if result.get("status") == "failed":
             append_log("failed", "生成新手模板失败", f"配置校验失败，发现 {len(result.get('issues') or [])} 个问题")
@@ -117,12 +122,21 @@ def generate_starter_template(config_id: str, config: dict):
 
 @router.post("/{config_id}/test-run")
 def test_run_config(config_id: str, config: dict):
+    append_log("running", "安全测试 - 配置校验", "正在检查当前页面配置快照")
     issues = prefect_runner.validate_config(config)
     if issues:
         append_log("failed", "安全测试失败", f"配置校验失败，发现 {len(issues)} 个问题")
         raise HTTPException(status_code=400, detail={"issues": issues})
     try:
-        result = prefect_runner.test_run_config(config)
+        def progress(title: str, message: str) -> None:
+            append_log("running", f"安全测试 - {title}", message)
+
+        append_log(
+            "running",
+            "安全测试 - 运行方式",
+            "只做 dry-run 冒烟检查：不真实发送企业微信，不提交正式模板，不覆盖模板文件。",
+        )
+        result = prefect_runner.test_run_config(config, progress=progress)
         append_log("success", "安全测试", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
         return result
     except RuntimeError as exc:
@@ -133,12 +147,26 @@ def test_run_config(config_id: str, config: dict):
 
 @router.post("/{config_id}/real-test-run")
 def real_test_run_config(config_id: str, config: dict):
+    append_log("running", "真实试跑 - 配置校验", "正在检查当前页面配置快照")
     issues = prefect_runner.validate_config(config)
     if issues:
         append_log("failed", "真实试跑失败", f"配置校验失败，发现 {len(issues)} 个问题")
         raise HTTPException(status_code=400, detail={"issues": issues})
     try:
-        result = prefect_runner.real_test_run_config(config)
+        def progress(title: str, message: str) -> None:
+            append_log("running", f"真实试跑 - {title}", message)
+
+        append_log(
+            "running",
+            "真实试跑 - 会话策略",
+            "先探活本次抓取项需要的 stage；探活失败才关闭旧自动登录浏览器并重新登录，登录成功后保留浏览器。",
+        )
+        append_log(
+            "running",
+            "真实试跑 - 运行方式",
+            "会真实下载、比对、生成截图并发送企业微信；不会提交正式模板。",
+        )
+        result = prefect_runner.real_test_run_config(config, progress=progress)
         append_log("success", "真实试跑", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
         return result
     except RuntimeError as exc:
