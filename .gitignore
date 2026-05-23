@@ -21,3 +21,9 @@ config/tasks/*.local.json
 config/modules/*.local.json
 scripts/*.local.ps1
 templates/
+
+# Local FRP binaries and credentials
+frp/frpc.exe
+frp/frps.exe
+frp/frpc.toml
+frp/frps.toml

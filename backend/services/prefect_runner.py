@@ -289,6 +289,7 @@ def test_run_config(config: dict[str, Any], progress: Callable[[str, str], None]
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PREFECT_API_URL"] = get_prefect_api_url()
     completed = subprocess.run(
         command,
         cwd=PROJECT_ROOT,
@@ -340,6 +341,7 @@ def real_test_run_config(config: dict[str, Any], progress: Callable[[str, str], 
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PREFECT_API_URL"] = get_prefect_api_url()
     completed = subprocess.run(
         command,
         cwd=PROJECT_ROOT,
@@ -394,6 +396,7 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PREFECT_API_URL"] = get_prefect_api_url()
     completed = subprocess.run(
         command,
         cwd=PROJECT_ROOT,

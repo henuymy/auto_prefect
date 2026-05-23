@@ -23,7 +23,7 @@
       "enabled": true,
       "config_path": "config/modules/report_compare.json",
       "generated_config_path": "runtime/flow/爱家亲情网每日盯控/compare_config.json",
-      "download_report_name": "实时"
+      "download_report_name": "爱家亲情网每日盯控"
     },
     "update_template": {
       "enabled": true,

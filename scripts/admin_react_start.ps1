@@ -2,18 +2,37 @@ param(
     [ValidateSet("backend", "frontend", "both")]
     [string]$Mode = "both",
     [int]$BackendPort = 8000,
-    [int]$FrontendPort = 5173
+    [int]$FrontendPort = 5173,
+    [string]$PrefectApiUrl = "http://127.0.0.1:4200/api"
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$PythonExe = if ($env:CONDA_PREFIX) { Join-Path $env:CONDA_PREFIX "python.exe" } else { "python" }
+$PythonExe = ""
+if ($env:CONDA_PREFIX -and (Test-Path -LiteralPath (Join-Path $env:CONDA_PREFIX "python.exe"))) {
+    $PythonExe = Join-Path $env:CONDA_PREFIX "python.exe"
+} else {
+    $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
+    if ($condaCmd) {
+        $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(.+)$" | Select-Object -First 1
+        if ($envInfo) {
+            $candidatePython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
+            if (Test-Path -LiteralPath $candidatePython) {
+                $PythonExe = $candidatePython
+            }
+        }
+    }
+}
+if (-not $PythonExe) {
+    $PythonExe = "python"
+}
 
 function Start-Backend {
     Set-Location $RepoRoot
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
+    $env:PREFECT_API_URL = $PrefectApiUrl
     & $PythonExe -m uvicorn backend.app:app --reload --host 127.0.0.1 --port $BackendPort
 }
 
@@ -27,7 +46,7 @@ switch ($Mode) {
     "backend" { Start-Backend }
     "frontend" { Start-Frontend }
     "both" {
-        $backendCommand = "cd '$RepoRoot'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; & '$PythonExe' -m uvicorn backend.app:app --reload --host 127.0.0.1 --port $BackendPort"
+        $backendCommand = "cd '$RepoRoot'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PREFECT_API_URL='$PrefectApiUrl'; & '$PythonExe' -m uvicorn backend.app:app --reload --host 127.0.0.1 --port $BackendPort"
         $frontendDir = Join-Path $RepoRoot "admin_react"
         $frontendCommand = "cd '$frontendDir'; npm run dev -- --host 127.0.0.1 --port $FrontendPort"
 
@@ -36,5 +55,6 @@ switch ($Mode) {
         Write-Host "已启动后端和前端窗口。"
         Write-Host "后端: http://127.0.0.1:$BackendPort/api/health"
         Write-Host "前端: http://127.0.0.1:$FrontendPort"
+        Write-Host "Prefect API: $PrefectApiUrl"
     }
 }

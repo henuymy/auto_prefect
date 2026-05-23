@@ -69,5 +69,5 @@
       "timeout_seconds": 8
     }
   },
-  "login_command": "\"C:\\Users\\yuyu\\.conda\\envs\\auto-notify\\python.exe\" -c \"from services.login_service import run_login; run_login('config/modules/login_config.json')\""
+  "login_command": "\"C:\\anaconda3\\envs\\auto-notify\\python.exe\" -c \"from services.login_service import run_login; run_login('config/modules/login_config.json')\""
 }

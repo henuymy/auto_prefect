@@ -11,6 +11,16 @@ if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 }
 $AutoNotifyPython = Join-Path $env:USERPROFILE ".conda\envs\auto-notify\python.exe"
+$condaCmd = Get-Command conda -ErrorAction SilentlyContinue
+if ($condaCmd) {
+    $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(.+)$" | Select-Object -First 1
+    if ($envInfo) {
+        $candidatePython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
+        if (Test-Path -LiteralPath $candidatePython) {
+            $AutoNotifyPython = $candidatePython
+        }
+    }
+}
 
 Write-Host "RepoRoot        : $RepoRoot"
 Write-Host "PREFECT_HOME    : $PrefectHome"

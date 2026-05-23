@@ -2,7 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
-$DatabaseUrl = "sqlite+aiosqlite:///C:/Users/yuyu/Desktop/项目/自动通报/runtime/prefect_home/prefect.db"
+$DatabasePath = (Join-Path $PrefectHome "prefect.db") -replace "\\", "/"
+$DatabaseUrl = "sqlite+aiosqlite:///$DatabasePath"
 
 New-Item -ItemType Directory -Force -Path $PrefectHome | Out-Null
 

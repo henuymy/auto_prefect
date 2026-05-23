@@ -3,9 +3,9 @@
   "runtime_dir": "runtime/flow/爱家V网",
   "report_config_path": "config/reports/爱家V网.json",
   "wait_for_change": {
-    "enabled": true,
+    "enabled": false,
     "poll_interval_seconds": 300,
-    "max_wait_minutes": 5
+    "max_wait_minutes": 180
   },
   "steps": {
     "login": {
@@ -23,7 +23,7 @@
       "enabled": true,
       "config_path": "config/modules/report_compare.json",
       "generated_config_path": "runtime/flow/爱家V网/compare_config.json",
-      "download_report_name": "335837"
+      "download_report_name": "爱家V网"
     },
     "update_template": {
       "enabled": true,

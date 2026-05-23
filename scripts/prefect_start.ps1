@@ -21,7 +21,23 @@ if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 }
 if (-not $PythonExe) {
-    $PythonExe = Join-Path $env:USERPROFILE ".conda\envs\auto-notify\python.exe"
+    if ($env:CONDA_PREFIX -and (Test-Path -LiteralPath (Join-Path $env:CONDA_PREFIX "python.exe"))) {
+        $PythonExe = Join-Path $env:CONDA_PREFIX "python.exe"
+    } else {
+        $condaPython = $null
+        $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
+        if ($condaCmd) {
+            $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(.+)$" | Select-Object -First 1
+            if ($envInfo) {
+                $condaPython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
+            }
+        }
+        if ($condaPython -and (Test-Path -LiteralPath $condaPython)) {
+            $PythonExe = $condaPython
+        } else {
+            $PythonExe = Join-Path $env:USERPROFILE ".conda\envs\auto-notify\python.exe"
+        }
+    }
 }
 if (-not (Test-Path -LiteralPath $PythonExe)) {
     $PythonExe = "python"
@@ -33,11 +49,11 @@ if ($UseSqliteDebug) {
 elseif (-not $DatabaseUrl) {
     $DatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
     if (-not $DatabaseUrl) {
-        throw "缺少 Prefect 数据库连接串，请传入 -DatabaseUrl 或在 scripts\prefect_env_prod.local.ps1 中设置 `$env:AUTO_NOTIFY_PREFECT_DATABASE_URL"
+        throw "Missing Prefect database URL. Pass -DatabaseUrl or set `$env:AUTO_NOTIFY_PREFECT_DATABASE_URL in scripts\prefect_env_prod.local.ps1"
     }
 }
 elseif ($DatabaseUrl -notlike "postgresql+asyncpg://*") {
-    throw "DatabaseUrl 必须是 PostgreSQL asyncpg 连接串，例如 postgresql+asyncpg://user:password@host:5432/prefect"
+    throw "DatabaseUrl must be a PostgreSQL asyncpg URL, for example postgresql+asyncpg://user:password@host:5432/prefect"
 }
 
 New-Item -ItemType Directory -Force -Path $PrefectHome | Out-Null
@@ -58,7 +74,8 @@ Write-Host "RepoRoot       : $RepoRoot"
 Write-Host "PythonExe      : $PythonExe"
 Write-Host "PREFECT_HOME   : $($env:PREFECT_HOME)"
 Write-Host "PREFECT_API_URL: $($env:PREFECT_API_URL)"
-Write-Host "DatabaseUrl    : $(if ($UseSqliteDebug) { 'SQLite 调试库' } else { '已从参数或本机 local 配置加载' })"
+$databaseSource = if ($UseSqliteDebug) { "SQLite debug database" } else { "loaded from parameter or local config" }
+Write-Host "DatabaseUrl    : $databaseSource"
 Write-Host "DebugSqlite    : $UseSqliteDebug"
 Write-Host "LateRuns       : $($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)"
 Write-Host "Mode           : $Mode"
@@ -118,7 +135,7 @@ switch ($Mode) {
     "server" {
         if ($Detached) {
             Start-DetachedWindow -Title "Prefect Server" -Command $serverCommand
-            Write-Host "已在新窗口启动 Prefect Server。"
+            Write-Host "Started Prefect Server in a new window."
         } else {
             & $PythonExe -m prefect @($serverArgs -split ' ')
         }
@@ -126,7 +143,7 @@ switch ($Mode) {
     "worker" {
         if ($Detached) {
             Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
-            Write-Host "已在新窗口启动 Prefect Worker。"
+            Write-Host "Started Prefect Worker in a new window."
         } else {
             & $PythonExe -m prefect worker start --pool $WorkPool --type process
         }
@@ -135,13 +152,13 @@ switch ($Mode) {
         Start-DetachedWindow -Title "Prefect Server" -Command $serverCommand
         $serverReady = Wait-ForPrefectServer -Url "http://127.0.0.1:4200/api/health"
         if (-not $serverReady) {
-            throw "Prefect Server 未在 90 秒内就绪，请查看 Prefect Server 窗口日志。"
+            throw "Prefect Server was not ready within 90 seconds. Check the Prefect Server window logs."
         }
         Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
-        Write-Host "已在两个新窗口启动 Server + Worker。"
-        Write-Host "打开 UI: http://127.0.0.1:4200"
+        Write-Host "Started Server + Worker in two new windows."
+        Write-Host "Open UI: http://127.0.0.1:4200"
         if ($UseSqliteDebug) {
-            Write-Host "当前为 SQLite 调试模式：不会写远程 PostgreSQL，但不建议长期调度。"
+            Write-Host "SQLite debug mode: remote PostgreSQL is not used; not recommended for long-running schedules."
         }
     }
 }

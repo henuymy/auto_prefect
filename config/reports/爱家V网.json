@@ -143,11 +143,11 @@
     "max_wait_minutes": 180
   },
   "deployment": {
-    "enabled": false,
-    "cron": "",
+    "enabled": true,
+    "cron": "0 16 * * *",
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-15 23:13:18",
+  "updatedAt": "2026-05-23 22:52:15",
   "source": "published",
   "has_draft": false
 }
