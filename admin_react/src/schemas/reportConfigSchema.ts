@@ -169,10 +169,10 @@ export const reportConfigJsonSchema = {
     },
     deployment: {
       type: "object",
-      required: ["enabled", "cron", "timezone"],
+      required: ["enabled", "crons", "timezone"],
       properties: {
         enabled: { type: "boolean" },
-        cron: { type: "string" },
+        crons: { type: "array", items: { type: "string" } },
         timezone: { type: "string" },
       },
       additionalProperties: false,

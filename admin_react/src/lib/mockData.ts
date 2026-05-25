@@ -104,7 +104,7 @@ export const mockConfigs: ReportConfig[] = [
     },
     deployment: {
       enabled: true,
-      cron: "0 9-18 * * *",
+      crons: ["0 9-18 * * *"],
       timezone: "Asia/Shanghai",
     },
   },
@@ -181,7 +181,7 @@ export const mockConfigs: ReportConfig[] = [
     },
     template_update: { engine: "hybrid", update_condition: "any_changed", write_sheets: "all_compared", send_when_same: true },
     wait_for_change: { enabled: false, poll_interval_seconds: 300, max_wait_minutes: 180 },
-    deployment: { enabled: false, cron: "", timezone: "Asia/Shanghai" },
+    deployment: { enabled: false, crons: [], timezone: "Asia/Shanghai" },
   },
 ];
 

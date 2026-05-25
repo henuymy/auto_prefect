@@ -77,7 +77,8 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
     template_update = data.get("template_update") if isinstance(data.get("template_update"), dict) else {}
     wait_for_change = data.get("wait_for_change") if isinstance(data.get("wait_for_change"), dict) else {}
     deployment = data.get("deployment") if isinstance(data.get("deployment"), dict) else {}
-    cron = str(deployment.get("cron") or "").strip()
+    raw_crons = deployment.get("crons") if isinstance(deployment.get("crons"), list) else []
+    crons = [str(item or "").strip() for item in raw_crons if str(item or "").strip()]
 
     normalized = dict(data)
     # The React admin edits the modern multi-download shape. Keep legacy input
@@ -110,8 +111,8 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
                 "max_wait_minutes": wait_for_change.get("max_wait_minutes", 180),
             },
             "deployment": {
-                "enabled": bool(cron),
-                "cron": cron,
+                "enabled": bool(crons),
+                "crons": crons,
                 "timezone": deployment.get("timezone", "Asia/Shanghai"),
             },
             "updatedAt": updated_at or data.get("updatedAt"),
@@ -132,7 +133,7 @@ def _broken_config(path: Path, exc: Exception, source: str, has_draft: bool = Fa
         "send": {"webhook_url": "", "workbook_name": path.stem, "items": []},
         "template_update": {"engine": "hybrid", "update_condition": "any_changed", "write_sheets": "all_compared", "send_when_same": True},
         "wait_for_change": {"enabled": False, "poll_interval_seconds": 300, "max_wait_minutes": 180},
-        "deployment": {"enabled": False, "cron": "", "timezone": "Asia/Shanghai"},
+        "deployment": {"enabled": False, "crons": [], "timezone": "Asia/Shanghai"},
         "lastRun": "failed",
         "updatedAt": _mtime_text(path),
         "source": source,

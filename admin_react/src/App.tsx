@@ -75,7 +75,7 @@ function emptyConfig(): ReportConfig {
     },
     deployment: {
       enabled: false,
-      cron: "",
+      crons: [],
       timezone: "Asia/Shanghai",
     },
     lastRun: "disabled",
@@ -451,8 +451,9 @@ export default function App() {
       }
       setLogs(await listRunLogs());
       setLogsOpen(true);
+      const scheduleCount = result.crons?.length || config.deployment.crons.length;
       const scheduleText = result.scheduleStatus === "enabled"
-        ? `定时已启用：${result.cron || config.deployment.cron} (${result.timezone || config.deployment.timezone})`
+        ? `定时已启用：${scheduleCount} 条 Cron (${result.timezone || config.deployment.timezone})`
         : result.scheduleStatus === "disabled"
           ? "部署已创建，定时调度已停用"
           : "部署已创建，未配置 Cron";

@@ -174,11 +174,17 @@
   },
   "deployment": {
     "enabled": true,
-    "cron": "*/15 14-17 * * *",
+    "crons": [
+      "0 9-13 * * *",
+      "0,30 14-15 * * *",
+      "*/10 16 * * *",
+      "0,30 17-18 * * *",
+      "0 19 * * *"
+    ],
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-05-24 16:22:01",
+  "updatedAt": "2026-05-25 09:29:05",
   "source": "published",
   "has_draft": false
 }

@@ -130,6 +130,12 @@ function getAuthTargetLabel(item: DownloadItem) {
   return "当前不写入动态认证字段";
 }
 
+function normalizeCronList(deployment: ReportConfig["deployment"]) {
+  const values = deployment.crons.length ? deployment.crons : [""];
+  const normalized = values.map((cron) => String(cron || "").trim());
+  return normalized.length ? normalized : [""];
+}
+
 export function ConfigForm({
   config,
   tab,
@@ -908,9 +914,16 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
   const update = config.template_update;
   const wait = config.wait_for_change;
   const deployment = config.deployment;
-  const updateDeployment = (next: ReportConfig["deployment"]) => {
-    const cron = next.cron.trim();
-    onChange({ ...config, deployment: { ...next, cron, enabled: Boolean(cron) } });
+  const crons = normalizeCronList(deployment);
+  const updateDeployment = (next: ReportConfig["deployment"], nextCrons = crons) => {
+    const cleanCrons = nextCrons.map((cron) => cron.trim()).filter(Boolean);
+    onChange({ ...config, deployment: { ...next, crons: cleanCrons, enabled: cleanCrons.length > 0 } });
+  };
+  const updateCron = (index: number, value: string) => {
+    updateDeployment(deployment, updateAt(crons, index, value));
+  };
+  const removeCron = (index: number) => {
+    updateDeployment(deployment, removeAt(crons, index));
   };
   return (
     <div className="grid gap-5 xl:grid-cols-2">
@@ -932,10 +945,27 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
         </CardContent>
       </Card>
       <Card className="xl:col-span-2">
-        <CardHeader><CardTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5" />Prefect 定时部署</CardTitle><CardDescription>Cron 为空时只保存部署；Cron 有值时由基础信息里的“启用定时调度”控制是否自动运行。</CardDescription></CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
-          <Field label="Cron"><DraftInput value={deployment.cron} onCommit={(value) => updateDeployment({ ...deployment, cron: value })} /></Field>
+        <CardHeader><CardTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5" />Prefect 定时部署</CardTitle><CardDescription>可配置多条 Cron；有任意 Cron 时由基础信息里的“启用定时调度”控制是否自动运行。</CardDescription></CardHeader>
+        <CardContent className="space-y-4">
           <Field label="时区"><DraftInput value={deployment.timezone} onCommit={(value) => updateDeployment({ ...deployment, timezone: value })} /></Field>
+          <div className="space-y-3">
+            {crons.map((cron, index) => (
+              <div key={index} className="grid gap-3 md:grid-cols-[1fr_auto]">
+                <Field label={`Cron ${index + 1}`}>
+                  <DraftInput value={cron} onCommit={(value) => updateCron(index, value)} />
+                </Field>
+                <div className="flex items-end">
+                  <Button variant="ghost" size="icon" onClick={() => removeCron(index)} disabled={crons.length === 1 && !cron}>
+                    <Trash2 className="h-4 w-4 text-red-500" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <Button variant="outline" onClick={() => updateDeployment(deployment, [...crons, ""])}>
+            <Plus className="h-4 w-4" />
+            添加 Cron
+          </Button>
         </CardContent>
       </Card>
     </div>

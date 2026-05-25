@@ -93,7 +93,7 @@ export interface ReportConfig {
   };
   deployment: {
     enabled: boolean;
-    cron: string;
+    crons: string[];
     timezone: string;
   };
   lastRun?: RuntimeStatus;

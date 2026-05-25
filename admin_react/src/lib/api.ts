@@ -22,6 +22,11 @@ const AUTH_PRESET_STAGE: Record<string, string> = {
   "地市平台 Uaptoken": "city_ops",
 };
 
+function normalizeDeploymentCrons(deployment?: Partial<ReportConfig["deployment"]>) {
+  const crons = Array.isArray(deployment?.crons) ? deployment.crons : [];
+  return crons.map((cron) => String(cron || "").trim()).filter(Boolean);
+}
+
 export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
   const { download: legacyDownload, env: _legacyEnv, compare: _legacyCompare, ...rest } = config;
   const downloads: RawDownloadItem[] = (rest.downloads?.length ? rest.downloads : legacyDownload ? [legacyDownload] : []) as RawDownloadItem[];
@@ -62,11 +67,14 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
       poll_interval_seconds: config.wait_for_change?.poll_interval_seconds || 300,
       max_wait_minutes: config.wait_for_change?.max_wait_minutes || 180,
     },
-    deployment: {
-      enabled: Boolean(config.deployment?.cron),
-      cron: config.deployment?.cron?.trim() || "",
-      timezone: config.deployment?.timezone || "Asia/Shanghai",
-    },
+    deployment: (() => {
+      const crons = normalizeDeploymentCrons(config.deployment);
+      return {
+        enabled: crons.length > 0,
+        crons,
+        timezone: config.deployment?.timezone || "Asia/Shanghai",
+      };
+    })(),
   };
 }
 
@@ -175,7 +183,7 @@ export async function publishConfig(config: ReportConfig) {
     message: string;
     output?: string;
     taskConfigPath?: string;
-    cron?: string;
+    crons?: string[];
     timezone?: string;
     scheduleStatus?: "enabled" | "disabled" | "none";
   }>(`/api/configs/${encodeURIComponent(config.id)}/publish`, {
