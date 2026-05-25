@@ -42,10 +42,28 @@ def _resolve_path(path_value: str | Path, base_dir: Path = PROJECT_ROOT) -> Path
 
 def _enabled_downloads(config: dict[str, Any]) -> list[dict[str, Any]]:
     return [
-        copy.deepcopy(item)
+        _normalize_download_auth(item)
         for item in config.get("downloads") or []
         if item.get("enabled", True) is not False
     ]
+
+
+def _normalize_download_auth(item: dict[str, Any]) -> dict[str, Any]:
+    next_item = copy.deepcopy(item)
+    preset = str(next_item.get("auth_preset") or "")
+    if preset == "报表分析 Ssr-token":
+        next_item["stage"] = "report_analysis"
+        next_item["headers_from_cookies"] = {"Ssr-token": "ssr-token"}
+        next_item.pop("headers_from_session_storage", None)
+    elif preset == "智慧运营 User-Info":
+        next_item["stage"] = "smart_ops"
+        next_item["headers_from_session_storage"] = {"User-Info": "zhyyptInfo.accessToken"}
+        next_item.pop("headers_from_cookies", None)
+    elif preset == "地市平台 Uaptoken":
+        next_item["stage"] = "city_ops"
+        next_item["headers_from_session_storage"] = {"Uaptoken": "uapToken"}
+        next_item.pop("headers_from_cookies", None)
+    return next_item
 
 
 def _required_stages(downloads: list[dict[str, Any]]) -> list[str]:
@@ -138,8 +156,9 @@ def _session_status_message(session_result: dict[str, Any]) -> str:
 
 
 def _is_session_expired_error(exc: RuntimeError) -> bool:
-    text = str(exc)
-    return "session 已过期" in text or "登录超时" in text or "请登录后重新跳转" in text
+    # Keep this aligned with flows.notify_single_flow.run_download_with_session_retry.
+    # Only a clear session-expired download error should force a browser re-login.
+    return "session 已过期" in str(exc)
 
 
 def _download_reports_with_session_retry(download_config: dict[str, Any], stages: list[str]) -> dict[str, Any]:

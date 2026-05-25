@@ -106,7 +106,7 @@ def generate_starter_template(config_id: str, config: dict):
         append_log(
             "running",
             "生成新手模板 - 会话策略",
-            "先探活本次抓取项需要的 stage；探活失败才关闭旧自动登录浏览器并重新登录，登录成功后保留浏览器。",
+            "按 Prefect 会话策略执行：先探活本次抓取项需要的 stage；探活失败才重新登录；仅下载明确提示 session 已过期时强制刷新。",
         )
         result = starter_template.generate_starter_template(config, progress=progress)
         if result.get("status") == "failed":

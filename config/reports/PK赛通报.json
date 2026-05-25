@@ -1,0 +1,184 @@
+{
+  "id": "PK赛通报",
+  "name": "PK赛通报",
+  "template_path": "templates/PK赛进度.xlsx",
+  "enabled": true,
+  "description": "",
+  "downloads": [
+    {
+      "name": "区公司PK赛数据",
+      "stage": "city_ops",
+      "auth_preset": "地市平台 Uaptoken",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailByAreaAndIndex",
+      "headers": {
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
+      },
+      "body_type": "json",
+      "response_mode": "json_to_excel",
+      "data": {
+        "indCodes": "sgs_ajvwdz",
+        "areaId": "AQ",
+        "diyCodes": "sgs_ajvwdz",
+        "areaType": null,
+        "queryDate": "${today_yyyymmdd}"
+      },
+      "raw_body": "",
+      "excel": {
+        "data_path": "result.tableData",
+        "columns": [
+          {
+            "field": "areaCode",
+            "header": "areaCode"
+          },
+          {
+            "field": "areaName",
+            "header": "areaName"
+          },
+          {
+            "field": "sgs_ajvwdz",
+            "header": "爱家亲情网(V网版)"
+          }
+        ],
+        "sheet_name": "区公司PK赛数据"
+      },
+      "drilldown": {
+        "data_path": "result.tableData",
+        "request_area_field": "areaId",
+        "next_area_field": "areaCode",
+        "levels": [
+          "网格",
+          "渠道经理",
+          "渠道",
+          "人员"
+        ],
+        "skip_self_row": true,
+        "max_requests": 1000,
+        "max_workers": 6
+      },
+      "headers_from_session_storage": {
+        "Uaptoken": "uapToken"
+      }
+    },
+    {
+      "name": "市公司PK赛数据",
+      "stage": "city_ops",
+      "auth_preset": "地市平台 Uaptoken",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailByAreaAndIndex",
+      "headers": {
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
+      },
+      "body_type": "json",
+      "response_mode": "json_to_excel",
+      "data": {
+        "indCodes": "sgs_ajvwdz",
+        "areaId": "A",
+        "diyCodes": "sgs_ajvwdz",
+        "areaType": null,
+        "queryDate": "${today_yyyymmdd}"
+      },
+      "excel": {
+        "data_path": "result.tableData",
+        "sheet_name": "市公司PK赛数据",
+        "columns": [
+          {
+            "field": "areaCode",
+            "header": "areaCode"
+          },
+          {
+            "field": "areaName",
+            "header": "areaName"
+          },
+          {
+            "field": "sgs_ajvwdz",
+            "header": "爱家亲情网(V网版)"
+          }
+        ]
+      },
+      "headers_from_session_storage": {
+        "Uaptoken": "uapToken"
+      }
+    }
+  ],
+  "compare_sources": [
+    {
+      "download_name": "区公司PK赛数据",
+      "engine": "openpyxl",
+      "max_workers": 1,
+      "sheet_mappings": [
+        {
+          "name": "区公司PK赛数据",
+          "new_sheet_name": "区公司PK赛数据",
+          "template_sheet_name": "区公司PK赛数据",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "市公司PK赛数据",
+      "engine": "openpyxl",
+      "max_workers": 1,
+      "sheet_mappings": [
+        {
+          "name": "市公司PK赛数据",
+          "new_sheet_name": "市公司PK赛数据",
+          "template_sheet_name": "市公司PK赛数据",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    }
+  ],
+  "send": {
+    "webhook_url": "",
+    "workbook_name": "新建通报配置",
+    "items": [
+      {
+        "type": "image",
+        "sheet": "区公司PK赛"
+      },
+      {
+        "type": "image",
+        "sheet": "市公司PK赛"
+      }
+    ]
+  },
+  "template_update": {
+    "engine": "hybrid",
+    "update_condition": "any_changed",
+    "write_sheets": "all_compared",
+    "send_when_same": true
+  },
+  "wait_for_change": {
+    "enabled": false,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "deployment": {
+    "enabled": true,
+    "cron": "*/15 14-17 * * *",
+    "timezone": "Asia/Shanghai"
+  },
+  "lastRun": "disabled",
+  "updatedAt": "2026-05-24 16:22:01",
+  "source": "published",
+  "has_draft": false
+}

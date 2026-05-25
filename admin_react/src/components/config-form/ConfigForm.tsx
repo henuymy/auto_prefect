@@ -88,6 +88,21 @@ const AUTH_PRESET_OPTIONS = [
   { value: "无", label: "无", desc: "清空动态认证配置，只使用 Cookie Stage 自动带 Cookie。" },
 ];
 
+const AUTH_PRESET_DEFAULTS: Record<string, Pick<DownloadItem, "stage" | "headers_from_cookies" | "headers_from_session_storage">> = {
+  "报表分析 Ssr-token": {
+    stage: "report_analysis",
+    headers_from_cookies: { "Ssr-token": "ssr-token" },
+  },
+  "智慧运营 User-Info": {
+    stage: "smart_ops",
+    headers_from_session_storage: { "User-Info": "zhyyptInfo.accessToken" },
+  },
+  "地市平台 Uaptoken": {
+    stage: "city_ops",
+    headers_from_session_storage: { Uaptoken: "uapToken" },
+  },
+};
+
 const STARTER_TEMPLATE_STEPS = ["校验配置", "探活/登录", "下载数据", "合并模板", "生成完成"];
 
 function normalizeAuthPreset(value?: string) {
@@ -224,7 +239,7 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
 
   async function handleGenerateStarterTemplate() {
     const confirmed = window.confirm(
-      "将真实下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n会先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会关闭旧自动登录浏览器并重新登录。登录成功后会保留浏览器，供下次运行继续探活复用。\n\n不会发送企业微信，也不会提交正式模板。确定继续吗？",
+      "将真实下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n会按 Prefect 会话策略处理：先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会重新登录；下载阶段只有明确提示 session 已过期时才强制刷新。\n\n不会发送企业微信，也不会提交正式模板。确定继续吗？",
     );
     if (!confirmed) return;
     setStarterStep(0);
@@ -513,11 +528,11 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
     delete next.headers_from_cookie_string;
 
     if (authPreset === "报表分析 Ssr-token") {
-      next.headers_from_cookies = { "Ssr-token": "ssr-token" };
+      Object.assign(next, AUTH_PRESET_DEFAULTS[authPreset]);
     } else if (authPreset === "智慧运营 User-Info") {
-      next.headers_from_session_storage = { "User-Info": "zhyyptInfo.accessToken" };
+      Object.assign(next, AUTH_PRESET_DEFAULTS[authPreset]);
     } else if (authPreset === "地市平台 Uaptoken") {
-      next.headers_from_session_storage = { Uaptoken: "uapToken" };
+      Object.assign(next, AUTH_PRESET_DEFAULTS[authPreset]);
     }
 
     setAuthText(prettyJson(next.headers_from_session_storage || next.headers_from_cookies || {}));
@@ -560,7 +575,7 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
           <Select value={normalizeAuthPreset(item.auth_preset)} onChange={(event) => applyAuthPreset(event.target.value)}>
             {AUTH_PRESET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </Select>
-          <p className="mt-1 text-xs text-muted-foreground">{getAuthTargetLabel(item)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{getAuthTargetLabel(item)}；选择预设会自动切换 Cookie Stage。</p>
         </Field>
         <Field label="下载 URL" hint="可以写占位符，例如 queryDate=${today_yyyymmdd}" className="lg:col-span-3"><DraftInput value={item.url} onCommit={(value) => onChange({ ...item, url: value })} /></Field>
         <JsonTextField label="请求头 Headers JSON" value={headersText} error={headersError} onChange={setHeadersText} onBlur={applyJsonTexts} />

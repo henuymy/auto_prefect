@@ -16,6 +16,12 @@ function normalizeAuthPreset(value?: string) {
   return value || "无";
 }
 
+const AUTH_PRESET_STAGE: Record<string, string> = {
+  "报表分析 Ssr-token": "report_analysis",
+  "智慧运营 User-Info": "smart_ops",
+  "地市平台 Uaptoken": "city_ops",
+};
+
 export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
   const { download: legacyDownload, env: _legacyEnv, compare: _legacyCompare, ...rest } = config;
   const downloads: RawDownloadItem[] = (rest.downloads?.length ? rest.downloads : legacyDownload ? [legacyDownload] : []) as RawDownloadItem[];
@@ -28,7 +34,7 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
       return {
         ...cleanItem,
         name: cleanItem.name || `抓取项-${index + 1}`,
-        stage: cleanItem.stage || "report_analysis",
+        stage: AUTH_PRESET_STAGE[normalizeAuthPreset(cleanItem.auth_preset)] || cleanItem.stage || "report_analysis",
         auth_preset: normalizeAuthPreset(cleanItem.auth_preset),
         headers: cleanItem.headers || {},
         data: bodyType === "raw" ? cleanItem.data : cleanItem.data || {},

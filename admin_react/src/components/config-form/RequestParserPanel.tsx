@@ -79,18 +79,21 @@ export function RequestParserPanel({ item, onApply }: { item: DownloadItem; onAp
 
     if (userInfo) {
       next.auth_preset = "智慧运营 User-Info";
+      next.stage = "smart_ops";
       next.headers_from_session_storage = { "User-Info": "zhyyptInfo.accessToken" };
       removeHeader(userInfo);
       return;
     }
     if (uapToken) {
       next.auth_preset = "地市平台 Uaptoken";
+      next.stage = "city_ops";
       next.headers_from_session_storage = { Uaptoken: "uapToken" };
       removeHeader(uapToken);
       return;
     }
     if (ssrToken) {
       next.auth_preset = "报表分析 Ssr-token";
+      next.stage = "report_analysis";
       next.headers_from_cookies = { "Ssr-token": "ssr-token" };
       removeHeader(ssrToken);
     }
