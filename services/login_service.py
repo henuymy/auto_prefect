@@ -1,6 +1,8 @@
 """Selenium login flow for capturing NGBOSS/USM cookies."""
 import json
+import shutil
 import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 from selenium import webdriver
@@ -12,7 +14,7 @@ from selenium.common.exceptions import TimeoutException
 
 from services.cookie_recorder import CookieRecorder, resolve_cookie_dump_path
 from services.otp_service import delete_message, prepare_wait_context, wait_for_otp
-from services.browser_session import browser_config, record_browser_session
+from services.browser_session import browser_config, close_browser_session, record_browser_session
 from utils.config_loader import load_json_with_local_override
 
 
@@ -76,6 +78,13 @@ class AutoLogin:
     def get_login_url(self):
         return self.config.get("login_url") or self.config["urls"]["ngboss_login"]
 
+    def get_logout_url(self):
+        configured = self.config.get("logout_url")
+        if configured:
+            return configured
+        parsed = urlparse(self.get_login_url())
+        return f"{parsed.scheme}://{parsed.netloc}/uac/web3/jsp/login/login3!logout.action"
+
     def get_usm_host(self):
         if "usm_host" in self.config:
             return self.config["usm_host"]
@@ -97,10 +106,189 @@ class AutoLogin:
         element.click()
         return element
 
+    def dump_login_page_debug(self, reason):
+        debug_dir = PROJECT_DIR / "runtime" / "login_debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        payload = {
+            "reason": reason,
+            "url": "",
+            "title": "",
+            "page_source_path": str(debug_dir / f"login_{stamp}.html"),
+            "screenshot_path": str(debug_dir / f"login_{stamp}.png"),
+        }
+        try:
+            payload["url"] = self.driver.current_url
+            payload["title"] = self.driver.title
+        except Exception:
+            pass
+        try:
+            Path(payload["page_source_path"]).write_text(self.driver.page_source or "", encoding="utf-8")
+        except Exception as exc:
+            payload["page_source_error"] = str(exc)
+        try:
+            self.driver.save_screenshot(payload["screenshot_path"])
+        except Exception as exc:
+            payload["screenshot_error"] = str(exc)
+        print(f"[WARN] 登录页调试信息: {json.dumps(payload, ensure_ascii=False)}")
+        return payload
+
+    def wait_for_login_entry_or_home(self, timeout=30, attempts=2):
+        for attempt in range(1, attempts + 1):
+            try:
+                return WebDriverWait(self.driver, timeout).until(self.detect_login_entry_or_home)
+            except TimeoutException:
+                debug = self.dump_login_page_debug(f"login_entry_timeout_attempt_{attempt}")
+                if attempt < attempts:
+                    if self.is_ngboss_no_permission_page():
+                        self.reset_ngboss_login_state("检测到系统异常页")
+                    else:
+                        print("[WARN] 未找到登录框或主页，刷新登录页后重试")
+                        self.driver.get(self.get_login_url())
+                    continue
+                raise RuntimeError(
+                    "打开登录页后未找到 loginName 输入框，也未检测到 NGBOSS 主页；"
+                    f"当前URL={debug.get('url')}, 标题={debug.get('title')}, "
+                    f"截图={debug.get('screenshot_path')}, HTML={debug.get('page_source_path')}"
+                )
+            except Exception as exc:
+                debug = self.dump_login_page_debug(f"login_entry_error_attempt_{attempt}")
+                raise RuntimeError(
+                    "检测登录页状态时 WebDriver 无响应或异常；"
+                    f"错误={type(exc).__name__}: {exc}, "
+                    f"当前URL={debug.get('url')}, 标题={debug.get('title')}, "
+                    f"截图={debug.get('screenshot_path')}, HTML={debug.get('page_source_path')}"
+                ) from exc
+
+    def is_ngboss_no_permission_page(self):
+        try:
+            current_url = self.driver.current_url or ""
+            title = self.driver.title or ""
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text or ""
+        except Exception:
+            return False
+        return (
+            "nopermission.jsp" in current_url
+            or title == "系统异常"
+            or "网络环境发生变化" in body_text
+            or "安全检查失败" in body_text
+        )
+
+    def reset_ngboss_login_state(self, reason):
+        logout_url = self.get_logout_url()
+        login_url = self.get_login_url()
+        print(f"[WARN] {reason}，访问退出地址清理登录状态: {logout_url}")
+        self.driver.get(logout_url)
+        time.sleep(1)
+        print(f"[INFO] 重新打开登录页面: {login_url}")
+        self.driver.get(login_url)
+
+    def detect_login_entry_or_home(self, driver):
+        if self.is_ngboss_no_permission_page():
+            return False
+        if self.confirm_terminal_tool_dialog_if_present() and self.terminal_tool_dialog_is_visible():
+            return False
+        if driver.find_elements(By.ID, "buttonList"):
+            return "home"
+        items = driver.find_elements(By.ID, "loginName")
+        for item in items:
+            try:
+                if item.is_displayed() and item.is_enabled():
+                    return "login"
+            except Exception:
+                continue
+        return False
+
+    def terminal_tool_dialog_is_visible(self):
+        try:
+            dialogs = self.driver.find_elements(By.ID, "jMsgboxBox")
+        except Exception:
+            return False
+        for dialog in dialogs:
+            try:
+                if not dialog.is_displayed():
+                    continue
+                text = (dialog.text or "").strip()
+            except Exception:
+                continue
+            if "多终端工具" in text or "没有安装或运行" in text:
+                return True
+        return False
+
+    def confirm_terminal_tool_dialog_if_present(self):
+        try:
+            dialogs = self.driver.find_elements(By.ID, "jMsgboxBox")
+        except Exception as exc:
+            raise RuntimeError(f"检测多终端工具弹窗时 WebDriver 无响应: {type(exc).__name__}: {exc}") from exc
+        for dialog in dialogs:
+            try:
+                if not dialog.is_displayed():
+                    continue
+                text = (dialog.text or "").strip()
+            except Exception:
+                continue
+            if "多终端工具" not in text and "没有安装或运行" not in text:
+                continue
+            print("[INFO] 检测到多终端工具提示弹窗，自动点击确认后继续登录")
+            buttons = []
+            locators = [
+                (By.CSS_SELECTOR, "#jMsgboxBox .msgbox_button"),
+                (By.XPATH, "//*[@id='jMsgboxBox']//input[@type='button' and (contains(@value,'确') or contains(@value,'关'))]"),
+                (By.XPATH, "//*[@id='jMsgboxBox']//*[self::button or self::input][contains(.,'确认') or contains(@value,'确认')]"),
+            ]
+            for locator in locators:
+                try:
+                    buttons.extend(self.driver.find_elements(*locator))
+                except Exception:
+                    continue
+            for button in buttons:
+                try:
+                    self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", button)
+                    self.driver.execute_script(
+                        """
+                        const el = arguments[0];
+                        for (const type of ['mouseover', 'mousedown', 'mouseup', 'click']) {
+                          el.dispatchEvent(new MouseEvent(type, {bubbles: true, cancelable: true, view: window}));
+                        }
+                        if (typeof el.click === 'function') {
+                          el.click();
+                        }
+                        """,
+                        button,
+                    )
+                    try:
+                        WebDriverWait(self.driver, 3).until_not(
+                            lambda _: self.terminal_tool_dialog_is_visible()
+                        )
+                    except TimeoutException:
+                        continue
+                    print("[INFO] 多终端工具提示弹窗已确认关闭")
+                    return True
+                except Exception:
+                    continue
+            print("[WARN] 多终端工具提示弹窗存在，但未找到可点击的确认按钮")
+            return True
+        return False
+
     def init_driver(self):
         options = Options()
         browser = browser_config(self.config)
+        browser_options = self.config.get("browser") or {}
+        options.page_load_strategy = browser_options.get("page_load_strategy", "eager") or "eager"
         if browser["user_data_dir"]:
+            if browser_options.get("close_existing_before_start", True):
+                close_result = close_browser_session(
+                    browser["session_state_path"],
+                    user_data_dir=browser["user_data_dir"],
+                    wait_seconds=float(browser_options.get("close_wait_seconds", 10) or 10),
+                )
+                if close_result.get("stopped_pids"):
+                    print(f"[INFO] 启动前已关闭旧自动登录浏览器: {close_result}")
+                elif close_result.get("remaining_pids"):
+                    print(f"[WARN] 启动前旧自动登录浏览器仍有残留: {close_result}")
+            if browser_options.get("clear_profile_before_start", False):
+                shutil.rmtree(browser["user_data_dir"], ignore_errors=True)
+                print(f"[INFO] 启动前已删除自动登录浏览器 profile: {browser['user_data_dir']}")
             browser["user_data_dir"].mkdir(parents=True, exist_ok=True)
             options.add_argument(f"--user-data-dir={browser['user_data_dir']}")
         if browser["keep_open_after_login"]:
@@ -116,7 +304,12 @@ class AutoLogin:
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         self.driver = webdriver.Edge(options=options)
-        self.driver.implicitly_wait(int((self.config.get("browser") or {}).get("implicit_wait", 10) or 10))
+        webdriver_timeout = int(browser_options.get("webdriver_timeout_seconds", 30) or 30)
+        if hasattr(self.driver.command_executor, "set_timeout"):
+            self.driver.command_executor.set_timeout(webdriver_timeout)
+        self.driver.set_page_load_timeout(int(browser_options.get("page_load_timeout_seconds", 60) or 60))
+        self.driver.set_script_timeout(int(browser_options.get("script_timeout_seconds", 15) or 15))
+        self.driver.implicitly_wait(int(browser_options.get("implicit_wait", 3) or 3))
         print("[INFO] Edge浏览器已启动（有头模式，已忽略SSL证书错误）")
 
     def keep_open_after_login(self):
@@ -144,19 +337,83 @@ class AutoLogin:
         wait = WebDriverWait(self.driver, 30)
         username = self.config['credentials']['username']
         print(f"[INFO] 输入用户名: {username}")
-        login_name = wait.until(EC.element_to_be_clickable((By.ID, "loginName")))
-        login_name.click()
-        login_name.clear()
-        login_name.send_keys(username)
+        login_name = wait.until(EC.presence_of_element_located((By.ID, "loginName")))
+        self.set_input_value(login_name, username)
+        self.confirm_terminal_tool_dialog_if_present()
         try:
-            self.driver.find_element(By.CSS_SELECTOR, "#pwdDiv > .main_tab_l").click()
+            password_tab = self.driver.find_element(By.CSS_SELECTOR, "#pwdDiv > .main_tab_l")
+            self.driver.execute_script("arguments[0].click();", password_tab)
         except Exception:
             pass
+        self.driver.execute_script(
+            """
+            const password = document.getElementById('loginPassword');
+            const placeholder = document.getElementById('passwd_input_placeholder');
+            const passwordDiv = document.getElementById('pwdDiv');
+            if (passwordDiv) {
+              passwordDiv.style.display = 'block';
+            }
+            if (placeholder) {
+              placeholder.style.display = 'none';
+            }
+            if (password) {
+              password.style.display = '';
+              password.removeAttribute('disabled');
+              password.removeAttribute('readonly');
+            }
+            """
+        )
         print("[INFO] 输入密码")
-        login_password = wait.until(EC.element_to_be_clickable((By.ID, "loginPassword")))
-        login_password.click()
-        login_password.clear()
-        login_password.send_keys(self.config['credentials']['password'])
+        try:
+            login_password = wait.until(
+                lambda driver: self.find_password_input(driver)
+            )
+            self.driver.execute_script("arguments[0].focus();", login_password)
+            self.set_input_value(login_password, self.config['credentials']['password'])
+        except Exception as exc:
+            debug = self.dump_login_page_debug("password_input_timeout")
+            raise RuntimeError(
+                "输入密码失败，未找到可用的密码输入框；"
+                f"当前URL={debug.get('url')}, 标题={debug.get('title')}, "
+                f"截图={debug.get('screenshot_path')}, HTML={debug.get('page_source_path')}"
+            ) from exc
+
+    def find_password_input(self, driver):
+        candidates = []
+        for locator in [
+            (By.ID, "loginPassword"),
+            (By.CSS_SELECTOR, "input[type='password']"),
+        ]:
+            try:
+                candidates.extend(driver.find_elements(*locator))
+            except Exception:
+                continue
+        for item in candidates:
+            try:
+                if item.is_displayed() and item.is_enabled():
+                    return item
+            except Exception:
+                continue
+        return False
+
+    def set_input_value(self, element, value):
+        self.driver.execute_script(
+            """
+            const el = arguments[0];
+            const value = arguments[1];
+            el.removeAttribute('disabled');
+            el.removeAttribute('readonly');
+            el.focus();
+            el.value = '';
+            el.dispatchEvent(new Event('input', {bubbles: true}));
+            el.value = value;
+            for (const type of ['input', 'change', 'keyup', 'blur']) {
+              el.dispatchEvent(new Event(type, {bubbles: true}));
+            }
+            """,
+            element,
+            value,
+        )
 
     def confirm_existing_session_if_needed(self):
         try:
@@ -297,6 +554,10 @@ class AutoLogin:
         login_url = self.get_login_url()
         print(f"[INFO] 正在打开登录页面: {login_url}")
         self.driver.get(login_url)
+        page_state = self.wait_for_login_entry_or_home()
+        if page_state == "home":
+            print("[INFO] 打开登录页后已处于 NGBOSS 主页，跳过用户名密码登录")
+            return
         self.fill_login_credentials()
         self.otp_wait_context = self.prepare_otp_wait_context()
         self.trigger_first_login()

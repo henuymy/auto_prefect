@@ -15,6 +15,7 @@ from services.method_service import (
     normalize_downloaded_excel,
     output_filename_for_report,
     raise_for_status_with_context,
+    request_report,
 )
 
 
@@ -27,6 +28,41 @@ def make_work_dir():
     work_dir = Path("runtime/test_work") / uuid4().hex
     work_dir.mkdir(parents=True, exist_ok=True)
     return work_dir
+
+
+def test_request_report_retries_network_timeout(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("services.method_service.sleep", lambda seconds: sleeps.append(seconds))
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+
+        def request(self, method, url, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise requests.ConnectTimeout("connect timed out")
+            response = requests.Response()
+            response.status_code = 200
+            response.url = url
+            return response
+
+    session = FakeSession()
+    report = {"method": "POST", "url": "https://example.test/api", "body_type": "json", "data": {}}
+
+    response = request_report(
+        session,
+        report,
+        stage={"cookies": []},
+        timeout=120,
+        verify_ssl=False,
+        proxies=None,
+        retry={"retries": 2, "delay_seconds": 1, "backoff": 2},
+    )
+
+    assert response.status_code == 200
+    assert session.calls == 2
+    assert sleeps == [1]
 
 
 def test_find_stage_and_build_headers_from_cookies():

@@ -70,6 +70,18 @@ def deep_merge(base, override):
     return result
 
 
+def is_session_expired_error(exc):
+    message = str(exc)
+    markers = (
+        "session 已过期",
+        "session_expired",
+        "reCode=1101",
+        "单点登录超时",
+        "登录页",
+    )
+    return any(marker in message for marker in markers)
+
+
 def resolve_dynamic_placeholders(value, now=None):
     if not isinstance(value, str):
         return value
@@ -374,7 +386,7 @@ def auto_notify_flow(config_path=None):
                 debug=bool(steps["download"].get("debug", False)),
             )
         except RuntimeError as exc:
-            if "session 已过期" not in str(exc) or not steps.get("login", {}).get("enabled", False):
+            if not is_session_expired_error(exc) or not steps.get("login", {}).get("enabled", False):
                 raise
             logger.warning("下载失败（session 过期），强制重新登录后重试")
             session_result = prepare_session_task(

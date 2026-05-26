@@ -7,7 +7,7 @@ import re
 import copy
 import shutil
 import threading
-from time import perf_counter
+from time import perf_counter, sleep
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -349,11 +349,45 @@ def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
     return kwargs
 
 
-def request_report(session, report, stage, timeout, verify_ssl, proxies):
+NETWORK_RETRY_EXCEPTIONS = (
+    requests.ConnectTimeout,
+    requests.ReadTimeout,
+    requests.ConnectionError,
+)
+
+
+def retry_settings(report, defaults=None):
+    defaults = defaults or {}
+    return {
+        "retries": int(report.get("request_retries", defaults.get("request_retries", 2)) or 0),
+        "delay_seconds": float(report.get("request_retry_delay_seconds", defaults.get("request_retry_delay_seconds", 2)) or 0),
+        "backoff": float(report.get("request_retry_backoff", defaults.get("request_retry_backoff", 2)) or 1),
+    }
+
+
+def request_report(session, report, stage, timeout, verify_ssl, proxies, retry=None):
     method = report["method"].upper()
     url = report["url"]
     kwargs = build_request_kwargs(report, stage, timeout, verify_ssl, proxies)
-    return session.request(method, url, **kwargs)
+    retry = retry or {}
+    retries = int(retry.get("retries", 0) or 0)
+    delay_seconds = float(retry.get("delay_seconds", 0) or 0)
+    backoff = float(retry.get("backoff", 1) or 1)
+    attempt = 0
+    while True:
+        try:
+            return session.request(method, url, **kwargs)
+        except NETWORK_RETRY_EXCEPTIONS as exc:
+            if attempt >= retries:
+                raise
+            attempt += 1
+            wait_seconds = delay_seconds * (backoff ** (attempt - 1))
+            print(
+                f"[WARN] 下载请求网络异常，准备重试 {attempt}/{retries}: "
+                f"{type(exc).__name__} {method} {url}, wait={wait_seconds:.1f}s"
+            )
+            if wait_seconds > 0:
+                sleep(wait_seconds)
 
 
 def response_json_with_context(response):
@@ -416,13 +450,14 @@ def is_html_response(response):
     return preview.lstrip().startswith(b"<!doctype html") or preview.lstrip().startswith(b"<html")
 
 
-def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, proxies):
+def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, proxies, request_retry=None):
     started = perf_counter()
+    request_retry = retry_settings(report, request_retry)
     session = requests.Session()
     session.trust_env = trust_env
     session.cookies.update(build_cookie_jar(stage, cookie_names=report.get("cookie_names")))
     session.headers.update({"User-Agent": "report-downloader/1.0"})
-    response = request_report(session, report, stage, timeout, verify_ssl, proxies)
+    response = request_report(session, report, stage, timeout, verify_ssl, proxies, retry=request_retry)
     raise_for_status_with_context(response)
     if is_html_response(response):
         raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {response.url}")
@@ -460,7 +495,7 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
                     raise RuntimeError("json_drilldown_to_excel 不支持 raw 请求体")
                 next_report["data"] = payload_override
                 next_report.pop("json", None)
-                next_response = request_report(drilldown_session(), next_report, stage, timeout, verify_ssl, proxies)
+                next_response = request_report(drilldown_session(), next_report, stage, timeout, verify_ssl, proxies, retry=request_retry)
                 raise_for_status_with_context(next_response)
                 if is_html_response(next_response):
                     raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {next_response.url}")
@@ -534,6 +569,7 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
     output_dir = resolve_path(config.get("output_dir", "runtime/downloads"), base_dir)
     manifest_path = resolve_path(config.get("manifest_path", "runtime/download_manifest.json"), base_dir)
     timeout = int(config.get("request_timeout_seconds", 120))
+    request_retry = retry_settings(config)
     verify_ssl = bool(config.get("verify_ssl", True))
     trust_env = bool(config.get("trust_env", False))
     proxies = config.get("proxies") or None
@@ -559,7 +595,7 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
             results.append(payload)
             continue
         report_proxies = report.get("proxies", proxies)
-        results.append(download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, report_proxies))
+        results.append(download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, report_proxies, request_retry=request_retry))
 
     manifest = {
         "generated_at": datetime.now().isoformat(),

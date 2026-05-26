@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 
-from services.browser_session import close_recorded_browser_session
+from services.browser_session import close_browser_session
 from services.json_excel_service import get_by_path
 from services.method_service import build_cookie_jar, build_headers, resolve_storage_references
 
@@ -60,7 +60,39 @@ def read_lock_info(lock_path):
         return {}
 
 
+def process_is_running(pid):
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}",
+            ],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+        )
+        return completed.returncode == 0
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, SystemError):
+        return False
+
+
 def lock_is_stale(lock_path, stale_seconds):
+    lock_info = read_lock_info(lock_path)
+    if lock_info.get("pid") and not process_is_running(lock_info.get("pid")):
+        return True
     try:
         mtime = Path(lock_path).stat().st_mtime
     except FileNotFoundError:
@@ -368,6 +400,20 @@ def load_cookie_dump_if_exists(path):
     return payload
 
 
+def validate_existing_session(cookie_dump, required_stages, stage_probes, min_ttl_seconds=0, max_age_seconds=None):
+    validation = validate_cookie_dump(
+        cookie_dump or {},
+        required_stages,
+        min_ttl_seconds=min_ttl_seconds,
+        max_age_seconds=max_age_seconds,
+    )
+    if not validation["valid"]:
+        return validation, None
+    probe_validation = validate_stage_probes(cookie_dump or {}, required_stages, stage_probes)
+    validation["probe_validation"] = probe_validation
+    return validation, probe_validation
+
+
 def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None):
     cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/cookies/cookie_dump.json"), base_dir)
     legacy_cookie_dump_path = resolve_path(config.get("legacy_cookie_dump_path"), base_dir)
@@ -400,7 +446,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                     "cookie_dump_path": str(cookie_dump_path),
                     "validation": validation,
                 }
-            warn("已有 Cookie 探活失败，将重新登录: %s", format_probe_validation_error(probe_validation))
+            warn("已有 Cookie 探活失败，将进入登录锁并在锁内复检: %s", format_probe_validation_error(probe_validation))
         else:
             warn("已有 Cookie 静态检查失败，将重新登录: %s", validation)
     else:
@@ -426,6 +472,8 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         config.get("browser_session_state_path", "runtime/browser_session/session.json"),
         base_dir,
     )
+    browser_config = config.get("browser") or {}
+    browser_user_data_dir = resolve_path(browser_config.get("user_data_dir"), base_dir)
 
     login_timeout_seconds = config.get("login_timeout_seconds")
     if login_timeout_seconds is not None:
@@ -441,32 +489,37 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         poll_seconds=lock_poll_seconds,
         stale_seconds=lock_stale_seconds,
     ) as lock_result:
-        # Another scheduled flow may have refreshed cookies while this run was waiting.
-        if lock_result["waited"]:
-            waited_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
-            waited_validation = validate_cookie_dump(
-                waited_cookie_dump or {},
-                required_stages,
-                min_ttl_seconds=min_ttl_seconds,
-                max_age_seconds=max_age_seconds,
-            )
-            if waited_validation["valid"]:
-                waited_probe_validation = validate_stage_probes(waited_cookie_dump or {}, required_stages, stage_probes)
-                waited_validation["probe_validation"] = waited_probe_validation
-                if waited_probe_validation["valid"]:
-                    return {
-                        "status": "reused_after_wait",
-                        "cookie_dump_path": str(cookie_dump_path),
-                        "validation": waited_validation,
-                        "lock": lock_result,
-                    }
-                warn("等待登录锁后 Cookie 探活仍失败，将自行重新登录: %s", format_probe_validation_error(waited_probe_validation))
-            else:
-                warn("等待登录锁后 Cookie 静态检查仍失败，将自行重新登录: %s", waited_validation)
+        # Re-check under the login lock. Parallel flow runs may have refreshed
+        # cookies between this run's first probe/download failure and lock acquisition.
+        locked_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+        locked_validation, locked_probe_validation = validate_existing_session(
+            locked_cookie_dump,
+            required_stages,
+            stage_probes,
+            min_ttl_seconds=min_ttl_seconds,
+            max_age_seconds=max_age_seconds,
+        )
+        if locked_validation["valid"] and locked_probe_validation and locked_probe_validation["valid"]:
+            return {
+                "status": "reused_after_lock",
+                "cookie_dump_path": str(cookie_dump_path),
+                "validation": locked_validation,
+                "lock": lock_result,
+            }
+        if locked_validation["valid"]:
+            warn("登录锁内 Cookie 探活仍失败，将自行重新登录: %s", format_probe_validation_error(locked_probe_validation))
+        else:
+            warn("登录锁内 Cookie 静态检查仍失败，将自行重新登录: %s", locked_validation)
 
-        close_result = close_recorded_browser_session(browser_session_state_path)
+        close_result = close_browser_session(
+            browser_session_state_path,
+            user_data_dir=browser_user_data_dir,
+            wait_seconds=float(config.get("browser_close_wait_seconds", 10) or 10),
+        )
         if close_result.get("stopped_pids"):
             warn("重新登录前已关闭旧自动登录浏览器: %s", close_result)
+        if close_result.get("remaining_pids"):
+            warn("旧自动登录浏览器仍有残留进程，继续尝试登录: %s", close_result)
         command_result = run_login_command(command, cwd=base_dir, timeout_seconds=login_timeout_seconds)
         source_path = legacy_cookie_dump_path or cookie_dump_path
         sync_cookie_dump(source_path, cookie_dump_path)

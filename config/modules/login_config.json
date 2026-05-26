@@ -1,5 +1,6 @@
 {
   "login_url": "http://ngboss.ha.cmcc/uac/web3/jsp/login/login.jsp",
+  "logout_url": "http://ngboss.ha.cmcc/uac/web3/jsp/login/login3!logout.action",
   "usm_host": "usm.ha.cmcc",
   "credentials": {
     "username": "",
@@ -61,6 +62,13 @@
     "user_data_dir": "runtime/browser_session/edge_profile_auto_login",
     "window_width": 1920,
     "window_height": 1080,
-    "implicit_wait": 10
+    "close_existing_before_start": true,
+    "clear_profile_before_start": true,
+    "close_wait_seconds": 10,
+    "implicit_wait": 3,
+    "page_load_strategy": "none",
+    "page_load_timeout_seconds": 60,
+    "script_timeout_seconds": 15,
+    "webdriver_timeout_seconds": 30
   }
 }

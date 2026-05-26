@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -137,3 +138,33 @@ def close_recorded_browser_session(session_state_path=DEFAULT_SESSION_STATE_PATH
     stopped = stop_process_ids(process_ids)
     remove_session_state(state_path)
     return {"status": "closed", "stopped_pids": stopped, "state_path": str(state_path)}
+
+
+def close_browser_session(session_state_path=DEFAULT_SESSION_STATE_PATH, user_data_dir=None, wait_seconds=10, poll_seconds=0.5):
+    state_path = Path(session_state_path)
+    state = read_session_state(state_path)
+    profile_dir = user_data_dir or state.get("user_data_dir") or DEFAULT_USER_DATA_DIR
+    process_ids = []
+    if state.get("driver_pid"):
+        process_ids.append(state.get("driver_pid"))
+    process_ids.extend(state.get("browser_pids") or [])
+    if profile_dir:
+        process_ids.extend(find_edge_pids_by_user_data_dir(profile_dir))
+
+    stopped = stop_process_ids(process_ids)
+    deadline = time.time() + float(wait_seconds or 0)
+    remaining = find_edge_pids_by_user_data_dir(profile_dir) if profile_dir else []
+    while remaining and time.time() < deadline:
+        time.sleep(float(poll_seconds or 0.5))
+        remaining = find_edge_pids_by_user_data_dir(profile_dir)
+        if remaining:
+            stopped.extend(stop_process_ids(remaining))
+
+    remove_session_state(state_path)
+    return {
+        "status": "closed",
+        "stopped_pids": sorted({int(pid) for pid in stopped if pid}),
+        "remaining_pids": remaining,
+        "state_path": str(state_path),
+        "user_data_dir": str(Path(profile_dir).resolve()) if profile_dir else None,
+    }

@@ -10,10 +10,13 @@
   "allow_login": true,
   "login_timeout_seconds": 600,
   "login_lock_path": "runtime/locks/login.lock",
-  "login_lock_wait_seconds": 300,
+  "login_lock_wait_seconds": 900,
   "login_lock_poll_seconds": 5,
-  "login_lock_stale_seconds": 600,
+  "login_lock_stale_seconds": 900,
   "browser_session_state_path": "runtime/browser_session/session.json",
+  "browser": {
+    "user_data_dir": "runtime/browser_session/edge_profile_auto_login"
+  },
   "stage_probes": {
     "report_analysis": {
       "enabled": true,
@@ -45,7 +48,7 @@
         "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/"
       },
       "headers_from_session_storage": {
-        "uapToken": "uapToken"
+        "Uaptoken": "uapToken"
       },
       "body_type": "json",
       "data": {},

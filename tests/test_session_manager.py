@@ -6,6 +6,7 @@ from uuid import uuid4
 from services import session_manager
 from services.session_manager import (
     format_probe_validation_error,
+    lock_is_stale,
     prepare_session,
     validate_cookie_dump,
     validate_stage_probes,
@@ -225,7 +226,7 @@ def test_stage_probe_smart_ops_accepts_empty_200(monkeypatch):
     assert result["results"][0]["ok"] is True
 
 
-def test_prepare_session_refreshes_when_probe_reports_expired(monkeypatch):
+def test_prepare_session_reuses_after_lock_when_probe_recovers(monkeypatch):
     work_dir = make_work_dir()
     try:
         cookie_dump_path = work_dir / "cookie_dump.json"
@@ -268,8 +269,58 @@ def test_prepare_session_refreshes_when_probe_reports_expired(monkeypatch):
             }
         )
 
-        assert result["status"] == "refreshed"
-        assert login_calls == ["fake-login"]
+        assert result["status"] == "reused_after_lock"
+        assert login_calls == []
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_prepare_session_force_refresh_rechecks_under_lock(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        write_json(
+            cookie_dump_path,
+            {
+                "stages": [
+                    {
+                        "stage": "city_ops",
+                        "cookies": [{"name": "JSESSIONID", "value": "sid", "domain": "example.com"}],
+                        "session_storage": {"uapToken": "dynamic-token"},
+                    }
+                ]
+            },
+        )
+        monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+        FakeSession.responses = [FakeResponse(payload={"reCode": "0000", "reMsg": "success"})]
+        login_calls = []
+        close_calls = []
+        monkeypatch.setattr(session_manager, "run_login_command", lambda *args, **kwargs: login_calls.append(args[0]) or {"returncode": 0})
+        monkeypatch.setattr(session_manager, "close_browser_session", lambda *args, **kwargs: close_calls.append(args) or {"stopped_pids": []})
+
+        result = prepare_session(
+            {
+                "cookie_dump_path": str(cookie_dump_path),
+                "required_stages": ["city_ops"],
+                "login_command": "fake-login",
+                "stage_probes": {
+                    "city_ops": {
+                        "method": "POST",
+                        "url": "https://example/getUserInfo",
+                        "headers_from_session_storage": {"uapToken": "uapToken"},
+                        "body_type": "json",
+                        "data": {},
+                        "success_json_path": "reCode",
+                        "success_value": "0000",
+                    }
+                },
+            },
+            force_refresh=True,
+        )
+
+        assert result["status"] == "reused_after_lock"
+        assert login_calls == []
+        assert close_calls == []
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -293,3 +344,15 @@ def test_format_probe_validation_error_is_human_readable():
     assert "city_ops 探活失败" in message
     assert "原因=session_expired" in message
     assert "HTTP=401" in message
+
+
+def test_lock_is_stale_when_recorded_pid_is_gone(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        lock_path = work_dir / "login.lock"
+        write_json(lock_path, {"pid": 999999})
+        monkeypatch.setattr(session_manager, "process_is_running", lambda pid: False)
+
+        assert lock_is_stale(lock_path, stale_seconds=600) is True
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)

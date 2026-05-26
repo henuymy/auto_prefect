@@ -6,6 +6,7 @@ from flows.notify_single_flow import (
     build_download_config,
     build_compare_source_configs,
     build_login_config,
+    is_session_expired_error,
     parse_wait_for_change_config,
     required_stages_for_report,
     resolve_dynamic_placeholders,
@@ -14,6 +15,14 @@ from flows.notify_single_flow import (
 )
 
 PROJECT_TEST_RUNTIME_DIR = Path("runtime/flow/test")
+
+
+def test_is_session_expired_error_matches_known_messages():
+    assert is_session_expired_error(RuntimeError("JSON 接口返回 session 已过期: reCode=1101"))
+    assert is_session_expired_error(RuntimeError("reason=session_expired"))
+    assert is_session_expired_error(RuntimeError("reMsg=单点登录超时，请登录后重新跳转"))
+    assert is_session_expired_error(RuntimeError("下载响应为 HTML（可能是登录页）"))
+    assert not is_session_expired_error(RuntimeError("Connection timed out"))
 
 
 def test_select_downloaded_report_path_by_name():
