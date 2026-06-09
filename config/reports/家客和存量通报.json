@@ -140,8 +140,9 @@
           "渠道",
           "人员"
         ],
-        "max_requests": 1000,
-        "skip_self_row": true
+        "skip_self_row": true,
+        "max_requests": 2000,
+        "max_workers": 32
       },
       "headers_from_session_storage": {
         "Uaptoken": "uapToken"
@@ -212,7 +213,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-05-19 15:40:44",
+  "updatedAt": "2026-05-25 09:29:06",
   "source": "published",
   "has_draft": false
 }

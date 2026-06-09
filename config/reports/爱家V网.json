@@ -107,6 +107,14 @@
           "header_row": 1,
           "ignore_columns": [],
           "key_columns": []
+        },
+        {
+          "name": "期末-335837",
+          "new_sheet_name": "期末",
+          "template_sheet_name": "期末-335837",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
         }
       ]
     },
@@ -149,7 +157,7 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-23 22:52:15",
+  "updatedAt": "2026-05-25 09:29:06",
   "source": "published",
   "has_draft": false
 }

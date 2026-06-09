@@ -44,7 +44,8 @@
           },
           {
             "field": "sgs_ajvwdz",
-            "header": "爱家亲情网(V网版)"
+            "header": "爱家亲情网(V网版)",
+            "type": "number"
           }
         ],
         "sheet_name": "区公司PK赛数据"
@@ -106,12 +107,113 @@
           },
           {
             "field": "sgs_ajvwdz",
-            "header": "爱家亲情网(V网版)"
+            "header": "爱家亲情网(V网版)",
+            "type": "number"
           }
         ]
       },
       "headers_from_session_storage": {
         "Uaptoken": "uapToken"
+      }
+    },
+    {
+      "name": "累计区公司PK赛数据",
+      "stage": "city_ops",
+      "auth_preset": "地市平台 Uaptoken",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailsByDateAndArea",
+      "headers": {
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
+      },
+      "body_type": "json",
+      "response_mode": "json_to_excel",
+      "data": {
+        "indCodes": "sgs_ajvwdz",
+        "indType": "DD",
+        "areaId": "AQ",
+        "diyCodes": "sgs_ajvwdz",
+        "queryDate": "${yesterday_yyyymmdd}",
+        "areaType": null
+      },
+      "raw_body": "",
+      "headers_from_session_storage": {
+        "Uaptoken": "uapToken"
+      },
+      "excel": {
+        "data_path": "result.tableData",
+        "sheet_name": "累计区公司PK赛数据",
+        "columns": [
+          {
+            "field": "areaCode",
+            "header": "areaCode"
+          },
+          {
+            "field": "areaName",
+            "header": "areaName"
+          },
+          {
+            "field": "sgs_ajvwdz",
+            "header": "爱家亲情网(V网版)",
+            "type": "number"
+          }
+        ]
+      }
+    },
+    {
+      "name": "累计市公司PK赛数据",
+      "stage": "city_ops",
+      "auth_preset": "地市平台 Uaptoken",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailsByDateAndArea",
+      "headers": {
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
+      },
+      "body_type": "json",
+      "response_mode": "json_to_excel",
+      "data": {
+        "indCodes": "sgs_ajvwdz",
+        "indType": "DD",
+        "areaId": "A",
+        "diyCodes": "sgs_ajvwdz",
+        "queryDate": "${yesterday_yyyymmdd}",
+        "areaType": null
+      },
+      "raw_body": "",
+      "headers_from_session_storage": {
+        "Uaptoken": "uapToken"
+      },
+      "excel": {
+        "data_path": "result.tableData",
+        "sheet_name": "累计市公司PK赛数据",
+        "columns": [
+          {
+            "field": "areaCode",
+            "header": "areaCode"
+          },
+          {
+            "field": "areaName",
+            "header": "areaName"
+          },
+          {
+            "field": "sgs_ajvwdz",
+            "header": "爱家亲情网(V网版)",
+            "type": "number"
+          }
+        ]
       }
     }
   ],
@@ -140,6 +242,36 @@
           "name": "市公司PK赛数据",
           "new_sheet_name": "市公司PK赛数据",
           "template_sheet_name": "市公司PK赛数据",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "累计区公司PK赛数据",
+      "engine": "openpyxl",
+      "max_workers": 1,
+      "sheet_mappings": [
+        {
+          "name": "累计区公司PK赛数据",
+          "new_sheet_name": "累计区公司PK赛数据",
+          "template_sheet_name": "累计区公司PK赛数据",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "累计市公司PK赛数据",
+      "engine": "openpyxl",
+      "max_workers": 1,
+      "sheet_mappings": [
+        {
+          "name": "累计市公司PK赛数据",
+          "new_sheet_name": "累计市公司PK赛数据",
+          "template_sheet_name": "累计市公司PK赛数据",
           "header_row": 1,
           "ignore_columns": [],
           "key_columns": []
@@ -184,7 +316,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-05-25 09:29:05",
+  "updatedAt": "2026-06-04 00:09:42",
   "source": "published",
   "has_draft": false
 }

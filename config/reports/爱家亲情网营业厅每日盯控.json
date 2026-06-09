@@ -15,6 +15,10 @@
         "text": {
           "mode": "used_range"
         }
+      },
+      {
+        "type": "image",
+        "sheet": "营业厅人员通报"
       }
     ]
   },
@@ -222,7 +226,7 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-23 22:51:23",
+  "updatedAt": "2026-05-25 09:29:05",
   "source": "published",
   "has_draft": false
 }
