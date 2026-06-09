@@ -24,6 +24,7 @@ $env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = "False"
 $env:PREFECT_SERVER_ANALYTICS_ENABLED = "False"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONNOUSERSITE = "1"
 
 Write-Host "已加载 Prefect 正式调度环境变量。"
 Write-Host "PREFECT_HOME   : $($env:PREFECT_HOME)"

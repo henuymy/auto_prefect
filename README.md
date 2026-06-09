@@ -128,6 +128,12 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --tr
 pwsh -File scripts\setup_windows_env.ps1
 ```
 
+迁移到新电脑或迁回原电脑时，请先阅读：
+
+```text
+docs/项目迁移指南.md
+```
+
 这个脚本会：
 
 ```text

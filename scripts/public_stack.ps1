@@ -7,6 +7,7 @@ param(
     [int]$FrontendPort = 5173,
     [string]$FrpcExe = "",
     [string]$FrpcConfig = "",
+    [switch]$SkipFrp,
     [switch]$UseSqliteDebug,
     [switch]$ForceRestart,
     [switch]$KillAutoNotifyPython = $true
@@ -76,18 +77,28 @@ function Get-ListeningPortOwners {
 }
 
 function Start-PublicStack {
-    if (-not (Test-Path -LiteralPath $FrpcExe)) {
-        throw "未找到 frpc.exe: $FrpcExe"
-    }
-    if (-not (Test-Path -LiteralPath $FrpcConfig)) {
-        throw "未找到 frpc.toml: $FrpcConfig"
+    if (-not $SkipFrp) {
+        if (-not (Test-Path -LiteralPath $FrpcExe)) {
+            throw "未找到 frpc.exe: $FrpcExe。若被 Windows Defender 隔离，请从 FRP 官方 GitHub Release 下载并确认安全策略；仅启动本地服务可加 -SkipFrp。"
+        }
+        if (-not (Test-Path -LiteralPath $FrpcConfig)) {
+            throw "未找到 frpc.toml: $FrpcConfig"
+        }
+        try {
+            & $FrpcExe verify -c $FrpcConfig
+            if ($LASTEXITCODE -ne 0) {
+                throw "frpc 配置校验失败，退出码: $LASTEXITCODE"
+            }
+        } catch {
+            throw "frpc 无法执行。Windows Defender 可能已将其识别为病毒或潜在垃圾软件。请仅信任从 FRP 官方 GitHub Release 下载且哈希校验正确的文件；仅启动本地服务可加 -SkipFrp。原始错误: $($_.Exception.Message)"
+        }
     }
 
     Write-Host "RepoRoot   : $RepoRoot"
     Write-Host "Prefect API: $PrefectApiUrl"
     Write-Host "Backend    : http://127.0.0.1:$BackendPort"
     Write-Host "Frontend   : http://127.0.0.1:$FrontendPort"
-    Write-Host "FRP config : $FrpcConfig"
+    Write-Host "FRP        : $(if ($SkipFrp) { 'skipped' } else { $FrpcConfig })"
     Write-Host ""
 
     $requiredPorts = @(4200, $BackendPort, $FrontendPort) | Select-Object -Unique
@@ -134,16 +145,22 @@ function Start-PublicStack {
         throw "React 前端未在 60 秒内就绪: http://127.0.0.1:$FrontendPort"
     }
 
-    Write-Host "启动 frp 公网映射..."
-    $frpCommand = "& '$FrpcExe' -c '$FrpcConfig'"
-    Start-Window -Title "FRP Client" -Command $frpCommand
+    if ($SkipFrp) {
+        Write-Host "已跳过 frp 公网映射。"
+    } else {
+        Write-Host "启动 frp 公网映射..."
+        $frpCommand = "& '$FrpcExe' -c '$FrpcConfig'"
+        Start-Window -Title "FRP Client" -Command $frpCommand
+    }
 
     Write-Host ""
     Write-Host "一键启动完成。"
     Write-Host "本机前端: http://127.0.0.1:$FrontendPort"
     Write-Host "本机后端: http://127.0.0.1:$BackendPort/api/health"
     Write-Host "Prefect UI: http://127.0.0.1:4200"
-    Write-Host "公网访问请使用 frps 服务器 IP + frpc.toml 中的 remotePort。"
+    if (-not $SkipFrp) {
+        Write-Host "公网访问请使用 frps 服务器 IP + frpc.toml 中的 remotePort。"
+    }
 }
 
 function Stop-PublicStack {

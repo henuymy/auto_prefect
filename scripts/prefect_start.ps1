@@ -21,7 +21,11 @@ if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 }
 if (-not $PythonExe) {
-    if ($env:CONDA_PREFIX -and (Test-Path -LiteralPath (Join-Path $env:CONDA_PREFIX "python.exe"))) {
+    $activeEnvName = if ($env:CONDA_PREFIX) { Split-Path -Leaf $env:CONDA_PREFIX } else { "" }
+    if (
+        $activeEnvName -eq "auto-notify" -and
+        (Test-Path -LiteralPath (Join-Path $env:CONDA_PREFIX "python.exe"))
+    ) {
         $PythonExe = Join-Path $env:CONDA_PREFIX "python.exe"
     } else {
         $condaPython = $null
@@ -69,6 +73,7 @@ $env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = "False"
 $env:PREFECT_SERVER_ANALYTICS_ENABLED = "False"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONNOUSERSITE = "1"
 
 Write-Host "RepoRoot       : $RepoRoot"
 Write-Host "PythonExe      : $PythonExe"
@@ -124,6 +129,7 @@ function Get-EnvBootstrap {
 `$env:PREFECT_SERVER_ANALYTICS_ENABLED = 'False'
 `$env:PYTHONUTF8 = '1'
 `$env:PYTHONIOENCODING = 'utf-8'
+`$env:PYTHONNOUSERSITE = '1'
 "@
 }
 

@@ -55,6 +55,12 @@ pwsh -File scripts\public_stack.ps1 -Action start -ForceRestart
 pwsh -File scripts\start_public_stack.ps1 -ForceRestart
 ```
 
+如果只需要启动本地服务、不需要公网映射：
+
+```powershell
+pwsh -File scripts\public_stack.ps1 -Action start -SkipFrp
+```
+
 ## 关闭
 
 ```powershell
@@ -152,6 +158,11 @@ pwsh -File scripts\public_stack.ps1 -Action start -PrefectApiUrl "http://127.0.0
 ```powershell
 pwsh -File scripts\public_stack.ps1 -Action start -FrpcExe "C:\path\frpc.exe" -FrpcConfig "C:\path\frpc.toml"
 ```
+
+Windows Defender 可能将 `frpc.exe` 识别为潜在垃圾软件并隔离。仅使用
+[FRP 官方 GitHub Release](https://github.com/fatedier/frp/releases) 下载的文件，并核对 Release
+页面提供的 SHA-256。脚本不会自动关闭 Defender 或添加安全排除项；暂不使用公网映射时请加
+`-SkipFrp`。
 
 使用 SQLite 调试模式：
 

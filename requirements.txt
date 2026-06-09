@@ -1,4 +1,4 @@
-prefect>=3.0
+prefect==3.7.0
 requests>=2.31.0
 selenium>=4.0.0
 asyncpg>=0.29.0

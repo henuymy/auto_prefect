@@ -10,7 +10,11 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PythonExe = ""
-if ($env:CONDA_PREFIX -and (Test-Path -LiteralPath (Join-Path $env:CONDA_PREFIX "python.exe"))) {
+$activeEnvName = if ($env:CONDA_PREFIX) { Split-Path -Leaf $env:CONDA_PREFIX } else { "" }
+if (
+    $activeEnvName -eq "auto-notify" -and
+    (Test-Path -LiteralPath (Join-Path $env:CONDA_PREFIX "python.exe"))
+) {
     $PythonExe = Join-Path $env:CONDA_PREFIX "python.exe"
 } else {
     $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
@@ -32,6 +36,7 @@ function Start-Backend {
     Set-Location $RepoRoot
     $env:PYTHONUTF8 = "1"
     $env:PYTHONIOENCODING = "utf-8"
+    $env:PYTHONNOUSERSITE = "1"
     $env:PREFECT_API_URL = $PrefectApiUrl
     & $PythonExe -m uvicorn backend.app:app --reload --host 127.0.0.1 --port $BackendPort
 }
@@ -46,7 +51,7 @@ switch ($Mode) {
     "backend" { Start-Backend }
     "frontend" { Start-Frontend }
     "both" {
-        $backendCommand = "cd '$RepoRoot'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PREFECT_API_URL='$PrefectApiUrl'; & '$PythonExe' -m uvicorn backend.app:app --reload --host 127.0.0.1 --port $BackendPort"
+        $backendCommand = "cd '$RepoRoot'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONNOUSERSITE='1'; `$env:PREFECT_API_URL='$PrefectApiUrl'; & '$PythonExe' -m uvicorn backend.app:app --reload --host 127.0.0.1 --port $BackendPort"
         $frontendDir = Join-Path $RepoRoot "admin_react"
         $frontendCommand = "cd '$frontendDir'; npm run dev -- --host 127.0.0.1 --port $FrontendPort"
 

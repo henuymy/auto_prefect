@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Prefect-based automated report notification workflow."
 requires-python = ">=3.11"
 dependencies = [
-  "prefect>=3.0",
+  "prefect==3.7.0",
   "requests>=2.31.0",
   "selenium>=4.0.0",
   "asyncpg>=0.29.0",

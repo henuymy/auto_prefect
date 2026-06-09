@@ -22,15 +22,28 @@ function Resolve-PythonExe {
         return [System.IO.Path]::GetFullPath($Candidate)
     }
 
-    $defaultConda = "C:\anaconda3\envs\auto-notify\python.exe"
-    if (Test-Path -LiteralPath $defaultConda) {
-        return $defaultConda
+    $userConda = Join-Path $env:USERPROFILE ".conda\envs\auto-notify\python.exe"
+    if (Test-Path -LiteralPath $userConda) {
+        return [System.IO.Path]::GetFullPath($userConda)
     }
 
     if ($env:CONDA_PREFIX) {
         $condaPython = Join-Path $env:CONDA_PREFIX "python.exe"
         if (Test-Path -LiteralPath $condaPython) {
             return [System.IO.Path]::GetFullPath($condaPython)
+        }
+    }
+
+    $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
+    if ($condaCmd) {
+        $envInfo = (& conda env list 2>$null) |
+            Select-String -Pattern "^\s*auto-notify\s+(.+)$" |
+            Select-Object -First 1
+        if ($envInfo) {
+            $condaPython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
+            if (Test-Path -LiteralPath $condaPython) {
+                return [System.IO.Path]::GetFullPath($condaPython)
+            }
         }
     }
 

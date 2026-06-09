@@ -5,6 +5,7 @@ param(
     [int]$FrontendPort = 5173,
     [string]$FrpcExe = "",
     [string]$FrpcConfig = "",
+    [switch]$SkipFrp,
     [switch]$UseSqliteDebug,
     [switch]$ForceRestart
 )
@@ -17,5 +18,6 @@ param(
     -FrontendPort $FrontendPort `
     -FrpcExe $FrpcExe `
     -FrpcConfig $FrpcConfig `
+    -SkipFrp:$SkipFrp `
     -UseSqliteDebug:$UseSqliteDebug `
     -ForceRestart:$ForceRestart
