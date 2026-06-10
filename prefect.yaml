@@ -9,3 +9,16 @@ deployments:
     work_pool:
       name: default-agent-pool
       work_queue_name: default
+  - name: dashboard-session
+    entrypoint: flows/dashboard_session_flow.py:dashboard_session_flow
+    parameters:
+      config_path: config/dashboard/session.json
+      trigger_type: SCHEDULED
+      force_refresh: false
+    schedules:
+      - cron: "*/5 * * * *"
+        timezone: Asia/Shanghai
+        active: true
+    work_pool:
+      name: default-agent-pool
+      work_queue_name: default

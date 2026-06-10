@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import pytest
+from sqlalchemy.engine import make_url
+
+from infrastructure import dashboard_mysql
+
+
+def valid_env() -> dict[str, str]:
+    return {
+        "DASHBOARD_MYSQL_HOST": "db.internal",
+        "DASHBOARD_MYSQL_PORT": "3307",
+        "DASHBOARD_MYSQL_DATABASE": "dashboard",
+        "DASHBOARD_MYSQL_USER": "dashboard_app",
+        "DASHBOARD_MYSQL_PASSWORD": "p@ss:/word",
+        "DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS": "8",
+    }
+
+
+def test_settings_require_independent_dashboard_variables():
+    with pytest.raises(dashboard_mysql.DashboardMySQLConfigError) as exc_info:
+        dashboard_mysql.DashboardMySQLSettings.from_env({})
+
+    assert "DASHBOARD_MYSQL_HOST" in str(exc_info.value)
+    assert "DASHBOARD_MYSQL_PASSWORD" in str(exc_info.value)
+
+
+def test_settings_build_encoded_sqlalchemy_url_without_losing_password():
+    settings = dashboard_mysql.DashboardMySQLSettings.from_env(valid_env())
+
+    parsed = make_url(settings.sqlalchemy_url().render_as_string(hide_password=False))
+
+    assert parsed.drivername == "mysql+pymysql"
+    assert parsed.host == "db.internal"
+    assert parsed.port == 3307
+    assert parsed.database == "dashboard"
+    assert parsed.password == "p@ss:/word"
+    assert parsed.query["charset"] == "utf8mb4"
+
+
+def test_public_summary_never_contains_password():
+    settings = dashboard_mysql.DashboardMySQLSettings.from_env(valid_env())
+
+    summary = settings.public_summary()
+
+    assert "password" not in summary
+    assert summary["database"] == "dashboard"
+
+
+def test_check_reports_unconfigured_without_connecting():
+    result = dashboard_mysql.check_dashboard_mysql({})
+
+    assert result["ok"] is False
+    assert result["configured"] is False
+
+
+def test_check_connection_returns_server_details(monkeypatch):
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def one(self):
+            return {
+                "connection_ok": 1,
+                "database_name": "dashboard",
+                "server_version": "8.0.test",
+            }
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def execute(self, statement):
+            return FakeResult()
+
+    class FakeEngine:
+        disposed = False
+
+        def connect(self):
+            return FakeConnection()
+
+        def dispose(self):
+            self.disposed = True
+
+    engine = FakeEngine()
+    monkeypatch.setattr(
+        dashboard_mysql,
+        "create_dashboard_engine",
+        lambda settings: engine,
+    )
+
+    result = dashboard_mysql.check_dashboard_mysql(valid_env())
+
+    assert result["ok"] is True
+    assert result["configured"] is True
+    assert result["database_name"] == "dashboard"
+    assert engine.disposed is True

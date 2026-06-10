@@ -153,7 +153,7 @@ if (Test-Path -LiteralPath $autologinPath) {
 
 if (-not $SkipSmokeTest) {
     Write-Step "执行基础自检"
-    & $CondaPython -c "import prefect, requests, selenium, streamlit, asyncpg; import services.login_service; import services.session_manager; print('smoke_ok')"
+    & $CondaPython -c "import prefect, requests, selenium, streamlit, asyncpg, sqlalchemy, pymysql, alembic; import services.login_service; import services.session_manager; import infrastructure.dashboard_mysql; print('smoke_ok')"
 }
 
 Write-Step "完成"

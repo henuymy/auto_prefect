@@ -101,7 +101,13 @@ def lock_is_stale(lock_path, stale_seconds):
 
 
 @contextmanager
-def file_lock(lock_path, wait_seconds=DEFAULT_LOCK_WAIT_SECONDS, poll_seconds=DEFAULT_LOCK_POLL_SECONDS, stale_seconds=DEFAULT_LOCK_STALE_SECONDS):
+def file_lock(
+    lock_path,
+    wait_seconds=DEFAULT_LOCK_WAIT_SECONDS,
+    poll_seconds=DEFAULT_LOCK_POLL_SECONDS,
+    stale_seconds=DEFAULT_LOCK_STALE_SECONDS,
+    lock_label="登录锁",
+):
     lock_path = Path(lock_path).resolve()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.time() + wait_seconds
@@ -131,7 +137,7 @@ def file_lock(lock_path, wait_seconds=DEFAULT_LOCK_WAIT_SECONDS, poll_seconds=DE
                     continue
             if time.time() >= deadline:
                 lock_info = read_lock_info(lock_path)
-                raise TimeoutError(f"等待登录锁超时: {lock_path}, lock_info={lock_info}")
+                raise TimeoutError(f"等待{lock_label}超时: {lock_path}, lock_info={lock_info}")
             waited = True
             time.sleep(poll_seconds)
     try:

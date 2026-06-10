@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routers.configs import router as configs_router
+from backend.routers.dashboard import router as dashboard_router
 from backend.routers.runtime import router as runtime_router
 from backend.routers.run_logs import router as run_logs_router
 from backend.routers.status import router as status_router
@@ -21,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(configs_router)
+app.include_router(dashboard_router)
 app.include_router(runtime_router)
 app.include_router(run_logs_router)
 app.include_router(status_router)

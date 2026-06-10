@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "dashboard_mysql_env.ps1")
 $PythonExe = ""
 $activeEnvName = if ($env:CONDA_PREFIX) { Split-Path -Leaf $env:CONDA_PREFIX } else { "" }
 if (

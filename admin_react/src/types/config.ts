@@ -150,4 +150,22 @@ export interface SystemStatus {
     health_url: string;
     message: string;
   };
+  dashboard_mysql: {
+    ok: boolean;
+    configured: boolean;
+    message: string;
+    host?: string;
+    port?: number;
+    database?: string;
+    database_name?: string | null;
+    user?: string;
+    driver?: string;
+    charset?: string;
+    server_version?: string;
+    collection_run?: {
+      schema_ready: boolean;
+      latest: Record<string, unknown> | null;
+      message?: string;
+    };
+  };
 }
