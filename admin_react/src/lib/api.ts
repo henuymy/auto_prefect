@@ -1,4 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
+import type { DashboardCurrentResponse } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -100,6 +101,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
   return response.json() as Promise<T>;
+}
+
+export async function getCurrentDashboard() {
+  return request<DashboardCurrentResponse>("/api/dashboard/current");
+}
+
+export async function collectDashboard(forceRefresh = false) {
+  return request<{
+    status: string;
+    deployment: string;
+    flow_run_id: string | null;
+    message: string;
+  }>(`/api/dashboard/collect?force_refresh=${forceRefresh ? "true" : "false"}`, {
+    method: "POST",
+  });
 }
 
 function pushLog(status: RunLog["status"], title: string, message: string, details?: string) {

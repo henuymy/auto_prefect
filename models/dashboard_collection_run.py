@@ -22,6 +22,10 @@ class CollectionRun(DashboardBase):
     __tablename__ = "collection_run"
     __table_args__ = (
         CheckConstraint(
+            "run_type IN ('REALTIME', 'DAILY', 'MONTHLY')",
+            name="valid_run_type",
+        ),
+        CheckConstraint(
             "trigger_type IN ('MANUAL', 'SCHEDULED')",
             name="valid_trigger_type",
         ),
@@ -39,6 +43,11 @@ class CollectionRun(DashboardBase):
         autoincrement=True,
     )
     batch_no: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    run_type: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'REALTIME'"),
+    )
     trigger_type: Mapped[str] = mapped_column(String(16), nullable=False)
     prefect_flow_run_id: Mapped[str | None] = mapped_column(String(36), unique=True)
     status: Mapped[str] = mapped_column(
@@ -76,6 +85,11 @@ class CollectionRun(DashboardBase):
         server_default=text("0"),
     )
     snapshot_insert_count: Mapped[int] = mapped_column(
+        mysql.INTEGER(unsigned=True),
+        nullable=False,
+        server_default=text("0"),
+    )
+    acc_upsert_count: Mapped[int] = mapped_column(
         mysql.INTEGER(unsigned=True),
         nullable=False,
         server_default=text("0"),

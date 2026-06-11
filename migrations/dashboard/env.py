@@ -6,8 +6,12 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from infrastructure.dashboard_mysql import DashboardMySQLSettings
+from models.dashboard_area import Area  # noqa: F401
 from models.dashboard_base import DashboardBase
 from models.dashboard_collection_run import CollectionRun  # noqa: F401
+from models.dashboard_indicator import Indicator  # noqa: F401
+from models.dashboard_metric import MetricAcc, MetricCurrent, MetricSnapshot  # noqa: F401
+from models.dashboard_request_target import RequestTarget  # noqa: F401
 
 
 config = context.config

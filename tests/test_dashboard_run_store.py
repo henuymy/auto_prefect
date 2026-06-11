@@ -23,6 +23,7 @@ def store():
                 CREATE TABLE collection_run (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     batch_no VARCHAR(64) NOT NULL UNIQUE,
+                    run_type VARCHAR(16) NOT NULL DEFAULT 'REALTIME',
                     trigger_type VARCHAR(16) NOT NULL,
                     prefect_flow_run_id VARCHAR(36) UNIQUE,
                     status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
@@ -36,6 +37,7 @@ def store():
                     row_count INTEGER NOT NULL DEFAULT 0,
                     current_upsert_count INTEGER NOT NULL DEFAULT 0,
                     snapshot_insert_count INTEGER NOT NULL DEFAULT 0,
+                    acc_upsert_count INTEGER NOT NULL DEFAULT 0,
                     error_type VARCHAR(64),
                     error_message TEXT,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -55,6 +57,7 @@ def store():
 def test_mysql_store_lifecycle(store):
     created = store.create("dashboard-test", "MANUAL")
     assert created["status"] == "PENDING"
+    assert created["run_type"] == "REALTIME"
 
     running = store.update(
         "dashboard-test",

@@ -14,12 +14,14 @@ temp/
 cache/
 .prefect-local/
 *.log
+~$*
 .env
 .env.*
 config/tasks/local.json
 config/tasks/*.local.json
 config/modules/*.local.json
 scripts/*.local.ps1
+scripts/**/*.local.ps1
 templates/
 
 # Local FRP binaries and credentials

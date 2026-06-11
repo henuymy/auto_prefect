@@ -53,7 +53,7 @@ pwsh -File scripts\dev\stop.ps1
 本地直接试跑：
 
 ```powershell
-python -c "from flows.dashboard_session_flow import dashboard_session_flow; print(dashboard_session_flow(trigger_type='MANUAL'))"
+python -c "from flows.dashboard_metric_flow import dashboard_metric_flow; print(dashboard_metric_flow(mode='REALTIME', trigger_type='MANUAL'))"
 ```
 
 发布到开发 Work Pool：
@@ -82,7 +82,7 @@ runtime/dashboard/collection_runs/
 复制本机配置模板：
 
 ```powershell
-Copy-Item scripts\dashboard_mysql_env.example.ps1 scripts\dashboard_mysql_env.local.ps1
+Copy-Item scripts\dashboard\mysql_env.example.ps1 scripts\dashboard\mysql_env.local.ps1
 ```
 
 填写 `DASHBOARD_MYSQL_*` 后，启动脚本会自动加载该文件。连接检查可通过：
@@ -96,7 +96,7 @@ GET /api/status
 也可以在已加载环境变量的 PowerShell 中直接检查：
 
 ```powershell
-. scripts\dashboard_mysql_env.ps1
+. scripts\dashboard\mysql_env.ps1
 python -m infrastructure.dashboard_mysql
 ```
 
@@ -109,7 +109,7 @@ python -m alembic -c alembic_dashboard.ini current
 创建或升级 `collection_run`：
 
 ```powershell
-. scripts\dashboard_mysql_env.ps1
+. scripts\dashboard\mysql_env.ps1
 python -m alembic -c alembic_dashboard.ini upgrade head
 ```
 

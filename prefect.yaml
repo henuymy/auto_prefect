@@ -9,9 +9,10 @@ deployments:
     work_pool:
       name: default-agent-pool
       work_queue_name: default
-  - name: dashboard-session
-    entrypoint: flows/dashboard_session_flow.py:dashboard_session_flow
+  - name: dashboard-collection
+    entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
     parameters:
+      mode: REALTIME
       config_path: config/dashboard/session.json
       trigger_type: SCHEDULED
       force_refresh: false
@@ -19,6 +20,26 @@ deployments:
       - cron: "*/5 * * * *"
         timezone: Asia/Shanghai
         active: true
+    work_pool:
+      name: default-agent-pool
+      work_queue_name: default
+  - name: dashboard-daily
+    entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
+    parameters:
+      mode: DAY_ACC
+      config_path: config/dashboard/session.json
+      trigger_type: SCHEDULED
+      force_refresh: false
+    work_pool:
+      name: default-agent-pool
+      work_queue_name: default
+  - name: dashboard-monthly
+    entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
+    parameters:
+      mode: MONTH
+      config_path: config/dashboard/session.json
+      trigger_type: SCHEDULED
+      force_refresh: false
     work_pool:
       name: default-agent-pool
       work_queue_name: default

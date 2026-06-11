@@ -14,6 +14,7 @@ def valid_env() -> dict[str, str]:
         "DASHBOARD_MYSQL_USER": "dashboard_app",
         "DASHBOARD_MYSQL_PASSWORD": "p@ss:/word",
         "DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS": "8",
+        "DASHBOARD_MYSQL_IO_TIMEOUT_SECONDS": "45",
     }
 
 
@@ -36,6 +37,8 @@ def test_settings_build_encoded_sqlalchemy_url_without_losing_password():
     assert parsed.database == "dashboard"
     assert parsed.password == "p@ss:/word"
     assert parsed.query["charset"] == "utf8mb4"
+    assert settings.connect_timeout_seconds == 8
+    assert settings.io_timeout_seconds == 45
 
 
 def test_public_summary_never_contains_password():

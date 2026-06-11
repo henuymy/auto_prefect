@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -101,6 +102,8 @@ def execute_session_phase(
     force_refresh: bool = False,
     batch_no: str | None = None,
     event_logger: Any = None,
+    acquire_collection_lock: bool = True,
+    run_type: str = "REALTIME",
 ) -> dict[str, Any]:
     dashboard_config, resolved_config_path = load_dashboard_config(config_path)
     normalized_trigger = normalize_trigger_type(trigger_type)
@@ -108,7 +111,7 @@ def execute_session_phase(
     store = build_run_store(dashboard_config)
     record_created = False
     try:
-        store.create(batch_no, normalized_trigger)
+        store.create(batch_no, normalized_trigger, run_type=run_type)
         record_created = True
         started_at = now_shanghai()
         store.update(
@@ -128,19 +131,24 @@ def execute_session_phase(
             dashboard_config,
             resolved_config_path.parent,
         )
-        with file_lock(
-            lock_path,
-            wait_seconds=float(
-                dashboard_config.get("collection_lock_wait_seconds", 5) or 5
-            ),
-            poll_seconds=float(
-                dashboard_config.get("collection_lock_poll_seconds", 1) or 1
-            ),
-            stale_seconds=float(
-                dashboard_config.get("collection_lock_stale_seconds", 1800) or 1800
-            ),
-            lock_label="驾驶舱采集锁",
-        ) as lock_result:
+        lock_context = (
+            file_lock(
+                lock_path,
+                wait_seconds=float(
+                    dashboard_config.get("collection_lock_wait_seconds", 5) or 5
+                ),
+                poll_seconds=float(
+                    dashboard_config.get("collection_lock_poll_seconds", 1) or 1
+                ),
+                stale_seconds=float(
+                    dashboard_config.get("collection_lock_stale_seconds", 1800) or 1800
+                ),
+                lock_label="驾驶舱采集锁",
+            )
+            if acquire_collection_lock
+            else nullcontext({"lock_path": str(lock_path), "owned_by": "pipeline"})
+        )
+        with lock_context as lock_result:
             session_result = prepare_session(
                 login_config,
                 base_dir=PROJECT_ROOT,

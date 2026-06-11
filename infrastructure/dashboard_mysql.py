@@ -34,6 +34,7 @@ class DashboardMySQLSettings:
     user: str
     password: str
     connect_timeout_seconds: int = 5
+    io_timeout_seconds: int = 60
     pool_recycle_seconds: int = 1800
     pool_size: int = 5
     max_overflow: int = 5
@@ -59,6 +60,10 @@ class DashboardMySQLSettings:
             connect_timeout_seconds=_positive_int(
                 values.get("DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS", "5"),
                 "DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS",
+            ),
+            io_timeout_seconds=_positive_int(
+                values.get("DASHBOARD_MYSQL_IO_TIMEOUT_SECONDS", "60"),
+                "DASHBOARD_MYSQL_IO_TIMEOUT_SECONDS",
             ),
             pool_recycle_seconds=_positive_int(
                 values.get("DASHBOARD_MYSQL_POOL_RECYCLE_SECONDS", "1800"),
@@ -129,8 +134,8 @@ def create_dashboard_engine(
         max_overflow=resolved.max_overflow,
         connect_args={
             "connect_timeout": resolved.connect_timeout_seconds,
-            "read_timeout": resolved.connect_timeout_seconds,
-            "write_timeout": resolved.connect_timeout_seconds,
+            "read_timeout": resolved.io_timeout_seconds,
+            "write_timeout": resolved.io_timeout_seconds,
         },
     )
 

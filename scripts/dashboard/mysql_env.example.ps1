@@ -1,4 +1,4 @@
-# Copy this file to scripts/dashboard_mysql_env.local.ps1 and fill in local values.
+# Copy this file to scripts/dashboard/mysql_env.local.ps1 and fill in local values.
 # The *.local.ps1 file is ignored by Git.
 
 $env:DASHBOARD_MYSQL_HOST = "127.0.0.1"
@@ -8,6 +8,7 @@ $env:DASHBOARD_MYSQL_USER = "dashboard_app"
 $env:DASHBOARD_MYSQL_PASSWORD = ""
 
 $env:DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS = "5"
+$env:DASHBOARD_MYSQL_IO_TIMEOUT_SECONDS = "60"
 $env:DASHBOARD_MYSQL_POOL_RECYCLE_SECONDS = "1800"
 $env:DASHBOARD_MYSQL_POOL_SIZE = "5"
 $env:DASHBOARD_MYSQL_MAX_OVERFLOW = "5"

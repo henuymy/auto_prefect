@@ -17,7 +17,12 @@ from models.dashboard_collection_run import CollectionRun
 
 
 class CollectionRunStore(Protocol):
-    def create(self, batch_no: str, trigger_type: str) -> dict[str, Any]: ...
+    def create(
+        self,
+        batch_no: str,
+        trigger_type: str,
+        run_type: str = "REALTIME",
+    ) -> dict[str, Any]: ...
 
     def update(self, batch_no: str, **changes: Any) -> dict[str, Any]: ...
 
@@ -32,6 +37,7 @@ def serialize_collection_run(record: CollectionRun) -> dict[str, Any]:
     return {
         "id": record.id,
         "batch_no": record.batch_no,
+        "run_type": record.run_type,
         "trigger_type": record.trigger_type,
         "prefect_flow_run_id": record.prefect_flow_run_id,
         "status": record.status,
@@ -45,6 +51,7 @@ def serialize_collection_run(record: CollectionRun) -> dict[str, Any]:
         "row_count": record.row_count,
         "current_upsert_count": record.current_upsert_count,
         "snapshot_insert_count": record.snapshot_insert_count,
+        "acc_upsert_count": record.acc_upsert_count,
         "error_type": record.error_type,
         "error_message": record.error_message,
         "created_at": _serialize_value(record.created_at),
@@ -74,10 +81,16 @@ class MySQLCollectionRunStore:
             class_=Session,
         )
 
-    def create(self, batch_no: str, trigger_type: str) -> dict[str, Any]:
+    def create(
+        self,
+        batch_no: str,
+        trigger_type: str,
+        run_type: str = "REALTIME",
+    ) -> dict[str, Any]:
         record = CollectionRun(
             batch_no=batch_no,
             trigger_type=trigger_type,
+            run_type=run_type,
             status="PENDING",
             phase="TRIGGER",
         )
@@ -143,11 +156,17 @@ class JsonCollectionRunStore:
     def path_for(self, batch_no: str) -> Path:
         return self.directory / f"{batch_no}.json"
 
-    def create(self, batch_no: str, trigger_type: str) -> dict[str, Any]:
+    def create(
+        self,
+        batch_no: str,
+        trigger_type: str,
+        run_type: str = "REALTIME",
+    ) -> dict[str, Any]:
         created_at = self.now_provider().isoformat(timespec="milliseconds")
         record = {
             "id": None,
             "batch_no": batch_no,
+            "run_type": run_type,
             "trigger_type": trigger_type,
             "prefect_flow_run_id": None,
             "status": "PENDING",
@@ -161,6 +180,7 @@ class JsonCollectionRunStore:
             "row_count": 0,
             "current_upsert_count": 0,
             "snapshot_insert_count": 0,
+            "acc_upsert_count": 0,
             "error_type": None,
             "error_message": None,
             "created_at": created_at,

@@ -17,7 +17,7 @@ $LocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
 if (Test-Path -LiteralPath $LocalEnvPath) {
     . $LocalEnvPath
 }
-. (Join-Path $PSScriptRoot "dashboard_mysql_env.ps1")
+. (Join-Path $PSScriptRoot "dashboard\mysql_env.ps1")
 if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 }

@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3200" height="2200" viewBox="0 0 3200 2200">
+  <defs>
+    <style>
+      text { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; fill: #172033; }
+      .title { font-size: 68px; font-weight: 700; }
+      .subtitle { font-size: 32px; fill: #526078; }
+      .section { font-size: 42px; font-weight: 700; fill: #24324a; }
+      .box-title { font-size: 38px; font-weight: 700; }
+      .body { font-size: 29px; }
+      .small { font-size: 25px; fill: #526078; }
+      .label { font-size: 26px; font-weight: 700; }
+      .table { fill: #f4efff; stroke: #7357c6; stroke-width: 5; }
+      .process { fill: #eef6ff; stroke: #3377c8; stroke-width: 5; }
+      .success { fill: #edf9f1; stroke: #2d9560; stroke-width: 5; }
+      .failure { fill: #fff1f1; stroke: #d94a4a; stroke-width: 5; }
+      .transaction { fill: #fbf9ff; stroke: #7357c6; stroke-width: 8; stroke-dasharray: 22 14; }
+      .arrow { fill: none; stroke: #3377c8; stroke-width: 8; marker-end: url(#arrowBlue); }
+      .green-arrow { fill: none; stroke: #2d9560; stroke-width: 8; marker-end: url(#arrowGreen); }
+      .red-arrow { fill: none; stroke: #d94a4a; stroke-width: 8; marker-end: url(#arrowRed); }
+      .gray-arrow { fill: none; stroke: #7e899c; stroke-width: 6; stroke-dasharray: 18 12; marker-end: url(#arrowGray); }
+      .divider { stroke: #cbd3df; stroke-width: 3; }
+    </style>
+    <marker id="arrowBlue" markerWidth="16" markerHeight="16" refX="13" refY="6" orient="auto">
+      <path d="M0,0 L14,6 L0,12 Z" fill="#3377c8"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="16" markerHeight="16" refX="13" refY="6" orient="auto">
+      <path d="M0,0 L14,6 L0,12 Z" fill="#2d9560"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="16" markerHeight="16" refX="13" refY="6" orient="auto">
+      <path d="M0,0 L14,6 L0,12 Z" fill="#d94a4a"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="16" markerHeight="16" refX="13" refY="6" orient="auto">
+      <path d="M0,0 L14,6 L0,12 Z" fill="#7e899c"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#1b2a42" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="3200" height="2200" fill="#ffffff"/>
+  <text x="1600" y="105" text-anchor="middle" class="title">数据驾驶舱：结构表、采集程序与指标数据关系</text>
+  <text x="1600" y="160" text-anchor="middle" class="subtitle">结构决定请求和归属；采集结果校验完整后，才在独立 MySQL 中原子写入最新值与历史快照</text>
+
+  <text x="130" y="270" class="section">一、结构数据：采什么、数据属于谁</text>
+
+  <g filter="url(#shadow)">
+    <rect x="120" y="320" rx="28" width="850" height="500" class="table"/>
+    <text x="165" y="385" class="box-title">area（正式区域结构）</text>
+    <line x1="165" y1="415" x2="925" y2="415" class="divider"/>
+    <text x="165" y="470" class="body">保存：CITY / BRANCH / GRID / CHANNEL</text>
+    <text x="165" y="525" class="body">核心字段：id、area_code、area_name、parent_id</text>
+    <text x="165" y="580" class="body">作用 1：把采集行匹配成稳定的 area_id</text>
+    <text x="165" y="635" class="body">作用 2：支撑前端层级筛选、排名、展示</text>
+    <text x="165" y="690" class="body">作用 3：定义每批必须完整覆盖的正式区域</text>
+    <rect x="165" y="730" rx="14" width="755" height="58" fill="#e6ddff"/>
+    <text x="542" y="769" text-anchor="middle" class="label">不保存 CHANNEL_MANAGER</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1110" y="320" rx="28" width="850" height="500" class="table"/>
+    <text x="1155" y="385" class="box-title">request_target（请求目标）</text>
+    <line x1="1155" y1="415" x2="1915" y2="415" class="divider"/>
+    <text x="1155" y="470" class="body">保存：CITY / BRANCH / GRID / CHANNEL_MANAGER</text>
+    <text x="1155" y="525" class="body">核心字段：target_code、target_type、parent_target_id</text>
+    <text x="1155" y="580" class="body">作用：生成平台请求清单，决定“向谁请求”</text>
+    <text x="1155" y="635" class="body">经理只是请求路径，用经理请求获得其渠道数据</text>
+    <text x="1155" y="690" class="body">普通 CHANNEL 不进入该表，避免约 4000 次直查</text>
+    <rect x="1155" y="730" rx="14" width="755" height="58" fill="#e6ddff"/>
+    <text x="1532" y="769" text-anchor="middle" class="label">约 700 个请求覆盖 4130 个正式区域</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="2100" y="320" rx="28" width="970" height="500" class="process"/>
+    <text x="2145" y="385" class="box-title">采集程序</text>
+    <line x1="2145" y1="415" x2="3025" y2="415" class="divider"/>
+    <text x="2145" y="470" class="body">1. 加载启用的 request_target 与 indicator</text>
+    <text x="2145" y="525" class="body">2. 以限流并发方式请求地市平台</text>
+    <text x="2145" y="580" class="body">3. GRID 响应观察经理结构</text>
+    <text x="2145" y="635" class="body">4. 经理响应解析为 CHANNEL 指标行</text>
+    <text x="2145" y="690" class="body">5. 用 (level_type, area_code) 匹配 area.id</text>
+    <text x="2145" y="745" class="body">6. 校验请求成功、区域匹配、覆盖完整、数值合法</text>
+  </g>
+
+  <path d="M970 550 C1035 550 1040 550 1110 550" class="gray-arrow"/>
+  <text x="1040" y="515" text-anchor="middle" class="small">正式层级关联</text>
+  <path d="M1960 570 C2020 570 2030 570 2100 570" class="arrow"/>
+  <text x="2030" y="530" text-anchor="middle" class="small">加载请求清单</text>
+  <path d="M2100 720 C1780 900 730 905 545 820" class="gray-arrow"/>
+  <text x="1330" y="895" text-anchor="middle" class="small">采集行匹配 area_id，并检查区域覆盖完整</text>
+
+  <text x="130" y="960" class="section">二、异常时：从上一级网格局部同步结构，再整批重采</text>
+  <g filter="url(#shadow)">
+    <rect x="120" y="1005" rx="25" width="2950" height="250" class="failure"/>
+    <text x="175" y="1070" class="box-title">触发条件：经理请求异常 / GRID 返回的经理清单变化 / 发现 area 中不存在的新渠道</text>
+    <text x="175" y="1130" class="body">定位所属 GRID → 重新请求 GRID 获取最新经理 → 请求这些经理获取最新渠道</text>
+    <text x="175" y="1185" class="body">先更新 area（渠道归属），再更新 request_target（经理请求路径）→ 重新加载目标并整批重采一次</text>
+    <text x="175" y="1230" class="small">经理请求不完整时不禁用旧渠道；重采仍异常则整批失败，metric_current 与 metric_snapshot 均不更新</text>
+  </g>
+  <path d="M2585 820 L2585 1005" class="red-arrow"/>
+
+  <text x="130" y="1370" class="section">三、校验通过后：一个 MySQL 事务同时维护最新值与历史</text>
+  <g>
+    <rect x="120" y="1415" rx="32" width="2950" height="610" class="transaction"/>
+    <text x="175" y="1480" class="box-title" fill="#7357c6">独立 MySQL 事务边界：全部成功则 COMMIT，任一步失败则 ROLLBACK</text>
+
+    <g filter="url(#shadow)">
+      <rect x="200" y="1540" rx="24" width="780" height="370" class="success"/>
+      <text x="245" y="1605" class="box-title">标准化指标行</text>
+      <line x1="245" y1="1635" x2="935" y2="1635" class="divider"/>
+      <text x="245" y="1690" class="body">area_id + indicator_id + value</text>
+      <text x="245" y="1745" class="body">batch_no + stat_date + collected_at</text>
+      <text x="245" y="1800" class="body">每个正式区域、每个指标一行</text>
+      <text x="245" y="1855" class="small">来源：本批全部请求成功且区域覆盖完整</text>
+    </g>
+
+    <g filter="url(#shadow)">
+      <rect x="1210" y="1540" rx="24" width="780" height="370" class="table"/>
+      <text x="1255" y="1605" class="box-title">metric_snapshot（历史快照）</text>
+      <line x1="1255" y1="1635" x2="1945" y2="1635" class="divider"/>
+      <text x="1255" y="1690" class="body">写法：每批 INSERT 全量追加</text>
+      <text x="1255" y="1745" class="body">同一 area_id 会保留多个采集时点</text>
+      <text x="1255" y="1800" class="body">用途：趋势、五分钟变化、环比和追溯</text>
+      <text x="1255" y="1855" class="small">历史不会被下一批覆盖</text>
+    </g>
+
+    <g filter="url(#shadow)">
+      <rect x="2220" y="1540" rx="24" width="780" height="370" class="table"/>
+      <text x="2265" y="1605" class="box-title">metric_current（最新值）</text>
+      <line x1="2265" y1="1635" x2="2955" y2="1635" class="divider"/>
+      <text x="2265" y="1690" class="body">写法：按 area_id + indicator_id UPSERT</text>
+      <text x="2265" y="1745" class="body">存在则覆盖，不存在则新增</text>
+      <text x="2265" y="1800" class="body">用途：驾驶舱最新值、筛选、排名</text>
+      <text x="2265" y="1855" class="small">每个区域、每个指标只保留一条最新记录</text>
+    </g>
+
+    <path d="M980 1725 L1210 1725" class="green-arrow"/>
+    <path d="M1990 1725 L2220 1725" class="green-arrow"/>
+    <text x="2105" y="1685" text-anchor="middle" class="small">同一事务</text>
+  </g>
+
+  <text x="1600" y="2110" text-anchor="middle" class="subtitle">一句话：request_target 决定怎么采，area 决定采到的数据属于谁，snapshot 保存每次历史，current 保存可直接展示的最新状态。</text>
+</svg>

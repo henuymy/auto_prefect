@@ -1,4 +1,4 @@
-import { CheckCircle2, CloudUpload, FileCheck2, Loader2, Moon, Play, Save, ShieldCheck, Sun, Trash2, Zap } from "lucide-react";
+import { BarChart3, CheckCircle2, CloudUpload, FileCheck2, Loader2, Moon, Play, Save, ShieldCheck, Sun, Trash2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function Header({
@@ -37,6 +37,9 @@ export function Header({
         <p className="text-xs text-muted-foreground">可视化编辑报表配置 JSON，发布到自动化调度流程</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" onClick={() => { window.location.hash = "dashboard"; }}>
+          <BarChart3 className="h-4 w-4" />数据驾驶舱
+        </Button>
         <Button variant="outline" onClick={onDarkToggle} size="icon" title="切换主题">
           {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>

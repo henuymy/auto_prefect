@@ -21,7 +21,11 @@ def test_submit_dashboard_collection_uses_prefect_deployment(monkeypatch):
     result = dashboard_runner.submit_dashboard_collection(force_refresh=True)
 
     command = calls[0][0]
-    assert command[3:6] == ["deployment", "run", "dashboard-session-flow/dashboard-session"]
+    assert command[3:6] == [
+        "deployment",
+        "run",
+        "dashboard-metric-flow/dashboard-collection",
+    ]
     assert "trigger_type=MANUAL" in command
     assert "force_refresh=true" in command
     assert result["status"] == "submitted"

@@ -13,7 +13,7 @@ from backend.services.prefect_runner import get_prefect_api_url
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEPLOYMENT_NAME = "dashboard-session-flow/dashboard-session"
+DEPLOYMENT_NAME = "dashboard-metric-flow/dashboard-collection"
 UUID_PATTERN = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
     r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b"
@@ -57,5 +57,5 @@ def submit_dashboard_collection(force_refresh: bool = False) -> dict[str, Any]:
         "status": "submitted",
         "deployment": DEPLOYMENT_NAME,
         "flow_run_id": flow_run_match.group(0) if flow_run_match else None,
-        "message": "驾驶舱触发与会话任务已提交到 Prefect",
+        "message": "驾驶舱完整采集任务已提交到 Prefect",
     }

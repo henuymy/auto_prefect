@@ -10,7 +10,7 @@ if (-not (Test-Path -LiteralPath $ProdLocalEnvPath)) {
 }
 
 . $ProdLocalEnvPath
-. (Join-Path $ScriptsDir "dashboard_mysql_env.ps1")
+. (Join-Path $ScriptsDir "dashboard\mysql_env.ps1")
 
 $prodUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
 if (-not $prodUrl) {
