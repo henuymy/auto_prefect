@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable, Iterator
 
 from sqlalchemy.engine import Engine
@@ -13,14 +16,17 @@ from sqlalchemy.engine import Engine
 from infrastructure.dashboard_run_store import CollectionRunStore
 from infrastructure.dashboard_mysql import create_dashboard_engine
 from services.dashboard_collection_orchestrator import (
-    collect_validate_metric_rows,
+    collect_validate_metric_rows_simple,
     naive_shanghai_now,
 )
 from services.dashboard_collection_service import (
     CollectionTarget,
-    build_platform_fetcher,
     load_collection_targets,
     load_enabled_indicator_codes,
+)
+from services.dashboard_failure_report import (
+    DEFAULT_FAILURE_DIRECTORY,
+    write_dashboard_failure_report,
 )
 from services.dashboard_trigger import (
     build_run_store,
@@ -47,55 +53,37 @@ class DashboardBatchContext:
     stage: dict[str, Any]
     lock_result: dict[str, Any]
 
-    def build_fetcher(
-        self,
-        report: dict[str, Any],
-        query_date: date | None = None,
-        query_date_formatter: Callable[[date], str] | None = None,
-    ) -> Callable[[CollectionTarget], dict[str, Any]]:
-        return build_platform_fetcher(
-            report,
-            self.stage,
-            self.indicator_codes,
-            query_date or self.query_date,
-            timeout_seconds=int(
-                self.config.get("collection_timeout_seconds", 30) or 30
-            ),
-            request_retries=int(self.config.get("collection_request_retries", 2) or 0),
-            retry_delay_seconds=float(
-                self.config.get("collection_retry_delay_seconds", 0.5) or 0
-            ),
-            query_date_formatter=query_date_formatter,
-        )
-
-    def collect_validate(
+    def collect_validate_simple(
         self,
         fetch_metrics: Callable[[CollectionTarget], dict[str, Any]],
-        fetch_structure: Callable[[CollectionTarget], dict[str, Any]],
+        max_workers: int = 24,
+        hard_limit: int = 32,
+        retry_strategy: str = "affected_grid",
     ) -> dict[str, Any]:
-        return collect_validate_metric_rows(
+        """简化版采集验证：不需要 fetch_structure，单次采集"""
+        return collect_validate_metric_rows_simple(
             engine=self.engine,
             run_store=self.run_store,
             batch_no=self.batch_no,
             targets=self.targets,
             indicator_codes=self.indicator_codes,
             fetch_metrics=fetch_metrics,
-            fetch_structure=fetch_structure,
-            max_workers=int(self.config.get("collection_max_workers", 24) or 24),
-            hard_limit=int(self.config.get("collection_hard_max_workers", 32) or 32),
-            max_fallback_requests=int(
-                self.config.get(
-                    "collection_max_channel_fallback_requests",
-                    50,
-                )
-                or 50
-            ),
+            max_workers=max_workers,
+            hard_limit=hard_limit,
             anomaly_directory=resolve_project_path(
                 self.config.get(
                     "area_anomaly_directory",
                     "runtime/dashboard/area_anomalies",
                 )
             ),
+            failure_directory=resolve_project_path(
+                self.config.get(
+                    "failure_report_directory",
+                    DEFAULT_FAILURE_DIRECTORY,
+                )
+            ),
+            event_logger=self.config.get("event_logger"),
+            retry_strategy=retry_strategy,
         )
 
 
@@ -134,6 +122,8 @@ def dashboard_batch(
         ),
         lock_label="驾驶舱完整采集锁",
     ) as lock_result:
+        logger = event_logger or logging.getLogger(__name__)
+        session_started = perf_counter()
         session_result = execute_session_phase(
             config_path=config_path,
             trigger_type=trigger_type,
@@ -143,7 +133,16 @@ def dashboard_batch(
             acquire_collection_lock=False,
             run_type=run_type,
         )
+        session_seconds = perf_counter() - session_started
+        logger.info(
+            "驾驶舱批次前置耗时 batch_no=%s session=%.3fs session_status=%s",
+            batch_no,
+            session_seconds,
+            session_result.get("session_status"),
+        )
+        engine_started = perf_counter()
         engine = create_dashboard_engine()
+        engine_seconds = perf_counter() - engine_started
         run_store: CollectionRunStore | None = None
         try:
             run_store = build_run_store(dashboard_config)
@@ -153,8 +152,21 @@ def dashboard_batch(
                 phase="QUERY_DATE_CHECKED",
                 stat_date=query_date,
             )
+            targets_started = perf_counter()
             targets = load_collection_targets(engine)
+            targets_seconds = perf_counter() - targets_started
+            indicators_started = perf_counter()
             indicator_codes = load_enabled_indicator_codes(engine)
+            indicators_seconds = perf_counter() - indicators_started
+            logger.info(
+                "驾驶舱批次预加载耗时 batch_no=%s engine=%.3fs targets=%.3fs indicators=%.3fs target_count=%s indicator_count=%s",
+                batch_no,
+                engine_seconds,
+                targets_seconds,
+                indicators_seconds,
+                len(targets),
+                len(indicator_codes),
+            )
             if len(indicator_codes) != 1:
                 raise RuntimeError(
                     f"首版{indicator_scope}批次要求恰好启用一个指标，"
@@ -169,7 +181,7 @@ def dashboard_batch(
                 str(dashboard_config.get("required_stage") or "city_ops"),
             )
             yield DashboardBatchContext(
-                config=dashboard_config,
+                config={**dashboard_config, "event_logger": event_logger},
                 batch_no=batch_no,
                 query_date=query_date,
                 engine=engine,
@@ -186,6 +198,31 @@ def dashboard_batch(
                 try:
                     current = run_store.get(batch_no)
                     if current["status"] != "FAILED":
+                        failure_directory = resolve_project_path(
+                            dashboard_config.get(
+                                "failure_report_directory",
+                                DEFAULT_FAILURE_DIRECTORY,
+                            )
+                        )
+                        report_path = write_dashboard_failure_report(
+                            failure_directory,
+                            batch_no,
+                            phase=str(getattr(exc, "phase", failure_phase)),
+                            error_type=str(getattr(exc, "error_type", type(exc).__name__)),
+                            message=sanitize_error(exc),
+                            details={
+                                "run_type": run_type,
+                                "query_date": query_date.isoformat(),
+                            },
+                            now_provider=naive_shanghai_now,
+                        )
+                        store_error = json.dumps(
+                            {
+                                "message": sanitize_error(exc),
+                                "report_path": str(report_path),
+                            },
+                            ensure_ascii=False,
+                        )
                         run_store.update(
                             batch_no,
                             status="FAILED",
@@ -196,7 +233,7 @@ def dashboard_batch(
                                 "error_type",
                                 type(exc).__name__,
                             ),
-                            error_message=sanitize_error(exc),
+                            error_message=store_error,
                         )
                 except Exception:
                     pass

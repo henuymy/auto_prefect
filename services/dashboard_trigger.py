@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -16,6 +18,10 @@ from infrastructure.dashboard_run_store import (
     CollectionRunStore,
     JsonCollectionRunStore,
     MySQLCollectionRunStore,
+)
+from services.dashboard_failure_report import (
+    DEFAULT_FAILURE_DIRECTORY,
+    write_dashboard_failure_report,
 )
 from services.session_manager import file_lock, prepare_session
 
@@ -148,12 +154,22 @@ def execute_session_phase(
             if acquire_collection_lock
             else nullcontext({"lock_path": str(lock_path), "owned_by": "pipeline"})
         )
+        logger = event_logger or logging.getLogger(__name__)
         with lock_context as lock_result:
+            prepare_started = perf_counter()
             session_result = prepare_session(
                 login_config,
                 base_dir=PROJECT_ROOT,
                 force_refresh=force_refresh,
                 event_logger=event_logger,
+            )
+            prepare_seconds = perf_counter() - prepare_started
+            logger.info(
+                "驾驶舱会话阶段耗时 batch_no=%s prepare=%.3fs session_status=%s force_refresh=%s",
+                batch_no,
+                prepare_seconds,
+                session_result.get("status"),
+                force_refresh,
             )
             if session_result.get("status") == "invalid":
                 raise RuntimeError(
@@ -182,13 +198,37 @@ def execute_session_phase(
         if record_created:
             finished_at = now_shanghai()
             try:
+                failure_directory = resolve_project_path(
+                    dashboard_config.get(
+                        "failure_report_directory",
+                        DEFAULT_FAILURE_DIRECTORY,
+                    )
+                )
+                report_path = write_dashboard_failure_report(
+                    failure_directory,
+                    batch_no,
+                    phase="SESSION",
+                    error_type=type(exc).__name__,
+                    message=sanitize_error(exc),
+                    details={
+                        "trigger_type": normalized_trigger,
+                        "run_type": run_type,
+                    },
+                    now_provider=now_shanghai,
+                )
                 store.update(
                     batch_no,
                     status="FAILED",
                     phase="SESSION",
                     finished_at=finished_at,
                     error_type=type(exc).__name__,
-                    error_message=sanitize_error(exc),
+                    error_message=json.dumps(
+                        {
+                            "message": sanitize_error(exc),
+                            "report_path": str(report_path),
+                        },
+                        ensure_ascii=False,
+                    ),
                 )
             except Exception:
                 pass

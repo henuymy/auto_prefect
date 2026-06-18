@@ -4,6 +4,8 @@ import threading
 import time
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import StaticPool
 
 from services.dashboard_collection_service import (
     CollectionTarget,
@@ -11,6 +13,7 @@ from services.dashboard_collection_service import (
     collect_metric_rows,
     extract_target_metric_rows,
     extract_structure_observations,
+    load_collection_targets,
     normalize_max_workers,
 )
 
@@ -96,6 +99,53 @@ def test_extracts_formal_self_row_and_manager_channels_without_duplicates():
             "metric": 3,
         }
     ]
+
+
+def test_channel_is_not_a_supported_request_target():
+    with pytest.raises(DashboardCollectionError, match="不支持的请求目标类型"):
+        extract_target_metric_rows(
+            target(1, "C001", "CHANNEL"),
+            payload({"areaCode": "C001", "areaName": "渠道1", "metric": 3}),
+            ["metric"],
+        )
+
+
+def test_load_collection_targets_filters_channel_rows():
+    engine = create_engine(
+        "sqlite+pysqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE request_target (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_code VARCHAR(100) NOT NULL,
+                target_name VARCHAR(200) NOT NULL,
+                target_type VARCHAR(20) NOT NULL,
+                area_id INTEGER,
+                parent_target_id INTEGER,
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(target_type, target_code)
+            )
+        """))
+        connection.execute(text("""
+            INSERT INTO request_target
+                (target_code, target_name, target_type, area_id, enabled, sort_order)
+            VALUES
+                ('A', '郑州市', 'CITY', 1, 1, 10),
+                ('C001', '渠道1', 'CHANNEL', 2, 1, 20)
+        """))
+
+    targets = load_collection_targets(engine)
+
+    assert [(item.target_type, item.target_code) for item in targets] == [
+        ("CITY", "A")
+    ]
+    engine.dispose()
 
 
 def test_normalize_workers_uses_production_default_and_hard_cap():

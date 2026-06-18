@@ -10,11 +10,18 @@
   "collection_timeout_seconds": 30,
   "collection_request_retries": 2,
   "collection_retry_delay_seconds": 0.5,
-  "collection_max_channel_fallback_requests": 50,
+  "collection_retry_strategy": "affected_grid",
+  "relation_missing_disable_threshold": 2,
   "collection_report_config_path": "config/reports/家客和存量通报.json",
   "daily_report_config_path": "config/reports/爱家亲情网营业厅每日盯控.json",
   "daily_report_name": "日累计",
   "area_anomaly_directory": "runtime/dashboard/area_anomalies",
+  "failure_report_directory": "runtime/dashboard/failure_reports",
   "run_store_type": "mysql",
-  "run_store_dir": "runtime/dashboard/collection_runs"
+  "run_store_dir": "runtime/dashboard/collection_runs",
+  "retention": {
+    "snapshot_retention_days": 7,
+    "run_retention_days": 7,
+    "acc_retention_days": 90
+  }
 }

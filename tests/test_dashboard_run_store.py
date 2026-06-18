@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pytest
@@ -40,6 +41,7 @@ def store():
                     acc_upsert_count INTEGER NOT NULL DEFAULT 0,
                     error_type VARCHAR(64),
                     error_message TEXT,
+                    structure_change_summary TEXT,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -74,9 +76,17 @@ def test_mysql_store_lifecycle(store):
         phase="SESSION_READY",
         session_status="reused",
         finished_at=datetime(2026, 6, 10, 9, 31),
+        structure_change_summary=json.dumps(
+            {"changed": True, "counts": {"removed_targets": 1}},
+            ensure_ascii=False,
+        ),
     )
     assert success["status"] == "SUCCESS"
     assert success["session_status"] == "reused"
+    assert json.loads(success["structure_change_summary"]) == {
+        "changed": True,
+        "counts": {"removed_targets": 1},
+    }
     assert store.latest()["batch_no"] == "dashboard-test"
 
 

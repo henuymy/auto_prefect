@@ -6,21 +6,20 @@ import {
   ChevronRight,
   Clock3,
   Database,
-  LoaderCircle,
   MapPinned,
-  Play,
   RefreshCw,
   Search,
   Server,
   Trophy,
 } from "lucide-react";
-import { toast } from "sonner";
-import { collectDashboard, getCurrentDashboard } from "@/lib/api";
+import { getCurrentDashboard, getDashboardTrend } from "@/lib/api";
 import type {
   DashboardCurrentResponse,
   DashboardIndicator,
   DashboardRow,
+  DashboardTrendResponse,
 } from "@/types/dashboard";
+import { TrendChart } from "@/components/dashboard/TrendChart";
 
 const LEVEL_LABELS: Record<DashboardRow["level_type"], string> = {
   CITY: "地市",
@@ -62,11 +61,11 @@ function levelDescription(level: DashboardRow["level_type"]) {
 
 export function DashboardPage() {
   const [data, setData] = useState<DashboardCurrentResponse | null>(null);
+  const [trendData, setTrendData] = useState<DashboardTrendResponse | null>(null);
   const [selectedAreaId, setSelectedAreaId] = useState<number | null>(null);
   const [indicatorCode, setIndicatorCode] = useState("");
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(true);
-  const [collecting, setCollecting] = useState(false);
   const [error, setError] = useState("");
 
   const refresh = useCallback(async (quiet = false) => {
@@ -86,18 +85,51 @@ export function DashboardPage() {
         }
         return result.rows.find((row) => row.level_type === "CITY")?.area_id ?? null;
       });
+      // Refresh trend data for the currently selected area/indicator
+      const area = result.rows.find((row) => row.level_type === "CITY");
+      const code = result.indicators[0]?.code;
+      const activeArea = result.rows.some((r) => r.area_id === selectedAreaId)
+        ? selectedAreaId
+        : area?.area_id;
+      const activeCode = result.indicators.some((i) => i.code === indicatorCode)
+        ? indicatorCode
+        : code;
+      if (activeArea && activeCode) {
+        getDashboardTrend(activeArea, activeCode)
+          .then(setTrendData)
+          .catch(() => {});
+      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedAreaId, indicatorCode]);
 
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(true), 30_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  // Fetch trend data when selected area or indicator changes
+  useEffect(() => {
+    if (!selectedAreaId || !indicatorCode) {
+      setTrendData(null);
+      return;
+    }
+    let cancelled = false;
+    getDashboardTrend(selectedAreaId, indicatorCode)
+      .then((result) => {
+        if (!cancelled) setTrendData(result);
+      })
+      .catch(() => {
+        if (!cancelled) setTrendData(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAreaId, indicatorCode]);
 
   const rowById = useMemo(
     () => new Map((data?.rows || []).map((row) => [row.area_id, row])),
@@ -157,22 +189,6 @@ export function DashboardPage() {
       ? 0
       : 100;
 
-  async function submitCollection() {
-    setCollecting(true);
-    try {
-      const result = await collectDashboard();
-      toast.success("采集任务已提交", {
-        description: result.flow_run_id || result.deployment,
-      });
-    } catch (nextError) {
-      toast.error("提交采集失败", {
-        description: nextError instanceof Error ? nextError.message : String(nextError),
-      });
-    } finally {
-      setCollecting(false);
-    }
-  }
-
   return (
     <div className="dashboard-shell min-h-dvh text-slate-100">
       <div className="mx-auto max-w-[1920px] px-4 py-4 lg:px-7 lg:py-6">
@@ -208,21 +224,9 @@ export function DashboardPage() {
               刷新
             </button>
             <button
-              className="dashboard-button dashboard-button-primary"
-              disabled={collecting}
-              onClick={() => void submitCollection()}
-            >
-              {collecting ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-              ) : (
-                <Play className="h-4 w-4" />
-              )}
-              立即采集
-            </button>
-            <button
               className="dashboard-button"
               onClick={() => {
-                window.location.hash = "";
+                window.location.href = "/";
               }}
             >
               <ArrowLeft className="h-4 w-4" />
@@ -381,16 +385,10 @@ export function DashboardPage() {
               <PanelTitle
                 icon={BarChart3}
                 title="变化趋势"
-                description="5 / 15 / 30 / 60 分钟"
+                description={`近 24 小时 · ${selectedIndicator?.name || "当前指标"}`}
               />
-              <div className="relative mt-6 flex h-28 items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/10">
-                <div className="text-center">
-                  <BarChart3 className="mx-auto mb-2 h-7 w-7 text-slate-600" />
-                  <div className="text-sm font-bold text-slate-400">等待趋势接口接入</div>
-                  <div className="mt-1 text-xs text-slate-600">
-                    当前页面不生成模拟历史数据
-                  </div>
-                </div>
+              <div className="relative mt-4">
+                <TrendChart data={trendData} loading={loading} />
               </div>
             </div>
           </div>

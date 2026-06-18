@@ -16,6 +16,9 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      input: {
+        dashboard: path.resolve(__dirname, "dashboard.html"),
+      },
       output: {
         manualChunks: {
           validation: ["ajv", "zod", "@hookform/resolvers", "react-hook-form"],

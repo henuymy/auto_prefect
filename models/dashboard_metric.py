@@ -84,6 +84,7 @@ class MetricSnapshot(DashboardBase):
             "indicator_id",
             "collected_at",
         ),
+        Index("ix_metric_snapshot_collected_at", "collected_at"),
     )
 
     id: Mapped[int] = mapped_column(
@@ -140,6 +141,7 @@ class MetricAcc(DashboardBase):
             "indicator_id",
             "metric_value",
         ),
+        Index("ix_metric_acc_stat_date", "stat_date"),
     )
 
     id: Mapped[int] = mapped_column(

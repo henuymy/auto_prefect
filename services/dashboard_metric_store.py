@@ -142,43 +142,64 @@ def write_metric_batch(
     normalized_rows = normalize_metric_rows(rows)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     with session_factory.begin() as session:
-        run = _load_writable_run(
+        return write_metric_batch_in_session(
             session,
-            batch_no,
-            expected_run_type="REALTIME",
-            scope="实时",
+            dialect_name=engine.dialect.name,
+            batch_no=batch_no,
+            indicator_code=indicator_code,
+            normalized_rows=normalized_rows,
+            stat_date=stat_date,
+            collected_at=collected_at,
         )
-        indicator = _load_enabled_indicator(session, indicator_code)
 
-        if engine.dialect.name == "mysql":
-            _write_mysql_metrics(
-                session,
-                run.id,
-                indicator.id,
-                normalized_rows,
-                stat_date,
-                collected_at,
-            )
-        else:
-            _write_orm_metrics(
-                session,
-                run.id,
-                indicator.id,
-                normalized_rows,
-                stat_date,
-                collected_at,
-            )
 
-        written_count = len(normalized_rows)
-        _complete_run(run, stat_date, collected_at)
-        run.current_upsert_count = written_count
-        run.snapshot_insert_count = written_count
+def write_metric_batch_in_session(
+    session: Session,
+    *,
+    dialect_name: str,
+    batch_no: str,
+    indicator_code: str,
+    normalized_rows: list[dict[str, Any]],
+    stat_date: date,
+    collected_at: datetime,
+) -> dict[str, Any]:
+    run = _load_writable_run(
+        session,
+        batch_no,
+        expected_run_type="REALTIME",
+        scope="实时",
+    )
+    indicator = _load_enabled_indicator(session, indicator_code)
+
+    if dialect_name == "mysql":
+        _write_mysql_metrics(
+            session,
+            run.id,
+            indicator.id,
+            normalized_rows,
+            stat_date,
+            collected_at,
+        )
+    else:
+        _write_orm_metrics(
+            session,
+            run.id,
+            indicator.id,
+            normalized_rows,
+            stat_date,
+            collected_at,
+        )
+
+    written_count = len(normalized_rows)
+    _complete_run(run, stat_date, collected_at)
+    run.current_upsert_count = written_count
+    run.snapshot_insert_count = written_count
 
     return {
         "batch_no": batch_no,
         "indicator_code": indicator_code,
-        "current_upsert_count": len(normalized_rows),
-        "snapshot_insert_count": len(normalized_rows),
+        "current_upsert_count": written_count,
+        "snapshot_insert_count": written_count,
         "status": "SUCCESS",
         "phase": "COMPLETED",
     }
@@ -200,54 +221,79 @@ def write_acc_metric_batch(
     normalized_rows = normalize_metric_rows(rows)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     with session_factory.begin() as session:
-        run = _load_writable_run(
+        return write_acc_metric_batch_in_session(
             session,
-            batch_no,
+            dialect_name=engine.dialect.name,
+            batch_no=batch_no,
+            indicator_code=indicator_code,
+            normalized_rows=normalized_rows,
+            stat_date=stat_date,
+            collected_at=collected_at,
+            period_type=normalized_period,
             expected_run_type=expected_run_type,
-            scope="累计",
         )
-        indicator = _load_enabled_indicator(session, indicator_code)
 
-        values = [
-            {
-                "period_type": normalized_period,
-                "stat_date": stat_date,
-                "area_id": row["area_id"],
-                "indicator_id": indicator.id,
-                "collection_run_id": run.id,
-                "metric_value": row["metric_value"],
-                "collected_at": collected_at,
-                "updated_at": collected_at,
-            }
-            for row in normalized_rows
-        ]
-        if engine.dialect.name == "mysql":
-            statement = mysql_insert(MetricAcc).values(values)
-            statement = statement.on_duplicate_key_update(
-                collection_run_id=statement.inserted.collection_run_id,
-                metric_value=statement.inserted.metric_value,
-                collected_at=statement.inserted.collected_at,
-                updated_at=statement.inserted.updated_at,
-            )
-            session.execute(statement)
-        else:
-            _write_orm_daily_metrics(
-                session,
-                indicator.id,
-                values,
-                normalized_period,
-            )
 
-        written_count = len(normalized_rows)
-        _complete_run(run, stat_date, collected_at)
-        run.acc_upsert_count = written_count
+def write_acc_metric_batch_in_session(
+    session: Session,
+    *,
+    dialect_name: str,
+    batch_no: str,
+    indicator_code: str,
+    normalized_rows: list[dict[str, Any]],
+    stat_date: date,
+    collected_at: datetime,
+    period_type: str,
+    expected_run_type: str,
+) -> dict[str, Any]:
+    run = _load_writable_run(
+        session,
+        batch_no,
+        expected_run_type=expected_run_type,
+        scope="累计",
+    )
+    indicator = _load_enabled_indicator(session, indicator_code)
+
+    values = [
+        {
+            "period_type": period_type,
+            "stat_date": stat_date,
+            "area_id": row["area_id"],
+            "indicator_id": indicator.id,
+            "collection_run_id": run.id,
+            "metric_value": row["metric_value"],
+            "collected_at": collected_at,
+            "updated_at": collected_at,
+        }
+        for row in normalized_rows
+    ]
+    if dialect_name == "mysql":
+        statement = mysql_insert(MetricAcc).values(values)
+        statement = statement.on_duplicate_key_update(
+            collection_run_id=statement.inserted.collection_run_id,
+            metric_value=statement.inserted.metric_value,
+            collected_at=statement.inserted.collected_at,
+            updated_at=statement.inserted.updated_at,
+        )
+        session.execute(statement)
+    else:
+        _write_orm_daily_metrics(
+            session,
+            indicator.id,
+            values,
+            period_type,
+        )
+
+    written_count = len(normalized_rows)
+    _complete_run(run, stat_date, collected_at)
+    run.acc_upsert_count = written_count
 
     return {
         "batch_no": batch_no,
         "indicator_code": indicator_code,
-        "period_type": normalized_period,
+        "period_type": period_type,
         "stat_date": stat_date.isoformat(),
-        "acc_upsert_count": len(normalized_rows),
+        "acc_upsert_count": written_count,
         "status": "SUCCESS",
         "phase": "COMPLETED",
     }

@@ -23,6 +23,7 @@ config/modules/*.local.json
 scripts/*.local.ps1
 scripts/**/*.local.ps1
 templates/
+docs/prefect启动环境本地说明.md
 
 # Local FRP binaries and credentials
 frp/frpc.exe

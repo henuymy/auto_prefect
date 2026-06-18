@@ -1,6 +1,7 @@
 param(
     [switch]$ForceRestart,
-    [switch]$SkipAdmin
+    [switch]$SkipAdmin,
+    [switch]$ClearScheduledBacklog
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,6 +59,13 @@ Write-Host "启动 prefect_dev Server..."
 
 if (-not (Wait-HttpOk -Url "$($env:PREFECT_API_URL)/health")) {
     throw "prefect_dev Server 未在 90 秒内就绪"
+}
+
+if ($ClearScheduledBacklog) {
+    Write-Host "清理 prefect_dev 历史 SCHEDULED flow runs..."
+    & (Join-Path $PSScriptRoot "clear_scheduled_backlog.ps1") `
+        -PrefectApiUrl $env:PREFECT_API_URL `
+        -Execute
 }
 
 & $DevPythonExe -m prefect work-pool inspect $DevWorkPool *> $null

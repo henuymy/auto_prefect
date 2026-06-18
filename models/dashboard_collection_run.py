@@ -34,6 +34,7 @@ class CollectionRun(DashboardBase):
             name="valid_status",
         ),
         Index("ix_collection_run_status_started_at", "status", "started_at"),
+        Index("ix_collection_run_status_created_at", "status", "created_at"),
         Index("ix_collection_run_stat_date_status", "stat_date", "status"),
     )
 
@@ -96,6 +97,7 @@ class CollectionRun(DashboardBase):
     )
     error_type: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(Text)
+    structure_change_summary: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         mysql.DATETIME(fsp=3),
         nullable=False,

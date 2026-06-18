@@ -4,7 +4,7 @@
 
 ```text
 数据库：prefect_dev
-Work Pool：dev-agent-pool
+Work Pool：default-agent-pool
 Prefect API：http://127.0.0.1:4200/api
 ```
 
@@ -22,6 +22,18 @@ pwsh -File scripts\dev\start.ps1
 
 ```powershell
 pwsh -File scripts\dev\start.ps1 -ForceRestart
+```
+
+启动前清理 `prefect_dev` 里已经过期的历史 `SCHEDULED` flow runs，避免 Worker 一启动就消费积压任务：
+
+```powershell
+pwsh -File scripts\dev\start.ps1 -ForceRestart -ClearScheduledBacklog
+```
+
+只查看会被清理的历史 `SCHEDULED` flow runs，不删除：
+
+```powershell
+pwsh -File scripts\dev\clear_scheduled_backlog.ps1
 ```
 
 只启动 Prefect Server 和开发 Worker：
@@ -59,7 +71,7 @@ python -c "from flows.dashboard_metric_flow import dashboard_metric_flow; print(
 发布到开发 Work Pool：
 
 ```powershell
-python -m prefect deploy --name dashboard-session --pool dev-agent-pool
+python -m prefect deploy --name dashboard-session --pool default-agent-pool
 ```
 
 发布后可通过后端手动提交，接口立即返回 Prefect Flow Run ID：
@@ -118,7 +130,7 @@ python -m alembic -c alembic_dashboard.ini upgrade head
 ## 注意
 
 - 不要用默认 `scripts/public_stack.ps1 -Action start` 进行开发，它默认连接正式数据库。
-- 开发 Deployment 必须发布到 `dev-agent-pool`。
+- 开发 Deployment 必须发布到 `default-agent-pool`。
 - 开发配置应使用企业微信测试群 Webhook。
 - `scripts/prefect_env_prod.local.ps1` 仍保存正式数据库连接，本目录只根据它派生
   `prefect_dev` 地址，不复制密码。

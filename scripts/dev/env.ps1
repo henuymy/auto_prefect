@@ -26,7 +26,7 @@ $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONNOUSERSITE = "1"
 
-$DevWorkPool = "dev-agent-pool"
+$DevWorkPool = "default-agent-pool"
 $DevBackendPort = 8000
 $DevFrontendPort = 5173
 $DevPythonExe = Join-Path $env:USERPROFILE ".conda\envs\auto-notify\python.exe"

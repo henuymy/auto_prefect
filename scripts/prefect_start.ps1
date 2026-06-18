@@ -131,12 +131,49 @@ function Get-EnvBootstrap {
 `$env:PYTHONUTF8 = '1'
 `$env:PYTHONIOENCODING = 'utf-8'
 `$env:PYTHONNOUSERSITE = '1'
+`$env:DASHBOARD_MYSQL_HOST = '$($env:DASHBOARD_MYSQL_HOST)'
+`$env:DASHBOARD_MYSQL_PORT = '$($env:DASHBOARD_MYSQL_PORT)'
+`$env:DASHBOARD_MYSQL_DATABASE = '$($env:DASHBOARD_MYSQL_DATABASE)'
+`$env:DASHBOARD_MYSQL_USER = '$($env:DASHBOARD_MYSQL_USER)'
+`$env:DASHBOARD_MYSQL_PASSWORD = '$($env:DASHBOARD_MYSQL_PASSWORD)'
+`$env:DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS = '$($env:DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS)'
+`$env:DASHBOARD_MYSQL_IO_TIMEOUT_SECONDS = '$($env:DASHBOARD_MYSQL_IO_TIMEOUT_SECONDS)'
+`$env:DASHBOARD_MYSQL_POOL_RECYCLE_SECONDS = '$($env:DASHBOARD_MYSQL_POOL_RECYCLE_SECONDS)'
+`$env:DASHBOARD_MYSQL_POOL_SIZE = '$($env:DASHBOARD_MYSQL_POOL_SIZE)'
+`$env:DASHBOARD_MYSQL_MAX_OVERFLOW = '$($env:DASHBOARD_MYSQL_MAX_OVERFLOW)'
+`$env:DASHBOARD_MYSQL_CHARSET = '$($env:DASHBOARD_MYSQL_CHARSET)'
 "@
 }
 
 $serverArgs = if ($UseSqliteDebug) { "server start --no-services --workers 1" } else { "server start --workers 1" }
 $serverCommand = (Get-EnvBootstrap) + "`n& '$PythonExe' -m prefect $serverArgs"
 $workerCommand = (Get-EnvBootstrap) + "`n& '$PythonExe' -m prefect worker start --pool '$WorkPool' --type process"
+
+function Pause-DashboardDeployments {
+    param([string]$PythonExe)
+
+    $script = @"
+import asyncio
+from prefect.client.orchestration import get_client
+
+TARGETS = {"dashboard-collection", "dashboard-daily", "dashboard-monthly"}
+
+async def main():
+    async with get_client() as client:
+        deployments = await client.read_deployments()
+        for deployment in deployments:
+            if deployment.name in TARGETS and not getattr(deployment, "paused", False):
+                await client.set_deployment_paused_state(deployment.id, True)
+                print(f"paused:{deployment.name}")
+
+asyncio.run(main())
+"@
+
+    & $PythonExe -c $script
+    if ($LASTEXITCODE -ne 0) {
+        throw "暂停 dashboard deployments 失败"
+    }
+}
 
 switch ($Mode) {
     "server" {
@@ -161,6 +198,7 @@ switch ($Mode) {
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 90 seconds. Check the Prefect Server window logs."
         }
+        Pause-DashboardDeployments -PythonExe $PythonExe
         Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
         Write-Host "Started Server + Worker in two new windows."
         Write-Host "Open UI: http://127.0.0.1:4200"

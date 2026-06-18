@@ -28,7 +28,8 @@ from services.method_service import (
 
 DEFAULT_MAX_WORKERS = 24
 HARD_MAX_WORKERS = 32
-FORMAL_TARGET_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL"}
+REQUEST_TARGET_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER"}
+FORMAL_REQUEST_TARGET_TYPES = {"CITY", "BRANCH", "GRID"}
 SUCCESS_CODES = {"0", "0000"}
 RETRYABLE_RESPONSE_CODES = {"1104"}
 
@@ -64,6 +65,7 @@ def load_collection_targets(engine: Engine) -> list[CollectionTarget]:
         records = session.scalars(
             select(RequestTarget)
             .where(RequestTarget.enabled.is_(True))
+            .where(RequestTarget.target_type.in_(REQUEST_TARGET_TYPES))
             .order_by(RequestTarget.sort_order, RequestTarget.id)
         ).all()
     return [
@@ -123,7 +125,7 @@ def extract_target_metric_rows(
     source_rows = extract_rows(payload, "result.tableData")
     indicator_codes = list(indicator_codes)
 
-    if target.target_type in FORMAL_TARGET_TYPES:
+    if target.target_type in FORMAL_REQUEST_TARGET_TYPES:
         matching = [
             row
             for row in source_rows

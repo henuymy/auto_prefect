@@ -48,6 +48,7 @@ def create_test_engine():
                     acc_upsert_count INTEGER NOT NULL DEFAULT 0,
                     error_type VARCHAR(64),
                     error_message TEXT,
+                    structure_change_summary TEXT,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )

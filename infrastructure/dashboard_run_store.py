@@ -54,6 +54,7 @@ def serialize_collection_run(record: CollectionRun) -> dict[str, Any]:
         "acc_upsert_count": record.acc_upsert_count,
         "error_type": record.error_type,
         "error_message": record.error_message,
+        "structure_change_summary": record.structure_change_summary,
         "created_at": _serialize_value(record.created_at),
         "updated_at": _serialize_value(record.updated_at),
     }
@@ -183,6 +184,7 @@ class JsonCollectionRunStore:
             "acc_upsert_count": 0,
             "error_type": None,
             "error_message": None,
+            "structure_change_summary": None,
             "created_at": created_at,
             "updated_at": created_at,
         }

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from prefect import get_run_logger, task
 
-from services.dashboard_acc_pipeline import (
+from services.dashboard_pipeline import (
     execute_dashboard_daily_pipeline,
     execute_dashboard_monthly_pipeline,
+    execute_dashboard_pipeline,
 )
-from services.dashboard_pipeline import execute_dashboard_pipeline
 
 
 @task(name="dashboard-run-metrics")

@@ -13,6 +13,10 @@ from sqlalchemy.orm import Session
 
 from infrastructure.dashboard_run_store import CollectionRunStore
 from models.dashboard_area import Area
+from services.dashboard_failure_report import (
+    DEFAULT_FAILURE_DIRECTORY,
+    write_dashboard_failure_report,
+)
 
 
 FORMAL_AREA_LEVELS = {"CITY", "BRANCH", "GRID", "CHANNEL"}
@@ -195,14 +199,20 @@ def execute_area_validation_phase(
     engine: Engine,
     run_store: CollectionRunStore,
     anomaly_directory: str | Path,
+    failure_directory: str | Path | None = None,
     now_provider=datetime.now,
+    area_map: dict[tuple[str, str], EnabledArea] | None = None,
 ) -> dict[str, Any]:
     run_store.update(
         batch_no,
         status="RUNNING",
         phase="VALIDATE_AREA",
     )
-    area_map = load_enabled_area_map(engine)
+    if area_map is None:
+        area_map = load_enabled_area_map(engine)
+    resolved_failure_directory = Path(
+        failure_directory or DEFAULT_FAILURE_DIRECTORY
+    ).resolve()
     try:
         result = validate_metric_rows(rows, area_map)
     except AreaStructureMismatchError as exc:
@@ -212,11 +222,27 @@ def execute_area_validation_phase(
             exc.result,
             now_provider=now_provider,
         )
+        unified_report_path = write_dashboard_failure_report(
+            resolved_failure_directory,
+            batch_no,
+            phase=exc.phase,
+            error_type=exc.error_type,
+            message=str(exc),
+            details={
+                "unmatched_area_count": exc.result["unmatched_area_count"],
+                "skipped_row_count": exc.result["skipped_row_count"],
+                "anomaly_report_path": str(report_path),
+                "next_action": exc.result["next_action"],
+                "sync_commands": exc.result["sync_commands"],
+            },
+            now_provider=now_provider,
+        )
         error_summary = {
             "message": str(exc),
             "unmatched_area_count": exc.result["unmatched_area_count"],
             "skipped_row_count": exc.result["skipped_row_count"],
             "report_path": str(report_path),
+            "failure_report_path": str(unified_report_path),
             "next_action": exc.result["next_action"],
             "sync_commands": exc.result["sync_commands"],
         }
