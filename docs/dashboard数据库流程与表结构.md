@@ -33,7 +33,6 @@
 | `metric_snapshot` | 历史快照值 |
 | `metric_acc` | 日累计 / 月累计值 |
 | `metric_target` | 目标值，用于完成进度 |
-| `dashboard_wide` | 前端快速查询宽表 |
 | `alembic_version` | 迁移版本 |
 
 ## 3. 表结构摘要
@@ -94,16 +93,7 @@
 - 主要字段：`area_id`、`indicator_id`、`target_value`、`enabled`
 - 用途：前端完成进度计算。有目标值时，完成进度 = 完成量 / 目标值；没有目标值时显示 `--`
 
-### `dashboard_wide`
-- 主键：`id`
-- 唯一：`(area_id, indicator_code)`
-- 主要字段：
-  - 区域：`area_id`、`area_code`、`area_name`、`level_type`、`level_no`、`parent_id`
-  - 实时：`current_value`、`current_run_id`、`current_collected_at`
-  - 变化量：`change_5min_*`、`change_15min_*`、`change_30min_*`、`change_60min_*`
-  - 累计：`day_acc_value`、`day_acc_date`、`month_acc_value`、`month_acc_date`
-  - 最新批次：`latest_run_batch_no`、`latest_run_finished_at`、`latest_run_stat_date`
-  - 刷新时间：`refreshed_at`
+> `dashboard_wide` 宽表已在 `20260618_0016` 迁移中移除。当前前端接口直接查询规范化源表；后续如确实需要读性能优化，再重新设计物化表结构。
 
 ## 4. 我实际连到的库
 
@@ -124,10 +114,10 @@
 
 ## 6. 接口与表映射
 
-- `GET /api/dashboard/overview` -> `get_dashboard_overview_fast()`；当前设计目标是优先走 `dashboard_wide` 宽表
-- `GET /api/dashboard/drill-down` -> `get_drill_down()`；按父级区域下钻，查询重心也是 `dashboard_wide`
+- `GET /api/dashboard/overview` -> `get_dashboard_overview_fast()`；读 `area`、`indicator`、`metric_current`、`metric_snapshot`、`metric_acc`、`metric_target`
+- `GET /api/dashboard/drill-down` -> `get_drill_down()`；按父级区域下钻，读规范化源表
 - `GET /api/dashboard/current` -> `get_current_wide_table()`；直接读 `area`、`indicator`、`metric_current`，并补充 `collection_run`
 - `GET /api/dashboard/current-with-changes` -> `get_current_with_changes()`；在 `current` 基础上额外读 `metric_snapshot`
 - `GET /api/dashboard/acc` -> `get_acc_wide_table()`；读 `area`、`indicator`、`metric_acc`
 - `GET /api/dashboard/trend` -> `get_snapshot_trend()`；读 `indicator`、`metric_snapshot`
-- `POST /api/dashboard/collect` -> 提交 Prefect 采集流程；采集阶段会更新 `collection_run`，并写入 `metric_current`、`metric_snapshot`、`metric_acc`，同时维护 `area` / `request_target` / `channel_manager_area` / `dashboard_wide`
+- `POST /api/dashboard/collect` -> 提交 Prefect 采集流程；采集阶段会更新 `collection_run`，并写入 `metric_current`、`metric_snapshot`、`metric_acc`，同时维护 `area` / `request_target` / `channel_manager_area`

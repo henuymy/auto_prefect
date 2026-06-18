@@ -58,7 +58,6 @@
 | `dashboard_area_import.py` | 从 Excel 导入区域结构 |
 | `dashboard_request_target_import.py` | 从 Excel 导入采集目标 |
 | `dashboard_failure_report.py` | 失败报告写入工具 |
-| `dashboard_wide_refresh.py` | 刷新物化视图 |
 
 ---
 

@@ -8,7 +8,7 @@
 ### 助手
 已完成梳理，并把结果写到 `docs/dashboard数据库流程与表结构.md`。
 
-我做了两件事。第一，沿代码把 dashboard 的读写流程串起来了：API 入口在 `backend/routers/dashboard.py`，数据库连接在 `infrastructure/dashboard_mysql.py`，查询主逻辑在 `services/dashboard_query_service.py`，采集流程则经过 `flows/dashboard_metric_flow.py`、`services/dashboard_batch_runner.py`、`services/dashboard_collection_orchestrator.py`。第二，我实际连上了 dashboard MySQL，确认当前库是 `dashboard`，版本 `8.4.8`，真实表有 `alembic_version`、`area`、`collection_run`、`dashboard_wide`、`indicator`、`metric_acc`、`metric_current`、`metric_snapshot`、`request_target`。
+我做了两件事。第一，沿代码把 dashboard 的读写流程串起来了：API 入口在 `backend/routers/dashboard.py`，数据库连接在 `infrastructure/dashboard_mysql.py`，查询主逻辑在 `services/dashboard_query_service.py`，采集流程则经过 `flows/dashboard_metric_flow.py`、`services/dashboard_batch_runner.py`、`services/dashboard_collection_orchestrator.py`。第二，我实际连上了 dashboard MySQL，确认当前库是 `dashboard`，版本 `8.4.8`。注：早期梳理时曾包含 `dashboard_wide` 宽表，现已移除，前端接口直接查询规范化源表。
 
 文档里已经包含表用途、关键字段、接口到表的映射，以及当前连接目标的非敏感信息。若要继续深入，建议优先看 `get_dashboard_overview_fast()` 和 `get_drill_down()`，最能说明前端页面现在到底是走宽表还是走明细表。
 
