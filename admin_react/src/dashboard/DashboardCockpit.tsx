@@ -224,16 +224,18 @@ function buildBoards(
   activeCode: string,
   visible: LevelKey[],
   defaultScopedLowerLevels: boolean,
+  dayUnscopedLevels: LevelKey[],
+  monthUnscopedLevels: LevelKey[],
   changeWindows: number[],
 ): { dayLevels: LevelBoard[]; monthLevels: LevelBoard[] } {
   const defaultScope = defaultScopedLowerLevels
     ? buildDefaultBranchScope(changesRows)
     : null;
   const scopedChangesRows = defaultScopedLowerLevels
-    ? scopeLowerLevelsToDefaultBranch(changesRows, defaultScope)
+    ? scopeLowerLevelsToDefaultBranch(changesRows, defaultScope, dayUnscopedLevels)
     : changesRows;
   const scopedAccRows = defaultScopedLowerLevels
-    ? scopeLowerLevelsToDefaultBranch(accRows, defaultScope)
+    ? scopeLowerLevelsToDefaultBranch(accRows, defaultScope, monthUnscopedLevels)
     : accRows;
 
   const accBy = new Map<number, number>();
@@ -363,10 +365,13 @@ function buildDefaultBranchScope(rows: DashboardRow[]): {
 function scopeLowerLevelsToDefaultBranch<T extends DashboardRow>(
   rows: T[],
   scope: { branchId: number; gridIds: Set<number> } | null,
+  unscopedLevels: LevelKey[] = [],
 ): T[] {
   if (!scope) return rows;
+  const unscoped = new Set(unscopedLevels);
 
   return rows.filter((row) => {
+    if (unscoped.has(row.level_type as LevelKey)) return true;
     if (row.level_type === "BRANCH") return true;
     if (row.level_type === "GRID") return row.parent_id === scope.branchId;
     if (row.level_type === "CHANNEL") {
@@ -421,6 +426,11 @@ export function DashboardCockpit() {
   const [scopeMode, setScopeMode] = useState<ScopeMode>("default");
   const [dayLevelAllMode, setDayLevelAllMode] = useState<Partial<Record<LevelKey, boolean>>>({});
   const [monthLevelAllMode, setMonthLevelAllMode] = useState<Partial<Record<LevelKey, boolean>>>({});
+  const [pendingLevelAll, setPendingLevelAll] = useState<{
+    section: "day" | "month";
+    level: LevelKey;
+    label: string;
+  } | null>(null);
   const fetchSeqRef = useRef(0);
   const [daySorts, setDaySorts] = useState<Record<LevelKey, SortKey>>({
     BRANCH: "progress",
@@ -531,6 +541,7 @@ export function DashboardCockpit() {
       );
     } finally {
       if (seq === fetchSeqRef.current) setLoading(false);
+      if (seq === fetchSeqRef.current) setPendingLevelAll(null);
     }
   }, [
     drillTarget?.areaId,
@@ -591,6 +602,8 @@ export function DashboardCockpit() {
       activeCode,
       visible,
       normalizedDrillStack.length === 0 && scopeMode === "default",
+      (["GRID", "CHANNEL"] as LevelKey[]).filter((level) => dayLevelAllMode[level]),
+      (["GRID", "CHANNEL"] as LevelKey[]).filter((level) => monthLevelAllMode[level]),
       changeWindows,
     );
   }, [
@@ -722,19 +735,35 @@ export function DashboardCockpit() {
 
   const handleToggleDayLevelAll = useCallback((level: LevelKey) => {
     if (level === "BRANCH") return;
+    const nextActive = !dayLevelAllMode[level];
+    setPendingLevelAll({
+      section: "day",
+      level,
+      label: nextActive
+        ? level === "GRID" ? "全部网格" : "全部渠道"
+        : "当前范围",
+    });
     setDayLevelAllMode((prev) => ({
       ...prev,
       [level]: !prev[level],
     }));
-  }, []);
+  }, [dayLevelAllMode]);
 
   const handleToggleMonthLevelAll = useCallback((level: LevelKey) => {
     if (level === "BRANCH") return;
+    const nextActive = !monthLevelAllMode[level];
+    setPendingLevelAll({
+      section: "month",
+      level,
+      label: nextActive
+        ? level === "GRID" ? "全部网格" : "全部渠道"
+        : "当前范围",
+    });
     setMonthLevelAllMode((prev) => ({
       ...prev,
       [level]: !prev[level],
     }));
-  }, []);
+  }, [monthLevelAllMode]);
 
   const updateChangeWindow = useCallback((index: number, minutes: number) => {
     setChangeWindows((prev) => {
@@ -803,6 +832,12 @@ export function DashboardCockpit() {
             changeWindows={changeWindows}
             onDrill={handleDrill}
             levelAllActive={Boolean(dayLevelAllMode[level.key])}
+            levelAllPending={
+              loading &&
+              pendingLevelAll?.section === "day" &&
+              pendingLevelAll.level === level.key
+            }
+            levelAllPendingLabel={pendingLevelAll?.label}
             onToggleLevelAll={level.key !== "BRANCH" ? handleToggleDayLevelAll : undefined}
             isBranch={level.key === "BRANCH"}
             branchHeight={branchHeight}
@@ -825,6 +860,12 @@ export function DashboardCockpit() {
               changeWindows={changeWindows}
               onDrill={handleDrill}
               levelAllActive={Boolean(monthLevelAllMode[level.key])}
+              levelAllPending={
+                loading &&
+                pendingLevelAll?.section === "month" &&
+                pendingLevelAll.level === level.key
+              }
+              levelAllPendingLabel={pendingLevelAll?.label}
               onToggleLevelAll={level.key !== "BRANCH" ? handleToggleMonthLevelAll : undefined}
               isBranch={level.key === "BRANCH"}
               branchHeight={monthBranchHeight}
@@ -1041,6 +1082,8 @@ function LevelPanel({
   changeWindows,
   onDrill,
   levelAllActive,
+  levelAllPending,
+  levelAllPendingLabel,
   onToggleLevelAll,
   isBranch,
   branchHeight,
@@ -1052,6 +1095,8 @@ function LevelPanel({
   changeWindows: number[];
   onDrill: (row: BoardRow, levelType: string) => void;
   levelAllActive?: boolean;
+  levelAllPending?: boolean;
+  levelAllPendingLabel?: string;
   onToggleLevelAll?: (level: LevelKey) => void;
   isBranch?: boolean;
   branchHeight?: number;
@@ -1075,6 +1120,7 @@ function LevelPanel({
   const dataTableStyle: React.CSSProperties = needsScroll
     ? { maxHeight: branchHeight - 43, overflowY: "auto" }
     : {};
+  const levelAllLabel = level.key === "GRID" ? "全部网格" : "全部渠道";
 
   return (
     <section className="level-panel" ref={branchPanelRef} style={panelStyle}>
@@ -1092,12 +1138,13 @@ function LevelPanel({
               type="button"
               onClick={() => onToggleLevelAll(level.key)}
             >
-              {levelAllActive
-                ? "当前范围"
-                : level.key === "GRID"
-                  ? "全部网格"
-                  : "全部渠道"}
+              {levelAllActive ? "当前范围" : levelAllLabel}
             </button>
+          )}
+          {levelAllPending && (
+            <span className="level-loading-hint">
+              正在请求{levelAllPendingLabel || levelAllLabel}...
+            </span>
           )}
         <label className="sort-select">
           <select value={sortKey} onChange={(e) => onSortChange(e.target.value as SortKey)}>

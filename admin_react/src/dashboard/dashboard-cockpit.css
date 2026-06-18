@@ -292,6 +292,13 @@ body {
   color: #bbf7d0;
 }
 
+.level-loading-hint {
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .panel-index {
   color: #b8c2d2;
   font-size: 24px;

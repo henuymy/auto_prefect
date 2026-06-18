@@ -28,6 +28,12 @@ from services.dashboard_collection_service import (
 from services.dashboard_trigger import now_shanghai
 
 
+SPECIAL_GRID_BRANCH_CODES = {
+    # Online grid uses a non-branch prefix, but belongs under the online branch.
+    "A9999": "Aa",
+}
+
+
 @dataclass(frozen=True)
 class CollectionResult:
     rows: list[dict[str, Any]]
@@ -1744,7 +1750,7 @@ def _resolve_parent_area_id(
     if level_type == "BRANCH":
         return area_ids.get(("CITY", "A"))
     if level_type == "GRID":
-        branch_code = area_code[:2] if len(area_code) >= 2 else ""
+        branch_code = _grid_branch_code(area_code)
         return area_ids.get(("BRANCH", branch_code))
     if level_type == "CHANNEL":
         if parent_request_code:
@@ -1754,6 +1760,13 @@ def _resolve_parent_area_id(
         grid_code = area_code[:2] if len(area_code) >= 2 else ""
         return area_ids.get(("GRID", grid_code))
     return None
+
+
+def _grid_branch_code(area_code: str) -> str:
+    return SPECIAL_GRID_BRANCH_CODES.get(
+        area_code,
+        area_code[:2] if len(area_code) >= 2 else "",
+    )
 
 
 def _find_parent_id_in_session(
@@ -1793,7 +1806,7 @@ def _find_parent_id_in_session(
             return grid_area_id
 
     if level_type == "GRID":
-        branch_code = area_code[:2] if len(area_code) >= 2 else None
+        branch_code = _grid_branch_code(area_code) or None
         if branch_code:
             parent = session.scalar(
                 select(Area).where(
@@ -1865,7 +1878,7 @@ def _resolve_parent_target_id_in_session(
     if target_type == "BRANCH":
         parent_identity = ("CITY", "A")
     elif target_type == "GRID":
-        parent_identity = ("BRANCH", target_code[:2]) if target_code else None
+        parent_identity = ("BRANCH", _grid_branch_code(target_code)) if target_code else None
     elif target_type == "CHANNEL_MANAGER":
         parent_code = str(data.get("parent_code") or "").strip()
         parent_identity = ("GRID", parent_code) if parent_code else None

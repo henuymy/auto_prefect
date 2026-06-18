@@ -11,6 +11,8 @@ from services.dashboard_collection_orchestrator import (
     AreaCoverageError,
     AreaIdResolutionError,
     _merge_subtree_retry_collection,
+    _resolve_parent_area_id,
+    _resolve_parent_target_id_in_session,
     attach_area_ids_in_session,
     collect_validate_metric_rows_simple,
     affected_grid_targets,
@@ -114,6 +116,40 @@ def test_changed_manager_list_locates_grid_from_grid_observation():
     )
 
     assert result == [grid]
+
+
+def test_online_grid_resolves_to_online_branch_area():
+    area_ids = {
+        ("CITY", "A"): 1,
+        ("BRANCH", "Aa"): 32,
+    }
+
+    assert _resolve_parent_area_id(
+        area_ids,
+        {},
+        "GRID",
+        "A9999",
+    ) == 32
+
+
+def test_online_grid_request_target_resolves_to_online_branch():
+    target = RequestTarget(
+        id=32,
+        target_code="Aa",
+        target_name="郑州线上",
+        target_type="BRANCH",
+        enabled=True,
+    )
+
+    assert _resolve_parent_target_id_in_session(
+        Session(),
+        {("BRANCH", "Aa"): target},
+        {},
+        "GRID",
+        "A9999",
+        {},
+        {},
+    ) == 32
 
 
 def test_subtree_retry_drops_retried_base_recoverable_errors():
