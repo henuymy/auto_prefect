@@ -5,12 +5,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from infrastructure.dashboard_mysql import create_dashboard_engine
 from services.dashboard_query_service import (
-    get_dashboard_overview_fast,
+    get_dashboard_overview,
     get_drill_down,
     get_acc_wide_table,
     get_current_wide_table,
     get_current_with_changes,
     get_snapshot_trend,
+    parse_change_window_minutes,
 )
 
 
@@ -18,27 +19,10 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 def _parse_change_windows(value: str | None) -> list[int] | None:
-    if not value:
-        return None
-    windows: list[int] = []
-    for item in value.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        try:
-            minutes = int(item)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"change_windows 只支持逗号分隔分钟数: {value!r}",
-            ) from exc
-        if minutes <= 0 or minutes > 1440 or minutes % 5 != 0:
-            raise HTTPException(
-                status_code=400,
-                detail="change_windows 只支持 5 分钟粒度，范围 5-1440",
-            )
-        windows.append(minutes)
-    return windows or None
+    try:
+        return parse_change_window_minutes(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/overview")
@@ -53,7 +37,7 @@ def dashboard_overview(
 ):
     engine = create_dashboard_engine()
     try:
-        return get_dashboard_overview_fast(
+        return get_dashboard_overview(
             engine,
             branch_id=branch_id,
             branch_code=branch_code,

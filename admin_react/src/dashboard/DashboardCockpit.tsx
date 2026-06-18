@@ -156,6 +156,25 @@ function fmtProgress(value: number | null) {
   return value == null ? "--" : fmtPct(value);
 }
 
+function nextFiveMinuteTimeText(source?: string | null) {
+  const d = source ? new Date(source) : new Date();
+  if (Number.isNaN(d.getTime())) return "--";
+  const next = Math.ceil((d.getMinutes() + 1) / 5) * 5;
+  if (next >= 60) {
+    d.setHours(d.getHours() + 1);
+    d.setMinutes(0);
+  } else {
+    d.setMinutes(next);
+  }
+  d.setSeconds(0);
+  d.setMilliseconds(0);
+  return d.toLocaleTimeString("zh-CN", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function signed(value: number) {
   return value > 0 ? `+${value}` : `${value}`;
 }
@@ -729,13 +748,8 @@ export function DashboardCockpit() {
 
   /* derive */
   const nextCollect = useMemo(() => {
-    const d = new Date();
-    const next = Math.ceil((d.getMinutes() + 1) / 5) * 5;
-    if (next >= 60) { d.setHours(d.getHours() + 1); d.setMinutes(0); }
-    else d.setMinutes(next);
-    d.setSeconds(0);
-    return d.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" });
-  }, []);
+    return nextFiveMinuteTimeText(data?.latestRun?.finished_at);
+  }, [data?.latestRun?.finished_at]);
 
   /* ── render ── */
   return (

@@ -5,9 +5,9 @@ Performance notes
 ``get_dashboard_overview`` is the hot path for the cockpit.  It was
 originally 7-8 sequential ORM queries; the optimised version collapses
 area+metric_current into a single JOIN, fetches only the snapshots
-needed for the 4 change windows (not 120-min full-scan), and runs the
-acc query in a second cursor while the change computation runs in
-Python — effectively two DB round-trips instead of seven.
+needed for the configured change windows with a DB-side nearest-snapshot
+window function, and runs the acc query in a second cursor — effectively
+two DB round-trips instead of seven.
 """
 from __future__ import annotations
 
@@ -250,10 +250,24 @@ _CHANGE_WINDOWS: tuple[tuple[int, str], ...] = (
     (60, "change_60min"),
 )
 CHANGE_WINDOW_TOLERANCE_MINUTES = 3
+CHANGE_WINDOW_MINUTES_MIN = 5
+CHANGE_WINDOW_MINUTES_MAX = 1440
+CHANGE_WINDOW_MINUTES_STEP = 5
+CHANGE_WINDOW_LIMIT = 4
 DEFAULT_CHANGE_WINDOW_MINUTES = tuple(minutes for minutes, _ in _CHANGE_WINDOWS)
 
 
-def normalize_change_windows(value: list[int] | tuple[int, ...] | None = None) -> tuple[tuple[int, str], ...]:
+def _is_valid_change_window_minutes(minutes: int) -> bool:
+    return (
+        minutes >= CHANGE_WINDOW_MINUTES_MIN
+        and minutes <= CHANGE_WINDOW_MINUTES_MAX
+        and minutes % CHANGE_WINDOW_MINUTES_STEP == 0
+    )
+
+
+def normalize_change_windows(
+    value: list[int] | tuple[int, ...] | None = None,
+) -> tuple[tuple[int, str], ...]:
     windows = value or DEFAULT_CHANGE_WINDOW_MINUTES
     normalized: list[int] = []
     for item in windows:
@@ -261,26 +275,38 @@ def normalize_change_windows(value: list[int] | tuple[int, ...] | None = None) -
             minutes = int(item)
         except (TypeError, ValueError):
             continue
-        if (
-            minutes <= 0
-            or minutes > 1440
-            or minutes % 5 != 0
-            or minutes in normalized
-        ):
+        if not _is_valid_change_window_minutes(minutes) or minutes in normalized:
             continue
         normalized.append(minutes)
-        if len(normalized) >= 4:
+        if len(normalized) >= CHANGE_WINDOW_LIMIT:
             break
     if not normalized:
         normalized = list(DEFAULT_CHANGE_WINDOW_MINUTES)
     return tuple((minutes, f"change_{minutes}min") for minutes in normalized)
 
 
-def _snapshot_lookback_minutes(
-    change_windows: tuple[tuple[int, str], ...],
-) -> int:
-    max_window = max((minutes for minutes, _ in change_windows), default=120)
-    return max_window + CHANGE_WINDOW_TOLERANCE_MINUTES
+def parse_change_window_minutes(value: str | None) -> list[int] | None:
+    """Parse API change-window query text using the shared window rules."""
+    if not value:
+        return None
+    windows: list[int] = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            minutes = int(item)
+        except ValueError as exc:
+            raise ValueError(f"change_windows 只支持逗号分隔分钟数: {value!r}") from exc
+        if not _is_valid_change_window_minutes(minutes):
+            raise ValueError(
+                "change_windows 只支持 5 分钟粒度，范围 5-1440"
+            )
+        if minutes not in windows:
+            windows.append(minutes)
+        if len(windows) >= CHANGE_WINDOW_LIMIT:
+            break
+    return windows or None
 
 
 DEFAULT_OVERVIEW_BRANCH_KEYWORDS = ("中原", "AQ")
@@ -294,95 +320,18 @@ def get_dashboard_overview(
     period_type: str = "DAY_ACC",
     change_windows: list[int] | tuple[int, ...] | None = None,
 ) -> dict[str, Any]:
-    """Return the cockpit's default read model in one response.
+    """Backward-compatible overview entrypoint.
 
-    The overview page needs different scopes at once:
-    - BRANCH: all enabled branches for city-wide ranking.
-    - GRID: grids under the selected/default branch.
-    - CHANNEL: channels under those grids.
-
-    Returning those scopes together avoids loading every channel and then
-    filtering on the frontend.
+    Keep a single implementation path so API behavior, tests, and the cockpit
+    all use the same change-window and target/progress rules.
     """
-    normalized_period = str(period_type or "").strip().upper()
-    if normalized_period not in {"DAY_ACC", "MONTH"}:
-        raise ValueError(
-            f"period_type 只支持 DAY_ACC/MONTH: {period_type!r}"
-        )
-    normalized_windows = normalize_change_windows(change_windows)
-
-    with Session(engine) as session:
-        indicators = session.scalars(
-            select(Indicator)
-            .where(Indicator.enabled.is_(True))
-            .order_by(Indicator.sort_order, Indicator.id)
-        ).all()
-
-        branches = session.scalars(
-            select(Area)
-            .where(Area.enabled.is_(True), Area.level_type == "BRANCH")
-            .order_by(Area.sort_order, Area.id)
-        ).all()
-        selected_branch = _select_overview_branch(
-            branches,
-            branch_id=branch_id,
-            branch_code=branch_code,
-        )
-
-        grids: list[Area] = []
-        channels: list[Area] = []
-        if selected_branch is not None:
-            grids = session.scalars(
-                select(Area)
-                .where(
-                    Area.enabled.is_(True),
-                    Area.level_type == "GRID",
-                    Area.parent_id == selected_branch.id,
-                )
-                .order_by(Area.sort_order, Area.id)
-            ).all()
-            grid_ids = [area.id for area in grids]
-            if grid_ids:
-                channels = session.scalars(
-                    select(Area)
-                    .where(
-                        Area.enabled.is_(True),
-                        Area.level_type == "CHANNEL",
-                        Area.parent_id.in_(grid_ids),
-                    )
-                    .order_by(Area.sort_order, Area.id)
-                ).all()
-
-        areas = [*branches, *grids, *channels]
-        latest_run = _latest_realtime_run(session)
-        current_rows = _current_rows_for_areas(session, areas, indicators)
-        _attach_changes(
-            session,
-            current_rows,
-            indicators,
-            anchor_time=_change_anchor_time(latest_run),
-            change_windows=normalized_windows,
-        )
-        acc_rows = _acc_rows_for_areas(
-            session,
-            areas,
-            indicators,
-            period_type=normalized_period,
-        )
-
-    return {
-        "latest_run": _run_payload(latest_run),
-        "selected_branch": (
-            _area_payload(selected_branch, metrics={})
-            if selected_branch is not None
-            else None
-        ),
-        "indicators": _indicator_payload(indicators),
-        "rows": current_rows,
-        "acc_rows": acc_rows,
-        "row_count": len(current_rows),
-        "acc_row_count": len(acc_rows),
-    }
+    return get_dashboard_overview_fast(
+        engine,
+        branch_id=branch_id,
+        branch_code=branch_code,
+        period_type=period_type,
+        change_windows=change_windows,
+    )
 
 
 def _select_overview_branch(
@@ -532,212 +481,6 @@ def _run_payload(run: CollectionRun | None) -> dict[str, Any] | None:
     }
 
 
-def _current_rows_for_areas(
-    session: Session,
-    areas: list[Area],
-    indicators: list[Indicator],
-) -> list[dict[str, Any]]:
-    area_ids = [area.id for area in areas]
-    values_by_area: dict[int, dict[str, Any]] = defaultdict(dict)
-    collected_by_area: dict[int, Any] = {}
-    targets_by_area = _target_values_by_area(
-        session,
-        area_ids,
-        indicators,
-        "REALTIME",
-    )
-
-    if area_ids and indicators:
-        current_rows = session.execute(
-            select(
-                MetricCurrent.area_id,
-                Indicator.code,
-                MetricCurrent.metric_value,
-                MetricCurrent.collected_at,
-                MetricCurrent.collection_run_id,
-            )
-            .join(Indicator, Indicator.id == MetricCurrent.indicator_id)
-            .where(
-                MetricCurrent.area_id.in_(area_ids),
-                Indicator.enabled.is_(True),
-            )
-        ).all()
-        for row in current_rows:
-            values_by_area[row.area_id][row.code] = _number(row.metric_value)
-            previous = collected_by_area.get(row.area_id)
-            if previous is None or row.collected_at > previous["collected_at"]:
-                collected_by_area[row.area_id] = {
-                    "collected_at": row.collected_at,
-                    "collection_run_id": row.collection_run_id,
-                }
-
-    rows = []
-    for area in areas:
-        collection = collected_by_area.get(area.id)
-        metrics = {
-            indicator.code: values_by_area[area.id].get(indicator.code)
-            for indicator in indicators
-        }
-        targets = {
-            indicator.code: targets_by_area[area.id].get(indicator.code)
-            for indicator in indicators
-        }
-        payload = _area_payload(area, metrics=metrics, targets=targets)
-        payload.update(
-            {
-                "collection_run_id": (
-                    collection["collection_run_id"] if collection else None
-                ),
-                "collected_at": (
-                    _datetime_iso_millis(collection["collected_at"])
-                    if collection else None
-                ),
-            }
-        )
-        rows.append(payload)
-    return rows
-
-
-def _attach_changes(
-    session: Session,
-    rows: list[dict[str, Any]],
-    indicators: list[Indicator],
-    *,
-    anchor_time: datetime | None = None,
-    change_windows: tuple[tuple[int, str], ...] = _CHANGE_WINDOWS,
-) -> None:
-    if not rows or not indicators:
-        return
-
-    indicator_ids = [indicator.id for indicator in indicators]
-    area_ids = [row["area_id"] for row in rows]
-    now = anchor_time or datetime.now()
-    all_snapshots = list(
-        session.execute(
-            select(
-                MetricSnapshot.area_id,
-                MetricSnapshot.indicator_id,
-                MetricSnapshot.metric_value,
-                MetricSnapshot.collected_at,
-            )
-            .where(
-                MetricSnapshot.area_id.in_(area_ids),
-                MetricSnapshot.indicator_id.in_(indicator_ids),
-                MetricSnapshot.collected_at
-                >= now - timedelta(
-                    minutes=_snapshot_lookback_minutes(change_windows)
-                ),
-            )
-            .order_by(MetricSnapshot.collected_at.desc())
-        ).all()
-    )
-
-    snapshots_by_area_indicator: dict[
-        tuple[int, int], list[tuple[Decimal, datetime]]
-    ] = defaultdict(list)
-    for snap in all_snapshots:
-        snapshots_by_area_indicator[(snap.area_id, snap.indicator_id)].append(
-            (snap.metric_value, snap.collected_at)
-        )
-
-    for row in rows:
-        per_indicator: dict[str, dict[str, dict[str, Any]]] = {}
-        for indicator in indicators:
-            current_value = row["metrics"].get(indicator.code)
-            current_decimal = (
-                Decimal(str(current_value)) if current_value is not None else None
-            )
-            snapshots = snapshots_by_area_indicator.get(
-                (row["area_id"], indicator.id),
-                [],
-            )
-            changes: dict[str, dict[str, Any]] = {}
-            for minutes, key in change_windows:
-                previous, _ = _find_nearest_within_range(
-                    snapshots,
-                    minutes,
-                    now,
-                )
-                if current_decimal is not None and previous is not None:
-                    delta = current_decimal - previous
-                    delta_float = float(delta)
-                    changes[key] = {
-                        "value": delta_float,
-                        "rate": (
-                            delta_float / float(previous)
-                            if previous != 0
-                            else None
-                        ),
-                    }
-                else:
-                    changes[key] = {"value": None, "rate": None}
-            per_indicator[indicator.code] = changes
-        row["changes"] = per_indicator
-
-
-def _acc_rows_for_areas(
-    session: Session,
-    areas: list[Area],
-    indicators: list[Indicator],
-    *,
-    period_type: str,
-) -> list[dict[str, Any]]:
-    area_ids = [area.id for area in areas]
-    indicator_ids = [indicator.id for indicator in indicators]
-    values_by_area: dict[int, dict[str, Any]] = defaultdict(dict)
-    targets_by_area = _target_values_by_area(
-        session,
-        area_ids,
-        indicators,
-        period_type,
-    )
-
-    if area_ids and indicator_ids:
-        latest_date_row = session.execute(
-            select(MetricAcc.stat_date)
-            .where(
-                MetricAcc.area_id.in_(area_ids),
-                MetricAcc.indicator_id.in_(indicator_ids),
-                MetricAcc.period_type == period_type,
-            )
-            .order_by(MetricAcc.stat_date.desc())
-            .limit(1)
-        ).first()
-        if latest_date_row:
-            acc_rows = session.execute(
-                select(
-                    MetricAcc.area_id,
-                    MetricAcc.indicator_id,
-                    MetricAcc.metric_value,
-                )
-                .where(
-                    MetricAcc.area_id.in_(area_ids),
-                    MetricAcc.indicator_id.in_(indicator_ids),
-                    MetricAcc.period_type == period_type,
-                    MetricAcc.stat_date == latest_date_row[0],
-                )
-            ).all()
-            code_by_id = {indicator.id: indicator.code for indicator in indicators}
-            for row in acc_rows:
-                code = code_by_id.get(row.indicator_id)
-                if code:
-                    values_by_area[row.area_id][code] = _number(row.metric_value)
-
-    rows = []
-    for area in areas:
-        metrics = {
-            indicator.code: values_by_area[area.id].get(indicator.code)
-            for indicator in indicators
-        }
-        targets = {
-            indicator.code: targets_by_area[area.id].get(indicator.code)
-            for indicator in indicators
-        }
-        if any(value is not None for value in metrics.values()):
-            rows.append(_area_payload(area, metrics=metrics, targets=targets))
-    return rows
-
-
 def get_current_with_changes(
     engine: Engine,
     level_type: str | None = None,
@@ -748,8 +491,8 @@ def get_current_with_changes(
     per-area change deltas computed from MetricSnapshot history.
 
     For each enabled indicator, the service looks back the given number of
-    minutes, finds the newest snapshot at or before that cutoff, and computes
-    ``value - previous_value`` (value delta) and
+    minutes, finds the nearest snapshot within the shared tolerance around
+    that cutoff, and computes ``value - previous_value`` (value delta) and
     ``(value - previous_value) / previous_value`` (rate delta).
     """
     result = get_current_wide_table(engine, level_type=level_type, parent_id=parent_id)
@@ -757,110 +500,61 @@ def get_current_with_changes(
         return result
 
     normalized_windows = normalize_change_windows(change_windows)
-    indicator_ids = [ind["id"] for ind in result["indicators"]]
     area_ids = [row["area_id"] for row in result["rows"]]
 
     with Session(engine) as session:
         now = _change_anchor_time(_latest_realtime_run(session))
-        all_snapshots = list(
-            session.execute(
-                select(
-                    MetricSnapshot.area_id,
-                    MetricSnapshot.indicator_id,
-                    MetricSnapshot.metric_value,
-                    MetricSnapshot.collected_at,
-                )
-                .where(
-                    MetricSnapshot.area_id.in_(area_ids),
-                    MetricSnapshot.indicator_id.in_(indicator_ids),
-                    MetricSnapshot.collected_at
-                    >= now - timedelta(
-                        minutes=_snapshot_lookback_minutes(normalized_windows)
-                    ),
-                )
-                .order_by(MetricSnapshot.collected_at.desc())
-            ).all()
+        _attach_changes_fast(
+            session,
+            result["rows"],
+            result["indicators"],
+            area_ids,
+            now,
+            change_windows=normalized_windows,
         )
-
-    snapshots_by_area_indicator: dict[
-        tuple[int, int], list[tuple[Decimal, datetime]]
-    ] = defaultdict(list)
-    for snap in all_snapshots:
-        key = (snap.area_id, snap.indicator_id)
-        snapshots_by_area_indicator[key].append(
-            (snap.metric_value, snap.collected_at)
-        )
-
-    for row in result["rows"]:
-        area_id = row["area_id"]
-        per_indicator: dict[str, dict[str, dict[str, Any]]] = {}
-        for indicator in result["indicators"]:
-            indicator_code = indicator["code"]
-            indicator_id = indicator["id"]
-            current_value = row["metrics"].get(indicator_code)
-
-            snapshots = snapshots_by_area_indicator.get(
-                (area_id, indicator_id), []
-            )
-            current_decimal: Decimal | None = None
-            if current_value is not None:
-                current_decimal = Decimal(str(current_value))
-
-            changes: dict[str, dict[str, Any]] = {}
-            for minutes, key in normalized_windows:
-                previous, actual_minutes = _find_nearest_within_range(
-                    snapshots, minutes, now
-                )
-                if current_decimal is not None and previous is not None:
-                    delta = current_decimal - previous
-                    delta_float = float(delta)
-                    try:
-                        rate = (
-                            delta_float / float(previous)
-                            if previous != 0
-                            else None
-                        )
-                    except OverflowError:
-                        rate = None
-                    changes[key] = {"value": delta_float, "rate": rate}
-                else:
-                    changes[key] = {"value": None, "rate": None}
-
-            per_indicator[indicator_code] = changes
-
-        row["changes"] = per_indicator
 
     return result
 
 
-def _find_nearest_within_range(
-    snapshots: list[tuple[Decimal, datetime]],
-    target_minutes: int,
-    now: datetime,
-) -> tuple[Decimal | None, int | None]:
-    """Find the nearest snapshot within ±3 minutes of target time.
+def _snapshot_cutoff_time(now: datetime, target_minutes: int) -> datetime:
+    return now - timedelta(minutes=target_minutes)
 
-    Returns: (value, actual_minutes) or (None, None) if not found
-    """
-    target_time = now - timedelta(minutes=target_minutes)
-    target_ts = target_time.timestamp()
 
-    best_value: Decimal | None = None
-    best_diff = float('inf')
+def _snapshot_bounds(cutoff_time: datetime) -> tuple[datetime, datetime]:
+    tolerance = timedelta(minutes=CHANGE_WINDOW_TOLERANCE_MINUTES)
+    return cutoff_time - tolerance, cutoff_time + tolerance
 
-    for value, ts in snapshots:
-        diff_seconds = abs(ts.timestamp() - target_ts)
-        diff_minutes = diff_seconds / 60
 
-        if diff_minutes <= 3 and diff_seconds < best_diff:
-            best_diff = diff_seconds
-            best_value = value
+def _empty_change_payload() -> dict[str, Any]:
+    return {"value": None, "rate": None}
 
-    if best_value is None:
-        return None, None
 
-    actual_minutes = int(round((now - target_time).total_seconds() / 60))
-    return best_value, actual_minutes
+def _change_payload(
+    current_value: Decimal | None,
+    previous_value: Decimal | None,
+) -> dict[str, Any]:
+    if current_value is None or previous_value is None:
+        return _empty_change_payload()
+
+    delta = current_value - previous_value
+    delta_float = float(delta)
+    try:
+        rate = delta_float / float(previous_value) if previous_value != 0 else None
+    except OverflowError:
+        rate = None
+    return {"value": delta_float, "rate": rate}
+
+
+def _indicator_id(indicator: Indicator | dict[str, Any]) -> int:
+    if isinstance(indicator, dict):
+        return int(indicator["id"])
+    return int(indicator.id)
+
+
+def _indicator_code(indicator: Indicator | dict[str, Any]) -> str:
+    if isinstance(indicator, dict):
+        return str(indicator["code"])
+    return str(indicator.code)
 
 
 def get_acc_wide_table(
@@ -1376,7 +1070,7 @@ def _resolve_branch_scope(
 def _attach_changes_fast(
     session: Session,
     rows: list[dict[str, Any]],
-    indicators: list[Indicator],
+    indicators: list[Indicator] | list[dict[str, Any]],
     area_ids: list[int],
     now: datetime,
     *,
@@ -1388,29 +1082,44 @@ def _attach_changes_fast(
     single nearest snapshot at each cutoff (5/15/30/60 min ago) per
     (area, indicator) via a correlated subquery.
     """
-    indicator_ids = [ind.id for ind in indicators]
-    code_by_id = {ind.id: ind.code for ind in indicators}
+    indicator_ids = [_indicator_id(ind) for ind in indicators]
 
-    cutoffs = [(now - timedelta(minutes=m), k) for m, k in change_windows]
+    cutoffs = [(_snapshot_cutoff_time(now, m), k) for m, k in change_windows]
 
-    # One query per cutoff window — 4 small queries instead of 1 huge dump.
+    # One query per cutoff window — 4 small bounded queries instead of 1 huge
+    # dump.  Pick the nearest snapshot within +/- tolerance; scheduled runs can
+    # finish a few seconds before or after the nominal 5-minute boundary.
     snapshot_map: dict[tuple[int, int, str], Decimal] = {}
     for cutoff_ts, window_key in cutoffs:
-        snap_sql = text("""
-            SELECT ms.area_id, ms.indicator_id, ms.metric_value
-            FROM metric_snapshot ms
-            INNER JOIN (
-                SELECT area_id, indicator_id, MAX(collected_at) AS max_ts
+        lower_bound, upper_bound = _snapshot_bounds(cutoff_ts)
+        dialect_name = session.get_bind().dialect.name
+        if dialect_name in {"mysql", "mariadb"}:
+            distance_expr = (
+                "ABS(TIMESTAMPDIFF(MICROSECOND, collected_at, :cutoff_ts))"
+            )
+        else:
+            distance_expr = (
+                "ABS((julianday(collected_at) - julianday(:cutoff_ts)) * "
+                "86400000000.0)"
+            )
+        snap_sql = text(f"""
+            SELECT area_id, indicator_id, metric_value
+            FROM (
+                SELECT
+                    area_id,
+                    indicator_id,
+                    metric_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY area_id, indicator_id
+                        ORDER BY {distance_expr}, collected_at DESC
+                    ) AS rn
                 FROM metric_snapshot
                 WHERE area_id IN :area_ids
                   AND indicator_id IN :ind_ids
                   AND collected_at >= :lower_bound
-                  AND collected_at <= :cutoff
-                GROUP BY area_id, indicator_id
-            ) latest
-              ON ms.area_id = latest.area_id
-             AND ms.indicator_id = latest.indicator_id
-             AND ms.collected_at = latest.max_ts
+                  AND collected_at <= :upper_bound
+            ) ranked
+            WHERE rn = 1
         """).bindparams(
             bindparam("area_ids", expanding=True),
             bindparam("ind_ids", expanding=True),
@@ -1420,37 +1129,32 @@ def _attach_changes_fast(
             {
                 "area_ids": tuple(area_ids) if area_ids else (-1,),
                 "ind_ids": tuple(indicator_ids) if indicator_ids else (-1,),
-                "lower_bound": cutoff_ts - timedelta(
-                    minutes=CHANGE_WINDOW_TOLERANCE_MINUTES
-                ),
-                "cutoff": cutoff_ts,
+                "lower_bound": lower_bound,
+                "upper_bound": upper_bound,
+                "cutoff_ts": cutoff_ts,
             },
         ).mappings().all()
 
         for sr in snap_rows:
-            snapshot_map[(sr["area_id"], sr["indicator_id"], window_key)] = sr["metric_value"]
+            snapshot_map[(sr["area_id"], sr["indicator_id"], window_key)] = (
+                sr["metric_value"]
+            )
 
     # Attach to rows
     for row in rows:
         aid = row["area_id"]
         per_indicator: dict[str, dict[str, dict[str, Any]]] = {}
         for ind in indicators:
-            current_value = row["metrics"].get(ind.code)
+            indicator_id = _indicator_id(ind)
+            indicator_code = _indicator_code(ind)
+            current_value = row["metrics"].get(indicator_code)
             current_dec = Decimal(str(current_value)) if current_value is not None else None
 
             changes: dict[str, dict[str, Any]] = {}
             for _, window_key in cutoffs:
-                prev = snapshot_map.get((aid, ind.id, window_key))
-                if current_dec is not None and prev is not None:
-                    delta = current_dec - prev
-                    delta_f = float(delta)
-                    changes[window_key] = {
-                        "value": delta_f,
-                        "rate": delta_f / float(prev) if prev != 0 else None,
-                    }
-                else:
-                    changes[window_key] = {"value": None, "rate": None}
-            per_indicator[ind.code] = changes
+                prev = snapshot_map.get((aid, indicator_id, window_key))
+                changes[window_key] = _change_payload(current_dec, prev)
+            per_indicator[indicator_code] = changes
         row["changes"] = per_indicator
 
 

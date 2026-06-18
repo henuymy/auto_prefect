@@ -9,7 +9,9 @@ from services.dashboard_query_service import (
     get_acc_wide_table,
     get_current_wide_table,
     get_current_with_changes,
+    get_dashboard_overview,
     get_drill_down,
+    parse_change_window_minutes,
 )
 
 
@@ -298,6 +300,19 @@ def test_current_with_changes_includes_change_fields():
     engine.dispose()
 
 
+def test_parse_change_window_minutes_uses_shared_rules():
+    assert parse_change_window_minutes(None) is None
+    assert parse_change_window_minutes("5,15,15,30,60,90") == [5, 15, 30, 60]
+
+    for value in ("abc", "1", "6", "1445"):
+        try:
+            parse_change_window_minutes(value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected invalid change window: {value}")
+
+
 def test_current_with_changes_supports_custom_windows():
     engine = create_test_engine()
 
@@ -366,6 +381,39 @@ def test_current_with_changes_ignores_stale_cutoff_snapshot():
         "value": None,
         "rate": None,
     }
+    engine.dispose()
+
+
+def test_dashboard_overview_uses_nearest_snapshot_after_cutoff():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text("DELETE FROM metric_snapshot"))
+        anchor = datetime(2026, 6, 11, 10, 5, 8)
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_snapshot
+                    (id, collection_run_id, area_id, indicator_id,
+                     metric_value, collected_at)
+                VALUES
+                    (1, 1, 2, 1, 19, :far_before_cutoff),
+                    (2, 1, 2, 1, 21, :near_after_cutoff)
+                """
+            ),
+            {
+                "far_before_cutoff": (
+                    anchor - timedelta(minutes=5, seconds=90)
+                ).isoformat(sep=" "),
+                "near_after_cutoff": (
+                    anchor - timedelta(minutes=5) + timedelta(seconds=2)
+                ).isoformat(sep=" "),
+            },
+        )
+
+    result = get_dashboard_overview(engine, branch_code="AQ", change_windows=[5])
+    row_with_data = [r for r in result["rows"] if r["area_code"] == "AQ"][0]
+
+    assert row_with_data["changes"]["sgs_ajvwdz"]["change_5min"]["value"] == 4.0
     engine.dispose()
 
 

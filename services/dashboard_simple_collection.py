@@ -7,17 +7,11 @@ from __future__ import annotations
 
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 import requests
-from sqlalchemy import Engine
-from sqlalchemy.orm import Session
 
-from infrastructure.dashboard_run_store import CollectionRunStore
-from models.dashboard_indicator import Indicator
-from models.dashboard_request_target import RequestTarget
 from services.method_service import (
     build_cookie_jar,
     build_headers,
@@ -42,8 +36,6 @@ HEADERS = {
 }
 
 DEFAULT_TIMEOUT = 30
-DEFAULT_MAX_WORKERS = 24
-HARD_MAX_WORKERS = 32
 
 
 # ============== 请求参数构造 ==============
@@ -89,7 +81,7 @@ def create_simple_fetcher(
     timeout_seconds: int = DEFAULT_TIMEOUT,
     request_retries: int = 2,
     retry_delay_seconds: float = 0.5,
-) -> Callable[[RequestTarget], dict[str, Any]]:
+) -> Callable[[Any], dict[str, Any]]:
     """创建简化的数据采集器
 
     不需要任何报表配置，直接发送请求
@@ -163,28 +155,3 @@ def create_simple_fetcher(
         raise AssertionError("unreachable")
 
     return fetch
-
-
-# ============== 工具函数 ==============
-
-def load_collection_targets(engine: Engine) -> list[RequestTarget]:
-    """加载采集目标（从 request_target 表）"""
-    with Session(engine) as session:
-        records = session.scalars(
-            select(RequestTarget)
-            .where(RequestTarget.enabled.is_(True))
-            .order_by(RequestTarget.sort_order, RequestTarget.id)
-        ).all()
-    return list(records)
-
-
-def load_enabled_indicator_codes(engine: Engine) -> list[str]:
-    """加载启用的指标代码"""
-    with Session(engine) as session:
-        return list(
-            session.scalars(
-                select(Indicator.code)
-                .where(Indicator.enabled.is_(True))
-                .order_by(Indicator.sort_order, Indicator.id)
-            ).all()
-        )
