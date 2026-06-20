@@ -16,6 +16,9 @@ cache/
 *.log
 .env
 .env.*
+tenxunwendang.txt
+tenxunwendang*.local.*
+*tencent*token*.txt
 config/tasks/local.json
 config/tasks/*.local.json
 config/modules/*.local.json

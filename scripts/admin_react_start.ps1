@@ -15,7 +15,7 @@ if ($env:CONDA_PREFIX -and (Test-Path -LiteralPath (Join-Path $env:CONDA_PREFIX 
 } else {
     $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
     if ($condaCmd) {
-        $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(.+)$" | Select-Object -First 1
+        $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(?:\*\s+)?(.+)$" | Select-Object -First 1
         if ($envInfo) {
             $candidatePython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
             if (Test-Path -LiteralPath $candidatePython) {

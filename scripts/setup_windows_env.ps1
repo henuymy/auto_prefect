@@ -107,7 +107,7 @@ if (-not $SkipCondaCreate) {
 }
 
 $CondaPython = Join-Path $env:USERPROFILE ".conda\envs\$EnvName\python.exe"
-$envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*$([regex]::Escape($EnvName))\s+(.+)$" | Select-Object -First 1
+$envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*$([regex]::Escape($EnvName))\s+(?:\*\s+)?(.+)$" | Select-Object -First 1
 if ($envInfo) {
     $CondaPython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
 }

@@ -15,6 +15,10 @@
         "text": {
           "mode": "used_range"
         }
+      },
+      {
+        "type": "image",
+        "sheet": "营业厅人员通报"
       }
     ]
   },
@@ -43,13 +47,10 @@
       },
       "body_type": "json",
       "response_mode": "json_drilldown_to_excel",
-      "headers_from_session_storage": {
-        "uapToken": "uapToken"
-      },
       "data": {
-        "indCodes": "sgs_ajvwdz,",
+        "indCodes": "sgs_ajvwdz,sgs_ydzjdz,",
         "areaId": "AQ",
-        "diyCodes": "sgs_ajvwdz",
+        "diyCodes": "sgs_ajvwdz,sgs_ydzjdz,",
         "areaType": null,
         "queryDate": "${today_yyyymmdd}"
       },
@@ -81,6 +82,11 @@
             "field": "sgs_ajvwdz",
             "header": "爱家亲情网(V网版)",
             "type": "number"
+          },
+          {
+            "field": "sgs_ydzjdz",
+            "header": "爱家亲情网(基础版)",
+            "type": "number"
           }
         ]
       },
@@ -97,6 +103,9 @@
         "max_requests": 1000,
         "max_workers": 32,
         "skip_self_row": true
+      },
+      "headers_from_session_storage": {
+        "uapToken": "uapToken"
       }
     },
     {
@@ -117,14 +126,11 @@
       },
       "body_type": "json",
       "response_mode": "json_drilldown_to_excel",
-      "headers_from_session_storage": {
-        "uapToken": "uapToken"
-      },
       "data": {
-        "indCodes": "sgs_ajvwdz,",
+        "indCodes": "sgs_ajvwdz,sgs_ydzjdz,",
         "indType": "DD",
         "areaId": "AQ",
-        "diyCodes": "sgs_ajvwdz",
+        "diyCodes": "sgs_ajvwdz,sgs_ydzjdz,",
         "queryDate": "${yesterday_yyyymmdd}",
         "areaType": null
       },
@@ -156,6 +162,11 @@
             "field": "sgs_ajvwdz",
             "header": "爱家亲情网(V网版)",
             "type": "number"
+          },
+          {
+            "field": "sgs_ydzjdz",
+            "header": "爱家亲情网(基础版)",
+            "type": "number"
           }
         ]
       },
@@ -172,6 +183,9 @@
         "max_requests": 1000,
         "max_workers": 6,
         "skip_self_row": true
+      },
+      "headers_from_session_storage": {
+        "uapToken": "uapToken"
       }
     }
   ],
@@ -222,7 +236,7 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-23 22:51:23",
+  "updatedAt": "2026-06-10 09:48:15",
   "source": "published",
   "has_draft": false
 }

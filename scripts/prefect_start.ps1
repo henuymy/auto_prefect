@@ -27,7 +27,7 @@ if (-not $PythonExe) {
         $condaPython = $null
         $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
         if ($condaCmd) {
-            $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(.+)$" | Select-Object -First 1
+            $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(?:\*\s+)?(.+)$" | Select-Object -First 1
             if ($envInfo) {
                 $condaPython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
             }
@@ -62,8 +62,8 @@ $env:PREFECT_HOME = $PrefectHome
 $env:PREFECT_API_URL = $ApiUrl
 $env:PREFECT_API_DATABASE_CONNECTION_URL = $DatabaseUrl
 $env:PREFECT_SERVER_DATABASE_CONNECTION_URL = $DatabaseUrl
-$env:PREFECT_API_DATABASE_TIMEOUT = "60"
-$env:PREFECT_SERVER_DATABASE_TIMEOUT = "60"
+$env:PREFECT_API_DATABASE_TIMEOUT = "300"
+$env:PREFECT_SERVER_DATABASE_TIMEOUT = "300"
 $env:PREFECT_API_SERVICES_SCHEDULER_ENABLED = if ($UseSqliteDebug) { "False" } else { "True" }
 $env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = "False"
 $env:PREFECT_SERVER_ANALYTICS_ENABLED = "False"
@@ -97,7 +97,7 @@ function Start-DetachedWindow {
 function Wait-ForPrefectServer {
     param(
         [string]$Url,
-        [int]$TimeoutSeconds = 90
+        [int]$TimeoutSeconds = 300
     )
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -150,10 +150,45 @@ switch ($Mode) {
     }
     "both" {
         Start-DetachedWindow -Title "Prefect Server" -Command $serverCommand
-        $serverReady = Wait-ForPrefectServer -Url "http://127.0.0.1:4200/api/health"
+        $serverReady = Wait-ForPrefectServer -Url "http://127.0.0.1:4200/api/health" -TimeoutSeconds 300
         if (-not $serverReady) {
-            throw "Prefect Server was not ready within 90 seconds. Check the Prefect Server window logs."
+            throw "Prefect Server was not ready within 300 seconds. Check the Prefect Server window logs."
         }
+
+        Write-Host "清除积压的 Pending/Scheduled flow runs..."
+        try {
+            & $PythonExe -c "
+import asyncio
+from datetime import datetime, timezone
+from prefect.client.orchestration import get_client
+from prefect.client.schemas.filters import FlowRunFilter, FlowRunFilterExpectedStartTime, FlowRunFilterState, FlowRunFilterStateType
+from prefect.client.schemas.objects import StateType
+from prefect.states import Cancelled
+
+async def cancel_pending():
+    client = get_client()
+    now = datetime.now(timezone.utc)
+    # 只清理预计开始时间早于当前时间的 Pending/Scheduled flow runs，保留未来定时任务
+    state_filter = FlowRunFilter(
+        state=FlowRunFilterState(type=FlowRunFilterStateType(any_=[StateType.PENDING, StateType.SCHEDULED])),
+        expected_start_time=FlowRunFilterExpectedStartTime(before_=now),
+    )
+    runs = await client.read_flow_runs(flow_run_filter=state_filter)
+    if not runs:
+        print('  没有当前时间之前的积压 flow run')
+        return
+    cancelled_state = Cancelled(message='重启时自动取消当前时间之前的积压任务')
+    for run in runs:
+        await client.set_flow_run_state(run.id, cancelled_state)
+        print(f'  已取消: {run.id} ({run.name}) expected_start_time={run.expected_start_time}')
+    print(f'  共取消 {len(runs)} 个 flow run')
+
+asyncio.run(cancel_pending())
+" 2>&1 | ForEach-Object { Write-Host "  $_" }
+        } catch {
+            Write-Host "  [WARN] 清除积压 flow run 时出错: $_" -ForegroundColor Yellow
+        }
+
         Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
         Write-Host "Started Server + Worker in two new windows."
         Write-Host "Open UI: http://127.0.0.1:4200"
