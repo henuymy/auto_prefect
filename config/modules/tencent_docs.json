@@ -1,0 +1,13 @@
+{
+  "credentials": {
+    "client_id": "",
+    "access_token": "",
+    "open_id": ""
+  },
+  "request_timeout_seconds": 60,
+  "read_limits": {
+    "max_rows_per_request": 1000,
+    "max_columns_per_request": 200,
+    "max_cells_per_request": 10000
+  }
+}
