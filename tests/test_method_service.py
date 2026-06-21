@@ -356,6 +356,77 @@ def test_download_reports_dry_run_writes_manifest():
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def test_download_reports_tencent_sheet_dry_run_does_not_require_cookie_dump():
+    work_dir = make_work_dir()
+    try:
+        manifest_path = work_dir / "manifest.json"
+
+        manifest = download_reports(
+            {
+                "cookie_dump_path": str(work_dir / "missing-cookie-dump.json"),
+                "manifest_path": str(manifest_path),
+                "reports": [
+                    {
+                        "source": "tencent_sheet",
+                        "name": "腾讯文档日报",
+                        "doc_url": "https://docs.qq.com/sheet/DY1h4R1Rmd0FwWFhF?tab=000002",
+                        "sheets": [{"sheet_id": "000002", "range": "A1:B2"}],
+                    }
+                ],
+            },
+            dry_run=True,
+            debug=True,
+        )
+
+        assert manifest["dry_run"] is True
+        assert manifest["results"][0]["source"] == "tencent_sheet"
+        assert manifest["results"][0]["request_summary"]["sheet_count"] == 1
+        assert manifest_path.exists()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_download_reports_tencent_sheet_uses_openapi_downloader(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        manifest_path = work_dir / "manifest.json"
+        output_dir = work_dir / "downloads"
+        output_path = output_dir / "腾讯文档日报.xlsx"
+
+        def fake_download(report, output_dir_arg, base_dir):
+            Path(output_dir_arg).mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"PK\x03\x04xlsx")
+            return {
+                "name": report["name"],
+                "source": "tencent_sheet",
+                "output_path": str(output_path),
+                "bytes": output_path.stat().st_size,
+            }
+
+        monkeypatch.setattr("services.method_service.download_tencent_sheet_report", fake_download)
+
+        manifest = download_reports(
+            {
+                "cookie_dump_path": str(work_dir / "missing-cookie-dump.json"),
+                "manifest_path": str(manifest_path),
+                "output_dir": str(output_dir),
+                "reports": [
+                    {
+                        "source": "tencent_sheet",
+                        "name": "腾讯文档日报",
+                        "doc_url": "https://docs.qq.com/sheet/DY1h4R1Rmd0FwWFhF?tab=000002",
+                        "sheets": [{"sheet_id": "000002", "range": "A1:B2"}],
+                    }
+                ],
+            },
+        )
+
+        assert manifest["results"][0]["source"] == "tencent_sheet"
+        assert Path(manifest["results"][0]["output_path"]).exists()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def test_download_reports_json_to_excel_writes_output(monkeypatch):
     work_dir = make_work_dir()
     try:

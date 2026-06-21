@@ -218,6 +218,19 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
             issues.append({"path": f"/downloads/{index}/name", "message": "下载标识不能为空"})
         else:
             download_names.add(str(item["name"]))
+        source = item.get("source") or "http_api"
+        if source == "tencent_sheet":
+            if not (str(item.get("file_id") or "").strip() or str(item.get("doc_url") or "").strip()):
+                issues.append({"path": f"/downloads/{index}/file_id", "message": "腾讯文档必须填写 file_id 或 doc_url"})
+            sheets = item.get("sheets") or []
+            if not sheets:
+                issues.append({"path": f"/downloads/{index}/sheets", "message": "腾讯文档至少需要一个 Sheet 范围"})
+            for sheet_index, sheet in enumerate(sheets):
+                if not (str(sheet.get("sheet_id") or "").strip() or str(sheet.get("sheet_name") or "").strip()):
+                    issues.append({"path": f"/downloads/{index}/sheets/{sheet_index}/sheet_id", "message": "Sheet 必须填写 sheet_id 或 Sheet 名称"})
+            continue
+        if source not in {"http_api", ""}:
+            issues.append({"path": f"/downloads/{index}/source", "message": f"不支持的数据源: {source}"})
         if item.get("stage") and known_stages and item.get("stage") not in known_stages:
             issues.append({"path": f"/downloads/{index}/stage", "message": f"Cookie Stage 不存在: {item.get('stage')}"})
         if not item.get("url"):

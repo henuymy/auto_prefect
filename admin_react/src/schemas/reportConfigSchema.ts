@@ -15,13 +15,35 @@ export const reportConfigJsonSchema = {
       minItems: 1,
       items: {
         type: "object",
-        required: ["name", "stage", "method", "url", "body_type", "response_mode"],
+        required: ["name"],
         properties: {
           name: { type: "string", minLength: 1 },
+          source: { enum: ["http_api", "tencent_sheet"] },
           stage: { type: "string", minLength: 1 },
           auth_preset: { type: "string" },
           method: { enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] },
           url: { type: "string", minLength: 1 },
+          file_id: { type: "string" },
+          doc_url: { type: "string" },
+          output_filename: { type: "string" },
+          sheets: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              properties: {
+                sheet_name: { type: "string" },
+                sheet_id: { type: "string" },
+                range: { type: "string" },
+                output_sheet_name: { type: "string" },
+              },
+              anyOf: [
+                { required: ["sheet_id"], properties: { sheet_id: { type: "string", minLength: 1 } } },
+                { required: ["sheet_name"], properties: { sheet_name: { type: "string", minLength: 1 } } },
+              ],
+              additionalProperties: false,
+            },
+          },
           headers: { type: "object", additionalProperties: { type: "string" } },
           body_type: { enum: ["form", "json", "raw"] },
           data: { type: "object", additionalProperties: true },
@@ -67,6 +89,17 @@ export const reportConfigJsonSchema = {
           },
         },
         allOf: [
+          {
+            if: { properties: { source: { const: "tencent_sheet" } }, required: ["source"] },
+            then: {
+              required: ["sheets"],
+              anyOf: [
+                { required: ["file_id"], properties: { file_id: { type: "string", minLength: 1 } } },
+                { required: ["doc_url"], properties: { doc_url: { type: "string", minLength: 1 } } },
+              ],
+            },
+            else: { required: ["stage", "method", "url", "body_type", "response_mode"] },
+          },
           {
             if: { properties: { response_mode: { enum: ["json_to_excel", "json_drilldown_to_excel"] } }, required: ["response_mode"] },
             then: {

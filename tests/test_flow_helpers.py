@@ -183,6 +183,12 @@ def test_required_stages_for_report_uses_enabled_downloads_only():
             {"name": "B", "stage": "smart_ops", "enabled": False},
             {"name": "C", "stage": "city_ops"},
             {"name": "D", "stage": "report_analysis"},
+            {
+                "source": "tencent_sheet",
+                "name": "腾讯文档",
+                "doc_url": "https://docs.qq.com/sheet/DY1h4R1Rmd0FwWFhF?tab=000002",
+                "sheets": [{"sheet_id": "000002", "range": "A1:B2"}],
+            },
         ]
     }
 
@@ -271,6 +277,28 @@ def test_build_download_config_requires_schema_fields():
                 ],
             },
         )
+
+
+def test_build_download_config_accepts_tencent_sheet_source_without_stage():
+    config = build_download_config(
+        {"report_defaults": {}, "output_dir": "runtime/downloads"},
+        {
+            "name": "腾讯文档通报",
+            "downloads": [
+                {
+                    "source": "tencent_sheet",
+                    "name": "腾讯文档日报",
+                    "doc_url": "https://docs.qq.com/sheet/DY1h4R1Rmd0FwWFhF?tab=000002",
+                    "sheets": [{"sheet_id": "000002", "range": "A1:B2", "output_sheet_name": "日报"}],
+                }
+            ],
+        },
+    )
+
+    report = config["reports"][0]
+    assert report["source"] == "tencent_sheet"
+    assert report["sheets"][0]["sheet_id"] == "000002"
+    assert "stage" not in report
 
 
 

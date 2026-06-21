@@ -66,7 +66,8 @@
       },
       "headers_from_session_storage": {
         "Uaptoken": "uapToken"
-      }
+      },
+      "source": "http_api"
     },
     {
       "name": "市公司PK赛数据",
@@ -114,7 +115,8 @@
       },
       "headers_from_session_storage": {
         "Uaptoken": "uapToken"
-      }
+      },
+      "source": "http_api"
     },
     {
       "name": "累计区公司PK赛数据",
@@ -164,7 +166,8 @@
             "type": "number"
           }
         ]
-      }
+      },
+      "source": "http_api"
     },
     {
       "name": "累计市公司PK赛数据",
@@ -214,7 +217,8 @@
             "type": "number"
           }
         ]
-      }
+      },
+      "source": "http_api"
     }
   ],
   "compare_sources": [
@@ -316,7 +320,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-06-04 00:09:52",
+  "updatedAt": "2026-06-20 16:47:46",
   "source": "published",
   "has_draft": false
 }

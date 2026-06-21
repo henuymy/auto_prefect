@@ -1,0 +1,177 @@
+{
+  "id": "网格区公司PK赛通报",
+  "name": "网格区公司PK赛通报",
+  "template_path": "templates/网格-6月PK赛网格通报模版.xlsx",
+  "enabled": true,
+  "description": "",
+  "downloads": [
+    {
+      "name": "郑州PK赛通报",
+      "stage": "smart_ops",
+      "auth_preset": "智慧运营 User-Info",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/zhyypt/smop/dszzBranch/formsReal/exportData",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Referer": "https://usm.ha.cmcc:19011/zhyypt/dist/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0",
+        "baggage": "pageId=cca68fe8c4b4a0162348df62217bbd63",
+        "traceparent": "00-4a3b338f74cacc13ad3ae7bbfcf1f711-0123456789abcdef-01"
+      },
+      "body_type": "json",
+      "response_mode": "file",
+      "data": {
+        "expFileId": "AT_0054_9",
+        "expFileName": "郑州移动PK赛通报.xlsx",
+        "templateId": "AT_0054_9",
+        "queryDate": "${today}",
+        "hour": "${hour}",
+        "areaId": "371"
+      },
+      "raw_body": "",
+      "source": "http_api",
+      "headers_from_session_storage": {
+        "User-Info": "zhyyptInfo.accessToken"
+      }
+    },
+    {
+      "source": "http_api",
+      "name": "郑州优选PLUS",
+      "stage": "city_ops",
+      "auth_preset": "地市平台 Uaptoken",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailByAreaAndIndex",
+      "headers": {
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
+      },
+      "body_type": "json",
+      "response_mode": "json_to_excel",
+      "data": {
+        "indCodes": "sgs_ajvwdz,sgs_ydzjdz,",
+        "areaId": "AQ",
+        "diyCodes": "371_ydyxp0616,sgs_AIYSJSZD_260228",
+        "areaType": null,
+        "queryDate": "${today_yyyymmdd}"
+      },
+      "raw_body": "",
+      "excel": {
+        "data_path": "result.tableData",
+        "sheet_name": "郑州优选PLUS",
+        "columns": [
+          {
+            "field": "areaCode",
+            "header": "areaCode"
+          },
+          {
+            "field": "areaName",
+            "header": "areaName"
+          },
+          {
+            "field": "371_ydyxp0616",
+            "header": "郑州移动优选PLUS会员产品",
+            "type": "number"
+          },
+          {
+            "field": "sgs_AIYSJSZD_260228",
+            "header": "AI云手机瘦终端",
+            "type": "number"
+          }
+        ]
+      },
+      "headers_from_session_storage": {
+        "Uaptoken": "uapToken"
+      }
+    }
+  ],
+  "compare_sources": [
+    {
+      "download_name": "郑州PK赛通报",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "111",
+          "new_sheet_name": "郑州移动PK赛通报-网格",
+          "template_sheet_name": "郑州移动PK赛通报-网格",
+          "header_row": 3,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "郑州优选PLUS",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "222",
+          "new_sheet_name": "郑州优选PLUS",
+          "template_sheet_name": "郑州优选PLUS",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    }
+  ],
+  "send": {
+    "webhook_url": "",
+    "workbook_name": "新建通报配置",
+    "items": [
+      {
+        "type": "image",
+        "sheet": "通报",
+        "text": {
+          "mode": "none"
+        }
+      },
+      {
+        "type": "text",
+        "sheet": "通报文字",
+        "text": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "image",
+        "sheet": "通报2",
+        "text": {
+          "mode": "none"
+        }
+      }
+    ]
+  },
+  "template_update": {
+    "engine": "hybrid",
+    "update_condition": "any_changed",
+    "write_sheets": "all_compared",
+    "send_when_same": false
+  },
+  "wait_for_change": {
+    "enabled": true,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "deployment": {
+    "enabled": true,
+    "crons": [
+      "35 14-17 * * *"
+    ],
+    "timezone": "Asia/Shanghai"
+  },
+  "lastRun": "disabled",
+  "updatedAt": "2026-06-21 12:58:33",
+  "source": "published",
+  "has_draft": false
+}

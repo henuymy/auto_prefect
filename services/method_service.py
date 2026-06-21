@@ -22,6 +22,7 @@ from services.json_excel_service import (
     json_response_to_excel,
     set_by_path,
 )
+from services.tencent_sheet_service import download_tencent_sheet_report
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
@@ -573,12 +574,33 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
     verify_ssl = bool(config.get("verify_ssl", True))
     trust_env = bool(config.get("trust_env", False))
     proxies = config.get("proxies") or None
-    cookie_dump = load_json(cookie_dump_path)
-
     results = []
     reports = [report for report in config.get("reports", []) if report.get("enabled", True)]
+    needs_cookie_dump = any((report.get("source") or "http_api") != "tencent_sheet" for report in reports)
+    cookie_dump = load_json(cookie_dump_path) if needs_cookie_dump else {"stages": []}
     for report in reports:
         name = report.get("name", report.get("url", "未命名报表"))
+        if report.get("source") == "tencent_sheet":
+            if dry_run:
+                payload = {
+                    "name": name,
+                    "source": "tencent_sheet",
+                    "doc_url": report.get("doc_url"),
+                    "file_id": report.get("file_id"),
+                    "sheets": report.get("sheets") or [],
+                    "dry_run": True,
+                }
+                if debug:
+                    payload["request_summary"] = {
+                        "source": "tencent_sheet",
+                        "sheet_count": len(report.get("sheets") or []),
+                        "credential_source": "config/modules/tencent_docs.local.json",
+                    }
+                results.append(payload)
+                continue
+            results.append(download_tencent_sheet_report(report, output_dir, base_dir=base_dir))
+            continue
+
         stage_name = report.get("stage")
         if not stage_name:
             raise ValueError(f"报表 {name} 缺少 stage")

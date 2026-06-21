@@ -5,6 +5,12 @@
     "open_id": ""
   },
   "request_timeout_seconds": 60,
+  "chunk_request_interval_seconds": 0.2,
+  "retry": {
+    "attempts": 3,
+    "backoff_seconds": 1,
+    "max_backoff_seconds": 8
+  },
   "read_limits": {
     "max_rows_per_request": 1000,
     "max_columns_per_request": 200,

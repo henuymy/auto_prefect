@@ -1,0 +1,52 @@
+{
+  "flow_name": "auto-notify-网格区公司PK赛通报",
+  "runtime_dir": "runtime/flow/网格区公司PK赛通报",
+  "report_config_path": "config/reports/网格区公司PK赛通报.json",
+  "wait_for_change": {
+    "enabled": true,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "steps": {
+    "login": {
+      "enabled": true,
+      "config_path": "config/modules/autologin.json",
+      "force_refresh": false
+    },
+    "download": {
+      "enabled": true,
+      "config_path": "config/modules/report_downloader.json",
+      "dry_run": false,
+      "debug": false
+    },
+    "compare": {
+      "enabled": true,
+      "config_path": "config/modules/report_compare.json",
+      "generated_config_path": "runtime/flow/网格区公司PK赛通报/compare_config.json",
+      "download_report_name": "网格区公司PK赛通报"
+    },
+    "update_template": {
+      "enabled": true,
+      "config_path": "config/modules/template_updater.json",
+      "generated_config_path": "runtime/flow/网格区公司PK赛通报/template_updater_config.json",
+      "output_dir": "runtime/flow/网格区公司PK赛通报/templates",
+      "manifest_path": "runtime/flow/网格区公司PK赛通报/update_manifest.json"
+    },
+    "send_wecom": {
+      "enabled": true,
+      "base_config_path": "config/modules/wecom_sender.json",
+      "generated_config_path": "runtime/flow/网格区公司PK赛通报/excel_sender_config.json",
+      "runtime_dir": "runtime/flow/网格区公司PK赛通报/wecom",
+      "dry_run": false,
+      "timeout": 30
+    },
+    "commit_template": {
+      "enabled": true,
+      "config_path": "config/modules/template_commit.json",
+      "update_manifest_path": "runtime/flow/网格区公司PK赛通报/update_manifest.json",
+      "send_result_path": "runtime/flow/网格区公司PK赛通报/wecom/send_result.json",
+      "backup_dir": "runtime/flow/网格区公司PK赛通报/backups",
+      "manifest_path": "runtime/flow/网格区公司PK赛通报/commit_manifest.json"
+    }
+  }
+}

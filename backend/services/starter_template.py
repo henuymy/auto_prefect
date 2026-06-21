@@ -50,6 +50,8 @@ def _enabled_downloads(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _normalize_download_auth(item: dict[str, Any]) -> dict[str, Any]:
     next_item = copy.deepcopy(item)
+    if next_item.get("source") == "tencent_sheet":
+        return next_item
     preset = str(next_item.get("auth_preset") or "")
     if preset == "报表分析 Ssr-token":
         next_item["stage"] = "report_analysis"
@@ -70,6 +72,8 @@ def _required_stages(downloads: list[dict[str, Any]]) -> list[str]:
     stages = []
     seen = set()
     for item in downloads:
+        if item.get("source") == "tencent_sheet":
+            continue
         stage = str(item.get("stage") or "").strip()
         if stage and stage not in seen:
             stages.append(stage)
@@ -84,6 +88,18 @@ def _validate_downloads(downloads: list[dict[str, Any]]) -> list[dict[str, str]]
 
     required_fields = ("name", "stage", "method", "url", "body_type", "response_mode")
     for index, item in enumerate(downloads):
+        if item.get("source") == "tencent_sheet":
+            if not item.get("name"):
+                issues.append({"path": f"/downloads/{index}/name", "message": "抓取项缺少 name"})
+            if not (item.get("doc_url") or item.get("file_id")):
+                issues.append({"path": f"/downloads/{index}/doc_url", "message": "腾讯文档必须填写 doc_url 或 file_id"})
+            sheets = item.get("sheets") or []
+            if not sheets:
+                issues.append({"path": f"/downloads/{index}/sheets", "message": "腾讯文档至少需要一个 Sheet 范围"})
+            for sheet_index, sheet in enumerate(sheets):
+                if not (sheet.get("sheet_id") or sheet.get("sheet_name")):
+                    issues.append({"path": f"/downloads/{index}/sheets/{sheet_index}/sheet_id", "message": "Sheet 必须填写 sheet_id 或 Sheet 名称"})
+            continue
         for field in required_fields:
             if not item.get(field):
                 issues.append({"path": f"/downloads/{index}/{field}", "message": f"抓取项缺少 {field}"})
@@ -172,9 +188,9 @@ def _download_reports_with_session_retry(download_config: dict[str, Any], stages
 
 
 def _copy_values(source_sheet, target_sheet) -> None:
-    for row in source_sheet.iter_rows():
-        for cell in row:
-            target_sheet.cell(row=cell.row, column=cell.column).value = cell.value
+    for row_index, row in enumerate(source_sheet.iter_rows(), start=1):
+        for column_index, cell in enumerate(row, start=1):
+            target_sheet.cell(row=row_index, column=column_index).value = cell.value
 
 
 def _safe_sheet_name(raw_name: str, used_names: set[str]) -> str:
@@ -212,11 +228,12 @@ def _merge_downloads_to_template(download_manifest: dict[str, Any], output_path:
         except Exception as exc:
             raise RuntimeError(f"下载结果 Excel 无法读取: {source_path}: {exc}") from exc
         try:
-            stage = str(result.get("stage") or "stage")
+            stage = str(result.get("stage") or result.get("source") or "source")
             download_name = str(result.get("name") or f"下载{result_index}")
             for source_sheet in source_workbook.worksheets:
+                prefix = "" if result.get("source") == "tencent_sheet" else f"{stage}_"
                 sheet_name = _safe_sheet_name(
-                    f"{stage}_{download_name}_{source_sheet.title}",
+                    f"{prefix}{download_name}_{source_sheet.title}",
                     used_sheet_names,
                 )
                 target_sheet = workbook.create_sheet(sheet_name)
@@ -259,10 +276,11 @@ def generate_starter_template(config: dict[str, Any], progress: Callable[[str, s
 
     stages = _required_stages(downloads)
     _emit_progress(progress, "探活/登录", f"正在探活本次下载所需 stage: {', '.join(stages) or '无'}")
-    session_result = _prepare_required_session(stages)
-    _emit_progress(progress, "探活/登录", _session_status_message(session_result))
-    if session_result.get("status") == "invalid":
-        raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
+    if stages:
+        session_result = _prepare_required_session(stages)
+        _emit_progress(progress, "探活/登录", _session_status_message(session_result))
+        if session_result.get("status") == "invalid":
+            raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
 
     download_config = _build_download_config(downloads, run_dir)
     _write_json(run_dir / "download_config.json", download_config)

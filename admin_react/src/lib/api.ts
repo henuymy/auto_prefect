@@ -27,6 +27,16 @@ function normalizeDeploymentCrons(deployment?: Partial<ReportConfig["deployment"
   return crons.map((cron) => String(cron || "").trim()).filter(Boolean);
 }
 
+function sheetIdFromDocUrl(value?: string) {
+  if (!value) return "";
+  try {
+    return new URL(value).searchParams.get("tab") || "";
+  } catch {
+    const match = value.match(/[?&]tab=([^&#]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+}
+
 export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
   const { download: legacyDownload, env: _legacyEnv, compare: _legacyCompare, ...rest } = config;
   const downloads: RawDownloadItem[] = (rest.downloads?.length ? rest.downloads : legacyDownload ? [legacyDownload] : []) as RawDownloadItem[];
@@ -36,8 +46,27 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
     downloads: downloads.map((item, index) => {
       const { csrf_headers_from_cookies: _legacyCsrf, ...cleanItem } = item;
       const bodyType = cleanItem.body_type;
+      if (cleanItem.source === "tencent_sheet") {
+        const parsedSheetId = sheetIdFromDocUrl(cleanItem.doc_url);
+        const sheets = cleanItem.sheets?.length
+          ? cleanItem.sheets
+          : [{ sheet_name: "日报", sheet_id: "", range: "A1:Z1000", output_sheet_name: "日报" }];
+        return {
+          ...cleanItem,
+          source: "tencent_sheet",
+          name: cleanItem.name || `腾讯文档-${index + 1}`,
+          headers: cleanItem.headers || {},
+          file_id: cleanItem.file_id || "",
+          doc_url: cleanItem.doc_url || "",
+          output_filename: cleanItem.output_filename || "",
+          sheets: sheets.map((sheet, sheetIndex) => (
+            sheetIndex === 0 && !sheet.sheet_id && parsedSheetId ? { ...sheet, sheet_id: parsedSheetId } : sheet
+          )),
+        } as DownloadItem;
+      }
       return {
         ...cleanItem,
+        source: cleanItem.source || "http_api",
         name: cleanItem.name || `抓取项-${index + 1}`,
         stage: AUTH_PRESET_STAGE[normalizeAuthPreset(cleanItem.auth_preset)] || cleanItem.stage || "report_analysis",
         auth_preset: normalizeAuthPreset(cleanItem.auth_preset),

@@ -44,14 +44,21 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
         next_item = dict(item)
         next_item.pop("csrf_headers_from_cookies", None)
         next_item["name"] = next_item.get("name") or f"抓取项-{index}"
-        next_item["stage"] = next_item.get("stage") or "report_analysis"
-        if next_item.get("method"):
-            next_item["method"] = str(next_item["method"]).upper()
-        next_item["headers"] = next_item.get("headers") or {}
-        if "data" not in next_item and isinstance(next_item.get("json"), dict):
-            next_item["data"] = next_item["json"]
-        if "data" not in next_item and next_item.get("body_type") != "raw":
-            next_item["data"] = {}
+        if next_item.get("source") == "tencent_sheet":
+            next_item["headers"] = next_item.get("headers") or {}
+            next_item["sheets"] = next_item.get("sheets") or [
+                {"sheet_name": "日报", "sheet_id": "", "range": "A1:Z1000", "output_sheet_name": "日报"}
+            ]
+        else:
+            next_item["source"] = next_item.get("source") or "http_api"
+            next_item["stage"] = next_item.get("stage") or "report_analysis"
+            if next_item.get("method"):
+                next_item["method"] = str(next_item["method"]).upper()
+            next_item["headers"] = next_item.get("headers") or {}
+            if "data" not in next_item and isinstance(next_item.get("json"), dict):
+                next_item["data"] = next_item["json"]
+            if "data" not in next_item and next_item.get("body_type") != "raw":
+                next_item["data"] = {}
         normalized_downloads.append(next_item)
     downloads = normalized_downloads
 
