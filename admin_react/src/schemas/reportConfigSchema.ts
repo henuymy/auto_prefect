@@ -140,7 +140,7 @@ export const reportConfigJsonSchema = {
                 name: { type: "string" },
                 new_sheet_name: { type: "string", minLength: 1 },
                 template_sheet_name: { type: "string", minLength: 1 },
-                header_row: { type: "number", minimum: 1 },
+                header_row: { type: "number", minimum: 0 },
                 ignore_columns: { type: "array", items: { type: "string" } },
                 key_columns: { type: "array", items: { type: "string" } },
               },

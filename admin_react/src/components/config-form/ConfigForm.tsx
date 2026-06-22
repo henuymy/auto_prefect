@@ -3,7 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { toast } from "sonner";
-import { AlertCircle, ArrowDown, ArrowUp, Bell, CalendarClock, ChevronDown, CloudDownload, Download, FilePlus2, GitCompareArrows, Info, Plus, Settings, Trash2, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bell, CalendarClock, ChevronDown, CloudDownload, Download, FilePlus2, GitCompareArrows, Info, Plus, RefreshCw, Settings, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { ResponseParserPanel } from "@/components/config-form/ResponseParserPane
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tabs } from "@/components/ui/tabs";
 import { generateStarterTemplate, listTemplates, templateDownloadUrl, uploadTemplate } from "@/lib/api";
-import { parseJsonSafe, prettyJson } from "@/lib/utils";
+import { cn, parseJsonSafe, prettyJson } from "@/lib/utils";
 import type { CompareSource, DownloadItem, ExcelColumn, ReportConfig, SendItem } from "@/types/config";
 
 const basicSchema = z.object({
@@ -1019,7 +1019,7 @@ function CompareTab({ config, onChange }: { config: ReportConfig; onChange: (con
                 <DraftInput placeholder="映射备注" value={mapping.name || ""} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, name: value })} />
                 <DraftInput placeholder="源 sheet" value={mapping.new_sheet_name} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, new_sheet_name: value })} />
                 <DraftInput placeholder="模板 sheet" value={mapping.template_sheet_name} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, template_sheet_name: value })} />
-                <DraftInput type="number" placeholder="表头行" value={mapping.header_row || 1} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, header_row: Number(value || 1) })} />
+                <DraftInput type="number" placeholder="表头行，0=无表头" value={mapping.header_row ?? 1} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, header_row: value === "" ? 1 : Number(value) })} />
                 <DraftInput placeholder="主键列，逗号分隔" value={(mapping.key_columns || []).join(",")} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, key_columns: value.split(",").map((item) => item.trim()).filter(Boolean) })} />
               </div>
             ))}
@@ -1076,6 +1076,14 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
   const wait = config.wait_for_change;
   const deployment = config.deployment;
   const crons = normalizeCronList(deployment);
+  const sameMode: "retry" | "send" = update.send_when_same ? "send" : "retry";
+  const setSameMode = (mode: "retry" | "send") => {
+    onChange({
+      ...config,
+      template_update: { ...update, send_when_same: mode === "send" },
+      wait_for_change: { ...wait, enabled: mode === "retry" },
+    });
+  };
   const updateDeployment = (next: ReportConfig["deployment"], nextCrons = crons) => {
     const cleanCrons = nextCrons.map((cron) => cron.trim()).filter(Boolean);
     onChange({ ...config, deployment: { ...next, crons: cleanCrons, enabled: cleanCrons.length > 0 } });
@@ -1094,15 +1102,48 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
           <Field label="更新引擎"><Select value={update.engine || "hybrid"} onChange={(event) => onChange({ ...config, template_update: { ...update, engine: event.target.value as NonNullable<typeof update.engine> } })}><option value="hybrid">hybrid</option><option value="com_copy">com_copy</option></Select></Field>
           <Field label="changed 判断条件"><Select value={update.update_condition} onChange={(event) => onChange({ ...config, template_update: { ...update, update_condition: event.target.value as typeof update.update_condition } })}><option value="any_changed">any_changed</option><option value="all_changed">all_changed</option></Select></Field>
           <Field label="写入范围"><Select value={update.write_sheets} onChange={(event) => onChange({ ...config, template_update: { ...update, write_sheets: event.target.value as typeof update.write_sheets } })}><option value="changed">changed</option><option value="all_compared">all_compared</option></Select></Field>
-          <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={update.send_when_same} onChange={(event) => onChange({ ...config, template_update: { ...update, send_when_same: event.target.checked } })} /> same 时直接发送当前通报</label>
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle>等待重试</CardTitle><CardDescription>数据未变化时按间隔等待，再重新下载比对。</CardDescription></CardHeader>
-        <CardContent className="space-y-4">
-          <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={wait.enabled} onChange={(event) => onChange({ ...config, wait_for_change: { ...wait, enabled: event.target.checked } })} /> 启用 same 自动重试</label>
-          <Field label="重试间隔秒"><DraftInput type="number" value={wait.poll_interval_seconds} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, poll_interval_seconds: Number(value || 0) } })} /></Field>
-          <Field label="最大等待分钟"><DraftInput type="number" value={wait.max_wait_minutes} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, max_wait_minutes: Number(value || 0) } })} /></Field>
+        <CardHeader><CardTitle>same 时处理方式</CardTitle><CardDescription>控制数据一致或下载数据区为空时怎么继续。</CardDescription></CardHeader>
+        <CardContent className="space-y-5">
+          <div className="rounded-xl border border-border bg-muted/30 p-1">
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                className={cn(
+                  "flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition",
+                  sameMode === "retry" ? "border-sky-300 bg-sky-100 text-sky-950 shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                )}
+                onClick={() => setSameMode("retry")}
+              >
+                <RefreshCw className="h-4 w-4" />
+                等待重试
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition",
+                  sameMode === "send" ? "border-sky-300 bg-sky-100 text-sky-950 shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                )}
+                onClick={() => setSameMode("send")}
+              >
+                <Bell className="h-4 w-4" />
+                直接发送
+              </button>
+            </div>
+          </div>
+          <div className="rounded-lg border border-dashed border-sky-200 bg-sky-50/70 px-3 py-2 text-sm text-sky-950">
+            {sameMode === "retry"
+              ? "数据一致或下载数据区为空时，按间隔重新下载并比对。"
+              : "即使数据一致，也继续生成并发送当前通报。"}
+          </div>
+          {sameMode === "retry" && (
+            <div className="grid gap-4 rounded-xl bg-muted/30 p-3 sm:grid-cols-2">
+              <Field label="重试间隔秒"><DraftInput type="number" value={wait.poll_interval_seconds} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, poll_interval_seconds: Number(value || 0) } })} /></Field>
+              <Field label="最大等待分钟"><DraftInput type="number" value={wait.max_wait_minutes} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, max_wait_minutes: Number(value || 0) } })} /></Field>
+            </div>
+          )}
         </CardContent>
       </Card>
       <Card className="xl:col-span-2">

@@ -166,12 +166,12 @@
   "deployment": {
     "enabled": true,
     "crons": [
-      "35 14-17 * * *"
+      "25 9-19 * * *"
     ],
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-06-21 12:58:33",
+  "updatedAt": "2026-06-21 18:43:25",
   "source": "published",
   "has_draft": false
 }

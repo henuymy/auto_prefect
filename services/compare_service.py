@@ -155,10 +155,13 @@ def read_sheet_table_openpyxl(workbook, sheet_name, range_address=None):
 
 
 def split_header_rows(rows, header_row=1):
-    if header_row < 1:
-        raise ValueError("header_row 必须从 1 开始")
+    if header_row < 0:
+        raise ValueError("header_row 必须大于等于 0")
     if not rows:
         return [], []
+    if header_row == 0:
+        max_width = max(len(row) for row in rows)
+        return [f"列{index}" for index in range(1, max_width + 1)], [row for row in rows if not is_empty_row(row)]
     header_index = header_row - 1
     if header_index >= len(rows):
         raise ValueError(f"header_row={header_row} 超出数据行数 {len(rows)}")
@@ -390,8 +393,11 @@ def build_sheet_mappings(config, new_workbook, template_workbook):
 
 
 def merge_sheet_config(config, mapping):
+    header_row = mapping.get("header_row")
+    if header_row is None:
+        header_row = config.get("header_row", 1)
     return {
-        "header_row": int(mapping.get("header_row") or config.get("header_row", 1)),
+        "header_row": int(header_row),
         "ignore_columns": mapping.get("ignore_columns")
         if mapping.get("ignore_columns") is not None
         else config.get("ignore_columns") or [],
@@ -400,6 +406,53 @@ def merge_sheet_config(config, mapping):
         else config.get("key_columns") or [],
         "sample_limit": int(config.get("sample_limit", 10)),
     }
+
+
+def sheet_has_data_below_header(workbook_path, sheet_name, header_row=1, range_address=None) -> bool:
+    header_row = 1 if header_row is None else int(header_row)
+    if header_row < 0:
+        raise ValueError("header_row 必须大于等于 0")
+    workbook = load_workbook(workbook_path, data_only=True, read_only=True)
+    try:
+        rows = trim_empty_edges(normalize_matrix(worksheet_range_values(workbook[sheet_name], range_address)))
+    finally:
+        workbook.close()
+    data_rows = rows[header_row:] if header_row else rows
+    return any(not is_empty_row(row) for row in data_rows)
+
+
+def find_empty_download_sheet_mappings(download_manifest, compare_sources, base_dir=PROJECT_DIR):
+    paths_by_name = {
+        item.get("name"): item.get("output_path")
+        for item in (download_manifest or {}).get("results") or []
+        if item.get("name") and item.get("output_path")
+    }
+    empty_items = []
+    for source_index, source in enumerate(compare_sources or [], start=1):
+        download_name = source.get("download_name")
+        output_path = paths_by_name.get(download_name)
+        if not output_path:
+            raise RuntimeError(f"下载结果中找不到 compare_sources 对应报表: {download_name}")
+        workbook_path = resolve_path(output_path, base_dir)
+        for mapping_index, mapping in enumerate(source.get("sheet_mappings") or [], start=1):
+            header_row = mapping.get("header_row")
+            if header_row is None:
+                header_row = 1
+            sheet_name = mapping.get("new_sheet_name")
+            if not sheet_name:
+                raise ValueError(f"compare_sources[{source_index}].sheet_mappings[{mapping_index}] 缺少 new_sheet_name")
+            if not sheet_has_data_below_header(workbook_path, sheet_name, header_row, mapping.get("new_range")):
+                empty_items.append({
+                    "download_name": download_name,
+                    "source_report_path": str(workbook_path),
+                    "new_sheet_name": sheet_name,
+                    "template_sheet_name": mapping.get("template_sheet_name"),
+                    "header_row": int(header_row),
+                    "source_index": source_index,
+                    "mapping_index": mapping_index,
+                    "reason": "download_sheet_empty_below_header",
+                })
+    return empty_items
 
 
 def resolve_compare_config(config, base_dir=PROJECT_DIR):

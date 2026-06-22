@@ -19,6 +19,7 @@ from tasks.method_tasks import download_reports_task
 from tasks.notify_tasks import build_message_package_task, send_notification_package_task
 from tasks.session_tasks import prepare_session_task
 from tasks.template_tasks import update_template_task
+from services.compare_service import find_empty_download_sheet_mappings
 from utils.config_loader import load_json_with_local_override
 
 try:
@@ -433,6 +434,60 @@ def auto_notify_flow(config_path=None):
             steps["compare"],
             flow_runtime_dir,
         )
+        if wait_cfg["enabled"]:
+            empty_sheet_mappings = find_empty_download_sheet_mappings(
+                download_manifest,
+                report_cfg.get("compare_sources") or [],
+                base_dir=PROJECT_DIR,
+            )
+            if empty_sheet_mappings:
+                compare_result = {
+                    "result": "same",
+                    "reason": "download_sheet_empty_below_header",
+                    "message": "下载文件存在参与比对的 Sheet 数据区为空，等待下一轮",
+                    "sheets": [
+                        {
+                            "name": item.get("new_sheet_name"),
+                            "new_sheet_name": item.get("new_sheet_name"),
+                            "template_sheet_name": item.get("template_sheet_name"),
+                            "download_name": item.get("download_name"),
+                            "source_report_path": item.get("source_report_path"),
+                            "header_row": item.get("header_row"),
+                            "result": "same",
+                            "reason": item.get("reason"),
+                        }
+                        for item in empty_sheet_mappings
+                    ],
+                    "summary": {
+                        "same": len(empty_sheet_mappings),
+                        "changed": 0,
+                        "invalid": 0,
+                        "total": len(empty_sheet_mappings),
+                    },
+                    "update_condition": get_update_condition(report_cfg),
+                }
+                write_json(str(flow_runtime_dir / "compare_result.json"), compare_result)
+                elapsed_seconds = int(monotonic() - wait_started_at)
+                max_wait_seconds = wait_cfg["max_wait_seconds"]
+                if max_wait_seconds is not None and elapsed_seconds >= max_wait_seconds:
+                    logger.warning(
+                        "下载数据区持续为空，已超时（%s 秒），停止重试",
+                        max_wait_seconds,
+                    )
+                    return {
+                        "status": "timeout_no_change",
+                        "reason": "download_sheet_empty_below_header_timeout",
+                        "attempts": attempt,
+                        "elapsed_seconds": elapsed_seconds,
+                        "empty_sheets": empty_sheet_mappings,
+                    }
+                logger.info(
+                    "下载数据区为空（第 %s 次），%s 秒后重试下载",
+                    attempt,
+                    wait_cfg["poll_interval_seconds"],
+                )
+                sleep(wait_cfg["poll_interval_seconds"])
+                continue
         compare_runs = []
         for index, compare_item in enumerate(compare_configs, start=1):
             compare_config_path = write_json(

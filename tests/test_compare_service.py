@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from openpyxl import Workbook
 
-from services.compare_service import compare_report, compare_tables
+from services.compare_service import compare_report, compare_tables, find_empty_download_sheet_mappings, sheet_has_data_below_header
 
 
 def make_work_dir():
@@ -34,6 +34,19 @@ def test_compare_tables_same():
     ]
 
     result = compare_tables(table, table)
+
+    assert result.result == "same"
+    assert result.new_row_count == 2
+    assert result.old_row_count == 2
+
+
+def test_compare_tables_supports_header_row_zero():
+    table = [
+        ["A", 1],
+        ["B", 2],
+    ]
+
+    result = compare_tables(table, table, header_row=0)
 
     assert result.result == "same"
     assert result.new_row_count == 2
@@ -159,5 +172,50 @@ def test_compare_report_openpyxl_parallel_multiple_sheets():
         assert result["summary"]["max_workers"] == 2
         assert result["max_workers"] == 2
         assert [item["name"] for item in result["sheets"]] == ["一", "二", "三"]
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_sheet_has_data_below_header_uses_header_row():
+    work_dir = make_work_dir()
+    try:
+        workbook_path = work_dir / "new.xlsx"
+        create_workbook(workbook_path, {"明细": [["name", "count"], [None, None]]})
+
+        assert sheet_has_data_below_header(workbook_path, "明细", header_row=1) is False
+        assert sheet_has_data_below_header(workbook_path, "明细", header_row=0) is True
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_find_empty_download_sheet_mappings_reports_empty_data_area():
+    work_dir = make_work_dir()
+    try:
+        workbook_path = work_dir / "new.xlsx"
+        create_workbook(workbook_path, {"明细": [["name", "count"]]})
+        manifest = {"results": [{"name": "下载A", "output_path": str(workbook_path)}]}
+        compare_sources = [
+            {
+                "download_name": "下载A",
+                "sheet_mappings": [
+                    {"new_sheet_name": "明细", "template_sheet_name": "模板明细", "header_row": 1}
+                ],
+            }
+        ]
+
+        empty = find_empty_download_sheet_mappings(manifest, compare_sources)
+
+        assert empty == [
+            {
+                "download_name": "下载A",
+                "source_report_path": str(workbook_path.resolve()),
+                "new_sheet_name": "明细",
+                "template_sheet_name": "模板明细",
+                "header_row": 1,
+                "source_index": 1,
+                "mapping_index": 1,
+                "reason": "download_sheet_empty_below_header",
+            }
+        ]
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
