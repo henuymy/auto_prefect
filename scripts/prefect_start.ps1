@@ -7,6 +7,7 @@ param(
     [string]$PythonExe = "",
     [string]$DatabaseUrl = "",
     [switch]$UseSqliteDebug,
+    [switch]$NoWorkerRestart,
     [switch]$Detached
 )
 
@@ -79,6 +80,7 @@ Write-Host "DatabaseUrl    : $databaseSource"
 Write-Host "DebugSqlite    : $UseSqliteDebug"
 Write-Host "LateRuns       : $($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)"
 Write-Host "Mode           : $Mode"
+Write-Host "WorkerRestart  : $($Detached -and -not $NoWorkerRestart)"
 Write-Host ""
 
 function Start-DetachedWindow {
@@ -111,6 +113,48 @@ function Wait-ForPrefectServer {
     return $false
 }
 
+function Test-PrefectDatabase {
+    if ($UseSqliteDebug) {
+        return
+    }
+
+    Write-Host "检查 Prefect PostgreSQL 连接..."
+    $checkScript = @'
+import asyncio
+import os
+import sys
+
+import asyncpg
+
+url = os.environ.get("PREFECT_API_DATABASE_CONNECTION_URL") or os.environ.get("PREFECT_SERVER_DATABASE_CONNECTION_URL")
+if not url:
+    print("missing_database_url")
+    sys.exit(2)
+
+pg_url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+async def main():
+    conn = await asyncpg.connect(pg_url, timeout=15)
+    try:
+        await conn.fetchval("select 1")
+    finally:
+        await conn.close()
+
+try:
+    asyncio.run(main())
+except Exception as exc:
+    print(f"{type(exc).__name__}: {exc}")
+    sys.exit(1)
+print("postgres_ok")
+'@
+    $checkOutput = $checkScript | & $PythonExe -
+    $checkExitCode = $LASTEXITCODE
+    $checkOutput | ForEach-Object { Write-Host "  $_" }
+    if ($checkExitCode -ne 0) {
+        throw "Prefect PostgreSQL 连接失败。请先检查 scripts\prefect_env_prod.local.ps1 中的 AUTO_NOTIFY_PREFECT_DATABASE_URL、服务器 5432 端口、数据库服务和网络连通性。"
+    }
+}
+
 function Get-EnvBootstrap {
 @"
 `$env:PREFECT_HOME = '$($env:PREFECT_HOME)'
@@ -127,9 +171,33 @@ function Get-EnvBootstrap {
 "@
 }
 
+function Get-WorkerCommand {
+    param(
+        [bool]$Restart
+    )
+
+    $startWorker = "& '$PythonExe' -m prefect worker start --pool '$WorkPool' --type process"
+    if (-not $Restart) {
+        return (Get-EnvBootstrap) + "`n$startWorker"
+    }
+
+    return (Get-EnvBootstrap) + @"
+
+while (`$true) {
+    Write-Host "[worker-supervisor] starting Prefect worker at `$(Get-Date -Format o)"
+    $startWorker
+    `$exitCode = if (`$null -ne `$LASTEXITCODE) { `$LASTEXITCODE } else { 1 }
+    Write-Host "[worker-supervisor] worker exited with code `$exitCode at `$(Get-Date -Format o); restarting in 30s"
+    Start-Sleep -Seconds 30
+}
+"@
+}
+
+Test-PrefectDatabase
+
 $serverArgs = if ($UseSqliteDebug) { "server start --no-services --workers 1" } else { "server start --workers 1" }
 $serverCommand = (Get-EnvBootstrap) + "`n& '$PythonExe' -m prefect $serverArgs"
-$workerCommand = (Get-EnvBootstrap) + "`n& '$PythonExe' -m prefect worker start --pool '$WorkPool' --type process"
+$workerCommand = Get-WorkerCommand -Restart ($Detached -and -not $NoWorkerRestart)
 
 switch ($Mode) {
     "server" {
