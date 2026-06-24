@@ -7,10 +7,15 @@ if (Test-Path -LiteralPath $LocalEnvPath) {
     . $LocalEnvPath
 }
 . (Join-Path $PSScriptRoot "dashboard\mysql_env.ps1")
-$DatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
-if (-not $DatabaseUrl) {
+$SourceDatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
+if (-not $SourceDatabaseUrl) {
     throw "缺少 Prefect 数据库连接串，请在 scripts\prefect_env_prod.local.ps1 中设置 `$env:AUTO_NOTIFY_PREFECT_DATABASE_URL"
 }
+if ($SourceDatabaseUrl -notmatch "/prefect(?:\?.*)?$") {
+    throw "基础连接串必须以 /prefect 结尾，无法安全派生 prefect_dev"
+}
+$DatabaseUrl = $SourceDatabaseUrl -replace "/prefect(\?.*)?$", "/prefect_dev`$1"
+$env:AUTO_NOTIFY_PREFECT_DEV_DATABASE_URL = $DatabaseUrl
 
 New-Item -ItemType Directory -Force -Path $PrefectHome | Out-Null
 
@@ -27,8 +32,8 @@ $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONNOUSERSITE = "1"
 
-Write-Host "已加载 Prefect 正式调度环境变量。"
+Write-Host "已加载 Prefect 开发调度环境变量。"
 Write-Host "PREFECT_HOME   : $($env:PREFECT_HOME)"
 Write-Host "PREFECT_API_URL: $($env:PREFECT_API_URL)"
-Write-Host "DatabaseUrl    : 已从本机 local 配置加载"
-Write-Host "说明           : PostgreSQL 调度模式，适合长期运行。"
+Write-Host "DatabaseUrl    : PostgreSQL / prefect_dev"
+Write-Host "说明           : 当前项目仅允许使用 prefect_dev，拒绝连接 prefect。"
