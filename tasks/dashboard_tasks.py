@@ -9,6 +9,7 @@ from services.dashboard_pipeline import (
     execute_dashboard_monthly_pipeline,
     execute_dashboard_pipeline,
 )
+from services.dashboard_indicator_sync import execute_dashboard_indicator_sync
 
 
 @task(name="dashboard-run-metrics")
@@ -22,6 +23,7 @@ def run_dashboard_metric_task(
         "REALTIME": execute_dashboard_pipeline,
         "DAY_ACC": execute_dashboard_daily_pipeline,
         "MONTH": execute_dashboard_monthly_pipeline,
+        "INDICATOR_SYNC": execute_dashboard_indicator_sync,
     }
     normalized_mode = str(mode or "").strip().upper()
     pipeline = pipelines.get(normalized_mode)

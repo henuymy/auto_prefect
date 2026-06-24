@@ -10,6 +10,7 @@ from services.dashboard_query_service import (
     get_acc_wide_table,
     get_current_wide_table,
     get_current_with_changes,
+    get_indicator_catalog,
     get_snapshot_trend,
     parse_change_window_minutes,
 )
@@ -23,6 +24,25 @@ def _parse_change_windows(value: str | None) -> list[int] | None:
         return parse_change_window_minutes(value)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/indicators")
+def dashboard_indicators(
+    include_archived: bool = Query(False),
+):
+    engine = create_dashboard_engine()
+    try:
+        return get_indicator_catalog(
+            engine,
+            include_archived=include_archived,
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"驾驶舱指标目录查询失败: {type(exc).__name__}",
+        ) from exc
+    finally:
+        engine.dispose()
 
 
 @router.get("/overview")

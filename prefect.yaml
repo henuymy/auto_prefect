@@ -43,3 +43,17 @@ deployments:
     work_pool:
       name: default-agent-pool
       work_queue_name: default
+  - name: dashboard-indicator-sync
+    entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
+    parameters:
+      mode: INDICATOR_SYNC
+      config_path: config/dashboard/session.json
+      trigger_type: SCHEDULED
+      force_refresh: false
+    schedules:
+      - cron: "10 8 * * *"
+        timezone: Asia/Shanghai
+        active: true
+    work_pool:
+      name: default-agent-pool
+      work_queue_name: default

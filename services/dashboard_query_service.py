@@ -52,6 +52,34 @@ def _datetime_iso_millis(value: Any) -> str | None:
     return str(value).replace(" ", "T")
 
 
+def get_indicator_catalog(
+    engine: Engine,
+    *,
+    include_archived: bool = False,
+) -> dict[str, Any]:
+    """Return the source indicator catalog without changing collection state."""
+    with Session(engine) as session:
+        query = select(Indicator).order_by(Indicator.sort_order, Indicator.id)
+        if not include_archived:
+            query = query.where(Indicator.source_active.is_(True))
+        indicators = session.scalars(query).all()
+
+    return {
+        "indicators": [
+            {
+                "id": indicator.id,
+                "code": indicator.code,
+                "name": indicator.name,
+                "enabled": indicator.enabled,
+                "source_active": indicator.source_active,
+                "removed_at": _datetime_iso_millis(indicator.removed_at),
+                "sort_order": indicator.sort_order,
+            }
+            for indicator in indicators
+        ]
+    }
+
+
 def get_snapshot_trend(
     engine: Engine,
     *,
@@ -1235,4 +1263,3 @@ def _acc_rows_for_areas_fast(
                 "targets": {code: targets_by_area[r["area_id"]].get(code)},
             })
     return rows
-

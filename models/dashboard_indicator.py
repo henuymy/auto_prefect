@@ -15,6 +15,11 @@ class Indicator(DashboardBase):
     __tablename__ = "indicator"
     __table_args__ = (
         Index("ix_indicator_enabled_sort_order", "enabled", "sort_order"),
+        Index(
+            "ix_indicator_source_active_sort_order",
+            "source_active",
+            "sort_order",
+        ),
     )
 
     id: Mapped[int] = mapped_column(
@@ -32,6 +37,15 @@ class Indicator(DashboardBase):
         mysql.BOOLEAN,
         nullable=False,
         server_default=text("1"),
+    )
+    source_active: Mapped[bool] = mapped_column(
+        mysql.BOOLEAN,
+        nullable=False,
+        server_default=text("1"),
+    )
+    removed_at: Mapped[datetime | None] = mapped_column(
+        mysql.DATETIME(fsp=3),
+        nullable=True,
     )
     sort_order: Mapped[int] = mapped_column(
         mysql.INTEGER(unsigned=True),

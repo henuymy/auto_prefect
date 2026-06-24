@@ -170,7 +170,7 @@ function Pause-DashboardDeployments {
 import asyncio
 from prefect.client.orchestration import get_client
 
-TARGETS = {"dashboard-collection", "dashboard-daily", "dashboard-monthly"}
+TARGETS = {"dashboard-collection", "dashboard-daily", "dashboard-monthly", "dashboard-indicator-sync"}
 
 async def main():
     async with get_client() as client:

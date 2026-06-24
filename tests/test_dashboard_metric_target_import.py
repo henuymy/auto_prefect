@@ -78,6 +78,8 @@ def create_engine_with_tables():
                     code VARCHAR(100) NOT NULL,
                     name VARCHAR(200) NOT NULL,
                     enabled BOOLEAN NOT NULL DEFAULT 1,
+                    source_active BOOLEAN NOT NULL DEFAULT 1,
+                    removed_at DATETIME,
                     sort_order INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -9,6 +9,8 @@ def test_indicator_uses_minimal_first_version_schema():
         "code",
         "name",
         "enabled",
+        "source_active",
+        "removed_at",
         "sort_order",
         "created_at",
         "updated_at",

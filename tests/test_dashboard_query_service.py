@@ -50,6 +50,8 @@ def create_test_engine():
                     code VARCHAR(100) NOT NULL,
                     name VARCHAR(200) NOT NULL,
                     enabled BOOLEAN NOT NULL,
+                    source_active BOOLEAN NOT NULL DEFAULT 1,
+                    removed_at DATETIME,
                     sort_order INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -560,6 +562,8 @@ def test_current_with_changes_handles_no_snapshots():
                             code VARCHAR(100) NOT NULL,
                             name VARCHAR(200) NOT NULL,
                             enabled BOOLEAN NOT NULL,
+                            source_active BOOLEAN NOT NULL DEFAULT 1,
+                            removed_at DATETIME,
                             sort_order INTEGER NOT NULL DEFAULT 0,
                             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -600,9 +604,12 @@ def test_current_with_changes_handles_no_snapshots():
         conn.execute(
             text(
                 """
-                INSERT INTO indicator VALUES
-                    (1, 'test_code', '测试指标', 1, 10,
-                     '2026-06-11', '2026-06-11')
+                    INSERT INTO indicator
+                        (id, code, name, enabled, source_active, sort_order,
+                         created_at, updated_at)
+                    VALUES
+                        (1, 'test_code', '测试指标', 1, 1, 10,
+                         '2026-06-11', '2026-06-11')
                 """
             )
         )
