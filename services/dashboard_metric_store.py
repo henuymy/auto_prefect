@@ -162,6 +162,7 @@ def write_metric_batch_in_session(
     normalized_rows: list[dict[str, Any]],
     stat_date: date,
     collected_at: datetime,
+    finalize_run: bool = True,
 ) -> dict[str, Any]:
     run = _load_writable_run(
         session,
@@ -191,9 +192,10 @@ def write_metric_batch_in_session(
         )
 
     written_count = len(normalized_rows)
-    _complete_run(run, stat_date, collected_at)
-    run.current_upsert_count = written_count
-    run.snapshot_insert_count = written_count
+    if finalize_run:
+        _complete_run(run, stat_date, collected_at)
+        run.current_upsert_count = written_count
+        run.snapshot_insert_count = written_count
 
     return {
         "batch_no": batch_no,
@@ -245,6 +247,7 @@ def write_acc_metric_batch_in_session(
     collected_at: datetime,
     period_type: str,
     expected_run_type: str,
+    finalize_run: bool = True,
 ) -> dict[str, Any]:
     run = _load_writable_run(
         session,
@@ -285,8 +288,9 @@ def write_acc_metric_batch_in_session(
         )
 
     written_count = len(normalized_rows)
-    _complete_run(run, stat_date, collected_at)
-    run.acc_upsert_count = written_count
+    if finalize_run:
+        _complete_run(run, stat_date, collected_at)
+        run.acc_upsert_count = written_count
 
     return {
         "batch_no": batch_no,
@@ -297,6 +301,29 @@ def write_acc_metric_batch_in_session(
         "status": "SUCCESS",
         "phase": "COMPLETED",
     }
+
+
+def finalize_metric_run_in_session(
+    session: Session,
+    *,
+    batch_no: str,
+    expected_run_type: str,
+    stat_date: date,
+    collected_at: datetime,
+    current_upsert_count: int = 0,
+    snapshot_insert_count: int = 0,
+    acc_upsert_count: int = 0,
+) -> None:
+    run = _load_writable_run(
+        session,
+        batch_no,
+        expected_run_type=expected_run_type,
+        scope="指标",
+    )
+    _complete_run(run, stat_date, collected_at)
+    run.current_upsert_count = current_upsert_count
+    run.snapshot_insert_count = snapshot_insert_count
+    run.acc_upsert_count = acc_upsert_count
 
 
 def _write_mysql_metrics(

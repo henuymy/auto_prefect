@@ -24,6 +24,7 @@ from services.dashboard_collection_orchestrator import (
     sync_structure_in_session,
 )
 from services.dashboard_metric_store import (
+    finalize_metric_run_in_session,
     normalize_metric_rows,
     write_acc_metric_batch_in_session,
     write_metric_batch_in_session,
@@ -195,38 +196,82 @@ def execute_dashboard_pipeline(
                 write_timings["run_record_seconds"] = perf_counter() - stage_started
 
                 stage_started = perf_counter()
-                normalized_metric_rows = normalize_metric_rows(
-                    metric_rows(
-                        rows_for_metrics,
-                        batch.indicator_code,
+                normalized_rows_by_indicator = {
+                    indicator_code: normalize_metric_rows(
+                        metric_rows(rows_for_metrics, indicator_code)
                     )
-                )
+                    for indicator_code in batch.indicator_codes
+                }
                 write_timings["normalize_seconds"] = perf_counter() - stage_started
 
                 stage_started = perf_counter()
+                indicator_results: list[dict[str, Any]] = []
+                total_written = 0
+                expected_run_type = (
+                    "REALTIME"
+                    if normalized_period == "REALTIME"
+                    else "DAILY"
+                    if normalized_period == "DAY_ACC"
+                    else "MONTHLY"
+                )
+                for indicator_code, normalized_metric_rows in normalized_rows_by_indicator.items():
+                    if normalized_period == "REALTIME":
+                        indicator_result = write_metric_batch_in_session(
+                            session,
+                            dialect_name=batch.engine.dialect.name,
+                            batch_no=batch_no,
+                            indicator_code=indicator_code,
+                            normalized_rows=normalized_metric_rows,
+                            stat_date=query_date,
+                            collected_at=collected_at,
+                            finalize_run=False,
+                        )
+                        total_written += indicator_result["snapshot_insert_count"]
+                    else:
+                        indicator_result = write_acc_metric_batch_in_session(
+                            session,
+                            dialect_name=batch.engine.dialect.name,
+                            batch_no=batch_no,
+                            indicator_code=indicator_code,
+                            normalized_rows=normalized_metric_rows,
+                            stat_date=query_date,
+                            collected_at=collected_at,
+                            period_type=normalized_period,
+                            expected_run_type=expected_run_type,
+                            finalize_run=False,
+                        )
+                        total_written += indicator_result["acc_upsert_count"]
+                    indicator_results.append(indicator_result)
+
+                finalize_metric_run_in_session(
+                    session,
+                    batch_no=batch_no,
+                    expected_run_type=expected_run_type,
+                    stat_date=query_date,
+                    collected_at=collected_at,
+                    current_upsert_count=(
+                        total_written if normalized_period == "REALTIME" else 0
+                    ),
+                    snapshot_insert_count=(
+                        total_written if normalized_period == "REALTIME" else 0
+                    ),
+                    acc_upsert_count=(
+                        total_written if normalized_period != "REALTIME" else 0
+                    ),
+                )
+                write_result = {
+                    "batch_no": batch_no,
+                    "indicator_codes": list(batch.indicator_codes),
+                    "indicator_count": len(batch.indicator_codes),
+                    "indicator_results": indicator_results,
+                    "status": "SUCCESS",
+                    "phase": "COMPLETED",
+                }
                 if normalized_period == "REALTIME":
-                    write_result = write_metric_batch_in_session(
-                        session,
-                        dialect_name=batch.engine.dialect.name,
-                        batch_no=batch_no,
-                        indicator_code=batch.indicator_code,
-                        normalized_rows=normalized_metric_rows,
-                        stat_date=query_date,
-                        collected_at=collected_at,
-                    )
+                    write_result["current_upsert_count"] = total_written
+                    write_result["snapshot_insert_count"] = total_written
                 else:
-                    expected_run_type = "DAILY" if normalized_period == "DAY_ACC" else "MONTHLY"
-                    write_result = write_acc_metric_batch_in_session(
-                        session,
-                        dialect_name=batch.engine.dialect.name,
-                        batch_no=batch_no,
-                        indicator_code=batch.indicator_code,
-                        normalized_rows=normalized_metric_rows,
-                        stat_date=query_date,
-                        collected_at=collected_at,
-                        period_type=normalized_period,
-                        expected_run_type=expected_run_type,
-                    )
+                    write_result["acc_upsert_count"] = total_written
                 write_timings["metric_write_seconds"] = perf_counter() - stage_started
 
                 stage_started = perf_counter()

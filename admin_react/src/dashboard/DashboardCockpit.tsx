@@ -1,19 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   ChevronDown,
   Database,
+  Search,
   RefreshCw,
   Signal,
 } from "lucide-react";
 import {
   getDashboardOverview,
   getDashboardDrillDown,
+  getDashboardIndicators,
+  getDashboardLatestRun,
+  getDashboardMatrix,
   getDashboardWithChanges,
+  getCurrentDashboard,
   getAccDashboard,
 } from "@/lib/api";
 import type {
+  DashboardCatalogIndicator,
   DashboardRow,
   DashboardRowWithChanges,
   DashboardIndicator,
@@ -61,6 +69,42 @@ type LevelOverrideData = {
 };
 
 type ScopeMode = "default" | "all";
+type CockpitMode = "single" | "multi";
+type MatrixSortMode =
+  | "progressAsc" | "progressDesc"
+  | "doneAsc" | "doneDesc"
+  | "changeValueAsc" | "changeValueDesc"
+  | "changeRateAsc" | "changeRateDesc";
+
+type LevelAllPopup = {
+  kind: "loading" | "error";
+  message: string;
+} | null;
+
+type ScopePopupTarget = {
+  label: string;
+};
+
+const detailsCloseTimers = new WeakMap<HTMLDetailsElement, number>();
+
+function keepDetailsOpen(event: React.MouseEvent<HTMLDetailsElement>) {
+  const timer = detailsCloseTimers.get(event.currentTarget);
+  if (timer != null) {
+    window.clearTimeout(timer);
+    detailsCloseTimers.delete(event.currentTarget);
+  }
+}
+
+function closeDetailsAfterLeave(event: React.MouseEvent<HTMLDetailsElement>) {
+  const details = event.currentTarget;
+  const previousTimer = detailsCloseTimers.get(details);
+  if (previousTimer != null) window.clearTimeout(previousTimer);
+  const timer = window.setTimeout(() => {
+    details.removeAttribute("open");
+    detailsCloseTimers.delete(details);
+  }, 250);
+  detailsCloseTimers.set(details, timer);
+}
 
 /** Raw fetched data that doesn't change when indicator selection changes. */
 type FetchedData = {
@@ -71,14 +115,64 @@ type FetchedData = {
   } | null;
   updatedAt: string;
   indicators: DashboardIndicator[];
+  indicatorCatalog: DashboardCatalogIndicator[];
   changesRows: DashboardRowWithChanges[];
   accRows: DashboardRow[];
   levelOverrides: Partial<Record<LevelKey, LevelOverrideData>>;
 };
 
+type DashboardCacheEntry = {
+  data: FetchedData;
+  cachedAt: number;
+};
+
+function makeDashboardCacheKey({
+  mode,
+  scopeMode,
+  parentId,
+  parentLevel,
+  changeWindows,
+  indicatorCodes,
+  dayLevelAllMode,
+  monthLevelAllMode,
+}: {
+  mode: CockpitMode;
+  scopeMode: ScopeMode;
+  parentId?: number | null;
+  parentLevel?: string | null;
+  changeWindows: number[];
+  indicatorCodes?: string[] | null;
+  dayLevelAllMode: Partial<Record<LevelKey, boolean>>;
+  monthLevelAllMode: Partial<Record<LevelKey, boolean>>;
+}) {
+  return JSON.stringify({
+    mode,
+    scopeMode,
+    parentId: parentId ?? null,
+    parentLevel: parentLevel ?? null,
+    changeWindows,
+    indicatorCodes: indicatorCodes ?? null,
+    dayLevelAll: {
+      grid: Boolean(dayLevelAllMode.GRID),
+      channel: Boolean(dayLevelAllMode.CHANNEL),
+    },
+    monthLevelAll: {
+      grid: Boolean(monthLevelAllMode.GRID),
+      channel: Boolean(monthLevelAllMode.CHANNEL),
+    },
+  });
+}
+
 /* ── constants ── */
 
 const DEFAULT_CHANGE_WINDOWS = [5, 15, 30, 60];
+const SHOW_MONTH_ACCUMULATION = false;
+const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
+const DASHBOARD_CACHE_MAX_ENTRIES = 24;
+const MATRIX_ROW_HEIGHT = 58;
+const MATRIX_VIRTUAL_OVERSCAN = 8;
+const SINGLE_ROW_HEIGHT = 38;
+const SINGLE_VIRTUAL_OVERSCAN = 10;
 
 const LEVEL_CONFIG: {
   key: LevelKey;
@@ -191,20 +285,25 @@ function normalizeChangeWindowMinutes(value: number, fallback = 5) {
   return Math.max(5, Math.min(1440, rounded));
 }
 
-function sortRows(rows: BoardRow[], sortKey: SortKey) {
+function sortRows(
+  rows: BoardRow[],
+  sortKey: SortKey,
+  direction: "asc" | "desc" = "desc",
+) {
   return [...rows].sort((left, right) => {
+    let score = 0;
     if (sortKey === "progress") {
-      return progressScore(right) - progressScore(left);
-    }
-    if (sortKey.startsWith("changeRate:")) {
+      score = progressScore(left) - progressScore(right);
+    } else if (sortKey.startsWith("changeRate:")) {
       const m = Number(sortKey.replace("changeRate:", ""));
-      return (right.changes[m].rate ?? -Infinity) - (left.changes[m].rate ?? -Infinity);
-    }
-    if (sortKey.startsWith("changeValue:")) {
+      score = (left.changes[m].rate ?? -Infinity) - (right.changes[m].rate ?? -Infinity);
+    } else if (sortKey.startsWith("changeValue:")) {
       const m = Number(sortKey.replace("changeValue:", ""));
-      return (right.changes[m].value ?? -Infinity) - (left.changes[m].value ?? -Infinity);
+      score = (left.changes[m].value ?? -Infinity) - (right.changes[m].value ?? -Infinity);
+    } else {
+      score = left.done - right.done;
     }
-    return right.done - left.done;
+    return direction === "asc" ? score : -score;
   });
 }
 
@@ -418,10 +517,14 @@ export function DashboardCockpit() {
   const [branchHeight, setBranchHeight] = useState<number>(0);
   const [monthBranchHeight, setMonthBranchHeight] = useState<number>(0);
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState<CockpitMode>("single");
   const [data, setData] = useState<FetchedData | null>(null);
   const [error, setError] = useState(false);
   const [indicator, setIndicator] = useState("");
   const [changeWindows, setChangeWindows] = useState<number[]>(DEFAULT_CHANGE_WINDOWS);
+  const [multiMetricWindow, setMultiMetricWindow] = useState(60);
+  const [multiSelectedCodes, setMultiSelectedCodes] = useState<string[]>([]);
+  const [dataRevision, setDataRevision] = useState(0);
   const [drillStack, setDrillStack] = useState<DrillEntry[]>([]);
   const [scopeMode, setScopeMode] = useState<ScopeMode>("default");
   const [dayLevelAllMode, setDayLevelAllMode] = useState<Partial<Record<LevelKey, boolean>>>({});
@@ -431,10 +534,17 @@ export function DashboardCockpit() {
     level: LevelKey;
     label: string;
   } | null>(null);
+  const [backgroundLoadingLevels, setBackgroundLoadingLevels] = useState<
+    Partial<Record<LevelKey, boolean>>
+  >({});
+  const [levelAllPopup, setLevelAllPopup] = useState<LevelAllPopup>(null);
+  const scopePopupTargetRef = useRef<ScopePopupTarget | null>(null);
   const fetchSeqRef = useRef(0);
+  const queryCacheRef = useRef<Map<string, DashboardCacheEntry>>(new Map());
+  const latestDataVersionRef = useRef<string | null>(null);
   const [daySorts, setDaySorts] = useState<Record<LevelKey, SortKey>>({
-    BRANCH: "progress",
-    GRID: "changeValue:60",
+    BRANCH: "done",
+    GRID: "done",
     CHANNEL: "done",
   });
   const [monthSorts, setMonthSorts] = useState<Record<LevelKey, SortKey>>({
@@ -456,6 +566,88 @@ export function DashboardCockpit() {
     : scopeMode === "all"
       ? "郑州市 / 全部"
       : "郑州市 / 中原区";
+  const requestedChangeWindows = useMemo(
+    () => mode === "multi" ? [multiMetricWindow] : changeWindows,
+    [changeWindows, mode, multiMetricWindow],
+  );
+  const parentChangeWindows = useMemo(
+    () => mode === "multi" ? [] : requestedChangeWindows,
+    [mode, requestedChangeWindows],
+  );
+  const requestedIndicatorCodes = useMemo(
+    () => mode === "multi"
+      ? multiSelectedCodes
+      : indicator
+        ? [indicator]
+        : undefined,
+    [indicator, mode, multiSelectedCodes],
+  );
+  const queryCacheKey = makeDashboardCacheKey({
+    mode,
+    scopeMode,
+    parentId: drillTarget?.areaId ?? null,
+    parentLevel: drillTarget?.levelType ?? null,
+    changeWindows: parentChangeWindows,
+    indicatorCodes: requestedIndicatorCodes ?? null,
+    dayLevelAllMode,
+    monthLevelAllMode,
+  });
+  const selectableIndicators = useMemo(
+    () => (data?.indicatorCatalog || [])
+      .filter((item) => item.enabled),
+    [data?.indicatorCatalog],
+  );
+  const handleModeChange = useCallback((nextMode: CockpitMode) => {
+    if (nextMode === mode) return;
+
+    const nextChangeWindows = nextMode === "multi" ? [] : changeWindows;
+    const nextIndicatorCodes = nextMode === "multi"
+      ? multiSelectedCodes
+      : indicator
+        ? [indicator]
+        : undefined;
+    const nextCacheKey = makeDashboardCacheKey({
+      mode: nextMode,
+      scopeMode,
+      parentId: drillTarget?.areaId ?? null,
+      parentLevel: drillTarget?.levelType ?? null,
+      changeWindows: nextChangeWindows,
+      indicatorCodes: nextIndicatorCodes ?? null,
+      dayLevelAllMode,
+      monthLevelAllMode,
+    });
+    const cached = queryCacheRef.current.get(nextCacheKey);
+    const cacheFresh = cached && Date.now() - cached.cachedAt <= DASHBOARD_CACHE_TTL_MS;
+
+    if (cacheFresh) {
+      setData(cached.data);
+      setLoading(false);
+      setError(false);
+      setPendingLevelAll(null);
+      setBackgroundLoadingLevels({});
+      scopePopupTargetRef.current = null;
+      setLevelAllPopup((prev) => (prev?.kind === "loading" ? null : prev));
+    } else {
+      setLoading(true);
+      setError(false);
+      setBackgroundLoadingLevels(
+        nextMode === "single" && scopeMode === "all" && !drillTarget
+          ? { GRID: true, CHANNEL: true }
+          : {},
+      );
+    }
+
+    setMode(nextMode);
+  }, [
+    changeWindows,
+    dayLevelAllMode,
+    drillTarget,
+    indicator,
+    mode,
+    monthLevelAllMode,
+    multiSelectedCodes,
+    scopeMode,
+  ]);
 
   useEffect(() => {
     if (!sameDrillStack(drillStack, normalizedDrillStack)) {
@@ -463,57 +655,214 @@ export function DashboardCockpit() {
     }
   }, [drillStack, normalizedDrillStack]);
 
-  /* fetch — re‑runs only when drill changes */
-  const fetchData = useCallback(async () => {
+  /* Query cache is reused for navigation/filter state; timed refresh bypasses it. */
+  const fetchData = useCallback(async (forceRefresh = false) => {
     const seq = fetchSeqRef.current + 1;
     fetchSeqRef.current = seq;
+    const cached = queryCacheRef.current.get(queryCacheKey);
+    if (
+      !forceRefresh &&
+      cached &&
+      Date.now() - cached.cachedAt <= DASHBOARD_CACHE_TTL_MS
+    ) {
+      setData(cached.data);
+      setError(false);
+      setLoading(false);
+      setPendingLevelAll(null);
+      scopePopupTargetRef.current = null;
+      setLevelAllPopup((prev) => (prev?.kind === "loading" ? null : prev));
+      return;
+    }
+    if (cached) {
+      queryCacheRef.current.delete(queryCacheKey);
+    }
     setLoading(true);
     setError(false);
+    let levelAllOverrideFailed = false;
+    let requestFailed = false;
     try {
       const parentId = drillTarget?.areaId;
       const parentLevel = drillTarget?.levelType;
-      const [changesData, accRows] = parentId == null
+      const catalogPromise = getDashboardIndicators(false, true)
+        .catch(() => ({ indicators: [] }));
+      const [changesData, accRows] = mode === "multi"
+        ? await getCurrentDashboard(
+            "BRANCH",
+            undefined,
+            requestedIndicatorCodes,
+          ).then((changes) => [changes, [] as DashboardRow[]] as const)
+        : parentId == null
         ? scopeMode === "all"
-          ? await Promise.all([
-              getDashboardWithChanges(undefined, undefined, changeWindows),
-              getAccDashboard("DAY_ACC"),
-            ]).then(([changes, acc]) => [changes, acc.rows] as const)
-          : await getDashboardOverview(undefined, "AQ", "DAY_ACC", changeWindows).then((overview) => [
+          ? SHOW_MONTH_ACCUMULATION
+            ? await Promise.all([
+                getDashboardWithChanges(
+                  "BRANCH",
+                  undefined,
+                  requestedChangeWindows,
+                  requestedIndicatorCodes,
+                ),
+                getAccDashboard(
+                  "DAY_ACC",
+                  undefined,
+                  "BRANCH",
+                  undefined,
+                  requestedIndicatorCodes,
+                ),
+              ]).then(([changes, acc]) => [changes, acc.rows] as const)
+            : await getDashboardWithChanges(
+                "BRANCH",
+                undefined,
+                requestedChangeWindows,
+                requestedIndicatorCodes,
+              ).then((changes) => [changes, [] as DashboardRow[]] as const)
+          : await getDashboardOverview(
+              undefined,
+              "AQ",
+              "DAY_ACC",
+              requestedChangeWindows,
+              requestedIndicatorCodes,
+              SHOW_MONTH_ACCUMULATION,
+            ).then((overview) => [
               overview,
               overview.acc_rows,
             ] as const)
         : parentLevel
-          ? await getDashboardDrillDown(parentId, parentLevel, "DAY_ACC", changeWindows).then((drill) => [
+          ? await getDashboardDrillDown(
+              parentId,
+              parentLevel,
+              "DAY_ACC",
+              requestedChangeWindows,
+              requestedIndicatorCodes,
+              SHOW_MONTH_ACCUMULATION,
+            ).then((drill) => [
               drill,
               drill.acc_rows,
             ] as const)
-        : await Promise.all([
-            getDashboardWithChanges(undefined, parentId, changeWindows),
-            getAccDashboard("DAY_ACC", undefined, undefined, parentId)
-              .then((accData) => accData.rows)
-              .catch(() => []),
-          ]);
+        : SHOW_MONTH_ACCUMULATION
+          ? await Promise.all([
+              getDashboardWithChanges(
+                undefined,
+                parentId,
+                requestedChangeWindows,
+                requestedIndicatorCodes,
+              ),
+              getAccDashboard(
+                "DAY_ACC",
+                undefined,
+                undefined,
+                parentId,
+                requestedIndicatorCodes,
+              ),
+            ]).then(([changes, acc]) => [changes, acc.rows] as const)
+          : await getDashboardWithChanges(
+              undefined,
+              parentId,
+              requestedChangeWindows,
+              requestedIndicatorCodes,
+            )
+              .then((changes) => [changes, [] as DashboardRow[]] as const);
 
+      const progressiveAllLevels = (
+        mode === "single"
+        && parentId == null
+        && scopeMode === "all"
+      );
+      const catalog = await catalogPromise;
+      const latestRun = changesData.latest_run ?? null;
       const levelOverrides: Partial<Record<LevelKey, LevelOverrideData>> = {};
+      const makeData = (): FetchedData => ({
+        online: Boolean(latestRun),
+        latestRun,
+        updatedAt: latestRun?.finished_at
+          ? new Date(latestRun.finished_at).toLocaleString("zh-CN", { hour12: false })
+          : nowText(),
+        indicators: changesData.indicators,
+        indicatorCatalog: catalog.indicators,
+        changesRows: changesData.rows,
+        accRows,
+        levelOverrides: { ...levelOverrides },
+      });
+      const cacheData = (nextData: FetchedData) => {
+        queryCacheRef.current.set(queryCacheKey, {
+          data: nextData,
+          cachedAt: Date.now(),
+        });
+        while (queryCacheRef.current.size > DASHBOARD_CACHE_MAX_ENTRIES) {
+          const oldestKey = queryCacheRef.current.keys().next().value;
+          if (oldestKey == null) break;
+          queryCacheRef.current.delete(oldestKey);
+        }
+      };
+
+      if (progressiveAllLevels && seq === fetchSeqRef.current) {
+        const branchData = makeData();
+        setBackgroundLoadingLevels({ GRID: true, CHANNEL: true });
+        startTransition(() => {
+          setData(branchData);
+          setDataRevision((current) => current + 1);
+        });
+      } else {
+        setBackgroundLoadingLevels({});
+      }
+
+      const overrideLevels = (["GRID", "CHANNEL"] as LevelKey[])
+        .filter((level) => (
+          progressiveAllLevels
+          || dayLevelAllMode[level]
+          || monthLevelAllMode[level]
+        ));
       await Promise.all(
-        (["GRID", "CHANNEL"] as LevelKey[])
-          .filter((level) => dayLevelAllMode[level] || monthLevelAllMode[level])
+        overrideLevels
           .map(async (level) => {
             try {
-              const [overrideChanges, overrideAccRows] = await Promise.all([
-                getDashboardWithChanges(level, undefined, changeWindows),
-                getAccDashboard("DAY_ACC", undefined, level)
-                  .then((accData) => accData.rows)
-                  .catch(() => []),
-              ]);
+              const overrideChanges = await getDashboardWithChanges(
+                  level,
+                  undefined,
+                  requestedChangeWindows,
+                  requestedIndicatorCodes,
+                );
+              const overrideAccRows = SHOW_MONTH_ACCUMULATION
+                ? await getAccDashboard(
+                    "DAY_ACC",
+                    undefined,
+                    level,
+                    undefined,
+                    requestedIndicatorCodes,
+                  )
+                    .then((accData) => accData.rows)
+                    .catch(() => [])
+                : [];
               levelOverrides[level] = {
                 changesRows: overrideChanges.rows,
                 accRows: overrideAccRows,
               };
+              if (progressiveAllLevels && seq === fetchSeqRef.current) {
+                const progressiveData = makeData();
+                startTransition(() => {
+                  setData(progressiveData);
+                  setDataRevision((current) => current + 1);
+                });
+                setBackgroundLoadingLevels((previous) => ({
+                  ...previous,
+                  [level]: false,
+                }));
+              }
             } catch {
+              levelAllOverrideFailed = true;
               if (seq === fetchSeqRef.current) {
-                setDayLevelAllMode((prev) => ({ ...prev, [level]: false }));
-                setMonthLevelAllMode((prev) => ({ ...prev, [level]: false }));
+                const failedLabel = level === "GRID" ? "全部网格" : "全部渠道";
+                setLevelAllPopup({
+                  kind: "error",
+                  message: `${failedLabel}请求失败，请重试`,
+                });
+                if (!progressiveAllLevels) {
+                  setDayLevelAllMode((prev) => ({ ...prev, [level]: false }));
+                  setMonthLevelAllMode((prev) => ({ ...prev, [level]: false }));
+                }
+                setBackgroundLoadingLevels((previous) => ({
+                  ...previous,
+                  [level]: false,
+                }));
               }
             }
           }),
@@ -521,32 +870,40 @@ export function DashboardCockpit() {
 
       if (seq !== fetchSeqRef.current) return;
 
-      const latestRun = changesData.latest_run ?? null;
-      setData({
-        online: Boolean(latestRun),
-        latestRun,
-        updatedAt: latestRun?.finished_at
-          ? new Date(latestRun.finished_at).toLocaleString("zh-CN", { hour12: false })
-          : nowText(),
-        indicators: changesData.indicators,
-        changesRows: changesData.rows,
-        accRows,
-        levelOverrides,
+      const nextData = makeData();
+      cacheData(nextData);
+      setBackgroundLoadingLevels({});
+      startTransition(() => {
+        setData(nextData);
+        setDataRevision((current) => current + 1);
       });
     } catch {
+      requestFailed = true;
       if (seq !== fetchSeqRef.current) return;
       setError(true);
+      if (scopePopupTargetRef.current) {
+        setLevelAllPopup({
+          kind: "error",
+          message: `${scopePopupTargetRef.current.label}请求失败，请重试`,
+        });
+      }
       setData((prev) =>
         prev ? { ...prev, online: false, updatedAt: nowText() } : null,
       );
     } finally {
       if (seq === fetchSeqRef.current) setLoading(false);
       if (seq === fetchSeqRef.current) setPendingLevelAll(null);
+      if (seq === fetchSeqRef.current) scopePopupTargetRef.current = null;
+      if (seq === fetchSeqRef.current && !levelAllOverrideFailed && !requestFailed) {
+        setLevelAllPopup((prev) => (prev?.kind === "loading" ? null : prev));
+      }
     }
   }, [
     drillTarget?.areaId,
     drillTarget?.levelType,
-    changeWindows,
+    queryCacheKey,
+    parentChangeWindows,
+    requestedIndicatorCodes,
     scopeMode,
     dayLevelAllMode.GRID,
     dayLevelAllMode.CHANNEL,
@@ -555,21 +912,51 @@ export function DashboardCockpit() {
   ]);
 
   useEffect(() => {
-    void fetchData();
-    const timer = window.setInterval(() => void fetchData(), 30_000);
+    if (mode === "multi" && !multiSelectedCodes.length) {
+      const initialCodes = selectableIndicators
+        .slice(0, 6)
+        .map((item) => item.code);
+      if (initialCodes.length) {
+        setMultiSelectedCodes(initialCodes);
+        return;
+      }
+    }
+    void fetchData(false);
+    const timer = window.setInterval(() => {
+      void getDashboardLatestRun()
+        .then((result) => {
+          if (
+            !latestDataVersionRef.current ||
+            result.data_version !== latestDataVersionRef.current
+          ) {
+            latestDataVersionRef.current = result.data_version;
+            queryCacheRef.current.clear();
+            return fetchData(true);
+          }
+        })
+        .catch(() => fetchData(true));
+    }, 30_000);
     return () => window.clearInterval(timer);
-  }, [fetchData]);
+  }, [fetchData, mode, multiSelectedCodes.length, selectableIndicators.length]);
+
+  useEffect(() => {
+    if (levelAllPopup?.kind !== "error") return;
+    const timer = window.setTimeout(() => {
+      setLevelAllPopup((prev) => (prev?.kind === "error" ? null : prev));
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [levelAllPopup]);
 
   /* auto‑select first indicator when data first arrives */
   useEffect(() => {
-    if (data?.indicators.length) {
+    if (selectableIndicators.length) {
       setIndicator((prev) =>
-        data.indicators.some((ind) => ind.code === prev)
+        selectableIndicators.some((ind) => ind.code === prev)
           ? prev
-          : data.indicators[0].code,
+          : selectableIndicators[0].code,
       );
     }
-  }, [data?.indicators]);
+  }, [selectableIndicators]);
 
   /* derive boards from data + indicator + visible */
   const activeCode = indicator || data?.indicators[0]?.code || "";
@@ -578,12 +965,12 @@ export function DashboardCockpit() {
     if (!data) return { dayLevels: [] as LevelBoard[], monthLevels: [] as LevelBoard[] };
     const dayOverrides = Object.fromEntries(
       (["GRID", "CHANNEL"] as LevelKey[])
-        .filter((level) => dayLevelAllMode[level])
+        .filter((level) => scopeMode === "all" || dayLevelAllMode[level])
         .map((level) => [level, data.levelOverrides[level]]),
     ) as Partial<Record<LevelKey, LevelOverrideData>>;
     const monthOverrides = Object.fromEntries(
       (["GRID", "CHANNEL"] as LevelKey[])
-        .filter((level) => monthLevelAllMode[level])
+        .filter((level) => scopeMode === "all" || monthLevelAllMode[level])
         .map((level) => [level, data.levelOverrides[level]]),
     ) as Partial<Record<LevelKey, LevelOverrideData>>;
     const changesRows = applyLevelOverrides(
@@ -709,11 +1096,21 @@ export function DashboardCockpit() {
     setDayLevelAllMode({});
     setMonthLevelAllMode({});
     if (value === "__default__") {
+      scopePopupTargetRef.current = { label: "郑州市 / 中原区" };
+      setLevelAllPopup({
+        kind: "loading",
+        message: "正在请求郑州市 / 中原区...",
+      });
       setScopeMode("default");
       setDrillStack([]);
       return;
     }
     if (value === "__all__") {
+      scopePopupTargetRef.current = { label: "郑州市 / 全部" };
+      setLevelAllPopup({
+        kind: "loading",
+        message: "正在请求郑州市 / 全部...",
+      });
       setScopeMode("all");
       setDrillStack([]);
       return;
@@ -725,6 +1122,12 @@ export function DashboardCockpit() {
       (item) => item.level_type === "BRANCH" && item.area_id === areaId,
     );
     if (!branch) return;
+    const branchLabel = `郑州市 / ${branch.area_name}`;
+    scopePopupTargetRef.current = { label: branchLabel };
+    setLevelAllPopup({
+      kind: "loading",
+      message: `正在请求${branchLabel}...`,
+    });
     setScopeMode("default");
     setDrillStack([{
       areaId: branch.area_id,
@@ -743,6 +1146,12 @@ export function DashboardCockpit() {
         ? level === "GRID" ? "全部网格" : "全部渠道"
         : "当前范围",
     });
+    setLevelAllPopup({
+      kind: "loading",
+      message: nextActive
+        ? `正在请求${level === "GRID" ? "全部网格" : "全部渠道"}...`
+        : "正在切回当前范围...",
+    });
     setDayLevelAllMode((prev) => ({
       ...prev,
       [level]: !prev[level],
@@ -758,6 +1167,12 @@ export function DashboardCockpit() {
       label: nextActive
         ? level === "GRID" ? "全部网格" : "全部渠道"
         : "当前范围",
+    });
+    setLevelAllPopup({
+      kind: "loading",
+      message: nextActive
+        ? `正在请求${level === "GRID" ? "全部网格" : "全部渠道"}...`
+        : "正在切回当前范围...",
     });
     setMonthLevelAllMode((prev) => ({
       ...prev,
@@ -784,6 +1199,8 @@ export function DashboardCockpit() {
   return (
     <div className="cockpit-shell">
       <Header
+        mode={mode}
+        onModeChange={handleModeChange}
         drillName={orgScopeName}
         scopeValue={
           drillTarget?.levelType === "BRANCH"
@@ -809,16 +1226,28 @@ export function DashboardCockpit() {
         ]}
         onScopeChange={handleScopeChange}
         activeCode={activeCode}
-        indicators={data?.indicators || []}
+        indicators={selectableIndicators}
         onIndicatorChange={setIndicator}
         changeWindows={changeWindows}
         onChangeWindow={updateChangeWindow}
         online={data?.online ?? false}
         updatedAt={data?.updatedAt ?? nowText()}
         loading={loading}
-        onRefresh={fetchData}
+        onRefresh={() => void fetchData(true)}
       />
 
+      {levelAllPopup && (
+        <div
+          className={`cockpit-toast ${levelAllPopup.kind}`}
+          role={levelAllPopup.kind === "error" ? "alert" : "status"}
+        >
+          {levelAllPopup.kind === "loading" && <RefreshCw size={15} className="spin" />}
+          <span>{levelAllPopup.message}</span>
+        </div>
+      )}
+
+      {mode === "single" ? (
+      <>
       <main className="board-grid" style={{ marginBottom: 14 }}>
         <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -14 }}>
           <strong>当日实时</strong><span>展示每30秒刷新，数据按采集批次更新</span>
@@ -831,14 +1260,20 @@ export function DashboardCockpit() {
             onSortChange={(k) => setDaySorts((prev) => ({ ...prev, [level.key]: k as SortKey }))}
             changeWindows={changeWindows}
             onDrill={handleDrill}
-            levelAllActive={Boolean(dayLevelAllMode[level.key])}
+            levelAllActive={scopeMode === "all" || Boolean(dayLevelAllMode[level.key])}
             levelAllPending={
-              loading &&
-              pendingLevelAll?.section === "day" &&
-              pendingLevelAll.level === level.key
+              Boolean(backgroundLoadingLevels[level.key]) || (
+                loading &&
+                pendingLevelAll?.section === "day" &&
+                pendingLevelAll.level === level.key
+              )
             }
-            levelAllPendingLabel={pendingLevelAll?.label}
-            onToggleLevelAll={level.key !== "BRANCH" ? handleToggleDayLevelAll : undefined}
+            queryLoading={loading}
+            onToggleLevelAll={
+              level.key !== "BRANCH" && scopeMode !== "all"
+                ? handleToggleDayLevelAll
+                : undefined
+            }
             isBranch={level.key === "BRANCH"}
             branchHeight={branchHeight}
             branchPanelRef={level.key === "BRANCH" ? branchPanelRef : undefined}
@@ -846,7 +1281,7 @@ export function DashboardCockpit() {
         ))}
       </main>
 
-      {monthLevels.length > 0 && (
+      {SHOW_MONTH_ACCUMULATION && monthLevels.length > 0 && (
         <main className="board-grid">
           <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -14 }}>
             <strong>当月累计</strong><span>前一日期累计 + 当日实时</span>
@@ -865,7 +1300,7 @@ export function DashboardCockpit() {
                 pendingLevelAll?.section === "month" &&
                 pendingLevelAll.level === level.key
               }
-              levelAllPendingLabel={pendingLevelAll?.label}
+              queryLoading={loading}
               onToggleLevelAll={level.key !== "BRANCH" ? handleToggleMonthLevelAll : undefined}
               isBranch={level.key === "BRANCH"}
               branchHeight={monthBranchHeight}
@@ -881,6 +1316,23 @@ export function DashboardCockpit() {
         hasData={Boolean(data?.latestRun?.finished_at)}
         nextCollect={nextCollect}
       />
+      </>
+      ) : (
+        <MultiMetricMatrix
+          catalog={data?.indicatorCatalog || []}
+          availableIndicators={data?.indicators || []}
+          selectedCodes={multiSelectedCodes}
+          onSelectedCodesChange={setMultiSelectedCodes}
+          windowMinutes={multiMetricWindow}
+          onWindowChange={setMultiMetricWindow}
+          scopeMode={scopeMode}
+          parentId={drillTarget?.areaId}
+          parentLevel={drillTarget?.levelType}
+          refreshKey={dataRevision}
+          drillLevel={drillTarget?.levelType}
+          onDrill={handleDrill}
+        />
+      )}
     </div>
   );
 }
@@ -888,6 +1340,8 @@ export function DashboardCockpit() {
 /* ── sub-components ── */
 
 function Header({
+  mode,
+  onModeChange,
   drillName,
   scopeValue,
   scopeOptions,
@@ -902,6 +1356,8 @@ function Header({
   loading,
   onRefresh,
 }: {
+  mode: CockpitMode;
+  onModeChange: (mode: CockpitMode) => void;
   drillName: string;
   scopeValue: string;
   scopeOptions: { label: string; value: string }[];
@@ -922,9 +1378,27 @@ function Header({
     <header className="cockpit-header">
       <div className="brand">
         <div className="brand-icon"><BarChart3 size={28} /></div>
-        <div className="brand-title">数据驾驶舱</div>
+        <div>
+          <div className="brand-title">数据驾驶舱</div>
+          <div className="cockpit-mode-tabs" aria-label="驾驶舱模式">
+            <button
+              type="button"
+              className={mode === "single" ? "active" : ""}
+              onClick={() => onModeChange("single")}
+            >
+              单指标驾驶舱
+            </button>
+            <button
+              type="button"
+              className={mode === "multi" ? "active" : ""}
+              onClick={() => onModeChange("multi")}
+            >
+              多指标驾驶舱
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="toolbar">
+      <div className={mode === "single" ? "toolbar" : "toolbar toolbar-muted"}>
         <Selector
           label="组织范围"
           value={scopeValue}
@@ -932,16 +1406,16 @@ function Header({
           options={scopeOptions}
           onChange={onScopeChange}
         />
-        <Selector
+        {mode === "single" && <Selector
           label="指标"
           value={activeCode}
           options={indOptions.length ? indOptions : undefined}
           onChange={onIndicatorChange}
-        />
-        <WindowSelector
+        />}
+        {mode === "single" && <WindowSelector
           windows={changeWindows}
           onChange={onChangeWindow}
-        />
+        />}
       </div>
       <div className="header-status">
         <span className={online ? "pulse-dot" : "pulse-dot muted"} />
@@ -1021,6 +1495,511 @@ function WindowSelector({
   );
 }
 
+function SingleWindowInput({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (minutes: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const normalized = normalizeChangeWindowMinutes(Number(draft), value);
+    setDraft(String(normalized));
+    if (normalized !== value) {
+      onChange(normalized);
+    }
+  };
+
+  return (
+    <label className="selector matrix-window-input">
+      <span>变化窗口</span>
+      <input
+        type="number"
+        min={5}
+        max={1440}
+        step={5}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value.replace(/[^\d]/g, ""))}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+        }}
+        aria-label="多指标变化窗口分钟数"
+      />
+      <em>分钟</em>
+    </label>
+  );
+}
+
+function MultiMetricMatrix({
+  catalog,
+  availableIndicators,
+  selectedCodes,
+  onSelectedCodesChange,
+  windowMinutes,
+  onWindowChange,
+  scopeMode,
+  parentId,
+  parentLevel,
+  refreshKey,
+  drillLevel,
+  onDrill,
+}: {
+  catalog: DashboardCatalogIndicator[];
+  availableIndicators: DashboardIndicator[];
+  selectedCodes: string[];
+  onSelectedCodesChange: (codes: string[]) => void;
+  windowMinutes: number;
+  onWindowChange: (minutes: number) => void;
+  scopeMode: ScopeMode;
+  parentId?: number;
+  parentLevel?: string;
+  refreshKey: number;
+  drillLevel?: string;
+  onDrill: (row: BoardRow, levelType: string) => void;
+}) {
+  const orderedCatalog = useMemo(() => {
+    const byCode = new Map(
+      catalog
+        .filter((indicator) => indicator.enabled)
+        .map((indicator) => [indicator.code, indicator]),
+    );
+    for (const indicator of availableIndicators) {
+      if (!byCode.has(indicator.code)) {
+        byCode.set(indicator.code, {
+          ...indicator,
+          enabled: true,
+          source_active: true,
+          removed_at: null,
+        });
+      }
+    }
+    return [...byCode.values()]
+      .sort((left, right) => left.sort_order - right.sort_order);
+  }, [availableIndicators, catalog]);
+
+  const [level, setLevel] = useState<LevelKey>("BRANCH");
+  const [search, setSearch] = useState("");
+  const [sortIndicator, setSortIndicator] = useState("");
+  const [sortMode, setSortMode] = useState<MatrixSortMode>("doneDesc");
+  const [indicatorSearch, setIndicatorSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [matrixRows, setMatrixRows] = useState<DashboardRowWithChanges[]>([]);
+  const [matrixTotal, setMatrixTotal] = useState(0);
+  const [matrixPage, setMatrixPage] = useState(1);
+  const [matrixTotalPages, setMatrixTotalPages] = useState(0);
+  const [matrixLoading, setMatrixLoading] = useState(false);
+  const [matrixError, setMatrixError] = useState("");
+  const [matrixScrollTop, setMatrixScrollTop] = useState(0);
+  const [matrixViewportHeight, setMatrixViewportHeight] = useState(600);
+  const matrixScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (drillLevel === "BRANCH") {
+      setLevel("GRID");
+    } else if (drillLevel === "GRID") {
+      setLevel("CHANNEL");
+    } else if (!drillLevel || drillLevel === "CITY") {
+      setLevel("BRANCH");
+    }
+  }, [drillLevel]);
+
+  useEffect(() => {
+    if (!orderedCatalog.length) return;
+    const availableCodeSet = new Set(orderedCatalog.map((indicator) => indicator.code));
+    const valid = selectedCodes
+      .filter((code) => availableCodeSet.has(code))
+      .slice(0, 6);
+    if (valid.length !== selectedCodes.length) {
+      onSelectedCodesChange(
+        valid.length ? valid : orderedCatalog.slice(0, 6).map((indicator) => indicator.code),
+      );
+    }
+  }, [onSelectedCodesChange, orderedCatalog, selectedCodes]);
+
+  useEffect(() => {
+    if (!selectedCodes.length) return;
+    if (!selectedCodes.includes(sortIndicator)) {
+      setSortIndicator(selectedCodes[0]);
+    }
+  }, [selectedCodes, sortIndicator]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setMatrixPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    setMatrixPage(1);
+  }, [level, parentId, parentLevel, scopeMode, selectedCodes, sortIndicator, sortMode, windowMinutes]);
+
+  useEffect(() => {
+    if (!selectedCodes.length || !sortIndicator) return;
+    let cancelled = false;
+    setMatrixLoading(true);
+    setMatrixError("");
+    void getDashboardMatrix({
+      levelType: level,
+      scopeMode,
+      parentId,
+      parentLevel,
+      indicatorCodes: selectedCodes,
+      changeWindow: windowMinutes,
+      search: debouncedSearch || undefined,
+      sortIndicator,
+      sortMode,
+      page: matrixPage,
+      pageSize: 100,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setMatrixRows(result.rows);
+        setMatrixTotal(result.total);
+        setMatrixTotalPages(result.total_pages);
+      })
+      .catch((requestError) => {
+        if (cancelled) return;
+        setMatrixRows([]);
+        setMatrixTotal(0);
+        setMatrixTotalPages(0);
+        setMatrixError(
+          requestError instanceof Error ? requestError.message : "矩阵请求失败",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setMatrixLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    debouncedSearch,
+    level,
+    matrixPage,
+    parentId,
+    parentLevel,
+    refreshKey,
+    scopeMode,
+    selectedCodes,
+    sortIndicator,
+    sortMode,
+    windowMinutes,
+  ]);
+
+  const selectedIndicators = selectedCodes
+    .map((code) => orderedCatalog.find((indicator) => indicator.code === code))
+    .filter((indicator): indicator is DashboardCatalogIndicator => Boolean(indicator));
+  const filteredOptions = orderedCatalog.filter((indicator) => {
+    const keyword = indicatorSearch.trim().toLowerCase();
+    return !keyword ||
+      indicator.name.toLowerCase().includes(keyword) ||
+      indicator.code.toLowerCase().includes(keyword);
+  });
+
+  const virtualRange = useMemo(() => {
+    const visibleCount = Math.ceil(matrixViewportHeight / MATRIX_ROW_HEIGHT);
+    const start = Math.max(
+      0,
+      Math.floor(matrixScrollTop / MATRIX_ROW_HEIGHT) - MATRIX_VIRTUAL_OVERSCAN,
+    );
+    const end = Math.min(
+      matrixRows.length,
+      start + visibleCount + MATRIX_VIRTUAL_OVERSCAN * 2,
+    );
+    return {
+      start,
+      end,
+      rows: matrixRows.slice(start, end),
+      topHeight: start * MATRIX_ROW_HEIGHT,
+      bottomHeight: Math.max(0, (matrixRows.length - end) * MATRIX_ROW_HEIGHT),
+    };
+  }, [matrixRows, matrixScrollTop, matrixViewportHeight]);
+
+  useEffect(() => {
+    const container = matrixScrollRef.current;
+    if (!container) return;
+    setMatrixViewportHeight(container.clientHeight || 600);
+    container.scrollTop = 0;
+    setMatrixScrollTop(0);
+  }, [level, search, sortIndicator, sortMode]);
+
+  const toggleIndicator = (code: string) => {
+    if (selectedCodes.includes(code)) {
+      onSelectedCodesChange(
+        selectedCodes.length === 1
+          ? selectedCodes
+          : selectedCodes.filter((item) => item !== code),
+      );
+      return;
+    }
+    if (selectedCodes.length < 6) {
+      onSelectedCodesChange([...selectedCodes, code]);
+    }
+  };
+
+  const handleMatrixDrill = (row: DashboardRowWithChanges) => {
+    if (row.level_type === "CHANNEL") return;
+    setLevel(row.level_type === "BRANCH" ? "GRID" : "CHANNEL");
+    onDrill({
+      areaId: row.area_id,
+      parentId: row.parent_id,
+      name: row.area_name,
+      done: 0,
+      target: null,
+      changes: {},
+    }, row.level_type);
+  };
+
+  return (
+    <main className="multi-metric-view">
+      <section className="matrix-toolbar">
+        <Selector
+          label="层级"
+          value={level}
+          options={[
+            { label: "分公司级", value: "BRANCH" },
+            { label: "网格级", value: "GRID" },
+            { label: "渠道级", value: "CHANNEL" },
+          ]}
+          onChange={(value) => setLevel(value as LevelKey)}
+        />
+        <label className="matrix-search">
+          <span>筛选</span>
+          <Search size={15} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="区域名称或编码"
+          />
+        </label>
+        <SingleWindowInput
+          value={windowMinutes}
+          onChange={onWindowChange}
+        />
+        <Selector
+          label="排序指标"
+          value={sortIndicator}
+          options={selectedIndicators.map((indicator) => ({
+            label: indicator.name,
+            value: indicator.code,
+          }))}
+          onChange={setSortIndicator}
+        />
+        <MatrixSortPicker value={sortMode} onChange={setSortMode} />
+        <details
+          className="metric-multi-picker"
+          onMouseEnter={keepDetailsOpen}
+          onMouseLeave={closeDetailsAfterLeave}
+        >
+          <summary>
+            <span>指标</span>
+            <strong>多选 {selectedCodes.length} 项</strong>
+            <ChevronDown size={15} />
+          </summary>
+          <div className="metric-picker-popover">
+            <label className="metric-picker-search">
+              <Search size={14} />
+              <input
+                value={indicatorSearch}
+                onChange={(event) => setIndicatorSearch(event.target.value)}
+                placeholder="搜索指标"
+              />
+            </label>
+            <div className="metric-option-list">
+              {filteredOptions.map((indicator) => (
+                <label key={indicator.code} className="metric-check-option">
+                  <input
+                    type="checkbox"
+                    checked={selectedCodes.includes(indicator.code)}
+                    onChange={() => toggleIndicator(indicator.code)}
+                  />
+                  <span title={indicator.name}>{indicator.name}</span>
+                </label>
+              ))}
+            </div>
+            <div className="metric-picker-note">最多同时展示 6 个指标</div>
+          </div>
+        </details>
+      </section>
+
+      <div className="selected-indicator-strip">
+        {selectedIndicators.map((indicator, index) => (
+          <button
+            key={indicator.code}
+            type="button"
+            onClick={() => toggleIndicator(indicator.code)}
+            title="从矩阵中移除"
+          >
+            <i data-index={index} />
+            {indicator.name}
+          </button>
+        ))}
+      </div>
+
+      <section className="matrix-panel">
+        <div className="matrix-panel-head">
+          <strong>区域 × 指标矩阵</strong>
+          <span>{matrixTotal} 个区域，单元格展示完成值、目标值、完成率和 {windowMinutes} 分钟变化</span>
+        </div>
+        <div
+          ref={matrixScrollRef}
+          className="matrix-scroll"
+          onScroll={(event) => {
+            setMatrixScrollTop(event.currentTarget.scrollTop);
+            setMatrixViewportHeight(event.currentTarget.clientHeight);
+          }}
+        >
+          <table className="metric-matrix">
+            <thead>
+              <tr>
+                <th className="matrix-area-column">区域</th>
+                {selectedIndicators.map((indicator) => (
+                  <th key={indicator.code}>{indicator.name}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {virtualRange.topHeight > 0 && (
+                <tr className="matrix-virtual-spacer" aria-hidden="true">
+                  <td
+                    colSpan={selectedIndicators.length + 1}
+                    style={{ height: virtualRange.topHeight }}
+                  />
+                </tr>
+              )}
+              {virtualRange.rows.map((row) => (
+                <tr key={row.area_id}>
+                  <td className="matrix-area-column">
+                    <button
+                      type="button"
+                      disabled={level === "CHANNEL"}
+                      onClick={() => handleMatrixDrill(row)}
+                    >
+                      <strong>{row.area_name}</strong>
+                      <span>{row.area_code} · {levelLabel(row.level_type)}</span>
+                    </button>
+                  </td>
+                  {selectedIndicators.map((indicator) => (
+                    <MatrixMetricCell
+                      key={indicator.code}
+                      row={row}
+                      indicator={indicator}
+                      windowMinutes={windowMinutes}
+                    />
+                  ))}
+                </tr>
+              ))}
+              {virtualRange.bottomHeight > 0 && (
+                <tr className="matrix-virtual-spacer" aria-hidden="true">
+                  <td
+                    colSpan={selectedIndicators.length + 1}
+                    style={{ height: virtualRange.bottomHeight }}
+                  />
+                </tr>
+              )}
+              {!matrixRows.length && (
+                <tr>
+                  <td
+                    className="matrix-empty"
+                    colSpan={selectedIndicators.length + 1}
+                  >
+                    {matrixLoading
+                      ? "正在加载..."
+                      : matrixError || "当前层级暂无数据"}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {matrixTotalPages > 1 && (
+          <div className="matrix-pagination">
+            <button
+              type="button"
+              disabled={matrixPage <= 1 || matrixLoading}
+              onClick={() => setMatrixPage((current) => Math.max(1, current - 1))}
+            >
+              上一页
+            </button>
+            <span>第 {matrixPage} / {matrixTotalPages} 页</span>
+            <button
+              type="button"
+              disabled={matrixPage >= matrixTotalPages || matrixLoading}
+              onClick={() => setMatrixPage((current) => current + 1)}
+            >
+              下一页
+            </button>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function MatrixMetricCell({
+  row,
+  indicator,
+  windowMinutes,
+}: {
+  row: DashboardRowWithChanges;
+  indicator: DashboardCatalogIndicator;
+  windowMinutes: number;
+}) {
+  const done = row.metrics[indicator.code];
+  const target = row.targets?.[indicator.code];
+  const progress = done != null && target != null && target > 0 ? done / target : null;
+  const change = row.changes?.[indicator.code]?.[`change_${windowMinutes}min`];
+  const progressClass = progress == null
+    ? "unknown"
+    : progress >= 0.9
+      ? "good"
+      : progress >= 0.8
+        ? "mid"
+        : "low";
+  const changeClass = (change?.value ?? 0) > 0
+    ? "up"
+    : (change?.value ?? 0) < 0
+      ? "down"
+      : "flat";
+
+  return (
+    <td className="matrix-metric-cell">
+      <div className="matrix-cell-main">
+        <strong>{done == null ? "--" : formatNumber(done)}</strong>
+        <span className={progressClass}>
+          {progress == null ? "--" : fmtPct(progress)}
+        </span>
+      </div>
+      <div className="matrix-cell-meta">
+        <span>目标 {target == null ? "--" : formatNumber(target)}</span>
+        <span className={changeClass}>
+          {change?.value == null ? "--" : signed(change.value)}
+          {" / "}
+          {change?.rate == null ? "--" : signedPct(change.rate * 100)}
+        </span>
+      </div>
+    </td>
+  );
+}
+
+function levelLabel(level: DashboardRow["level_type"]) {
+  if (level === "BRANCH") return "分公司级";
+  if (level === "GRID") return "网格级";
+  if (level === "CHANNEL") return "渠道级";
+  return "市级";
+}
+
 function Footer({
   batchNo,
   online,
@@ -1055,23 +2034,114 @@ function Selector({
   options?: { label: string; value: string }[];
   onChange?: (v: string) => void;
 }) {
+  const selectedLabel = options?.find((option) => option.value === value)?.label
+    || displayValue
+    || value;
+
   return (
-    <label className="selector">
+    <div className="selector">
       <span>{label}</span>
       {options ? (
-        <select value={value} onChange={(e) => onChange?.(e.target.value)}>
-          {displayValue && !options.some((option) => option.value === value) && (
-            <option value={value}>{displayValue}</option>
-          )}
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
+        <details
+          className="selector-field"
+          onMouseEnter={keepDetailsOpen}
+          onMouseLeave={closeDetailsAfterLeave}
+        >
+          <summary>
+            <strong>{selectedLabel}</strong>
+            <ChevronDown size={16} />
+          </summary>
+          <div className="selector-popover">
+            {displayValue && !options.some((option) => option.value === value) && (
+              <button type="button" className="active">{displayValue}</button>
+            )}
+            {options.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={option.value === value ? "active" : ""}
+                onClick={(event) => {
+                  onChange?.(option.value);
+                  event.currentTarget.closest("details")?.removeAttribute("open");
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </details>
       ) : (
         <strong>{displayValue || value}</strong>
       )}
-      <ChevronDown size={16} />
-    </label>
+    </div>
+  );
+}
+
+const MATRIX_SORT_FIELDS: {
+  key: "progress" | "done" | "changeValue" | "changeRate";
+  label: string;
+  asc: MatrixSortMode;
+  desc: MatrixSortMode;
+}[] = [
+  { key: "progress", label: "完成率", asc: "progressAsc", desc: "progressDesc" },
+  { key: "done", label: "完成值", asc: "doneAsc", desc: "doneDesc" },
+  { key: "changeValue", label: "变化量", asc: "changeValueAsc", desc: "changeValueDesc" },
+  { key: "changeRate", label: "变化率", asc: "changeRateAsc", desc: "changeRateDesc" },
+];
+
+function MatrixSortPicker({
+  value,
+  onChange,
+}: {
+  value: MatrixSortMode;
+  onChange: (value: MatrixSortMode) => void;
+}) {
+  const selected = MATRIX_SORT_FIELDS.find(
+    (field) => field.asc === value || field.desc === value,
+  ) || MATRIX_SORT_FIELDS[1];
+  const selectedDirection = selected.asc === value ? "asc" : "desc";
+  const DirectionIcon = selectedDirection === "asc" ? ArrowUp : ArrowDown;
+
+  return (
+    <div className="matrix-sort-picker">
+      <span>排序方式</span>
+      <details
+        className="matrix-sort-field-picker"
+        onMouseEnter={keepDetailsOpen}
+        onMouseLeave={closeDetailsAfterLeave}
+      >
+        <summary>
+          <strong>{selected.label}</strong>
+          <ChevronDown size={15} />
+        </summary>
+        <div className="matrix-sort-field-popover">
+          {MATRIX_SORT_FIELDS.map((field) => (
+            <button
+              key={field.key}
+              type="button"
+              className={field.key === selected.key ? "active" : ""}
+              onClick={(event) => {
+                onChange(selectedDirection === "asc" ? field.asc : field.desc);
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+            >
+              {field.label}
+            </button>
+          ))}
+        </div>
+      </details>
+      <button
+        type="button"
+        className="matrix-sort-direction"
+        title={selectedDirection === "asc" ? "当前升序，点击切换为降序" : "当前降序，点击切换为升序"}
+        aria-label={selectedDirection === "asc" ? "切换为降序" : "切换为升序"}
+        onClick={() => onChange(
+          selectedDirection === "asc" ? selected.desc : selected.asc,
+        )}
+      >
+        <DirectionIcon size={16} />
+      </button>
+    </div>
   );
 }
 
@@ -1083,7 +2153,7 @@ function LevelPanel({
   onDrill,
   levelAllActive,
   levelAllPending,
-  levelAllPendingLabel,
+  queryLoading,
   onToggleLevelAll,
   isBranch,
   branchHeight,
@@ -1096,13 +2166,41 @@ function LevelPanel({
   onDrill: (row: BoardRow, levelType: string) => void;
   levelAllActive?: boolean;
   levelAllPending?: boolean;
-  levelAllPendingLabel?: string;
+  queryLoading?: boolean;
   onToggleLevelAll?: (level: LevelKey) => void;
   isBranch?: boolean;
   branchHeight?: number;
   branchPanelRef?: React.RefObject<HTMLDivElement | null>;
 }) {
-  const rows = useMemo(() => sortRows(level.dayRows, sortKey), [level.dayRows, sortKey]);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [tableScrollTop, setTableScrollTop] = useState(0);
+  const [tableViewportHeight, setTableViewportHeight] = useState(600);
+  const dataTableRef = useRef<HTMLDivElement>(null);
+  const rows = useMemo(
+    () => sortRows(level.dayRows, sortKey, sortDirection),
+    [level.dayRows, sortDirection, sortKey],
+  );
+  const useVirtualRows = level.key === "CHANNEL" && Boolean(levelAllActive) && rows.length > 200;
+  const virtualRows = useMemo(() => {
+    if (!useVirtualRows) {
+      return { start: 0, rows, topHeight: 0, bottomHeight: 0 };
+    }
+    const visibleCount = Math.ceil(tableViewportHeight / SINGLE_ROW_HEIGHT);
+    const start = Math.max(
+      0,
+      Math.floor(tableScrollTop / SINGLE_ROW_HEIGHT) - SINGLE_VIRTUAL_OVERSCAN,
+    );
+    const end = Math.min(
+      rows.length,
+      start + visibleCount + SINGLE_VIRTUAL_OVERSCAN * 2,
+    );
+    return {
+      start,
+      rows: rows.slice(start, end),
+      topHeight: start * SINGLE_ROW_HEIGHT,
+      bottomHeight: Math.max(0, (rows.length - end) * SINGLE_ROW_HEIGHT),
+    };
+  }, [rows, tableScrollTop, tableViewportHeight, useVirtualRows]);
   const lastWindow = changeWindows[changeWindows.length - 1] ?? 60;
 
   const totalDone = rows.reduce((s, r) => s + r.done, 0);
@@ -1121,6 +2219,15 @@ function LevelPanel({
     ? { maxHeight: branchHeight - 43, overflowY: "auto" }
     : {};
   const levelAllLabel = level.key === "GRID" ? "全部网格" : "全部渠道";
+  const showLoadingPlaceholder = rows.length === 0 && Boolean(levelAllPending || queryLoading);
+
+  useEffect(() => {
+    const container = dataTableRef.current;
+    if (!container) return;
+    setTableViewportHeight(container.clientHeight || 600);
+    container.scrollTop = 0;
+    setTableScrollTop(0);
+  }, [levelAllActive, sortDirection, sortKey]);
 
   return (
     <section className="level-panel" ref={branchPanelRef} style={panelStyle}>
@@ -1129,35 +2236,40 @@ function LevelPanel({
           <span className="panel-index">{level.index}</span>
           <span className="panel-title">{level.title}</span>
           <span className="panel-dot" />
-          <span className="panel-count">{level.total}项</span>
+          <span className="panel-count">
+            {showLoadingPlaceholder ? "加载中" : `${level.total}项`}
+          </span>
         </div>
         <div className="panel-actions">
           {onToggleLevelAll && (
             <button
               className={levelAllActive ? "level-reset-button active" : "level-reset-button"}
               type="button"
+              disabled={levelAllPending}
               onClick={() => onToggleLevelAll(level.key)}
             >
               {levelAllActive ? "当前范围" : levelAllLabel}
             </button>
           )}
-          {levelAllPending && (
-            <span className="level-loading-hint">
-              正在请求{levelAllPendingLabel || levelAllLabel}...
-            </span>
-          )}
-        <label className="sort-select">
-          <select value={sortKey} onChange={(e) => onSortChange(e.target.value as SortKey)}>
-            {sortOptions(changeWindows).map((option) => (
-              <option key={option.key} value={option.key}>{option.label}</option>
-            ))}
-          </select>
-          <ChevronDown size={15} />
-        </label>
+        <SingleMetricSortPicker
+          value={sortKey}
+          options={sortOptions(changeWindows)}
+          direction={sortDirection}
+          onChange={onSortChange}
+          onDirectionChange={setSortDirection}
+        />
         </div>
       </div>
 
-      <div className="data-table" style={{ padding: "10px 10px 0", ...dataTableStyle }}>
+      <div
+        ref={dataTableRef}
+        className="data-table"
+        style={{ padding: "10px 10px 0", ...dataTableStyle }}
+        onScroll={useVirtualRows ? (event) => {
+          setTableScrollTop(event.currentTarget.scrollTop);
+          setTableViewportHeight(event.currentTarget.clientHeight);
+        } : undefined}
+      >
         <div className="table-row table-head">
           <span>排名</span><span>名称</span>
           <span>完成</span>
@@ -1166,17 +2278,34 @@ function LevelPanel({
             <span key={minutes}>{minutes}分钟</span>
           ))}
         </div>
-        {rows.map((r, i) => (
+        {virtualRows.topHeight > 0 && (
+          <div
+            className="single-virtual-spacer"
+            style={{ height: virtualRows.topHeight }}
+            aria-hidden="true"
+          />
+        )}
+        {virtualRows.rows.map((r, i) => (
           <DataRow
             key={r.areaId}
-            rank={i + 1}
+            rank={virtualRows.start + i + 1}
             item={r}
             changeWindows={changeWindows}
-            clickable={level.key !== "CHANNEL"}
-            onClick={() => onDrill(r, level.key)}
+            levelType={level.key}
+            onDrill={onDrill}
           />
         ))}
-        {rows.length === 0 && <EmptyRow />}
+        {virtualRows.bottomHeight > 0 && (
+          <div
+            className="single-virtual-spacer"
+            style={{ height: virtualRows.bottomHeight }}
+            aria-hidden="true"
+          />
+        )}
+        {showLoadingPlaceholder && <LoadingRows />}
+        {rows.length === 0 && !showLoadingPlaceholder && (
+          <EmptyRow message="暂无数据" />
+        )}
       </div>
 
       <div className="section-total">
@@ -1189,21 +2318,100 @@ function LevelPanel({
   );
 }
 
-function DataRow({
+function LoadingRows() {
+  return (
+    <div className="loading-rows" aria-label="正在加载数据">
+      {Array.from({ length: 8 }).map((_, index) => (
+        <div className="loading-row" key={index}>
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SingleMetricSortPicker({
+  value,
+  options,
+  direction,
+  onChange,
+  onDirectionChange,
+}: {
+  value: SortKey;
+  options: { key: SortKey; label: string }[];
+  direction: "asc" | "desc";
+  onChange: (value: SortKey) => void;
+  onDirectionChange: (direction: "asc" | "desc") => void;
+}) {
+  const selected = options.find((option) => option.key === value) || options[0];
+  const DirectionIcon = direction === "asc" ? ArrowUp : ArrowDown;
+
+  return (
+    <div className="single-sort-picker">
+      <details
+        className="single-sort-field"
+        onMouseEnter={keepDetailsOpen}
+        onMouseLeave={closeDetailsAfterLeave}
+      >
+        <summary>
+          <strong>{selected?.label || "完成量"}</strong>
+          <ChevronDown size={14} />
+        </summary>
+        <div className="single-sort-popover">
+          {options.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              className={option.key === value ? "active" : ""}
+              onClick={(event) => {
+                onChange(option.key);
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </details>
+      <button
+        type="button"
+        className="single-sort-direction"
+        title={direction === "asc" ? "当前升序，点击切换为降序" : "当前降序，点击切换为升序"}
+        aria-label={direction === "asc" ? "切换为降序" : "切换为升序"}
+        onClick={() => onDirectionChange(direction === "asc" ? "desc" : "asc")}
+      >
+        <DirectionIcon size={15} />
+      </button>
+    </div>
+  );
+}
+
+const DataRow = memo(function DataRow({
   rank,
   item,
   changeWindows,
-  clickable,
-  onClick,
+  levelType,
+  onDrill,
 }: {
   rank: number;
   item: BoardRow;
   changeWindows: number[];
-  clickable: boolean;
-  onClick: () => void;
+  levelType: LevelKey;
+  onDrill: (row: BoardRow, levelType: string) => void;
 }) {
+  const clickable = levelType !== "CHANNEL";
   return (
-    <div className={clickable ? "table-row clickable-row" : "table-row"} onClick={clickable ? onClick : undefined}>
+    <div
+      className={clickable ? "table-row clickable-row" : "table-row"}
+      onClick={clickable ? () => onDrill(item, levelType) : undefined}
+    >
       <span className="rank">{String(rank).padStart(2, "0")}</span>
       <span className="name" title={item.name}>{item.name}</span>
       <span className="done-cell">
@@ -1218,12 +2426,12 @@ function DataRow({
       ))}
     </div>
   );
-}
+});
 
-function EmptyRow() {
+function EmptyRow({ message = "暂无数据" }: { message?: string }) {
   return (
     <div className="table-row" style={{ justifyContent: "center", color: "rgba(148,163,184,0.5)", padding: "20px 0" }}>
-      暂无数据
+      {message}
     </div>
   );
 }

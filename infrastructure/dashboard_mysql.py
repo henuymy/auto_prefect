@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Mapping
 
 from sqlalchemy import URL, create_engine, text
@@ -138,6 +139,19 @@ def create_dashboard_engine(
             "write_timeout": resolved.io_timeout_seconds,
         },
     )
+
+
+@lru_cache(maxsize=1)
+def get_dashboard_engine() -> Engine:
+    """Return the process-wide dashboard connection pool."""
+    return create_dashboard_engine()
+
+
+def dispose_dashboard_engine() -> None:
+    """Dispose and clear the shared dashboard connection pool."""
+    if get_dashboard_engine.cache_info().currsize:
+        get_dashboard_engine().dispose()
+        get_dashboard_engine.cache_clear()
 
 
 def check_dashboard_mysql(

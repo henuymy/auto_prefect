@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
 from services.dashboard_metric_store import (
+    finalize_metric_run_in_session,
     MetricConflictError,
     MetricValueError,
     MetricWriteError,
@@ -15,6 +16,7 @@ from services.dashboard_metric_store import (
     parse_metric_value,
     write_acc_metric_batch,
     write_metric_batch,
+    write_metric_batch_in_session,
 )
 
 
@@ -362,4 +364,72 @@ def test_write_monthly_metric_does_not_replace_daily():
         ).all()
 
     assert rows == [("DAY_ACC", 12), ("MONTH", 120)]
+    engine.dispose()
+
+
+def test_write_multiple_realtime_indicators_in_one_run():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator (id, code, name, enabled, sort_order)
+                VALUES (2, 'sgs_YDYDN_260410', '移动云电脑', 1, 20)
+                """
+            )
+        )
+    add_run(engine, 1, "multi-realtime")
+    collected_at = datetime(2026, 6, 25, 11, 0)
+
+    from sqlalchemy.orm import Session
+
+    with Session(engine) as session, session.begin():
+        first = write_metric_batch_in_session(
+            session,
+            dialect_name=engine.dialect.name,
+            batch_no="multi-realtime",
+            indicator_code="sgs_ajvwdz",
+            normalized_rows=[{"area_id": 101, "metric_value": Decimal("12")}],
+            stat_date=date(2026, 6, 25),
+            collected_at=collected_at,
+            finalize_run=False,
+        )
+        second = write_metric_batch_in_session(
+            session,
+            dialect_name=engine.dialect.name,
+            batch_no="multi-realtime",
+            indicator_code="sgs_YDYDN_260410",
+            normalized_rows=[{"area_id": 101, "metric_value": Decimal("7")}],
+            stat_date=date(2026, 6, 25),
+            collected_at=collected_at,
+            finalize_run=False,
+        )
+        finalize_metric_run_in_session(
+            session,
+            batch_no="multi-realtime",
+            expected_run_type="REALTIME",
+            stat_date=date(2026, 6, 25),
+            collected_at=collected_at,
+            current_upsert_count=2,
+            snapshot_insert_count=2,
+        )
+
+    with engine.connect() as connection:
+        current_rows = connection.execute(
+            text(
+                "SELECT indicator_id, metric_value FROM metric_current "
+                "ORDER BY indicator_id"
+            )
+        ).all()
+        run = connection.execute(
+            text(
+                "SELECT status, phase, current_upsert_count, snapshot_insert_count "
+                "FROM collection_run WHERE batch_no = 'multi-realtime'"
+            )
+        ).one()
+
+    assert first["current_upsert_count"] == 1
+    assert second["current_upsert_count"] == 1
+    assert current_rows == [(1, 12), (2, 7)]
+    assert run == ("SUCCESS", "COMPLETED", 2, 2)
     engine.dispose()

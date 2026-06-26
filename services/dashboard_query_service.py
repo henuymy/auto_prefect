@@ -14,9 +14,10 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
 from typing import Any
 
-from sqlalchemy import Engine, bindparam, inspect, select, text
+from sqlalchemy import Engine, and_, bindparam, case, func, inspect, or_, select, text
 from sqlalchemy.orm import Session
 
 from models.dashboard_area import Area
@@ -52,16 +53,38 @@ def _datetime_iso_millis(value: Any) -> str | None:
     return str(value).replace(" ", "T")
 
 
+def _enabled_indicators(
+    session: Session,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+) -> list[Indicator]:
+    query = select(Indicator).where(Indicator.enabled.is_(True))
+    if indicator_codes:
+        query = query.where(Indicator.code.in_(indicator_codes))
+    return list(
+        session.scalars(
+            query.order_by(Indicator.sort_order, Indicator.id)
+        )
+    )
+
+
 def get_indicator_catalog(
     engine: Engine,
     *,
     include_archived: bool = False,
+    enabled_only: bool = False,
 ) -> dict[str, Any]:
     """Return the source indicator catalog without changing collection state."""
     with Session(engine) as session:
         query = select(Indicator).order_by(Indicator.sort_order, Indicator.id)
         if not include_archived:
-            query = query.where(Indicator.source_active.is_(True))
+            query = query.where(
+                or_(
+                    Indicator.source_active.is_(True),
+                    Indicator.enabled.is_(True),
+                )
+            )
+        if enabled_only:
+            query = query.where(Indicator.enabled.is_(True))
         indicators = session.scalars(query).all()
 
     return {
@@ -78,6 +101,58 @@ def get_indicator_catalog(
             for indicator in indicators
         ]
     }
+
+
+def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
+    with Session(engine) as session:
+        latest_run = _latest_realtime_run(session)
+        indicators = session.execute(
+            select(
+                Indicator.id,
+                Indicator.code,
+                Indicator.name,
+                Indicator.enabled,
+                Indicator.source_active,
+                Indicator.sort_order,
+                Indicator.updated_at,
+            ).order_by(Indicator.id)
+        ).all()
+        target_version = session.execute(
+            select(
+                func.count(MetricTarget.id),
+                func.max(MetricTarget.id),
+                func.max(MetricTarget.updated_at),
+            )
+        ).one()
+        indicator_version = "|".join(
+            ":".join(
+                [
+                    str(row.id),
+                    row.code,
+                    row.name,
+                    str(int(bool(row.enabled))),
+                    str(int(bool(row.source_active))),
+                    str(row.sort_order),
+                    _datetime_iso_millis(row.updated_at) or "",
+                ]
+            )
+            for row in indicators
+        )
+        target_updated_at = _datetime_iso_millis(target_version[2]) or ""
+        version_source = "#".join(
+            [
+                latest_run.batch_no if latest_run else "",
+                indicator_version,
+                str(target_version[0] or 0),
+                str(target_version[1] or 0),
+                target_updated_at,
+            ]
+        )
+        data_version = sha256(version_source.encode("utf-8")).hexdigest()
+        return {
+            "latest_run": _run_payload(latest_run),
+            "data_version": data_version,
+        }
 
 
 def get_snapshot_trend(
@@ -136,18 +211,299 @@ def get_snapshot_trend(
     }
 
 
+def get_dashboard_matrix_page(
+    engine: Engine,
+    *,
+    level_type: str,
+    scope_mode: str = "default",
+    parent_id: int | None = None,
+    parent_level: str | None = None,
+    branch_code: str | None = "AQ",
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+    change_window: int = 60,
+    search: str | None = None,
+    sort_indicator: str | None = None,
+    sort_mode: str = "doneDesc",
+    page: int = 1,
+    page_size: int = 100,
+) -> dict[str, Any]:
+    normalized_level = str(level_type or "").strip().upper()
+    if normalized_level not in {"BRANCH", "GRID", "CHANNEL"}:
+        raise ValueError(f"level_type 只支持 BRANCH/GRID/CHANNEL: {level_type!r}")
+    normalized_scope = str(scope_mode or "default").strip().lower()
+    if normalized_scope not in {"default", "all"}:
+        raise ValueError(f"scope_mode 只支持 default/all: {scope_mode!r}")
+    normalized_parent_level = str(parent_level or "").strip().upper() or None
+    normalized_windows = normalize_change_windows([change_window])
+    page = max(1, int(page))
+    page_size = max(1, min(200, int(page_size)))
+
+    with Session(engine) as session:
+        indicators = _enabled_indicators(session, indicator_codes)
+        if not indicators:
+            return {
+                "latest_run": _run_payload(_latest_realtime_run(session)),
+                "indicators": [],
+                "rows": [],
+                "row_count": 0,
+                "total": 0,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": 0,
+            }
+        indicator_ids = [indicator.id for indicator in indicators]
+        indicator_by_code = {indicator.code: indicator for indicator in indicators}
+        sort_code = (
+            sort_indicator
+            if sort_indicator in indicator_by_code
+            else indicators[0].code
+        )
+        sort_indicator_id = indicator_by_code[sort_code].id
+
+        area_query = select(Area).where(
+            Area.enabled.is_(True),
+            Area.level_type == normalized_level,
+        )
+        if search:
+            keyword = f"%{str(search).strip()}%"
+            area_query = area_query.where(
+                Area.area_name.like(keyword) | Area.area_code.like(keyword)
+            )
+
+        branch_scope_id: int | None = None
+        if normalized_parent_level == "BRANCH" and parent_id is not None:
+            branch_scope_id = parent_id
+        elif normalized_parent_level == "GRID" and parent_id is not None:
+            branch_scope_id = session.scalar(
+                select(Area.parent_id).where(
+                    Area.id == parent_id,
+                    Area.level_type == "GRID",
+                )
+            )
+        elif normalized_scope == "default":
+            branch_scope = _resolve_branch_scope(
+                session,
+                branch_id=None,
+                branch_code=branch_code,
+            )
+            branch_scope_id = branch_scope.id if branch_scope else None
+
+        if normalized_level == "GRID" and branch_scope_id is not None:
+            area_query = area_query.where(Area.parent_id == branch_scope_id)
+        elif normalized_level == "CHANNEL":
+            if normalized_parent_level == "GRID" and parent_id is not None:
+                area_query = area_query.where(Area.parent_id == parent_id)
+            elif branch_scope_id is not None:
+                grid_ids = select(Area.id).where(
+                    Area.enabled.is_(True),
+                    Area.level_type == "GRID",
+                    Area.parent_id == branch_scope_id,
+                )
+                area_query = area_query.where(Area.parent_id.in_(grid_ids))
+
+        latest_run = _latest_realtime_run(session)
+        change_anchor = _change_anchor_time(latest_run)
+        start = (page - 1) * page_size
+        total = int(
+            session.scalar(
+                select(func.count()).select_from(area_query.subquery())
+            )
+            or 0
+        )
+
+        if sort_mode in {"doneAsc", "doneDesc", "progressAsc", "progressDesc"}:
+            paged_query = (
+                area_query
+                .outerjoin(
+                    MetricCurrent,
+                    and_(
+                        MetricCurrent.area_id == Area.id,
+                        MetricCurrent.indicator_id == sort_indicator_id,
+                    ),
+                )
+                .outerjoin(
+                    MetricTarget,
+                    and_(
+                        MetricTarget.area_id == Area.id,
+                        MetricTarget.indicator_id == sort_indicator_id,
+                        MetricTarget.period_type == "REALTIME",
+                        MetricTarget.enabled.is_(True),
+                    ),
+                )
+            )
+            if sort_mode.startswith("progress"):
+                missing_expr = case(
+                    (
+                        or_(
+                            MetricCurrent.metric_value.is_(None),
+                            MetricTarget.target_value.is_(None),
+                            MetricTarget.target_value <= 0,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+                score_expr = (
+                    MetricCurrent.metric_value
+                    / func.nullif(MetricTarget.target_value, 0)
+                )
+                score_order = (
+                    score_expr.asc()
+                    if sort_mode.endswith("Asc")
+                    else score_expr.desc()
+                )
+                order_by = (missing_expr.asc(), score_order, Area.id.asc())
+            else:
+                missing_expr = case(
+                    (MetricCurrent.metric_value.is_(None), 1),
+                    else_=0,
+                )
+                order_by = (
+                    missing_expr.asc(),
+                    (
+                        MetricCurrent.metric_value.asc()
+                        if sort_mode.endswith("Asc")
+                        else MetricCurrent.metric_value.desc()
+                    ),
+                    Area.id.asc(),
+                )
+            page_areas = list(
+                session.scalars(
+                    paged_query
+                    .order_by(*order_by)
+                    .offset(start)
+                    .limit(page_size)
+                )
+            )
+        else:
+            areas = list(
+                session.scalars(
+                    area_query.order_by(Area.sort_order, Area.id)
+                )
+            )
+            area_ids = [area.id for area in areas]
+            sort_values: dict[int, float] = {}
+            if area_ids:
+                for row in session.execute(
+                    select(
+                        MetricCurrent.area_id,
+                        MetricCurrent.metric_value,
+                    ).where(
+                        MetricCurrent.area_id.in_(area_ids),
+                        MetricCurrent.indicator_id == sort_indicator_id,
+                    )
+                ):
+                    sort_values[row.area_id] = float(row.metric_value)
+
+            sort_rows = [
+                {
+                    "area_id": area_id,
+                    "metrics": {sort_code: sort_values.get(area_id)},
+                }
+                for area_id in area_ids
+            ]
+            _attach_changes_fast(
+                session,
+                sort_rows,
+                [indicator_by_code[sort_code]],
+                area_ids,
+                change_anchor,
+                change_windows=normalized_windows,
+            )
+            window_key = normalized_windows[0][1]
+            sort_changes = {
+                row["area_id"]: row["changes"][sort_code][window_key]
+                for row in sort_rows
+            }
+
+            def sort_score(area: Area) -> tuple[int, float, int]:
+                change = sort_changes.get(area.id, {})
+                value = (
+                    change.get("rate")
+                    if sort_mode.startswith("changeRate")
+                    else change.get("value")
+                )
+                score = 0.0 if value is None else float(value)
+                return (
+                    1 if value is None else 0,
+                    score if sort_mode.endswith("Asc") else -score,
+                    area.id,
+                )
+
+            areas.sort(key=sort_score)
+            page_areas = areas[start : start + page_size]
+        page_area_ids = [area.id for area in page_areas]
+
+        rows_by_area = {
+            area.id: {
+                "area_id": area.id,
+                "area_code": area.area_code,
+                "area_name": area.area_name,
+                "level_type": area.level_type,
+                "level_no": area.level_no,
+                "parent_id": area.parent_id,
+                "collection_run_id": None,
+                "collected_at": None,
+                "metrics": {indicator.code: None for indicator in indicators},
+            }
+            for area in page_areas
+        }
+        if page_area_ids:
+            current_rows = session.execute(
+                select(
+                    MetricCurrent.area_id,
+                    MetricCurrent.indicator_id,
+                    MetricCurrent.metric_value,
+                    MetricCurrent.collected_at,
+                    MetricCurrent.collection_run_id,
+                ).where(
+                    MetricCurrent.area_id.in_(page_area_ids),
+                    MetricCurrent.indicator_id.in_(indicator_ids),
+                )
+            ).all()
+            code_by_id = {indicator.id: indicator.code for indicator in indicators}
+            for current in current_rows:
+                row = rows_by_area[current.area_id]
+                code = code_by_id[current.indicator_id]
+                row["metrics"][code] = _number(current.metric_value)
+                collected_at = _datetime_iso_millis(current.collected_at)
+                if row["collected_at"] is None or collected_at > row["collected_at"]:
+                    row["collected_at"] = collected_at
+                    row["collection_run_id"] = current.collection_run_id
+
+        rows = list(rows_by_area.values())
+        _attach_targets(session, rows, indicators, "REALTIME")
+        if page_area_ids:
+            _attach_changes_fast(
+                session,
+                rows,
+                indicators,
+                page_area_ids,
+                change_anchor,
+                change_windows=normalized_windows,
+            )
+
+    return {
+        "latest_run": _run_payload(latest_run),
+        "indicators": _indicator_payload(indicators),
+        "rows": rows,
+        "row_count": len(rows),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
+
+
 def get_current_wide_table(
     engine: Engine,
     level_type: str | None = None,
     parent_id: int | None = None,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     normalized_level = str(level_type or "").strip().upper() or None
     with Session(engine) as session:
-        indicators = session.scalars(
-            select(Indicator)
-            .where(Indicator.enabled.is_(True))
-            .order_by(Indicator.sort_order, Indicator.id)
-        ).all()
+        indicators = _enabled_indicators(session, indicator_codes)
 
         area_query = (
             select(Area)
@@ -347,6 +703,8 @@ def get_dashboard_overview(
     branch_code: str | None = None,
     period_type: str = "DAY_ACC",
     change_windows: list[int] | tuple[int, ...] | None = None,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+    include_acc: bool = True,
 ) -> dict[str, Any]:
     """Backward-compatible overview entrypoint.
 
@@ -359,6 +717,8 @@ def get_dashboard_overview(
         branch_code=branch_code,
         period_type=period_type,
         change_windows=change_windows,
+        indicator_codes=indicator_codes,
+        include_acc=include_acc,
     )
 
 
@@ -514,6 +874,7 @@ def get_current_with_changes(
     level_type: str | None = None,
     parent_id: int | None = None,
     change_windows: list[int] | tuple[int, ...] | None = None,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Return the same wide table as get_current_wide_table, enriched with
     per-area change deltas computed from MetricSnapshot history.
@@ -523,7 +884,12 @@ def get_current_with_changes(
     that cutoff, and computes ``value - previous_value`` (value delta) and
     ``(value - previous_value) / previous_value`` (rate delta).
     """
-    result = get_current_wide_table(engine, level_type=level_type, parent_id=parent_id)
+    result = get_current_wide_table(
+        engine,
+        level_type=level_type,
+        parent_id=parent_id,
+        indicator_codes=indicator_codes,
+    )
     if not result["indicators"] or not result["rows"]:
         return result
 
@@ -591,6 +957,7 @@ def get_acc_wide_table(
     level_type: str | None = None,
     parent_id: int | None = None,
     stat_date: str | None = None,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Return accumulated (daily/monthly) metric data in wide-table format."""
     normalized_period = str(period_type or "").strip().upper()
@@ -602,11 +969,7 @@ def get_acc_wide_table(
     normalized_level = str(level_type or "").strip().upper() or None
 
     with Session(engine) as session:
-        indicators = session.scalars(
-            select(Indicator)
-            .where(Indicator.enabled.is_(True))
-            .order_by(Indicator.sort_order, Indicator.id)
-        ).all()
+        indicators = _enabled_indicators(session, indicator_codes)
 
         area_query = (
             select(Area)
@@ -733,6 +1096,8 @@ def get_dashboard_overview_fast(
     branch_code: str | None = None,
     period_type: str = "DAY_ACC",
     change_windows: list[int] | tuple[int, ...] | None = None,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+    include_acc: bool = True,
 ) -> dict[str, Any]:
     """Drop-in replacement for ``get_dashboard_overview`` with fewer queries.
 
@@ -746,13 +1111,7 @@ def get_dashboard_overview_fast(
 
     with Session(engine) as session:
         # ① indicators (small, always cached)
-        indicators = list(
-            session.scalars(
-                select(Indicator)
-                .where(Indicator.enabled.is_(True))
-                .order_by(Indicator.sort_order, Indicator.id)
-            )
-        )
+        indicators = _enabled_indicators(session, indicator_codes)
         indicator_ids = [ind.id for ind in indicators]
         code_by_id = {ind.id: ind.code for ind in indicators}
 
@@ -770,13 +1129,14 @@ def get_dashboard_overview_fast(
                 a.level_type,
                 a.level_no,
                 a.parent_id,
+                mc.indicator_id,
                 mc.metric_value,
                 mc.collected_at,
                 mc.collection_run_id
             FROM area a
             LEFT JOIN metric_current mc
                 ON mc.area_id = a.id
-               AND mc.indicator_id = :ind_id
+               AND mc.indicator_id IN :ind_ids
             WHERE a.enabled = 1
               AND (
                     a.level_type = 'BRANCH'
@@ -787,7 +1147,7 @@ def get_dashboard_overview_fast(
                      ))
               )
             ORDER BY a.level_no, a.sort_order, a.id
-        """)
+        """).bindparams(bindparam("ind_ids", expanding=True))
 
         # Resolve branch scope
         branch_scope = _resolve_branch_scope(
@@ -795,36 +1155,17 @@ def get_dashboard_overview_fast(
         )
         scope_branch_id = branch_scope.id if branch_scope else -1
 
-        # Use first enabled indicator for the JOIN (current design: 1 indicator)
-        primary_ind_id = indicator_ids[0] if indicator_ids else -1
-
         result = session.execute(
             area_current_sql,
-            {"ind_id": primary_ind_id, "branch_id": scope_branch_id},
+            {
+                "ind_ids": tuple(indicator_ids) if indicator_ids else (-1,),
+                "branch_id": scope_branch_id,
+            },
         ).mappings().all()
 
         # Build rows grouped by level
-        all_area_ids: list[int] = []
-        rows_by_area: dict[int, dict[str, Any]] = {}
-        for r in result:
-            aid = r["area_id"]
-            all_area_ids.append(aid)
-            rows_by_area[aid] = {
-                "area_id": aid,
-                "area_code": r["area_code"],
-                "area_name": r["area_name"],
-                "level_type": r["level_type"],
-                "level_no": r["level_no"],
-                "parent_id": r["parent_id"],
-                "collection_run_id": r["collection_run_id"],
-                "collected_at": (
-                    _datetime_iso_millis(r["collected_at"])
-                    if r["collected_at"] else None
-                ),
-                "metrics": {
-                    code_by_id[primary_ind_id]: _number(r["metric_value"])
-                },
-            }
+        rows_by_area = _group_area_metric_rows(result, indicators, code_by_id)
+        all_area_ids = list(rows_by_area)
 
         # ③ snapshots for change windows — only the 4 cutoff timestamps
         _attach_targets(
@@ -850,8 +1191,12 @@ def get_dashboard_overview_fast(
                 }
 
         # ④ acc data
-        acc_rows = _acc_rows_for_areas_fast(
-            session, all_area_ids, indicator_ids, code_by_id, normalized_period
+        acc_rows = (
+            _acc_rows_for_areas_fast(
+                session, all_area_ids, indicator_ids, code_by_id, normalized_period
+            )
+            if include_acc
+            else []
         )
 
     # Assemble branches / grids / channels
@@ -876,6 +1221,8 @@ def get_drill_down(
     parent_level: str,
     period_type: str = "DAY_ACC",
     change_windows: list[int] | tuple[int, ...] | None = None,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+    include_acc: bool = True,
 ) -> dict[str, Any]:
     """Lightweight drill-down: fetch only the children of *parent_id*.
 
@@ -892,17 +1239,9 @@ def get_drill_down(
     normalized_windows = normalize_change_windows(change_windows)
 
     with Session(engine) as session:
-        indicators = list(
-            session.scalars(
-                select(Indicator)
-                .where(Indicator.enabled.is_(True))
-                .order_by(Indicator.sort_order, Indicator.id)
-            )
-        )
+        indicators = _enabled_indicators(session, indicator_codes)
         indicator_ids = [ind.id for ind in indicators]
         code_by_id = {ind.id: ind.code for ind in indicators}
-        primary_ind_id = indicator_ids[0] if indicator_ids else -1
-
         latest_run = _latest_realtime_run(session)
         change_anchor = _change_anchor_time(latest_run)
 
@@ -936,13 +1275,14 @@ def get_drill_down(
                     a.level_type,
                     a.level_no,
                     a.parent_id,
+                    mc.indicator_id,
                     mc.metric_value,
                     mc.collected_at,
                     mc.collection_run_id
                 FROM area a
                 LEFT JOIN metric_current mc
                     ON mc.area_id = a.id
-                   AND mc.indicator_id = :ind_id
+                   AND mc.indicator_id IN :ind_ids
                 WHERE a.enabled = 1
                   AND (
                        a.level_type = 'BRANCH'
@@ -953,10 +1293,14 @@ def get_drill_down(
                         ))
                   )
                 ORDER BY a.level_no, a.sort_order, a.id
-            """)
+            """).bindparams(bindparam("ind_ids", expanding=True))
             result = session.execute(
                 drill_sql,
-                {"ind_id": primary_ind_id, "parent_id": parent_id, "parent_id2": parent_id},
+                {
+                    "ind_ids": tuple(indicator_ids) if indicator_ids else (-1,),
+                    "parent_id": parent_id,
+                    "parent_id2": parent_id,
+                },
             ).mappings().all()
         elif parent_level.upper() == "GRID":
             # Keep BRANCH rows visible for cross-branch comparison, while
@@ -970,13 +1314,14 @@ def get_drill_down(
                     a.level_type,
                     a.level_no,
                     a.parent_id,
+                    mc.indicator_id,
                     mc.metric_value,
                     mc.collected_at,
                     mc.collection_run_id
                 FROM area a
                 LEFT JOIN metric_current mc
                     ON mc.area_id = a.id
-                   AND mc.indicator_id = :ind_id
+                   AND mc.indicator_id IN :ind_ids
                 WHERE a.enabled = 1
                   AND (
                        a.level_type = 'BRANCH'
@@ -987,11 +1332,11 @@ def get_drill_down(
                     OR (a.level_type = 'CHANNEL' AND a.parent_id = :parent_id)
                   )
                 ORDER BY a.level_no, a.sort_order, a.id
-            """)
+            """).bindparams(bindparam("ind_ids", expanding=True))
             result = session.execute(
                 drill_sql,
                 {
-                    "ind_id": primary_ind_id,
+                    "ind_ids": tuple(indicator_ids) if indicator_ids else (-1,),
                     "parent_id": parent_id,
                     "parent_id2": parent_id,
                 },
@@ -1006,43 +1351,30 @@ def get_drill_down(
                     a.level_type,
                     a.level_no,
                     a.parent_id,
+                    mc.indicator_id,
                     mc.metric_value,
                     mc.collected_at,
                     mc.collection_run_id
                 FROM area a
                 LEFT JOIN metric_current mc
                     ON mc.area_id = a.id
-                   AND mc.indicator_id = :ind_id
+                   AND mc.indicator_id IN :ind_ids
                 WHERE a.enabled = 1
                   AND a.level_type IN ({level_filter})
                   AND a.parent_id = :parent_id
                 ORDER BY a.level_no, a.sort_order, a.id
-            """)
+            """).bindparams(bindparam("ind_ids", expanding=True))
             result = session.execute(
-                drill_sql, {"ind_id": primary_ind_id, "parent_id": parent_id}
+                drill_sql,
+                {
+                    "ind_ids": tuple(indicator_ids) if indicator_ids else (-1,),
+                    "parent_id": parent_id,
+                },
             ).mappings().all()
 
-        all_area_ids: list[int] = []
-        rows: list[dict[str, Any]] = []
-        for r in result:
-            aid = r["area_id"]
-            all_area_ids.append(aid)
-            rows.append({
-                "area_id": aid,
-                "area_code": r["area_code"],
-                "area_name": r["area_name"],
-                "level_type": r["level_type"],
-                "level_no": r["level_no"],
-                "parent_id": r["parent_id"],
-                "collection_run_id": r["collection_run_id"],
-                "collected_at": (
-                    _datetime_iso_millis(r["collected_at"])
-                    if r["collected_at"] else None
-                ),
-                "metrics": {
-                    code_by_id[primary_ind_id]: _number(r["metric_value"])
-                },
-            })
+        rows_by_area = _group_area_metric_rows(result, indicators, code_by_id)
+        all_area_ids = list(rows_by_area)
+        rows = list(rows_by_area.values())
 
         _attach_targets(session, rows, indicators, "REALTIME")
         if all_area_ids and indicator_ids:
@@ -1061,8 +1393,12 @@ def get_drill_down(
                     for ind in indicators
                 }
 
-        acc_rows = _acc_rows_for_areas_fast(
-            session, all_area_ids, indicator_ids, code_by_id, normalized_period
+        acc_rows = (
+            _acc_rows_for_areas_fast(
+                session, all_area_ids, indicator_ids, code_by_id, normalized_period
+            )
+            if include_acc
+            else []
         )
 
     return {
@@ -1076,6 +1412,39 @@ def get_drill_down(
 
 
 # ── helpers for the fast path ───────────────────────────────────────────
+
+def _group_area_metric_rows(
+    result: list[Any],
+    indicators: list[Indicator],
+    code_by_id: dict[int, str],
+) -> dict[int, dict[str, Any]]:
+    rows_by_area: dict[int, dict[str, Any]] = {}
+    empty_metrics = {indicator.code: None for indicator in indicators}
+    for raw in result:
+        area_id = raw["area_id"]
+        row = rows_by_area.setdefault(
+            area_id,
+            {
+                "area_id": area_id,
+                "area_code": raw["area_code"],
+                "area_name": raw["area_name"],
+                "level_type": raw["level_type"],
+                "level_no": raw["level_no"],
+                "parent_id": raw["parent_id"],
+                "collection_run_id": None,
+                "collected_at": None,
+                "metrics": dict(empty_metrics),
+            },
+        )
+        indicator_code = code_by_id.get(raw["indicator_id"])
+        if indicator_code:
+            row["metrics"][indicator_code] = _number(raw["metric_value"])
+        if raw["collected_at"] is not None:
+            collected_at = _datetime_iso_millis(raw["collected_at"])
+            if row["collected_at"] is None or collected_at > row["collected_at"]:
+                row["collected_at"] = collected_at
+                row["collection_run_id"] = raw["collection_run_id"]
+    return rows_by_area
 
 def _resolve_branch_scope(
     session: Session,

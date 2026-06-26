@@ -175,6 +175,7 @@ def sync_indicator_records(
     for indicator in session.scalars(
         select(Indicator).where(
             Indicator.source_active.is_(True),
+            Indicator.enabled.is_(False),
             Indicator.code.not_in(codes),
         )
     ).all():

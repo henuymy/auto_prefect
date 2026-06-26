@@ -5,6 +5,26 @@ export type DashboardIndicator = {
   sort_order: number;
 };
 
+export type DashboardCatalogIndicator = DashboardIndicator & {
+  enabled: boolean;
+  source_active: boolean;
+  removed_at: string | null;
+};
+
+export type DashboardIndicatorCatalogResponse = {
+  indicators: DashboardCatalogIndicator[];
+};
+
+export type DashboardLatestRunResponse = {
+  latest_run: {
+    id: number;
+    batch_no: string;
+    stat_date: string | null;
+    finished_at: string | null;
+  } | null;
+  data_version: string;
+};
+
 export type ChangeEntry = {
   value: number | null;
   rate: number | null;
@@ -52,6 +72,13 @@ export type DashboardChangesResponse = {
   indicators: DashboardIndicator[];
   rows: DashboardRowWithChanges[];
   row_count: number;
+};
+
+export type DashboardMatrixResponse = DashboardChangesResponse & {
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 };
 
 export type DashboardAccResponse = {

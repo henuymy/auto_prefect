@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 
 # Local credentials and session artifacts
+.claude/settings.local.json
 legacy_modules/modules/*/config.json
 legacy_modules/modules/*/runtime/
 legacy_modules/modules/report-compare/*.xls

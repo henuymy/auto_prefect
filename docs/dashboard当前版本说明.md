@@ -219,10 +219,10 @@ MONTH 目标用于月累计板块。
 
 ```text
 python -m pytest -q
-189 passed
+218 passed
 ```
 
-当前测试 warning 已清零。
+当前仍有 Python 3.12 SQLite datetime adapter 弃用 warning，不影响 MySQL 运行。
 
 ## 11. 性能排查与本轮优化
 

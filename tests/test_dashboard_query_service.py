@@ -9,8 +9,11 @@ from services.dashboard_query_service import (
     get_acc_wide_table,
     get_current_wide_table,
     get_current_with_changes,
+    get_dashboard_matrix_page,
     get_dashboard_overview,
     get_drill_down,
+    get_indicator_catalog,
+    get_latest_dashboard_run,
     parse_change_window_minutes,
 )
 
@@ -252,6 +255,36 @@ def create_test_engine():
     return engine
 
 
+def test_indicator_catalog_keeps_enabled_archived_indicator_visible():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE indicator
+                SET source_active = 0, removed_at = '2026-06-24 10:11:07'
+                WHERE code = 'sgs_ajvwdz'
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active, sort_order)
+                VALUES
+                    (2, 'disabled-archived', '已停用归档指标', 0, 0, 20)
+                """
+            )
+        )
+
+    result = get_indicator_catalog(engine)
+    codes = [row["code"] for row in result["indicators"]]
+
+    assert "sgs_ajvwdz" in codes
+    assert "disabled-archived" not in codes
+
+
 def test_current_wide_table_builds_dynamic_metric_columns():
     engine = create_test_engine()
 
@@ -426,6 +459,185 @@ def test_drill_down_returns_latest_run_metadata():
 
     assert result["latest_run"]["batch_no"] == "batch-1"
     assert result["latest_run"]["finished_at"].startswith("2026-06-11T10:05:08")
+    engine.dispose()
+
+
+def test_overview_and_drill_down_return_all_enabled_indicators():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active, sort_order)
+                VALUES
+                    (2, 'sgs_YDYDN_260410', '移动云电脑', 1, 1, 20)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_current
+                    (id, area_id, indicator_id, collection_run_id,
+                     metric_value, stat_date, collected_at, updated_at)
+                VALUES
+                    (2, 2, 2, 1, 9, '2026-06-11',
+                     '2026-06-11 10:05:08', '2026-06-11 10:05:08')
+                """
+            )
+        )
+
+    overview = get_dashboard_overview(engine, branch_code="AQ", change_windows=[5])
+    overview_row = [row for row in overview["rows"] if row["area_code"] == "AQ"][0]
+    drill = get_drill_down(engine, parent_id=1, parent_level="CITY")
+    drill_row = [row for row in drill["rows"] if row["area_code"] == "AQ"][0]
+
+    assert overview_row["metrics"] == {
+        "sgs_ajvwdz": 25,
+        "sgs_YDYDN_260410": 9,
+    }
+    assert drill_row["metrics"] == overview_row["metrics"]
+    engine.dispose()
+
+
+def test_overview_and_drill_down_filter_selected_indicators():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active, sort_order)
+                VALUES
+                    (2, 'sgs_YDYDN_260410', '移动云电脑', 1, 1, 20)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_current
+                    (id, area_id, indicator_id, collection_run_id,
+                     metric_value, stat_date, collected_at, updated_at)
+                VALUES
+                    (2, 2, 2, 1, 9, '2026-06-11',
+                     '2026-06-11 10:05:08', '2026-06-11 10:05:08')
+                """
+            )
+        )
+
+    overview = get_dashboard_overview(
+        engine,
+        branch_code="AQ",
+        change_windows=[5],
+        indicator_codes=["sgs_YDYDN_260410"],
+    )
+    drill = get_drill_down(
+        engine,
+        parent_id=1,
+        parent_level="CITY",
+        indicator_codes=["sgs_YDYDN_260410"],
+    )
+
+    assert [item["code"] for item in overview["indicators"]] == [
+        "sgs_YDYDN_260410"
+    ]
+    overview_row = next(row for row in overview["rows"] if row["area_code"] == "AQ")
+    drill_row = next(row for row in drill["rows"] if row["area_code"] == "AQ")
+    assert overview_row["metrics"] == {"sgs_YDYDN_260410": 9}
+    assert drill_row["metrics"] == {"sgs_YDYDN_260410": 9}
+    engine.dispose()
+
+
+def test_overview_can_skip_accumulated_query_payload():
+    engine = create_test_engine()
+
+    result = get_dashboard_overview(
+        engine,
+        branch_code="AQ",
+        change_windows=[5],
+        include_acc=False,
+    )
+
+    assert result["acc_rows"] == []
+    assert result["acc_row_count"] == 0
+    engine.dispose()
+
+
+def test_dashboard_data_version_changes_with_target_update():
+    engine = create_test_engine()
+    before = get_latest_dashboard_run(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE metric_target
+                SET target_value = 120,
+                    updated_at = '2099-06-25 12:00:00'
+                WHERE id = 1
+                """
+            )
+        )
+    after = get_latest_dashboard_run(engine)
+
+    assert before["latest_run"]["batch_no"] == after["latest_run"]["batch_no"]
+    assert before["data_version"] != after["data_version"]
+    engine.dispose()
+
+
+def test_matrix_page_sorts_and_paginates_by_done_value():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO area
+                    (id, area_code, area_name, level_type, level_no, parent_id, enabled)
+                VALUES
+                    (3, 'ZY', '中原区', 'BRANCH', 2, 1, 1),
+                    (4, 'JS', '金水区', 'BRANCH', 2, 1, 1)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_current
+                    (id, area_id, indicator_id, collection_run_id,
+                     metric_value, stat_date, collected_at, updated_at)
+                VALUES
+                    (2, 3, 1, 1, 50, '2026-06-11',
+                     '2026-06-11 10:05:08', '2026-06-11 10:05:08'),
+                    (3, 4, 1, 1, 10, '2026-06-11',
+                     '2026-06-11 10:05:08', '2026-06-11 10:05:08')
+                """
+            )
+        )
+
+    first = get_dashboard_matrix_page(
+        engine,
+        level_type="BRANCH",
+        indicator_codes=["sgs_ajvwdz"],
+        sort_indicator="sgs_ajvwdz",
+        sort_mode="doneDesc",
+        page=1,
+        page_size=2,
+    )
+    second = get_dashboard_matrix_page(
+        engine,
+        level_type="BRANCH",
+        indicator_codes=["sgs_ajvwdz"],
+        sort_indicator="sgs_ajvwdz",
+        sort_mode="doneDesc",
+        page=2,
+        page_size=2,
+    )
+
+    assert first["total"] == 3
+    assert first["total_pages"] == 2
+    assert [row["area_code"] for row in first["rows"]] == ["ZY", "AQ"]
+    assert [row["area_code"] for row in second["rows"]] == ["JS"]
     engine.dispose()
 
 

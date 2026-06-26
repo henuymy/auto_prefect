@@ -167,11 +167,8 @@ def dashboard_batch(
                 len(targets),
                 len(indicator_codes),
             )
-            if len(indicator_codes) != 1:
-                raise RuntimeError(
-                    f"首版{indicator_scope}批次要求恰好启用一个指标，"
-                    f"当前启用数量={len(indicator_codes)}"
-                )
+            if not indicator_codes:
+                raise RuntimeError(f"{indicator_scope}批次没有启用的指标")
 
             cookie_dump_path = session_result.get("cookie_dump_path")
             if not cookie_dump_path:

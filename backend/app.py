@@ -9,6 +9,7 @@ from backend.routers.runtime import router as runtime_router
 from backend.routers.run_logs import router as run_logs_router
 from backend.routers.status import router as status_router
 from backend.routers.templates import router as templates_router
+from infrastructure.dashboard_mysql import dispose_dashboard_engine
 
 
 app = FastAPI(title="自动化任务配置中心 API")
@@ -32,6 +33,11 @@ app.include_router(runtime_router)
 app.include_router(run_logs_router)
 app.include_router(status_router)
 app.include_router(templates_router)
+
+
+@app.on_event("shutdown")
+def shutdown_dashboard_engine():
+    dispose_dashboard_engine()
 
 
 @app.get("/api/health")

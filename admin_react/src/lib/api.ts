@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { DashboardAccResponse, DashboardChangesResponse, DashboardCurrentResponse, DashboardOverviewResponse, DashboardTrendResponse } from "@/types/dashboard";
+import type { DashboardAccResponse, DashboardChangesResponse, DashboardCurrentResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTrendResponse } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -103,8 +103,69 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function getCurrentDashboard() {
-  return request<DashboardCurrentResponse>("/api/dashboard/current");
+export async function getCurrentDashboard(
+  levelType?: string,
+  parentId?: number,
+  indicatorCodes?: string[],
+) {
+  const params = new URLSearchParams();
+  if (levelType) params.set("level_type", levelType);
+  if (parentId != null) params.set("parent_id", String(parentId));
+  if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
+  const qs = params.toString();
+  return request<DashboardCurrentResponse>(
+    `/api/dashboard/current${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function getDashboardIndicators(
+  includeArchived = false,
+  enabledOnly = false,
+) {
+  const params = new URLSearchParams({
+    include_archived: String(includeArchived),
+    enabled_only: String(enabledOnly),
+  });
+  return request<DashboardIndicatorCatalogResponse>(
+    `/api/dashboard/indicators?${params.toString()}`,
+  );
+}
+
+export async function getDashboardLatestRun() {
+  return request<DashboardLatestRunResponse>("/api/dashboard/latest-run");
+}
+
+export async function getDashboardMatrix(params: {
+  levelType: string;
+  scopeMode: "default" | "all";
+  parentId?: number;
+  parentLevel?: string;
+  branchCode?: string;
+  indicatorCodes: string[];
+  changeWindow: number;
+  search?: string;
+  sortIndicator?: string;
+  sortMode: string;
+  page: number;
+  pageSize: number;
+}) {
+  const query = new URLSearchParams({
+    level_type: params.levelType,
+    scope_mode: params.scopeMode,
+    branch_code: params.branchCode || "AQ",
+    indicator_codes: params.indicatorCodes.join(","),
+    change_window: String(params.changeWindow),
+    sort_mode: params.sortMode,
+    page: String(params.page),
+    page_size: String(params.pageSize),
+  });
+  if (params.parentId != null) query.set("parent_id", String(params.parentId));
+  if (params.parentLevel) query.set("parent_level", params.parentLevel);
+  if (params.search) query.set("search", params.search);
+  if (params.sortIndicator) query.set("sort_indicator", params.sortIndicator);
+  return request<DashboardMatrixResponse>(
+    `/api/dashboard/matrix?${query.toString()}`,
+  );
 }
 
 export async function getDashboardOverview(
@@ -112,12 +173,16 @@ export async function getDashboardOverview(
   branchCode?: string,
   periodType: "DAY_ACC" | "MONTH" = "DAY_ACC",
   changeWindows?: number[],
+  indicatorCodes?: string[],
+  includeAcc = true,
 ) {
   const params = new URLSearchParams();
   params.set("period_type", periodType);
   if (branchId != null) params.set("branch_id", String(branchId));
   if (branchCode) params.set("branch_code", branchCode);
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
+  if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
+  params.set("include_acc", String(includeAcc));
   return request<DashboardOverviewResponse>(
     `/api/dashboard/overview?${params.toString()}`,
   );
@@ -127,11 +192,13 @@ export async function getDashboardWithChanges(
   levelType?: string,
   parentId?: number,
   changeWindows?: number[],
+  indicatorCodes?: string[],
 ) {
   const params = new URLSearchParams();
   if (levelType) params.set("level_type", levelType);
   if (parentId != null) params.set("parent_id", String(parentId));
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
+  if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   const qs = params.toString();
   return request<DashboardChangesResponse>(
     `/api/dashboard/current-with-changes${qs ? `?${qs}` : ""}`,
@@ -143,12 +210,14 @@ export async function getAccDashboard(
   statDate?: string,
   levelType?: string,
   parentId?: number,
+  indicatorCodes?: string[],
 ) {
   const params = new URLSearchParams();
   params.set("period_type", periodType);
   if (statDate) params.set("stat_date", statDate);
   if (levelType) params.set("level_type", levelType);
   if (parentId != null) params.set("parent_id", String(parentId));
+  if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   return request<DashboardAccResponse>(
     `/api/dashboard/acc?${params.toString()}`,
   );
@@ -174,6 +243,8 @@ export async function getDashboardDrillDown(
   parentLevel: string,
   periodType: "DAY_ACC" | "MONTH" = "DAY_ACC",
   changeWindows?: number[],
+  indicatorCodes?: string[],
+  includeAcc = true,
 ) {
   const params = new URLSearchParams({
     parent_id: String(parentId),
@@ -181,6 +252,8 @@ export async function getDashboardDrillDown(
     period_type: periodType,
   });
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
+  if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
+  params.set("include_acc", String(includeAcc));
   return request<DashboardOverviewResponse>(
     `/api/dashboard/drill-down?${params.toString()}`,
   );

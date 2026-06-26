@@ -101,3 +101,34 @@ def test_check_connection_returns_server_details(monkeypatch):
     assert result["configured"] is True
     assert result["database_name"] == "dashboard"
     assert engine.disposed is True
+
+
+def test_shared_dashboard_engine_is_created_once(monkeypatch):
+    created = []
+
+    class FakeEngine:
+        disposed = False
+
+        def dispose(self):
+            self.disposed = True
+
+    def fake_create():
+        engine = FakeEngine()
+        created.append(engine)
+        return engine
+
+    dashboard_mysql.dispose_dashboard_engine()
+    monkeypatch.setattr(
+        dashboard_mysql,
+        "create_dashboard_engine",
+        fake_create,
+    )
+
+    first = dashboard_mysql.get_dashboard_engine()
+    second = dashboard_mysql.get_dashboard_engine()
+
+    assert first is second
+    assert len(created) == 1
+
+    dashboard_mysql.dispose_dashboard_engine()
+    assert first.disposed is True

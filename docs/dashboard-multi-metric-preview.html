@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>多指标矩阵 - 驾驶舱扩展预览</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f16;
+      --panel: #151b24;
+      --panel-2: #111821;
+      --panel-3: #1b2430;
+      --line: rgba(203, 213, 225, 0.14);
+      --line-strong: rgba(203, 213, 225, 0.24);
+      --text: #edf2f7;
+      --muted: #94a3b8;
+      --soft: #cbd5e1;
+      --blue: #8bb8ff;
+      --green: #65d685;
+      --amber: #f2c66d;
+      --red: #ff8c84;
+      --cyan: #63d3da;
+      --purple: #b9a7ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 1180px;
+      background:
+        linear-gradient(180deg, rgba(29, 38, 52, 0.68), transparent 280px),
+        var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+    }
+
+    button,
+    select,
+    input {
+      font: inherit;
+    }
+
+    .shell {
+      min-height: 100vh;
+      padding: 14px;
+    }
+
+    .topbar,
+    .filterbar,
+    .workspace {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(23, 30, 41, 0.98), rgba(15, 21, 30, 0.98));
+      box-shadow: 0 16px 38px rgba(0, 0, 0, 0.28);
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 268px 1fr auto;
+      align-items: center;
+      gap: 18px;
+      min-height: 66px;
+      border-radius: 12px;
+      padding: 0 16px;
+    }
+
+    .brand,
+    .toolbar,
+    .status,
+    .tabs,
+    .field,
+    .metric-picker,
+    .summary-card,
+    .metric-head,
+    .cell-main,
+    .change,
+    .action-row {
+      display: flex;
+      align-items: center;
+    }
+
+    .brand {
+      gap: 13px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid rgba(139, 184, 255, 0.24);
+      border-radius: 10px;
+      color: #dbeafe;
+      background: rgba(30, 41, 59, 0.72);
+      font-size: 20px;
+      font-weight: 950;
+    }
+
+    .brand-title {
+      font-size: 24px;
+      font-weight: 950;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .brand-subtitle {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .tabs {
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .tab {
+      height: 36px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 0 14px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .tab.active {
+      border-color: rgba(139, 184, 255, 0.28);
+      color: #eaf2ff;
+      background: rgba(37, 99, 235, 0.16);
+    }
+
+    .status {
+      justify-content: flex-end;
+      gap: 10px;
+      color: var(--soft);
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 12px rgba(101, 214, 133, 0.48);
+    }
+
+    .filterbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 14px;
+      align-items: center;
+      margin-top: 12px;
+      border-radius: 10px;
+      padding: 12px 14px;
+      background: rgba(15, 22, 32, 0.96);
+    }
+
+    .toolbar {
+      flex-wrap: wrap;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .field,
+    .metric-picker {
+      height: 38px;
+      gap: 9px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 8px;
+      padding: 0 10px;
+      background: rgba(8, 13, 20, 0.72);
+    }
+
+    .field.search-field {
+      min-width: 260px;
+    }
+
+    .field label,
+    .metric-picker label {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .field select,
+    .field input {
+      width: 120px;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      color: var(--text);
+      background: transparent;
+      font-weight: 850;
+    }
+
+    .field.search-field input {
+      width: 190px;
+    }
+
+    .metric-picker {
+      position: relative;
+      min-width: 420px;
+      justify-content: space-between;
+    }
+
+    .selected-metrics {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .metric-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 142px;
+      height: 30px;
+      border: 1px solid rgba(139, 184, 255, 0.24);
+      border-radius: 8px;
+      padding: 0 10px;
+      color: #eaf2ff;
+      background: rgba(37, 99, 235, 0.16);
+      font-size: 13px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .metric-trigger::after {
+      content: "⌄";
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .metric-list {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      z-index: 10;
+      display: none;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      width: 360px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 10px;
+      padding: 10px;
+      background: #101720;
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
+    }
+
+    .metric-picker:hover .metric-list,
+    .metric-picker:focus-within .metric-list {
+      display: grid;
+    }
+
+    .metric-option {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      height: 28px;
+      color: var(--soft);
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .metric-option input {
+      width: 14px;
+      height: 14px;
+      accent-color: #8bb8ff;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 26px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 999px;
+      padding: 0 9px;
+      color: #e7edf5;
+      background: rgba(28, 36, 48, 0.9);
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .pill i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+
+    .pill:nth-child(2) i {
+      background: var(--green);
+    }
+
+    .pill:nth-child(3) i {
+      background: var(--amber);
+    }
+
+    .pill:nth-child(4) i {
+      background: var(--purple);
+    }
+
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .btn {
+      height: 38px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 8px;
+      padding: 0 13px;
+      color: var(--soft);
+      background: rgba(28, 36, 48, 0.82);
+      cursor: pointer;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .btn.primary {
+      border-color: rgba(139, 184, 255, 0.32);
+      color: #eaf2ff;
+      background: rgba(37, 99, 235, 0.22);
+    }
+
+    .badge {
+      min-width: 52px;
+      border-radius: 7px;
+      padding: 6px 8px;
+      text-align: center;
+      color: #dbeafe;
+      background: rgba(37, 99, 235, 0.16);
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .badge.ok {
+      color: #dfffe8;
+      background: rgba(34, 197, 94, 0.15);
+    }
+
+    .badge.warn {
+      color: #ffe7ad;
+      background: rgba(245, 158, 11, 0.16);
+    }
+
+    .badge.bad {
+      color: #ffe1dd;
+      background: rgba(239, 68, 68, 0.16);
+    }
+
+    .workspace {
+      display: block;
+      gap: 0;
+      margin-top: 12px;
+      overflow: hidden;
+      border-radius: 10px;
+      min-height: 630px;
+    }
+
+    .matrix-area {
+      min-width: 0;
+      background: rgba(12, 18, 27, 0.48);
+    }
+
+    .matrix-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 56px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 14px;
+      background: rgba(17, 24, 34, 0.84);
+    }
+
+    .matrix-title strong {
+      display: block;
+      font-size: 16px;
+      font-weight: 950;
+    }
+
+    .matrix-title span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: 574px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 960px;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid rgba(203, 213, 225, 0.1);
+      padding: 10px 12px;
+      vertical-align: middle;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      height: 54px;
+      color: var(--soft);
+      background: #111821;
+      font-size: 12px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th.area-col,
+    td.area-col {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      width: 190px;
+      background: #111821;
+    }
+
+    td.area-col {
+      background: #101720;
+    }
+
+    .area-name {
+      display: block;
+      font-size: 14px;
+      font-weight: 950;
+    }
+
+    .area-meta {
+      display: block;
+      margin-top: 3px;
+      color: rgba(148, 163, 184, 0.82);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .metric-head {
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .metric-head b {
+      font-size: 13px;
+    }
+
+    .metric-head span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .metric-cell {
+      min-width: 160px;
+    }
+
+    .cell-main {
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .value {
+      font-size: 16px;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+
+    .cell-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .progress {
+      width: 50px;
+      border-radius: 7px;
+      padding: 3px 0;
+      text-align: center;
+      color: #dfffe8;
+      background: rgba(34, 197, 94, 0.14);
+      font-size: 11px;
+      font-weight: 950;
+    }
+
+    .progress.mid {
+      color: #ffe7ad;
+      background: rgba(245, 158, 11, 0.15);
+    }
+
+    .progress.low {
+      color: #ffe1dd;
+      background: rgba(239, 68, 68, 0.15);
+    }
+
+    .change {
+      gap: 4px;
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .change.down {
+      color: var(--red);
+    }
+
+    tr.highlight td {
+      background: rgba(120, 83, 20, 0.12);
+    }
+
+    tr.highlight td.area-col {
+      background: rgba(43, 31, 18, 0.95);
+    }
+
+    @media (max-width: 1280px) {
+      body {
+        min-width: 1080px;
+      }
+
+      .topbar {
+        grid-template-columns: 230px 1fr auto;
+      }
+
+      .metric-picker {
+        min-width: 460px;
+      }
+
+      .workspace {
+        min-height: 630px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">M</div>
+        <div>
+          <div class="brand-title">多指标矩阵</div>
+          <div class="brand-subtitle">驾驶舱扩展页 · 横向对比</div>
+        </div>
+      </div>
+
+      <nav class="tabs" aria-label="驾驶舱页面">
+        <button class="tab">单指标驾驶舱</button>
+        <button class="tab active">多指标驾驶舱</button>
+      </nav>
+
+      <div class="status">
+        <span class="dot"></span>
+        <span>实时批次 20260621-2000</span>
+        <strong>20:05:12</strong>
+      </div>
+    </header>
+
+    <section class="filterbar">
+      <div class="toolbar">
+        <div class="field">
+          <label>层级</label>
+          <select>
+            <option>分公司级</option>
+            <option>网格级</option>
+            <option>渠道级</option>
+          </select>
+        </div>
+        <div class="field search-field">
+          <label>筛选</label>
+          <input value="管城 / 金水" aria-label="按区域或指标筛选" />
+        </div>
+        <div class="field">
+          <label>变化窗口</label>
+          <select>
+            <option>60分钟</option>
+            <option>30分钟</option>
+            <option>15分钟</option>
+            <option>5分钟</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>排序指标</label>
+          <select>
+            <option>综合</option>
+            <option>新增到达</option>
+            <option>宽带办理</option>
+            <option>5G套餐</option>
+            <option>权益领取</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>排序方式</label>
+          <select>
+            <option>完成率低到高</option>
+            <option>完成值高到低</option>
+            <option>变化量高到低</option>
+            <option>变化率高到低</option>
+          </select>
+        </div>
+        <div class="metric-picker">
+          <label>指标</label>
+          <div class="metric-trigger">多选 4 项</div>
+          <div class="selected-metrics">
+            <span class="pill"><i></i>新增到达</span>
+            <span class="pill"><i></i>宽带办理</span>
+            <span class="pill"><i></i>5G套餐</span>
+            <span class="pill"><i></i>权益领取</span>
+          </div>
+          <div class="metric-list" aria-label="指标多选下拉列表">
+            <label class="metric-option"><input type="checkbox" checked />新增到达</label>
+            <label class="metric-option"><input type="checkbox" checked />宽带办理</label>
+            <label class="metric-option"><input type="checkbox" checked />5G套餐</label>
+            <label class="metric-option"><input type="checkbox" checked />权益领取</label>
+            <label class="metric-option"><input type="checkbox" />终端合约</label>
+            <label class="metric-option"><input type="checkbox" />移网新增</label>
+            <label class="metric-option"><input type="checkbox" />存量维系</label>
+            <label class="metric-option"><input type="checkbox" />云产品</label>
+          </div>
+        </div>
+      </div>
+
+      <div></div>
+    </section>
+
+    <section class="workspace">
+      <div class="matrix-area">
+        <div class="matrix-head">
+          <div class="matrix-title">
+            <strong>区域 × 指标矩阵</strong>
+            <span>单元格显示完成量、进度和 60 分钟变化；点击区域进入下钻</span>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="area-col">区域</th>
+                <th>
+                  <div class="metric-head">
+                    <b>新增到达</b>
+                  </div>
+                </th>
+                <th>
+                  <div class="metric-head">
+                    <b>宽带办理</b>
+                  </div>
+                </th>
+                <th>
+                  <div class="metric-head">
+                    <b>5G套餐</b>
+                  </div>
+                </th>
+                <th>
+                  <div class="metric-head">
+                    <b>权益领取</b>
+                  </div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="area-col">
+                  <span class="area-name">中原分公司</span>
+                  <span class="area-meta">网格 18 · 渠道 312</span>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">12,840</span><span class="progress">91%</span></div>
+                  <div class="cell-meta"><span>目标 14,110</span><span class="change">+326 / +2.6%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">3,218</span><span class="progress mid">84%</span></div>
+                  <div class="cell-meta"><span>目标 3,831</span><span class="change">+76 / +1.9%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">7,640</span><span class="progress">96%</span></div>
+                  <div class="cell-meta"><span>目标 7,958</span><span class="change">+188 / +2.5%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">8,192</span><span class="progress">88%</span></div>
+                  <div class="cell-meta"><span>目标 9,309</span><span class="change">+142 / +1.8%</span></div>
+                </td>
+              </tr>
+
+              <tr class="highlight">
+                <td class="area-col">
+                  <span class="area-name">金水分公司</span>
+                  <span class="area-meta">网格 22 · 渠道 426</span>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">11,206</span><span class="progress mid">82%</span></div>
+                  <div class="cell-meta"><span>目标 13,666</span><span class="change">+205 / +1.9%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">2,406</span><span class="progress low">69%</span></div>
+                  <div class="cell-meta"><span>目标 3,487</span><span class="change down">-18 / -0.7%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">6,902</span><span class="progress mid">81%</span></div>
+                  <div class="cell-meta"><span>目标 8,521</span><span class="change">+96 / +1.4%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">7,018</span><span class="progress low">74%</span></div>
+                  <div class="cell-meta"><span>目标 9,484</span><span class="change">+44 / +0.6%</span></div>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="area-col">
+                  <span class="area-name">二七分公司</span>
+                  <span class="area-meta">网格 15 · 渠道 284</span>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">9,875</span><span class="progress">89%</span></div>
+                  <div class="cell-meta"><span>目标 11,096</span><span class="change">+171 / +1.8%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">2,982</span><span class="progress">92%</span></div>
+                  <div class="cell-meta"><span>目标 3,241</span><span class="change">+58 / +2.0%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">5,804</span><span class="progress mid">86%</span></div>
+                  <div class="cell-meta"><span>目标 6,749</span><span class="change">+104 / +1.8%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">6,711</span><span class="progress">90%</span></div>
+                  <div class="cell-meta"><span>目标 7,457</span><span class="change">+119 / +1.6%</span></div>
+                </td>
+              </tr>
+
+              <tr class="highlight">
+                <td class="area-col">
+                  <span class="area-name">管城分公司</span>
+                  <span class="area-meta">网格 13 · 渠道 241</span>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">7,420</span><span class="progress low">73%</span></div>
+                  <div class="cell-meta"><span>目标 10,164</span><span class="change down">-42 / -0.6%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">2,219</span><span class="progress mid">80%</span></div>
+                  <div class="cell-meta"><span>目标 2,774</span><span class="change">+37 / +1.4%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">4,935</span><span class="progress low">77%</span></div>
+                  <div class="cell-meta"><span>目标 6,409</span><span class="change">+63 / +1.3%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">5,302</span><span class="progress low">71%</span></div>
+                  <div class="cell-meta"><span>目标 7,468</span><span class="change down">-9 / -0.2%</span></div>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="area-col">
+                  <span class="area-name">惠济分公司</span>
+                  <span class="area-meta">网格 11 · 渠道 198</span>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">6,944</span><span class="progress">94%</span></div>
+                  <div class="cell-meta"><span>目标 7,387</span><span class="change">+138 / +2.2%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">1,996</span><span class="progress mid">85%</span></div>
+                  <div class="cell-meta"><span>目标 2,348</span><span class="change">+28 / +1.4%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">4,102</span><span class="progress">91%</span></div>
+                  <div class="cell-meta"><span>目标 4,508</span><span class="change">+71 / +1.6%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">5,879</span><span class="progress">93%</span></div>
+                  <div class="cell-meta"><span>目标 6,322</span><span class="change">+98 / +1.7%</span></div>
+                </td>
+              </tr>
+
+              <tr>
+                <td class="area-col">
+                  <span class="area-name">高新分公司</span>
+                  <span class="area-meta">网格 16 · 渠道 265</span>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">8,306</span><span class="progress mid">85%</span></div>
+                  <div class="cell-meta"><span>目标 9,772</span><span class="change">+152 / +1.9%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">2,521</span><span class="progress">90%</span></div>
+                  <div class="cell-meta"><span>目标 2,801</span><span class="change">+49 / +1.8%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">5,311</span><span class="progress mid">83%</span></div>
+                  <div class="cell-meta"><span>目标 6,399</span><span class="change">+86 / +1.6%</span></div>
+                </td>
+                <td class="metric-cell">
+                  <div class="cell-main"><span class="value">6,184</span><span class="progress mid">86%</span></div>
+                  <div class="cell-meta"><span>目标 7,191</span><span class="change">+101 / +1.7%</span></div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+</body>
+</html>
