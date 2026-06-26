@@ -40,7 +40,8 @@ def parse_metric_value(value: Any) -> Decimal:
         raise MetricValueError(f"指标值不是有效数字: {value!r}") from exc
     if not parsed.is_finite():
         raise MetricValueError(f"指标值必须是有限数字: {value!r}")
-    if parsed.as_tuple().exponent < -4:
+    significant = parsed.normalize() if parsed else parsed
+    if significant.as_tuple().exponent < -4:
         raise MetricValueError(f"指标值最多保留4位小数: {value!r}")
     if abs(parsed) >= Decimal("10000000000000000"):
         raise MetricValueError(f"指标值超出 DECIMAL(20,4) 范围: {value!r}")
@@ -110,6 +111,7 @@ def _load_enabled_indicator(
         select(Indicator).where(
             Indicator.code == indicator_code,
             Indicator.enabled.is_(True),
+            Indicator.storage_mode == "STORE",
         )
     )
     if indicator is None:

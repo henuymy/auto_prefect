@@ -57,20 +57,28 @@ def _extract_indicator_records(payload: dict[str, Any]) -> list[tuple[str, str, 
         message = str(payload.get("reMsg") or payload.get("message") or "")
         raise ValueError(f"指标清单接口返回失败: reCode={response_code}, reMsg={message}")
 
-    items = ((payload.get("result") or {}).get("list") or [])
+    result = payload.get("result") or {}
+    if not isinstance(result, dict):
+        raise ValueError("指标清单接口 result 不是对象，拒绝归档现有指标")
+
     records: list[tuple[str, str, int]] = []
     seen: set[str] = set()
-    for index, item in enumerate(items, start=1):
-        if not isinstance(item, dict):
+    source_order = 0
+    for _field_name, items in result.items():
+        if not isinstance(items, list):
             continue
-        code = str(item.get("indCode") or "").strip()
-        name = str(item.get("indName") or "").strip()
-        if not code or not name or code in seen:
-            continue
-        seen.add(code)
-        records.append((code, name, index))
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("indCode") or "").strip()
+            name = str(item.get("indName") or "").strip()
+            if not code or not name or code in seen:
+                continue
+            source_order += 1
+            seen.add(code)
+            records.append((code, name, source_order))
     if not records:
-        raise ValueError("指标清单接口 result.list 为空，拒绝归档现有指标")
+        raise ValueError("指标清单接口 result 中没有可用指标，拒绝归档现有指标")
     return records
 
 
@@ -217,7 +225,7 @@ def execute_dashboard_indicator_sync(
     batch_no: str | None = None,
     event_logger: Any = None,
 ) -> dict[str, Any]:
-    """Refresh the dashboard indicator library from ``result.list`` once daily."""
+    """Refresh the dashboard indicator library from all indicator lists once daily."""
     logger = event_logger or logging.getLogger(__name__)
     started = perf_counter()
     dashboard_config, _resolved = load_dashboard_config(config_path)

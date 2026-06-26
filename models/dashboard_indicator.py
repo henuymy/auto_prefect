@@ -43,6 +43,16 @@ class Indicator(DashboardBase):
         nullable=False,
         server_default=text("1"),
     )
+    indicator_type: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'SOURCE'"),
+    )
+    storage_mode: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'STORE'"),
+    )
     removed_at: Mapped[datetime | None] = mapped_column(
         mysql.DATETIME(fsp=3),
         nullable=True,

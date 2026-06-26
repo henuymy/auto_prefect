@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 
+import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from services.dashboard_custom_indicator_service import (
+    compose_store_metric_rows,
+    delete_custom_indicator,
+    load_metric_indicator_plan,
+    update_indicator_settings,
+    upsert_custom_indicator,
+)
+from services.dashboard_metric_store import MetricValueError
 from services.dashboard_query_service import (
     get_acc_wide_table,
     get_current_wide_table,
@@ -54,6 +64,8 @@ def create_test_engine():
                     name VARCHAR(200) NOT NULL,
                     enabled BOOLEAN NOT NULL,
                     source_active BOOLEAN NOT NULL DEFAULT 1,
+                    indicator_type VARCHAR(16) NOT NULL DEFAULT 'SOURCE',
+                    storage_mode VARCHAR(16) NOT NULL DEFAULT 'STORE',
                     removed_at DATETIME,
                     sort_order INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -149,6 +161,20 @@ def create_test_engine():
                     indicator_id INTEGER NOT NULL,
                     target_value NUMERIC(20,4) NOT NULL,
                     enabled BOOLEAN NOT NULL DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE custom_indicator_component (
+                    id INTEGER PRIMARY KEY,
+                    custom_indicator_id INTEGER NOT NULL,
+                    source_indicator_id INTEGER NOT NULL,
+                    coefficient NUMERIC(20,4) NOT NULL DEFAULT 1,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
@@ -299,6 +325,353 @@ def test_current_wide_table_builds_dynamic_metric_columns():
     engine.dispose()
 
 
+def test_current_wide_table_only_returns_store_indicators():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE indicator
+                SET storage_mode = 'COMPONENT'
+                WHERE code = 'sgs_ajvwdz'
+                """
+            )
+        )
+
+    result = get_current_wide_table(engine)
+
+    assert result["indicators"] == []
+    assert all(row["metrics"] == {} for row in result["rows"])
+    engine.dispose()
+
+
+def test_current_wide_table_computes_custom_indicator_sum():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active, sort_order)
+                VALUES
+                    (2, 'cloud_pc', '移动云电脑', 1, 1, 20),
+                    (3, 'custom_total', '自建总量', 1, 0, 30)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_current
+                    (id, area_id, indicator_id, collection_run_id,
+                     metric_value, stat_date, collected_at)
+                VALUES
+                    (2, 2, 2, 1, 9, '2026-06-11', '2026-06-11 10:05:08')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_target
+                    (id, period_type, area_id, indicator_id, target_value, enabled)
+                VALUES
+                    (3, 'REALTIME', 2, 2, 10, 1)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 3, 1, 1),
+                    (2, 3, 2, 2)
+                """
+            )
+        )
+
+    result = get_current_wide_table(engine, indicator_codes=["custom_total"])
+    row = next(row for row in result["rows"] if row["area_code"] == "AQ")
+
+    assert [indicator["code"] for indicator in result["indicators"]] == [
+        "custom_total"
+    ]
+    assert row["metrics"] == {"custom_total": 43}
+    assert row["targets"] == {"custom_total": 70}
+    engine.dispose()
+
+
+def test_indicator_catalog_marks_component_owner_as_custom():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active,
+                     indicator_type, storage_mode, sort_order)
+                VALUES
+                    (3, 'custom_total', '自建总量', 1, 0,
+                     'SOURCE', 'STORE', 30)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 3, 1, 1)
+                """
+            )
+        )
+
+    result = get_indicator_catalog(engine)
+    indicator = next(
+        item for item in result["indicators"] if item["code"] == "custom_total"
+    )
+
+    assert indicator["indicator_type"] == "CUSTOM"
+    engine.dispose()
+
+
+def test_upsert_rejects_component_owner_even_if_marked_source():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active,
+                     indicator_type, storage_mode, sort_order)
+                VALUES
+                    (3, 'custom_total', '自建总量', 1, 0,
+                     'SOURCE', 'STORE', 30)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 3, 1, 1)
+                """
+            )
+        )
+
+    with pytest.raises(ValueError, match="组成指标必须是源指标"):
+        upsert_custom_indicator(
+            engine,
+            code="custom_nested",
+            name="嵌套自定义",
+            components=[
+                {"source_code": "custom_total", "coefficient": "1"}
+            ],
+        )
+
+    engine.dispose()
+
+
+def test_metric_indicator_plan_requests_components_but_stores_custom_only():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE indicator
+                SET storage_mode = 'COMPONENT'
+                WHERE id = 1
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active,
+                     indicator_type, storage_mode, sort_order)
+                VALUES
+                    (2, 'custom_total', '自建总量', 1, 0,
+                     'CUSTOM', 'STORE', 20)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 2, 1, 2)
+                """
+            )
+        )
+
+    plan = load_metric_indicator_plan(engine)
+    rows = compose_store_metric_rows(
+        [{"area_id": 2, "sgs_ajvwdz": 25}],
+        plan["custom_components"],
+    )
+
+    assert plan["request_codes"] == ["sgs_ajvwdz"]
+    assert plan["store_codes"] == ["custom_total"]
+    assert rows[0]["custom_total"] == 50
+    engine.dispose()
+
+
+def test_custom_metric_rows_round_to_metric_scale():
+    rows = compose_store_metric_rows(
+        [{"area_id": 2, "a": Decimal("316"), "b": Decimal("0")}],
+        {
+            "custom_total": [
+                {"source_code": "a", "coefficient": Decimal("1.0000")},
+                {"source_code": "b", "coefficient": Decimal("0.3333")},
+            ]
+        },
+    )
+
+    assert rows[0]["custom_total"] == Decimal("316.0000")
+
+
+def test_custom_metric_rows_reject_invalid_source_value():
+    with pytest.raises(MetricValueError):
+        compose_store_metric_rows(
+            [{"area_id": 2, "a": "bad"}],
+            {"custom_total": [{"source_code": "a", "coefficient": Decimal("1")}]},
+        )
+
+
+def test_upsert_custom_indicator_rejects_over_precise_coefficient():
+    engine = create_test_engine()
+
+    with pytest.raises(ValueError, match="系数最多保留4位小数"):
+        upsert_custom_indicator(
+            engine,
+            code="custom_bad",
+            name="超精度系数",
+            components=[
+                {"source_code": "sgs_ajvwdz", "coefficient": "0.33333"}
+            ],
+        )
+
+    engine.dispose()
+
+
+def test_delete_custom_indicator_removes_indicator_components_and_values():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active,
+                     indicator_type, storage_mode, sort_order)
+                VALUES
+                    (3, 'custom_total', '自建总量', 1, 0,
+                     'CUSTOM', 'STORE', 30)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 3, 1, 1)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_current
+                    (id, area_id, indicator_id, collection_run_id,
+                     metric_value, stat_date, collected_at)
+                VALUES
+                    (2, 2, 3, 1, 25, '2026-06-11', '2026-06-11 10:05:08')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_snapshot
+                    (id, collection_run_id, area_id, indicator_id,
+                     metric_value, collected_at)
+                VALUES
+                    (3, 1, 2, 3, 20, '2026-06-11 09:05:08')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_acc
+                    (id, period_type, stat_date, area_id, indicator_id,
+                     collection_run_id, metric_value, collected_at)
+                VALUES
+                    (2, 'DAY_ACC', '2026-06-10', 2, 3, 2,
+                     100, '2026-06-11 11:05:08')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_target
+                    (id, period_type, area_id, indicator_id, target_value, enabled)
+                VALUES
+                    (3, 'REALTIME', 2, 3, 50, 1)
+                """
+            )
+        )
+
+    assert delete_custom_indicator(engine, "custom_total") == {
+        "code": "custom_total",
+        "deleted": True,
+    }
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM indicator WHERE id = 3")
+        ).scalar_one() == 0
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM custom_indicator_component WHERE custom_indicator_id = 3")
+        ).scalar_one() == 0
+        for table_name in ("metric_current", "metric_snapshot", "metric_acc", "metric_target"):
+            assert connection.execute(
+                text(f"SELECT COUNT(*) FROM {table_name} WHERE indicator_id = 3")
+            ).scalar_one() == 0
+    engine.dispose()
+
+
+def test_source_setting_update_rejects_custom_indicator():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active,
+                     indicator_type, storage_mode, sort_order)
+                VALUES
+                    (3, 'custom_total', '自建总量', 1, 0,
+                     'CUSTOM', 'STORE', 30)
+                """
+            )
+        )
+
+    with pytest.raises(ValueError, match="只允许修改源指标"):
+        update_indicator_settings(engine, "custom_total", storage_mode="COMPONENT")
+
+    engine.dispose()
+
+
 def test_current_wide_table_filters_level_and_parent():
     engine = create_test_engine()
 
@@ -358,6 +731,68 @@ def test_current_with_changes_supports_custom_windows():
     assert set(changes) == {"change_10min", "change_60min"}
     assert changes["change_10min"]["value"] == 2.0
     assert changes["change_60min"]["value"] == 5.0
+    engine.dispose()
+
+
+def test_current_with_changes_computes_custom_indicator_delta():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        anchor = datetime(2026, 6, 11, 10, 5, 8)
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active, sort_order)
+                VALUES
+                    (2, 'cloud_pc', '移动云电脑', 1, 1, 20),
+                    (3, 'custom_total', '自建总量', 1, 0, 30)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_current
+                    (id, area_id, indicator_id, collection_run_id,
+                     metric_value, stat_date, collected_at)
+                VALUES
+                    (2, 2, 2, 1, 9, '2026-06-11', '2026-06-11 10:05:08')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_snapshot
+                    (id, collection_run_id, area_id, indicator_id,
+                     metric_value, collected_at)
+                VALUES
+                    (3, 1, 2, 2, 4, :ts_60min_ago)
+                """
+            ),
+            {"ts_60min_ago": (anchor - timedelta(minutes=60)).isoformat(sep=" ")},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 3, 1, 1),
+                    (2, 3, 2, 2)
+                """
+            )
+        )
+
+    result = get_current_with_changes(
+        engine,
+        indicator_codes=["custom_total"],
+        change_windows=[60],
+    )
+    row = next(row for row in result["rows"] if row["area_code"] == "AQ")
+
+    assert row["metrics"]["custom_total"] == 43
+    assert row["changes"]["custom_total"]["change_60min"]["value"] == 15.0
     engine.dispose()
 
 
@@ -641,6 +1076,71 @@ def test_matrix_page_sorts_and_paginates_by_done_value():
     engine.dispose()
 
 
+def test_matrix_page_sorts_by_custom_indicator_value():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO area
+                    (id, area_code, area_name, level_type, level_no, parent_id, enabled)
+                VALUES
+                    (3, 'ZY', '中原区', 'BRANCH', 2, 1, 1)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active, sort_order)
+                VALUES
+                    (2, 'cloud_pc', '移动云电脑', 1, 1, 20),
+                    (3, 'custom_total', '自建总量', 1, 0, 30)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_current
+                    (id, area_id, indicator_id, collection_run_id,
+                     metric_value, stat_date, collected_at)
+                VALUES
+                    (2, 2, 2, 1, 2, '2026-06-11', '2026-06-11 10:05:08'),
+                    (3, 3, 1, 1, 10, '2026-06-11', '2026-06-11 10:05:08'),
+                    (4, 3, 2, 1, 20, '2026-06-11', '2026-06-11 10:05:08')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 3, 1, 1),
+                    (2, 3, 2, 2)
+                """
+            )
+        )
+
+    result = get_dashboard_matrix_page(
+        engine,
+        level_type="BRANCH",
+        indicator_codes=["custom_total"],
+        sort_indicator="custom_total",
+        sort_mode="doneDesc",
+        page=1,
+        page_size=2,
+    )
+
+    assert [row["area_code"] for row in result["rows"]] == ["ZY", "AQ"]
+    assert result["rows"][0]["metrics"] == {"custom_total": 50}
+    assert result["rows"][1]["metrics"] == {"custom_total": 29}
+    engine.dispose()
+
+
 def test_branch_drill_down_keeps_all_branches_visible():
     engine = create_test_engine()
     with engine.begin() as connection:
@@ -775,6 +1275,8 @@ def test_current_with_changes_handles_no_snapshots():
                             name VARCHAR(200) NOT NULL,
                             enabled BOOLEAN NOT NULL,
                             source_active BOOLEAN NOT NULL DEFAULT 1,
+                            indicator_type VARCHAR(16) NOT NULL DEFAULT 'SOURCE',
+                            storage_mode VARCHAR(16) NOT NULL DEFAULT 'STORE',
                             removed_at DATETIME,
                             sort_order INTEGER NOT NULL DEFAULT 0,
                             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -845,6 +1347,51 @@ def test_acc_wide_table_returns_day_acc_data():
     assert result["rows"][0]["area_code"] == "AQ"
     assert result["rows"][0]["metrics"]["sgs_ajvwdz"] == 80
     assert result["rows"][0]["targets"]["sgs_ajvwdz"] == 100
+    engine.dispose()
+
+
+def test_acc_wide_table_computes_custom_indicator_sum():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active, sort_order)
+                VALUES
+                    (2, 'cloud_pc', '移动云电脑', 1, 1, 20),
+                    (3, 'custom_total', '自建总量', 1, 0, 30)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_acc
+                    (id, period_type, stat_date, area_id, indicator_id,
+                     collection_run_id, metric_value, collected_at)
+                VALUES
+                    (2, 'DAY_ACC', '2026-06-10', 2, 2, 2,
+                     11, '2026-06-11 11:05:08')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 3, 1, 1),
+                    (2, 3, 2, 2)
+                """
+            )
+        )
+
+    result = get_acc_wide_table(engine, indicator_codes=["custom_total"])
+
+    assert result["row_count"] == 1
+    assert result["rows"][0]["metrics"] == {"custom_total": 102}
     engine.dispose()
 
 

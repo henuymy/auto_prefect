@@ -79,6 +79,8 @@ def create_engine_with_tables():
                     name VARCHAR(200) NOT NULL,
                     enabled BOOLEAN NOT NULL DEFAULT 1,
                     source_active BOOLEAN NOT NULL DEFAULT 1,
+                    indicator_type VARCHAR(16) NOT NULL DEFAULT 'SOURCE',
+                    storage_mode VARCHAR(16) NOT NULL DEFAULT 'STORE',
                     removed_at DATETIME,
                     sort_order INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

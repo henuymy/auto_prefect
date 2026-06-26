@@ -23,6 +23,10 @@ from services.dashboard_collection_orchestrator import (
     naive_shanghai_now,
     sync_structure_in_session,
 )
+from services.dashboard_custom_indicator_service import (
+    compose_store_metric_rows,
+    load_metric_indicator_plan,
+)
 from services.dashboard_metric_store import (
     finalize_metric_run_in_session,
     normalize_metric_rows,
@@ -107,11 +111,14 @@ def execute_dashboard_pipeline(
         event_logger=event_logger,
     ) as batch:
         dashboard_config = batch.config
+        indicator_plan = load_metric_indicator_plan(batch.engine)
+        request_indicator_codes = indicator_plan["request_codes"]
+        store_indicator_codes = indicator_plan["store_codes"]
 
         fetch_started = perf_counter()
         fetch_metrics = create_simple_fetcher(
             stage=batch.stage,
-            indicator_codes=batch.indicator_codes,
+            indicator_codes=request_indicator_codes,
             query_date=query_date,
             period_type=normalized_period,
             timeout_seconds=int(dashboard_config.get("collection_timeout_seconds", 30) or 30),
@@ -196,11 +203,15 @@ def execute_dashboard_pipeline(
                 write_timings["run_record_seconds"] = perf_counter() - stage_started
 
                 stage_started = perf_counter()
+                rows_for_metrics = compose_store_metric_rows(
+                    rows_for_metrics,
+                    indicator_plan["custom_components"],
+                )
                 normalized_rows_by_indicator = {
                     indicator_code: normalize_metric_rows(
                         metric_rows(rows_for_metrics, indicator_code)
                     )
-                    for indicator_code in batch.indicator_codes
+                    for indicator_code in store_indicator_codes
                 }
                 write_timings["normalize_seconds"] = perf_counter() - stage_started
 
@@ -261,8 +272,9 @@ def execute_dashboard_pipeline(
                 )
                 write_result = {
                     "batch_no": batch_no,
-                    "indicator_codes": list(batch.indicator_codes),
-                    "indicator_count": len(batch.indicator_codes),
+                    "indicator_codes": list(store_indicator_codes),
+                    "indicator_count": len(store_indicator_codes),
+                    "request_indicator_codes": list(request_indicator_codes),
                     "indicator_results": indicator_results,
                     "status": "SUCCESS",
                     "phase": "COMPLETED",

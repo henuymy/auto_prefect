@@ -12,14 +12,12 @@ import {
   Server,
   Trophy,
 } from "lucide-react";
-import { getCurrentDashboard, getDashboardTrend } from "@/lib/api";
+import { getCurrentDashboard } from "@/lib/api";
 import type {
   DashboardCurrentResponse,
   DashboardIndicator,
   DashboardRow,
-  DashboardTrendResponse,
 } from "@/types/dashboard";
-import { TrendChart } from "@/components/dashboard/TrendChart";
 
 const LEVEL_LABELS: Record<DashboardRow["level_type"], string> = {
   CITY: "地市",
@@ -61,7 +59,6 @@ function levelDescription(level: DashboardRow["level_type"]) {
 
 export function DashboardPage() {
   const [data, setData] = useState<DashboardCurrentResponse | null>(null);
-  const [trendData, setTrendData] = useState<DashboardTrendResponse | null>(null);
   const [selectedAreaId, setSelectedAreaId] = useState<number | null>(null);
   const [indicatorCode, setIndicatorCode] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -85,20 +82,6 @@ export function DashboardPage() {
         }
         return result.rows.find((row) => row.level_type === "CITY")?.area_id ?? null;
       });
-      // Refresh trend data for the currently selected area/indicator
-      const area = result.rows.find((row) => row.level_type === "CITY");
-      const code = result.indicators[0]?.code;
-      const activeArea = result.rows.some((r) => r.area_id === selectedAreaId)
-        ? selectedAreaId
-        : area?.area_id;
-      const activeCode = result.indicators.some((i) => i.code === indicatorCode)
-        ? indicatorCode
-        : code;
-      if (activeArea && activeCode) {
-        getDashboardTrend(activeArea, activeCode)
-          .then(setTrendData)
-          .catch(() => {});
-      }
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -111,25 +94,6 @@ export function DashboardPage() {
     const timer = window.setInterval(() => void refresh(true), 30_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
-
-  // Fetch trend data when selected area or indicator changes
-  useEffect(() => {
-    if (!selectedAreaId || !indicatorCode) {
-      setTrendData(null);
-      return;
-    }
-    let cancelled = false;
-    getDashboardTrend(selectedAreaId, indicatorCode)
-      .then((result) => {
-        if (!cancelled) setTrendData(result);
-      })
-      .catch(() => {
-        if (!cancelled) setTrendData(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedAreaId, indicatorCode]);
 
   const rowById = useMemo(
     () => new Map((data?.rows || []).map((row) => [row.area_id, row])),
@@ -366,30 +330,16 @@ export function DashboardPage() {
             {!rankedChildren.length && <EmptyState text="当前层级暂无可排名数据" />}
           </div>
 
-          <div className="grid gap-5">
-            <div className="dashboard-panel p-5">
-              <PanelTitle
-                icon={Activity}
-                title="层级概览"
-                description="当前下级区域统计"
-              />
-              <div className="mt-5 grid grid-cols-3 gap-3">
-                <CompactMetric label="最高" value={formatNumber(maxValue)} />
-                <CompactMetric label="平均" value={formatNumber(averageValue)} />
-                <CompactMetric label="最低" value={formatNumber(minValue)} />
-              </div>
-            </div>
-
-            <div className="dashboard-panel relative min-h-56 overflow-hidden p-5">
-              <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-cyan-500/10 to-transparent" />
-              <PanelTitle
-                icon={BarChart3}
-                title="变化趋势"
-                description={`近 24 小时 · ${selectedIndicator?.name || "当前指标"}`}
-              />
-              <div className="relative mt-4">
-                <TrendChart data={trendData} loading={loading} />
-              </div>
+          <div className="dashboard-panel p-5">
+            <PanelTitle
+              icon={Activity}
+              title="层级概览"
+              description="当前下级区域统计"
+            />
+            <div className="mt-5 grid grid-cols-3 gap-3">
+              <CompactMetric label="最高" value={formatNumber(maxValue)} />
+              <CompactMetric label="平均" value={formatNumber(averageValue)} />
+              <CompactMetric label="最低" value={formatNumber(minValue)} />
             </div>
           </div>
         </section>

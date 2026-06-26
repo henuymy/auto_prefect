@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { DashboardAccResponse, DashboardChangesResponse, DashboardCurrentResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTrendResponse } from "@/types/dashboard";
+import type { DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, SaveCustomIndicatorPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -131,6 +131,37 @@ export async function getDashboardIndicators(
   );
 }
 
+export async function getDashboardCustomIndicators() {
+  return request<DashboardCustomIndicatorResponse>("/api/dashboard/custom-indicators");
+}
+
+export async function saveDashboardCustomIndicator(payload: SaveCustomIndicatorPayload) {
+  return request<DashboardCustomIndicator>("/api/dashboard/custom-indicators", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteDashboardCustomIndicator(code: string) {
+  return request<{ code: string; deleted: boolean }>(
+    `/api/dashboard/custom-indicators/${encodeURIComponent(code)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function updateDashboardIndicatorSettings(
+  code: string,
+  payload: UpdateIndicatorSettingsPayload,
+) {
+  return request<DashboardCatalogIndicator>(
+    `/api/dashboard/indicators/${encodeURIComponent(code)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export async function getDashboardLatestRun() {
   return request<DashboardLatestRunResponse>("/api/dashboard/latest-run");
 }
@@ -220,21 +251,6 @@ export async function getAccDashboard(
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   return request<DashboardAccResponse>(
     `/api/dashboard/acc?${params.toString()}`,
-  );
-}
-
-export async function getDashboardTrend(
-  areaId: number,
-  indicatorCode: string,
-  minutes = 1440,
-) {
-  const params = new URLSearchParams({
-    area_id: String(areaId),
-    indicator_code: indicatorCode,
-    minutes: String(minutes),
-  });
-  return request<DashboardTrendResponse>(
-    `/api/dashboard/trend?${params.toString()}`,
   );
 }
 

@@ -8,11 +8,45 @@ export type DashboardIndicator = {
 export type DashboardCatalogIndicator = DashboardIndicator & {
   enabled: boolean;
   source_active: boolean;
+  indicator_type: "SOURCE" | "CUSTOM";
+  storage_mode: "STORE" | "COMPONENT";
   removed_at: string | null;
 };
 
 export type DashboardIndicatorCatalogResponse = {
   indicators: DashboardCatalogIndicator[];
+};
+
+export type CustomIndicatorComponent = {
+  source_code: string;
+  source_name?: string;
+  coefficient: number;
+  source_storage_mode?: "STORE" | "COMPONENT" | null;
+};
+
+export type DashboardCustomIndicator = DashboardCatalogIndicator & {
+  components: CustomIndicatorComponent[];
+};
+
+export type DashboardCustomIndicatorResponse = {
+  indicators: DashboardCustomIndicator[];
+};
+
+export type SaveCustomIndicatorPayload = {
+  code: string;
+  name: string;
+  enabled: boolean;
+  sort_order?: number | null;
+  components: Array<{
+    source_code: string;
+    coefficient?: number;
+    source_storage_mode?: "STORE" | "COMPONENT";
+  }>;
+};
+
+export type UpdateIndicatorSettingsPayload = {
+  enabled?: boolean;
+  storage_mode?: "STORE" | "COMPONENT";
 };
 
 export type DashboardLatestRunResponse = {
@@ -100,17 +134,4 @@ export type DashboardOverviewResponse = {
   acc_rows: DashboardRow[];
   row_count: number;
   acc_row_count: number;
-};
-
-/** 趋势图数据点 */
-export type TrendPoint = {
-  collected_at: string;
-  value: number | null;
-};
-
-/** 趋势图响应 */
-export type DashboardTrendResponse = {
-  area_id: number;
-  indicator_code: string;
-  points: TrendPoint[];
 };

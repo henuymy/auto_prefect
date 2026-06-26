@@ -6,9 +6,16 @@ from time import monotonic
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
 from infrastructure.dashboard_mysql import get_dashboard_engine
+from services.dashboard_custom_indicator_service import (
+    delete_custom_indicator,
+    list_custom_indicators,
+    update_indicator_settings,
+    upsert_custom_indicator,
+)
 from services.dashboard_query_service import (
     get_dashboard_overview,
     get_dashboard_matrix_page,
@@ -18,7 +25,6 @@ from services.dashboard_query_service import (
     get_current_with_changes,
     get_indicator_catalog,
     get_latest_dashboard_run,
-    get_snapshot_trend,
     parse_change_window_minutes,
 )
 
@@ -28,6 +34,25 @@ _DASHBOARD_CACHE_TTL_SECONDS = 20.0
 _DASHBOARD_CACHE_MAX_ENTRIES = 64
 _dashboard_cache: OrderedDict[tuple[Any, ...], tuple[float, dict[str, Any]]] = OrderedDict()
 _dashboard_cache_lock = Lock()
+
+
+class CustomIndicatorComponentPayload(BaseModel):
+    source_code: str = Field(..., min_length=1, max_length=100)
+    coefficient: float = 1
+    source_storage_mode: str | None = Field(None, pattern="^(STORE|COMPONENT)$")
+
+
+class CustomIndicatorPayload(BaseModel):
+    code: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=200)
+    enabled: bool = True
+    sort_order: int | None = Field(None, ge=0)
+    components: list[CustomIndicatorComponentPayload]
+
+
+class IndicatorSettingsPayload(BaseModel):
+    enabled: bool | None = None
+    storage_mode: str | None = Field(None, pattern="^(STORE|COMPONENT)$")
 
 
 def _parse_change_windows(value: str | None) -> list[int] | None:
@@ -97,6 +122,75 @@ def dashboard_indicators(
         raise HTTPException(
             status_code=503,
             detail=f"驾驶舱指标目录查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/custom-indicators")
+def dashboard_custom_indicators():
+    engine = get_dashboard_engine()
+    try:
+        return list_custom_indicators(engine)
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"自建指标查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.post("/custom-indicators")
+def save_dashboard_custom_indicator(payload: CustomIndicatorPayload):
+    engine = get_dashboard_engine()
+    try:
+        return upsert_custom_indicator(
+            engine,
+            code=payload.code,
+            name=payload.name,
+            enabled=payload.enabled,
+            sort_order=payload.sort_order,
+            components=[
+                component.model_dump()
+                for component in payload.components
+            ],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"自建指标保存失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.delete("/custom-indicators/{code}")
+def remove_dashboard_custom_indicator(code: str):
+    engine = get_dashboard_engine()
+    try:
+        return delete_custom_indicator(engine, code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"自建指标删除失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.patch("/indicators/{code}")
+def update_dashboard_indicator(code: str, payload: IndicatorSettingsPayload):
+    engine = get_dashboard_engine()
+    try:
+        return update_indicator_settings(
+            engine,
+            code,
+            enabled=payload.enabled,
+            storage_mode=payload.storage_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"指标设置保存失败: {type(exc).__name__}",
         ) from exc
 
 
@@ -369,24 +463,3 @@ def acc_dashboard(
         ) from exc
 
 
-@router.get("/trend")
-def trend_dashboard(
-    area_id: int = Query(..., ge=1, description="区域 ID"),
-    indicator_code: str = Query(..., description="指标编码"),
-    minutes: int = Query(
-        1440, ge=10, le=10080, description="回溯分钟数（默认 1440 = 24 小时）",
-    ),
-):
-    engine = get_dashboard_engine()
-    try:
-        return get_snapshot_trend(
-            engine,
-            area_id=area_id,
-            indicator_code=indicator_code,
-            minutes=minutes,
-        )
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"驾驶舱趋势查询失败: {type(exc).__name__}",
-        ) from exc

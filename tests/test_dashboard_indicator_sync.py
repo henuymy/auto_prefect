@@ -29,10 +29,38 @@ def test_extract_indicator_records_reads_result_list():
     ]
 
 
-def test_extract_indicator_records_rejects_empty_list():
-    with pytest.raises(ValueError, match="result.list 为空"):
+def test_extract_indicator_records_reads_all_result_lists_and_deduplicates():
+    payload = {
+        "reCode": "0000",
+        "result": {
+            "colList": [
+                {"indCode": "A", "indName": "指标 A"},
+                {"indCode": "B", "indName": "指标 B"},
+            ],
+            "cityList": [
+                {"indCode": "B", "indName": "指标 B 重复"},
+                {"indCode": "C", "indName": "指标 C"},
+            ],
+            "list": [
+                {"indCode": "D", "indName": "指标 D"},
+                {"indCode": "", "indName": "空编码"},
+            ],
+            "notList": {"indCode": "E", "indName": "不是列表"},
+        },
+    }
+
+    assert _extract_indicator_records(payload) == [
+        ("A", "指标 A", 1),
+        ("B", "指标 B", 2),
+        ("C", "指标 C", 3),
+        ("D", "指标 D", 4),
+    ]
+
+
+def test_extract_indicator_records_rejects_empty_result_lists():
+    with pytest.raises(ValueError, match="result 中没有可用指标"):
         _extract_indicator_records(
-            {"reCode": "0000", "result": {"list": []}}
+            {"reCode": "0000", "result": {"list": [], "cityList": []}}
         )
 
 
@@ -52,6 +80,8 @@ def test_sync_does_not_archive_enabled_indicator_missing_from_source():
                     name VARCHAR(200) NOT NULL,
                     enabled BOOLEAN NOT NULL DEFAULT 1,
                     source_active BOOLEAN NOT NULL DEFAULT 1,
+                    indicator_type VARCHAR(16) NOT NULL DEFAULT 'SOURCE',
+                    storage_mode VARCHAR(16) NOT NULL DEFAULT 'STORE',
                     removed_at DATETIME,
                     sort_order INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

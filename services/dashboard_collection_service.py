@@ -15,8 +15,8 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from infrastructure.dashboard_run_store import CollectionRunStore
-from models.dashboard_indicator import Indicator
 from models.dashboard_request_target import RequestTarget
+from services.dashboard_custom_indicator_service import load_metric_indicator_plan
 from services.json_excel_service import extract_rows
 from services.method_service import (
     build_cookie_jar,
@@ -83,14 +83,7 @@ def load_collection_targets(engine: Engine) -> list[CollectionTarget]:
 
 
 def load_enabled_indicator_codes(engine: Engine) -> list[str]:
-    with Session(engine) as session:
-        return list(
-            session.scalars(
-                select(Indicator.code)
-                .where(Indicator.enabled.is_(True))
-                .order_by(Indicator.sort_order, Indicator.id)
-            ).all()
-        )
+    return list(load_metric_indicator_plan(engine)["request_codes"])
 
 
 def normalize_max_workers(

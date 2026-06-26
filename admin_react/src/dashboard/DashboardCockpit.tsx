@@ -6,21 +6,29 @@ import {
   BarChart3,
   ChevronDown,
   Database,
+  Plus,
   Search,
   RefreshCw,
+  Settings,
   Signal,
+  Trash2,
 } from "lucide-react";
 import {
+  deleteDashboardCustomIndicator,
   getDashboardOverview,
   getDashboardDrillDown,
+  getDashboardCustomIndicators,
   getDashboardIndicators,
   getDashboardLatestRun,
   getDashboardMatrix,
   getDashboardWithChanges,
   getCurrentDashboard,
   getAccDashboard,
+  saveDashboardCustomIndicator,
+  updateDashboardIndicatorSettings,
 } from "@/lib/api";
 import type {
+  DashboardCustomIndicator,
   DashboardCatalogIndicator,
   DashboardRow,
   DashboardRowWithChanges,
@@ -70,6 +78,14 @@ type LevelOverrideData = {
 
 type ScopeMode = "default" | "all";
 type CockpitMode = "single" | "multi";
+type StorageMode = "STORE" | "COMPONENT";
+type SourceMetricOption = {
+  code: string;
+  name: string;
+};
+type SourceFilterMode = "all" | "enabled" | "disabled" | "store" | "component";
+const COEFFICIENT_PATTERN = /^-?\d+(\.\d{0,4})?$/;
+const COEFFICIENT_INPUT_PATTERN = /^-?\d*(\.\d{0,4})?$/;
 type MatrixSortMode =
   | "progressAsc" | "progressDesc"
   | "doneAsc" | "doneDesc"
@@ -538,6 +554,7 @@ export function DashboardCockpit() {
     Partial<Record<LevelKey, boolean>>
   >({});
   const [levelAllPopup, setLevelAllPopup] = useState<LevelAllPopup>(null);
+  const [customManagerOpen, setCustomManagerOpen] = useState(false);
   const scopePopupTargetRef = useRef<ScopePopupTarget | null>(null);
   const fetchSeqRef = useRef(0);
   const queryCacheRef = useRef<Map<string, DashboardCacheEntry>>(new Map());
@@ -960,6 +977,18 @@ export function DashboardCockpit() {
 
   /* derive boards from data + indicator + visible */
   const activeCode = indicator || data?.indicators[0]?.code || "";
+  const activeIndicatorDataPending = Boolean(
+    mode === "single" &&
+    activeCode &&
+    data &&
+    !data.indicators.some((item) => item.code === activeCode),
+  );
+  const handleIndicatorChange = useCallback((code: string) => {
+    if (code === indicator) return;
+    setLoading(true);
+    setError(false);
+    setIndicator(code);
+  }, [indicator]);
 
   const { dayLevels, monthLevels } = useMemo(() => {
     if (!data) return { dayLevels: [] as LevelBoard[], monthLevels: [] as LevelBoard[] };
@@ -1227,14 +1256,22 @@ export function DashboardCockpit() {
         onScopeChange={handleScopeChange}
         activeCode={activeCode}
         indicators={selectableIndicators}
-        onIndicatorChange={setIndicator}
+        onIndicatorChange={handleIndicatorChange}
         changeWindows={changeWindows}
         onChangeWindow={updateChangeWindow}
         online={data?.online ?? false}
         updatedAt={data?.updatedAt ?? nowText()}
         loading={loading}
         onRefresh={() => void fetchData(true)}
+        onOpenCustomManager={() => setCustomManagerOpen(true)}
       />
+
+      {customManagerOpen && (
+        <CustomIndicatorManager
+          onClose={() => setCustomManagerOpen(false)}
+          onSaved={() => void fetchData(true)}
+        />
+      )}
 
       {levelAllPopup && (
         <div
@@ -1268,6 +1305,7 @@ export function DashboardCockpit() {
                 pendingLevelAll.level === level.key
               )
             }
+            staleIndicatorData={activeIndicatorDataPending}
             queryLoading={loading}
             onToggleLevelAll={
               level.key !== "BRANCH" && scopeMode !== "all"
@@ -1300,6 +1338,7 @@ export function DashboardCockpit() {
                 pendingLevelAll?.section === "month" &&
                 pendingLevelAll.level === level.key
               }
+              staleIndicatorData={activeIndicatorDataPending}
               queryLoading={loading}
               onToggleLevelAll={level.key !== "BRANCH" ? handleToggleMonthLevelAll : undefined}
               isBranch={level.key === "BRANCH"}
@@ -1355,6 +1394,7 @@ function Header({
   updatedAt,
   loading,
   onRefresh,
+  onOpenCustomManager,
 }: {
   mode: CockpitMode;
   onModeChange: (mode: CockpitMode) => void;
@@ -1371,6 +1411,7 @@ function Header({
   updatedAt: string;
   loading: boolean;
   onRefresh: () => void;
+  onOpenCustomManager: () => void;
 }) {
   const indOptions = indicators.map((ind) => ({ label: ind.name || ind.code, value: ind.code }));
 
@@ -1427,8 +1468,535 @@ function Header({
           <RefreshCw size={15} className={loading ? "spin" : ""} />
           刷新
         </button>
+        <button className="refresh-button" onClick={onOpenCustomManager}>
+          <Settings size={15} />
+          指标管理
+        </button>
       </div>
     </header>
+  );
+}
+
+type CustomIndicatorDraft = {
+  code: string;
+  name: string;
+  enabled: boolean;
+  components: Array<{
+    source_code: string;
+    coefficient: string;
+    source_storage_mode: StorageMode;
+  }>;
+};
+
+function emptyCustomDraft(): CustomIndicatorDraft {
+  return {
+    code: "",
+    name: "",
+    enabled: true,
+    components: [{ source_code: "", coefficient: "1", source_storage_mode: "COMPONENT" }],
+  };
+}
+
+function draftFromCustomIndicator(indicator: DashboardCustomIndicator): CustomIndicatorDraft {
+  return {
+    code: indicator.code,
+    name: indicator.name,
+    enabled: indicator.enabled,
+    components: indicator.components.length
+      ? indicator.components.map((component) => ({
+          source_code: component.source_code,
+          coefficient: String(component.coefficient ?? 1),
+          source_storage_mode: component.source_storage_mode || "COMPONENT",
+        }))
+      : emptyCustomDraft().components,
+  };
+}
+
+function CustomIndicatorManager({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [catalog, setCatalog] = useState<DashboardCatalogIndicator[]>([]);
+  const [customIndicators, setCustomIndicators] = useState<DashboardCustomIndicator[]>([]);
+  const [draft, setDraft] = useState<CustomIndicatorDraft>(() => emptyCustomDraft());
+  const [message, setMessage] = useState("");
+  const [managerTab, setManagerTab] = useState<"custom" | "source">("custom");
+  const [sourceKeyword, setSourceKeyword] = useState("");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilterMode>("all");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const [catalogData, customData] = await Promise.all([
+        getDashboardIndicators(true, false),
+        getDashboardCustomIndicators(),
+      ]);
+      setCatalog(catalogData.indicators);
+      setCustomIndicators(customData.indicators);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const sourceOptions = useMemo(
+    () => catalog
+      .filter((indicator) => indicator.indicator_type !== "CUSTOM")
+      .map((indicator) => ({
+        code: indicator.code,
+        name: indicator.name || indicator.code,
+      })),
+    [catalog],
+  );
+  const sourceIndicators = useMemo(() => {
+    const keyword = sourceKeyword.trim().toLowerCase();
+    return catalog
+      .filter((indicator) => indicator.indicator_type !== "CUSTOM")
+      .filter((indicator) => {
+        if (sourceFilter === "enabled") return indicator.enabled;
+        if (sourceFilter === "disabled") return !indicator.enabled;
+        if (sourceFilter === "store") return indicator.storage_mode === "STORE";
+        if (sourceFilter === "component") return indicator.storage_mode === "COMPONENT";
+        return true;
+      })
+      .filter((indicator) =>
+        !keyword ||
+        indicator.name.toLowerCase().includes(keyword) ||
+        indicator.code.toLowerCase().includes(keyword),
+      );
+  }, [catalog, sourceFilter, sourceKeyword]);
+  const sourceStats = useMemo(() => {
+    const sourceRows = catalog.filter((indicator) => indicator.indicator_type !== "CUSTOM");
+    return {
+      total: sourceRows.length,
+      enabled: sourceRows.filter((indicator) => indicator.enabled).length,
+      disabled: sourceRows.filter((indicator) => !indicator.enabled).length,
+      store: sourceRows.filter((indicator) => indicator.storage_mode === "STORE").length,
+      component: sourceRows.filter((indicator) => indicator.storage_mode === "COMPONENT").length,
+    };
+  }, [catalog]);
+
+  const updateComponent = (
+    index: number,
+    patch: Partial<CustomIndicatorDraft["components"][number]>,
+  ) => {
+    setDraft((current) => ({
+      ...current,
+      components: current.components.map((component, componentIndex) =>
+        componentIndex === index ? { ...component, ...patch } : component,
+      ),
+    }));
+  };
+
+  const addComponent = () => {
+    setDraft((current) => ({
+      ...current,
+      components: [
+        ...current.components,
+        { source_code: "", coefficient: "1", source_storage_mode: "COMPONENT" },
+      ],
+    }));
+  };
+
+  const removeComponent = (index: number) => {
+    setDraft((current) => ({
+      ...current,
+      components: current.components.filter((_, componentIndex) => componentIndex !== index),
+    }));
+  };
+
+  const save = async () => {
+    const code = draft.code.trim();
+    const name = draft.name.trim();
+    const components = draft.components
+      .map((component) => ({
+        source_code: component.source_code.trim(),
+        coefficient: Number(component.coefficient || 1),
+        source_storage_mode: component.source_storage_mode,
+      }))
+      .filter((component) => component.source_code);
+    if (!code || !name || !components.length) {
+      setMessage("请填写编码、名称，并至少选择 1 个源指标");
+      return;
+    }
+    if (components.some((component) => !Number.isFinite(component.coefficient))) {
+      setMessage("系数必须是有效数字");
+      return;
+    }
+    if (draft.components.some((component) => {
+      const coefficient = component.coefficient.trim();
+      return coefficient && !COEFFICIENT_PATTERN.test(coefficient);
+    })) {
+      setMessage("系数最多保留 4 位小数");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await saveDashboardCustomIndicator({ code, name, enabled: draft.enabled, components });
+      setDraft(emptyCustomDraft());
+      await load();
+      onSaved();
+      setMessage("已保存自定义指标");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeCustom = async (indicator: DashboardCustomIndicator) => {
+    if (!window.confirm(`确定删除自定义指标「${indicator.name}」吗？`)) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await deleteDashboardCustomIndicator(indicator.code);
+      if (draft.code === indicator.code) setDraft(emptyCustomDraft());
+      await load();
+      onSaved();
+      setMessage("已删除自定义指标");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSourceIndicator = async (
+    indicator: DashboardCatalogIndicator,
+    patch: { enabled?: boolean; storage_mode?: StorageMode },
+  ) => {
+    const actionText = patch.enabled != null
+      ? `${patch.enabled ? "启用" : "停用"}源指标「${indicator.name}」`
+      : `将源指标「${indicator.name}」改为${
+          patch.storage_mode === "STORE" ? "落库展示" : "只参与计算"
+        }`;
+    if (!window.confirm(`确定要${actionText}吗？`)) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await updateDashboardIndicatorSettings(indicator.code, patch);
+      await load();
+      onSaved();
+      setMessage("已保存源指标设置");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="custom-metric-backdrop" role="dialog" aria-modal="true">
+      <section className="custom-metric-modal">
+        <header className="custom-metric-head">
+          <div>
+            <strong>自定义指标管理</strong>
+            <span>维护自定义指标公式、源指标启停和落库方式</span>
+          </div>
+          <button type="button" onClick={onClose}>关闭</button>
+        </header>
+        <div className="custom-metric-body">
+          <aside className="custom-metric-list">
+            <div className="custom-manager-tabs">
+              <button
+                type="button"
+                className={managerTab === "custom" ? "active" : ""}
+                onClick={() => setManagerTab("custom")}
+              >
+                自定义指标
+              </button>
+              <button
+                type="button"
+                className={managerTab === "source" ? "active" : ""}
+                onClick={() => setManagerTab("source")}
+              >
+                源指标
+              </button>
+            </div>
+            {managerTab === "custom" ? (
+            <>
+            <button type="button" onClick={() => setDraft(emptyCustomDraft())}>
+              <Plus size={15} />
+              新建自定义指标
+            </button>
+            {customIndicators.map((indicator) => (
+              <div key={indicator.code} className="custom-metric-item">
+                <button type="button" onClick={() => setDraft(draftFromCustomIndicator(indicator))}>
+                  <strong>{indicator.name}</strong>
+                  <span>{indicator.code}</span>
+                </button>
+                <button type="button" title="删除" onClick={() => void removeCustom(indicator)}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+            </>
+            ) : (
+              <div className="source-manager-summary">
+                <strong>{sourceIndicators.length}</strong>
+                <span>当前列表</span>
+                <dl>
+                  <div>
+                    <dt>全部</dt>
+                    <dd>{sourceStats.total}</dd>
+                  </div>
+                  <div>
+                    <dt>启用</dt>
+                    <dd>{sourceStats.enabled}</dd>
+                  </div>
+                  <div>
+                    <dt>落库</dt>
+                    <dd>{sourceStats.store}</dd>
+                  </div>
+                  <div>
+                    <dt>只计算</dt>
+                    <dd>{sourceStats.component}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
+          </aside>
+          <main className="custom-metric-form">
+            {managerTab === "source" ? (
+              <>
+                <div className="source-manager-toolbar">
+                  <label className="source-manager-search">
+                    <Search size={15} />
+                    <input
+                      value={sourceKeyword}
+                      onChange={(event) => setSourceKeyword(event.target.value)}
+                      placeholder="搜索源指标名称或编码"
+                    />
+                  </label>
+                  <div className="source-filter-tabs" aria-label="源指标筛选">
+                    {[
+                      ["all", "全部", sourceStats.total],
+                      ["enabled", "已启用", sourceStats.enabled],
+                      ["disabled", "未启用", sourceStats.disabled],
+                      ["store", "落库", sourceStats.store],
+                      ["component", "只计算", sourceStats.component],
+                    ].map(([key, label, count]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className={sourceFilter === key ? "active" : ""}
+                        onClick={() => setSourceFilter(key as SourceFilterMode)}
+                      >
+                        {label}
+                        <span>{count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="source-manager-list">
+                  {sourceIndicators.map((indicator) => (
+                    <div
+                      key={indicator.code}
+                      className={[
+                        "source-manager-row",
+                        indicator.enabled ? "is-enabled" : "is-disabled",
+                        indicator.storage_mode === "COMPONENT" ? "is-component" : "",
+                      ].filter(Boolean).join(" ")}
+                    >
+                      <div className="source-manager-name">
+                        <strong>{indicator.name}</strong>
+                        <span>{indicator.code}</span>
+                      </div>
+                      <div className="source-manager-status">
+                        <span>{indicator.enabled ? "已启用" : "未启用"}</span>
+                        <span>{indicator.storage_mode === "STORE" ? "落库展示" : "只参与计算"}</span>
+                      </div>
+                      <label className="source-manager-enable">
+                        <input
+                          type="checkbox"
+                          checked={indicator.enabled}
+                          disabled={busy}
+                          onChange={(event) => void updateSourceIndicator(indicator, {
+                            enabled: event.target.checked,
+                          })}
+                        />
+                        启用
+                      </label>
+                      <select
+                        value={indicator.storage_mode}
+                        disabled={busy}
+                        onChange={(event) => void updateSourceIndicator(indicator, {
+                          storage_mode: event.target.value as StorageMode,
+                        })}
+                      >
+                        <option value="STORE">落库展示</option>
+                        <option value="COMPONENT">只参与计算</option>
+                      </select>
+                    </div>
+                  ))}
+                  {!sourceIndicators.length && (
+                    <div className="source-manager-empty">
+                      没有匹配的源指标
+                    </div>
+                  )}
+                </div>
+                {message && <div className="custom-metric-message">{message}</div>}
+              </>
+            ) : (
+            <>
+            <div className="custom-metric-grid">
+              <label>
+                <span>编码</span>
+                <input
+                  value={draft.code}
+                  onChange={(event) => setDraft((current) => ({ ...current, code: event.target.value }))}
+                  placeholder="custom_aijia"
+                />
+              </label>
+              <label>
+                <span>名称</span>
+                <input
+                  value={draft.name}
+                  onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="爱家亲情网"
+                />
+              </label>
+              <label className="custom-metric-toggle">
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                />
+                <span>启用</span>
+              </label>
+            </div>
+            <div className="custom-component-head">
+              <strong>组成指标</strong>
+              <button type="button" onClick={addComponent}>
+                <Plus size={14} />
+                添加
+              </button>
+            </div>
+            <div className="custom-component-list">
+              {draft.components.map((component, index) => (
+                <div key={index} className="custom-component-row">
+                  <SourceMetricPicker
+                    value={component.source_code}
+                    options={sourceOptions}
+                    onChange={(value) => updateComponent(index, { source_code: value })}
+                  />
+                  <input
+                    value={component.coefficient}
+                    onChange={(event) => {
+                      const nextValue = event.target.value.trim();
+                      if (COEFFICIENT_INPUT_PATTERN.test(nextValue)) {
+                        updateComponent(index, { coefficient: nextValue });
+                      }
+                    }}
+                    inputMode="decimal"
+                    placeholder="1"
+                  />
+                  <select
+                    value={component.source_storage_mode}
+                    onChange={(event) => updateComponent(index, {
+                      source_storage_mode: event.target.value as StorageMode,
+                    })}
+                  >
+                    <option value="COMPONENT">只参与计算</option>
+                    <option value="STORE">源指标也落库</option>
+                  </select>
+                  <button
+                    type="button"
+                    title="移除"
+                    disabled={draft.components.length <= 1}
+                    onClick={() => removeComponent(index)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            {message && <div className="custom-metric-message">{message}</div>}
+            <div className="custom-metric-actions">
+              <button type="button" onClick={() => setDraft(emptyCustomDraft())}>清空</button>
+              <button type="button" className="primary" disabled={busy} onClick={() => void save()}>
+                {busy ? "处理中..." : "保存指标"}
+              </button>
+            </div>
+            </>
+            )}
+          </main>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SourceMetricPicker({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: SourceMetricOption[];
+  onChange: (value: string) => void;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const selected = options.find((option) => option.code === value);
+  const normalizedKeyword = keyword.trim().toLowerCase();
+  const filteredOptions = normalizedKeyword
+    ? options.filter((option) =>
+        option.name.toLowerCase().includes(normalizedKeyword) ||
+        option.code.toLowerCase().includes(normalizedKeyword),
+      )
+    : options;
+
+  return (
+    <details className="source-metric-picker">
+      <summary>
+        <span title={selected ? `${selected.name} (${selected.code})` : "选择源指标"}>
+          {selected ? selected.name : "选择源指标"}
+        </span>
+        {selected && <em>{selected.code}</em>}
+        <ChevronDown size={14} />
+      </summary>
+      <div className="source-metric-popover">
+        <label className="source-metric-search">
+          <Search size={14} />
+          <input
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+            placeholder="搜索名称或编码"
+          />
+        </label>
+        <div className="source-metric-options">
+          {filteredOptions.map((option) => (
+            <button
+              key={option.code}
+              type="button"
+              className={option.code === value ? "active" : ""}
+              onClick={(event) => {
+                onChange(option.code);
+                setKeyword("");
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+            >
+              <strong>{option.name}</strong>
+              <span>{option.code}</span>
+            </button>
+          ))}
+          {!filteredOptions.length && (
+            <div className="source-metric-empty">没有匹配的源指标</div>
+          )}
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -1578,6 +2146,8 @@ function MultiMetricMatrix({
           ...indicator,
           enabled: true,
           source_active: true,
+          indicator_type: "SOURCE",
+          storage_mode: "STORE",
           removed_at: null,
         });
       }
@@ -2153,6 +2723,7 @@ function LevelPanel({
   onDrill,
   levelAllActive,
   levelAllPending,
+  staleIndicatorData,
   queryLoading,
   onToggleLevelAll,
   isBranch,
@@ -2166,6 +2737,7 @@ function LevelPanel({
   onDrill: (row: BoardRow, levelType: string) => void;
   levelAllActive?: boolean;
   levelAllPending?: boolean;
+  staleIndicatorData?: boolean;
   queryLoading?: boolean;
   onToggleLevelAll?: (level: LevelKey) => void;
   isBranch?: boolean;
@@ -2219,7 +2791,10 @@ function LevelPanel({
     ? { maxHeight: branchHeight - 43, overflowY: "auto" }
     : {};
   const levelAllLabel = level.key === "GRID" ? "全部网格" : "全部渠道";
-  const showLoadingPlaceholder = rows.length === 0 && Boolean(levelAllPending || queryLoading);
+  const showLoadingPlaceholder = (Boolean(staleIndicatorData) && Boolean(queryLoading))
+    || (rows.length === 0 && Boolean(levelAllPending || queryLoading));
+  const hideStaleRows = Boolean(staleIndicatorData);
+  const visibleRows = hideStaleRows || showLoadingPlaceholder ? [] : virtualRows.rows;
 
   useEffect(() => {
     const container = dataTableRef.current;
@@ -2278,14 +2853,14 @@ function LevelPanel({
             <span key={minutes}>{minutes}分钟</span>
           ))}
         </div>
-        {virtualRows.topHeight > 0 && (
+        {!hideStaleRows && !showLoadingPlaceholder && virtualRows.topHeight > 0 && (
           <div
             className="single-virtual-spacer"
             style={{ height: virtualRows.topHeight }}
             aria-hidden="true"
           />
         )}
-        {virtualRows.rows.map((r, i) => (
+        {visibleRows.map((r, i) => (
           <DataRow
             key={r.areaId}
             rank={virtualRows.start + i + 1}
@@ -2295,7 +2870,7 @@ function LevelPanel({
             onDrill={onDrill}
           />
         ))}
-        {virtualRows.bottomHeight > 0 && (
+        {!hideStaleRows && !showLoadingPlaceholder && virtualRows.bottomHeight > 0 && (
           <div
             className="single-virtual-spacer"
             style={{ height: virtualRows.bottomHeight }}
@@ -2303,16 +2878,18 @@ function LevelPanel({
           />
         )}
         {showLoadingPlaceholder && <LoadingRows />}
-        {rows.length === 0 && !showLoadingPlaceholder && (
+        {((rows.length === 0 || hideStaleRows) && !showLoadingPlaceholder) && (
           <EmptyRow message="暂无数据" />
         )}
       </div>
 
       <div className="section-total">
-        <span>合计</span><strong>{formatNumber(totalDone)}</strong>
-        <span>平均进度</span><strong>{fmtProgress(avgPct)}</strong>
+        <span>合计</span><strong>{hideStaleRows ? "--" : formatNumber(totalDone)}</strong>
+        <span>平均进度</span><strong>{hideStaleRows ? "--" : fmtProgress(avgPct)}</strong>
         <span>{lastWindow}分钟</span>
-        <strong className={lastChange >= 0 ? "up" : "down"}>{signed(lastChange)}</strong>
+        <strong className={lastChange >= 0 ? "up" : "down"}>
+          {hideStaleRows ? "--" : signed(lastChange)}
+        </strong>
       </div>
     </section>
   );

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 from typing import Any
 
@@ -22,8 +22,9 @@ from sqlalchemy.orm import Session
 
 from models.dashboard_area import Area
 from models.dashboard_collection_run import CollectionRun
+from models.dashboard_custom_indicator import CustomIndicatorComponent
 from models.dashboard_indicator import Indicator
-from models.dashboard_metric import MetricAcc, MetricCurrent, MetricSnapshot
+from models.dashboard_metric import MetricAcc, MetricCurrent
 from models.dashboard_metric_target import MetricTarget
 
 
@@ -57,7 +58,10 @@ def _enabled_indicators(
     session: Session,
     indicator_codes: list[str] | tuple[str, ...] | None = None,
 ) -> list[Indicator]:
-    query = select(Indicator).where(Indicator.enabled.is_(True))
+    query = select(Indicator).where(
+        Indicator.enabled.is_(True),
+        Indicator.storage_mode == "STORE",
+    )
     if indicator_codes:
         query = query.where(Indicator.code.in_(indicator_codes))
     return list(
@@ -65,6 +69,110 @@ def _enabled_indicators(
             query.order_by(Indicator.sort_order, Indicator.id)
         )
     )
+
+
+def _custom_component_table_exists(session: Session) -> bool:
+    return inspect(session.get_bind()).has_table("custom_indicator_component")
+
+
+def _component_map_for_indicators(
+    session: Session,
+    indicators: list[Indicator] | list[dict[str, Any]],
+) -> dict[str, list[tuple[str, Decimal]]]:
+    if not indicators or not _custom_component_table_exists(session):
+        return {}
+
+    indicator_ids = [_indicator_id(ind) for ind in indicators]
+    custom_code_by_id = {_indicator_id(ind): _indicator_code(ind) for ind in indicators}
+    rows = session.execute(
+        select(
+            CustomIndicatorComponent.custom_indicator_id,
+            Indicator.code,
+            CustomIndicatorComponent.coefficient,
+        )
+        .join(Indicator, Indicator.id == CustomIndicatorComponent.source_indicator_id)
+        .where(CustomIndicatorComponent.custom_indicator_id.in_(indicator_ids))
+        .order_by(CustomIndicatorComponent.id)
+    ).all()
+
+    components: dict[str, list[tuple[str, Decimal]]] = defaultdict(list)
+    for row in rows:
+        custom_code = custom_code_by_id.get(row.custom_indicator_id)
+        if custom_code:
+            components[custom_code].append(
+                (row.code, Decimal(str(row.coefficient)))
+            )
+    return components
+
+
+def _source_indicators_for_components(
+    session: Session,
+    components: dict[str, list[tuple[str, Decimal]]],
+) -> list[Indicator]:
+    source_codes = sorted({code for items in components.values() for code, _ in items})
+    if not source_codes:
+        return []
+    return list(
+        session.scalars(
+            select(Indicator)
+            .where(Indicator.code.in_(source_codes))
+            .order_by(Indicator.sort_order, Indicator.id)
+        )
+    )
+
+
+def _merge_indicator_sources(
+    indicators: list[Indicator],
+    source_indicators: list[Indicator],
+) -> list[Indicator]:
+    by_code: dict[str, Indicator] = {}
+    for indicator in [*indicators, *source_indicators]:
+        by_code.setdefault(indicator.code, indicator)
+    return list(by_code.values())
+
+
+def _weighted_sum(
+    values: dict[str, Any],
+    components: list[tuple[str, Decimal]],
+) -> float | int | None:
+    total = Decimal("0")
+    has_value = False
+    for source_code, coefficient in components:
+        value = values.get(source_code)
+        if value is None:
+            continue
+        total += Decimal(str(value)) * coefficient
+        has_value = True
+    return (
+        _number(total.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+        if has_value
+        else None
+    )
+
+
+def _apply_custom_metrics(
+    rows: list[dict[str, Any]],
+    indicators: list[Indicator],
+    components: dict[str, list[tuple[str, Decimal]]],
+    *,
+    prune_sources: bool = True,
+) -> None:
+    if not components:
+        return
+    response_codes = {indicator.code for indicator in indicators}
+    for row in rows:
+        metrics = row.get("metrics") or {}
+        targets = row.get("targets")
+        for custom_code, custom_components in components.items():
+            if metrics.get(custom_code) is None:
+                metrics[custom_code] = _weighted_sum(metrics, custom_components)
+            if isinstance(targets, dict):
+                if targets.get(custom_code) is None:
+                    targets[custom_code] = _weighted_sum(targets, custom_components)
+        if prune_sources:
+            row["metrics"] = {code: metrics.get(code) for code in response_codes}
+            if isinstance(targets, dict):
+                row["targets"] = {code: targets.get(code) for code in response_codes}
 
 
 def get_indicator_catalog(
@@ -86,6 +194,12 @@ def get_indicator_catalog(
         if enabled_only:
             query = query.where(Indicator.enabled.is_(True))
         indicators = session.scalars(query).all()
+        custom_ids = {
+            row[0]
+            for row in session.execute(
+                select(CustomIndicatorComponent.custom_indicator_id).distinct()
+            ).all()
+        } if _custom_component_table_exists(session) else set()
 
     return {
         "indicators": [
@@ -95,6 +209,10 @@ def get_indicator_catalog(
                 "name": indicator.name,
                 "enabled": indicator.enabled,
                 "source_active": indicator.source_active,
+                "indicator_type": (
+                    "CUSTOM" if indicator.id in custom_ids else indicator.indicator_type
+                ),
+                "storage_mode": indicator.storage_mode,
                 "removed_at": _datetime_iso_millis(indicator.removed_at),
                 "sort_order": indicator.sort_order,
             }
@@ -113,6 +231,8 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
                 Indicator.name,
                 Indicator.enabled,
                 Indicator.source_active,
+                Indicator.indicator_type,
+                Indicator.storage_mode,
                 Indicator.sort_order,
                 Indicator.updated_at,
             ).order_by(Indicator.id)
@@ -124,6 +244,16 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
                 func.max(MetricTarget.updated_at),
             )
         ).one()
+        if _custom_component_table_exists(session):
+            component_version = session.execute(
+                select(
+                    func.count(CustomIndicatorComponent.id),
+                    func.max(CustomIndicatorComponent.id),
+                    func.max(CustomIndicatorComponent.updated_at),
+                )
+            ).one()
+        else:
+            component_version = (0, 0, "")
         indicator_version = "|".join(
             ":".join(
                 [
@@ -132,6 +262,8 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
                     row.name,
                     str(int(bool(row.enabled))),
                     str(int(bool(row.source_active))),
+                    row.indicator_type,
+                    row.storage_mode,
                     str(row.sort_order),
                     _datetime_iso_millis(row.updated_at) or "",
                 ]
@@ -146,6 +278,9 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
                 str(target_version[0] or 0),
                 str(target_version[1] or 0),
                 target_updated_at,
+                str(component_version[0] or 0),
+                str(component_version[1] or 0),
+                _datetime_iso_millis(component_version[2]) or "",
             ]
         )
         data_version = sha256(version_source.encode("utf-8")).hexdigest()
@@ -153,62 +288,6 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
             "latest_run": _run_payload(latest_run),
             "data_version": data_version,
         }
-
-
-def get_snapshot_trend(
-    engine: Engine,
-    *,
-    area_id: int,
-    indicator_code: str,
-    minutes: int = 1440,
-) -> dict[str, Any]:
-    """Return a time-series of snapshot values for one area + indicator.
-
-    Designed for the trend chart.  Queries ``metric_snapshot`` over the
-    requested window (default 24 h) and returns an ascending list of
-    ``(collected_at, value)`` points.
-    """
-    cutoff = datetime.now() - timedelta(minutes=minutes)
-
-    with Session(engine) as session:
-        indicator = session.scalar(
-            select(Indicator).where(
-                Indicator.code == indicator_code,
-                Indicator.enabled.is_(True),
-            )
-        )
-        if indicator is None:
-            return {
-                "area_id": area_id,
-                "indicator_code": indicator_code,
-                "points": [],
-            }
-
-        rows = (
-            session.query(
-                MetricSnapshot.collected_at,
-                MetricSnapshot.metric_value,
-            )
-            .filter(
-                MetricSnapshot.area_id == area_id,
-                MetricSnapshot.indicator_id == indicator.id,
-                MetricSnapshot.collected_at >= cutoff,
-            )
-            .order_by(MetricSnapshot.collected_at.asc())
-            .all()
-        )
-
-    return {
-        "area_id": area_id,
-        "indicator_code": indicator_code,
-        "points": [
-            {
-                "collected_at": r.collected_at.strftime("%Y-%m-%dT%H:%M:%S"),
-                "value": _number(r.metric_value),
-            }
-            for r in rows
-        ],
-    }
 
 
 def get_dashboard_matrix_page(
@@ -251,7 +330,13 @@ def get_dashboard_matrix_page(
                 "page_size": page_size,
                 "total_pages": 0,
             }
-        indicator_ids = [indicator.id for indicator in indicators]
+        components = _component_map_for_indicators(session, indicators)
+        physical_indicators = _merge_indicator_sources(
+            indicators,
+            _source_indicators_for_components(session, components),
+        )
+        indicator_ids = [indicator.id for indicator in physical_indicators]
+        code_by_id = {indicator.id: indicator.code for indicator in physical_indicators}
         indicator_by_code = {indicator.code: indicator for indicator in indicators}
         sort_code = (
             sort_indicator
@@ -259,6 +344,7 @@ def get_dashboard_matrix_page(
             else indicators[0].code
         )
         sort_indicator_id = indicator_by_code[sort_code].id
+        sort_is_custom = sort_code in components
 
         area_query = select(Area).where(
             Area.enabled.is_(True),
@@ -311,7 +397,7 @@ def get_dashboard_matrix_page(
             or 0
         )
 
-        if sort_mode in {"doneAsc", "doneDesc", "progressAsc", "progressDesc"}:
+        if sort_mode in {"doneAsc", "doneDesc", "progressAsc", "progressDesc"} and not sort_is_custom:
             paged_query = (
                 area_query
                 .outerjoin(
@@ -383,7 +469,44 @@ def get_dashboard_matrix_page(
             )
             area_ids = [area.id for area in areas]
             sort_values: dict[int, float] = {}
-            if area_ids:
+            sort_targets: dict[int, float] = {}
+            if area_ids and sort_is_custom:
+                sort_rows_by_area = {
+                    area_id: {
+                        "area_id": area_id,
+                        "metrics": {
+                            indicator.code: None
+                            for indicator in physical_indicators
+                        },
+                    }
+                    for area_id in area_ids
+                }
+                for row in session.execute(
+                    select(
+                        MetricCurrent.area_id,
+                        MetricCurrent.indicator_id,
+                        MetricCurrent.metric_value,
+                    ).where(
+                        MetricCurrent.area_id.in_(area_ids),
+                        MetricCurrent.indicator_id.in_(indicator_ids),
+                    )
+                ):
+                    code = code_by_id.get(row.indicator_id)
+                    if code:
+                        sort_rows_by_area[row.area_id]["metrics"][code] = _number(
+                            row.metric_value
+                        )
+                sort_rows = list(sort_rows_by_area.values())
+                _attach_targets(session, sort_rows, physical_indicators, "REALTIME")
+                _apply_custom_metrics(sort_rows, indicators, components)
+                for row in sort_rows:
+                    value = row["metrics"].get(sort_code)
+                    target = row.get("targets", {}).get(sort_code)
+                    if value is not None:
+                        sort_values[row["area_id"]] = float(value)
+                    if target is not None:
+                        sort_targets[row["area_id"]] = float(target)
+            elif area_ids:
                 for row in session.execute(
                     select(
                         MetricCurrent.area_id,
@@ -402,27 +525,41 @@ def get_dashboard_matrix_page(
                 }
                 for area_id in area_ids
             ]
-            _attach_changes_fast(
-                session,
-                sort_rows,
-                [indicator_by_code[sort_code]],
-                area_ids,
-                change_anchor,
-                change_windows=normalized_windows,
-            )
-            window_key = normalized_windows[0][1]
-            sort_changes = {
-                row["area_id"]: row["changes"][sort_code][window_key]
-                for row in sort_rows
-            }
+            sort_changes: dict[int, dict[str, Any]] = {}
+            if sort_mode.startswith("change"):
+                _attach_changes_fast(
+                    session,
+                    sort_rows,
+                    [indicator_by_code[sort_code]],
+                    area_ids,
+                    change_anchor,
+                    change_windows=normalized_windows,
+                    components=components,
+                )
+                window_key = normalized_windows[0][1]
+                sort_changes = {
+                    row["area_id"]: row["changes"][sort_code][window_key]
+                    for row in sort_rows
+                }
 
             def sort_score(area: Area) -> tuple[int, float, int]:
-                change = sort_changes.get(area.id, {})
-                value = (
-                    change.get("rate")
-                    if sort_mode.startswith("changeRate")
-                    else change.get("value")
-                )
+                if sort_mode.startswith("progress"):
+                    target = sort_targets.get(area.id)
+                    current = sort_values.get(area.id)
+                    value = (
+                        current / target
+                        if current is not None and target and target > 0
+                        else None
+                    )
+                elif sort_mode.startswith("done"):
+                    value = sort_values.get(area.id)
+                else:
+                    change = sort_changes.get(area.id, {})
+                    value = (
+                        change.get("rate")
+                        if sort_mode.startswith("changeRate")
+                        else change.get("value")
+                    )
                 score = 0.0 if value is None else float(value)
                 return (
                     1 if value is None else 0,
@@ -461,18 +598,20 @@ def get_dashboard_matrix_page(
                     MetricCurrent.indicator_id.in_(indicator_ids),
                 )
             ).all()
-            code_by_id = {indicator.id: indicator.code for indicator in indicators}
+            code_by_id = {indicator.id: indicator.code for indicator in physical_indicators}
             for current in current_rows:
                 row = rows_by_area[current.area_id]
-                code = code_by_id[current.indicator_id]
-                row["metrics"][code] = _number(current.metric_value)
+                code = code_by_id.get(current.indicator_id)
+                if code:
+                    row["metrics"][code] = _number(current.metric_value)
                 collected_at = _datetime_iso_millis(current.collected_at)
                 if row["collected_at"] is None or collected_at > row["collected_at"]:
                     row["collected_at"] = collected_at
                     row["collection_run_id"] = current.collection_run_id
 
         rows = list(rows_by_area.values())
-        _attach_targets(session, rows, indicators, "REALTIME")
+        _attach_targets(session, rows, physical_indicators, "REALTIME")
+        _apply_custom_metrics(rows, indicators, components)
         if page_area_ids:
             _attach_changes_fast(
                 session,
@@ -481,6 +620,7 @@ def get_dashboard_matrix_page(
                 page_area_ids,
                 change_anchor,
                 change_windows=normalized_windows,
+                components=components,
             )
 
     return {
@@ -504,6 +644,15 @@ def get_current_wide_table(
     normalized_level = str(level_type or "").strip().upper() or None
     with Session(engine) as session:
         indicators = _enabled_indicators(session, indicator_codes)
+        components = _component_map_for_indicators(session, indicators)
+        physical_indicators = _merge_indicator_sources(
+            indicators,
+            _source_indicators_for_components(session, components),
+        )
+        physical_indicator_ids = [indicator.id for indicator in physical_indicators]
+        physical_code_by_id = {
+            indicator.id: indicator.code for indicator in physical_indicators
+        }
 
         area_query = (
             select(Area)
@@ -522,26 +671,26 @@ def get_current_wide_table(
         targets_by_area = _target_values_by_area(
             session,
             area_ids,
-            list(indicators),
+            physical_indicators,
             "REALTIME",
         )
-        if area_ids and indicators:
+        if area_ids and physical_indicators:
             current_rows = session.execute(
                 select(
                     MetricCurrent.area_id,
-                    Indicator.code,
+                    MetricCurrent.indicator_id,
                     MetricCurrent.metric_value,
                     MetricCurrent.collected_at,
                     MetricCurrent.collection_run_id,
-                )
-                .join(Indicator, Indicator.id == MetricCurrent.indicator_id)
-                .where(
+                ).where(
                     MetricCurrent.area_id.in_(area_ids),
-                    Indicator.enabled.is_(True),
+                    MetricCurrent.indicator_id.in_(physical_indicator_ids),
                 )
             ).all()
             for row in current_rows:
-                values_by_area[row.area_id][row.code] = _number(row.metric_value)
+                code = physical_code_by_id.get(row.indicator_id)
+                if code:
+                    values_by_area[row.area_id][code] = _number(row.metric_value)
                 previous = collected_by_area.get(row.area_id)
                 if previous is None or row.collected_at > previous["collected_at"]:
                     collected_by_area[row.area_id] = {
@@ -584,25 +733,29 @@ def get_current_wide_table(
             indicator.code: targets_by_area[area.id].get(indicator.code)
             for indicator in indicators
         }
-        rows.append(
-            {
-                "area_id": area.id,
-                "area_code": area.area_code,
-                "area_name": area.area_name,
-                "level_type": area.level_type,
-                "level_no": area.level_no,
-                "parent_id": area.parent_id,
-                "collection_run_id": (
-                    collection["collection_run_id"] if collection else None
-                ),
-                "collected_at": (
-                    _datetime_iso_millis(collection["collected_at"])
-                    if collection else None
-                ),
-                "metrics": metrics,
-                "targets": targets,
-            }
-        )
+        row = {
+            "area_id": area.id,
+            "area_code": area.area_code,
+            "area_name": area.area_name,
+            "level_type": area.level_type,
+            "level_no": area.level_no,
+            "parent_id": area.parent_id,
+            "collection_run_id": (
+                collection["collection_run_id"] if collection else None
+            ),
+            "collected_at": (
+                _datetime_iso_millis(collection["collected_at"])
+                if collection else None
+            ),
+            "metrics": metrics,
+            "targets": targets,
+        }
+        if components:
+            row["metrics"].update(values_by_area[area.id])
+            row["targets"].update(targets_by_area[area.id])
+        rows.append(row)
+
+    _apply_custom_metrics(rows, list(indicators), components)
 
     return {
         "latest_run": (
@@ -898,6 +1051,7 @@ def get_current_with_changes(
 
     with Session(engine) as session:
         now = _change_anchor_time(_latest_realtime_run(session))
+        components = _component_map_for_indicators(session, result["indicators"])
         _attach_changes_fast(
             session,
             result["rows"],
@@ -905,6 +1059,7 @@ def get_current_with_changes(
             area_ids,
             now,
             change_windows=normalized_windows,
+            components=components,
         )
 
     return result
@@ -970,6 +1125,11 @@ def get_acc_wide_table(
 
     with Session(engine) as session:
         indicators = _enabled_indicators(session, indicator_codes)
+        components = _component_map_for_indicators(session, indicators)
+        physical_indicators = _merge_indicator_sources(
+            indicators,
+            _source_indicators_for_components(session, components),
+        )
 
         area_query = (
             select(Area)
@@ -983,16 +1143,16 @@ def get_acc_wide_table(
         areas = session.scalars(area_query).all()
         area_ids = [area.id for area in areas]
 
-        indicator_to_id = {ind.code: ind.id for ind in indicators}
+        indicator_to_id = {ind.code: ind.id for ind in physical_indicators}
         values_by_area: dict[int, dict[str, Any]] = defaultdict(dict)
         targets_by_area = _target_values_by_area(
             session,
             area_ids,
-            list(indicators),
+            physical_indicators,
             normalized_period,
         )
 
-        if area_ids and indicators:
+        if area_ids and physical_indicators:
             acc_query = select(
                 MetricAcc.area_id,
                 MetricAcc.indicator_id,
@@ -1049,19 +1209,22 @@ def get_acc_wide_table(
             indicator.code: targets_by_area[area.id].get(indicator.code)
             for indicator in indicators
         }
-        if any(v is not None for v in metrics.values()):
-            rows.append(
-                {
-                    "area_id": area.id,
-                    "area_code": area.area_code,
-                    "area_name": area.area_name,
-                    "level_type": area.level_type,
-                    "level_no": area.level_no,
-                    "parent_id": area.parent_id,
-                    "metrics": metrics,
-                    "targets": targets,
-                }
-            )
+        if components:
+            metrics.update(values_by_area[area.id])
+            targets.update(targets_by_area[area.id])
+        row = {
+            "area_id": area.id,
+            "area_code": area.area_code,
+            "area_name": area.area_name,
+            "level_type": area.level_type,
+            "level_no": area.level_no,
+            "parent_id": area.parent_id,
+            "metrics": metrics,
+            "targets": targets,
+        }
+        _apply_custom_metrics([row], list(indicators), components)
+        if any(v is not None for v in row["metrics"].values()):
+            rows.append(row)
 
     return {
         "indicators": [
@@ -1112,8 +1275,13 @@ def get_dashboard_overview_fast(
     with Session(engine) as session:
         # ① indicators (small, always cached)
         indicators = _enabled_indicators(session, indicator_codes)
-        indicator_ids = [ind.id for ind in indicators]
-        code_by_id = {ind.id: ind.code for ind in indicators}
+        components = _component_map_for_indicators(session, indicators)
+        physical_indicators = _merge_indicator_sources(
+            indicators,
+            _source_indicators_for_components(session, components),
+        )
+        indicator_ids = [ind.id for ind in physical_indicators]
+        code_by_id = {ind.id: ind.code for ind in physical_indicators}
 
         # ② area + metric_current in one JOIN query
         #    Returns all areas (BRANCH always, GRID+CHANNEL filtered by scope)
@@ -1164,16 +1332,17 @@ def get_dashboard_overview_fast(
         ).mappings().all()
 
         # Build rows grouped by level
-        rows_by_area = _group_area_metric_rows(result, indicators, code_by_id)
+        rows_by_area = _group_area_metric_rows(result, physical_indicators, code_by_id)
         all_area_ids = list(rows_by_area)
 
         # ③ snapshots for change windows — only the 4 cutoff timestamps
         _attach_targets(
             session,
             list(rows_by_area.values()),
-            indicators,
+            physical_indicators,
             "REALTIME",
         )
+        _apply_custom_metrics(list(rows_by_area.values()), indicators, components)
         if all_area_ids and indicator_ids:
             _attach_changes_fast(
                 session,
@@ -1182,6 +1351,7 @@ def get_dashboard_overview_fast(
                 all_area_ids,
                 change_anchor,
                 change_windows=normalized_windows,
+                components=components,
             )
         else:
             for row in rows_by_area.values():
@@ -1198,6 +1368,7 @@ def get_dashboard_overview_fast(
             if include_acc
             else []
         )
+        _apply_custom_metrics(acc_rows, indicators, components)
 
     # Assemble branches / grids / channels
     rows = list(rows_by_area.values())
@@ -1240,8 +1411,13 @@ def get_drill_down(
 
     with Session(engine) as session:
         indicators = _enabled_indicators(session, indicator_codes)
-        indicator_ids = [ind.id for ind in indicators]
-        code_by_id = {ind.id: ind.code for ind in indicators}
+        components = _component_map_for_indicators(session, indicators)
+        physical_indicators = _merge_indicator_sources(
+            indicators,
+            _source_indicators_for_components(session, components),
+        )
+        indicator_ids = [ind.id for ind in physical_indicators]
+        code_by_id = {ind.id: ind.code for ind in physical_indicators}
         latest_run = _latest_realtime_run(session)
         change_anchor = _change_anchor_time(latest_run)
 
@@ -1372,11 +1548,12 @@ def get_drill_down(
                 },
             ).mappings().all()
 
-        rows_by_area = _group_area_metric_rows(result, indicators, code_by_id)
+        rows_by_area = _group_area_metric_rows(result, physical_indicators, code_by_id)
         all_area_ids = list(rows_by_area)
         rows = list(rows_by_area.values())
 
-        _attach_targets(session, rows, indicators, "REALTIME")
+        _attach_targets(session, rows, physical_indicators, "REALTIME")
+        _apply_custom_metrics(rows, indicators, components)
         if all_area_ids and indicator_ids:
             _attach_changes_fast(
                 session,
@@ -1385,6 +1562,7 @@ def get_drill_down(
                 all_area_ids,
                 change_anchor,
                 change_windows=normalized_windows,
+                components=components,
             )
         else:
             for row in rows:
@@ -1400,6 +1578,7 @@ def get_drill_down(
             if include_acc
             else []
         )
+        _apply_custom_metrics(acc_rows, indicators, components)
 
     return {
         "latest_run": _run_payload(latest_run),
@@ -1472,6 +1651,7 @@ def _attach_changes_fast(
     now: datetime,
     *,
     change_windows: tuple[tuple[int, str], ...] = _CHANGE_WINDOWS,
+    components: dict[str, list[tuple[str, Decimal]]] | None = None,
 ) -> None:
     """Attach change deltas using only the 4 cutoff-point snapshots.
 
@@ -1479,7 +1659,23 @@ def _attach_changes_fast(
     single nearest snapshot at each cutoff (5/15/30/60 min ago) per
     (area, indicator) via a correlated subquery.
     """
+    components = components or {}
     indicator_ids = [_indicator_id(ind) for ind in indicators]
+    source_code_by_id: dict[int, str] = {}
+    if components:
+        source_codes = sorted(
+            {code for items in components.values() for code, _ in items}
+        )
+        if source_codes:
+            source_rows = session.execute(
+                select(Indicator.id, Indicator.code).where(
+                    Indicator.code.in_(source_codes)
+                )
+            ).all()
+            source_code_by_id = {row.id: row.code for row in source_rows}
+            for row in source_rows:
+                if row.id not in indicator_ids:
+                    indicator_ids.append(row.id)
 
     cutoffs = [(_snapshot_cutoff_time(now, m), k) for m, k in change_windows]
 
@@ -1549,7 +1745,22 @@ def _attach_changes_fast(
 
             changes: dict[str, dict[str, Any]] = {}
             for _, window_key in cutoffs:
-                prev = snapshot_map.get((aid, indicator_id, window_key))
+                if indicator_code in components:
+                    source_values = {
+                        source_code: snapshot_map.get((aid, source_id, window_key))
+                        for source_id, source_code in source_code_by_id.items()
+                    }
+                    previous_value = _weighted_sum(
+                        source_values,
+                        components[indicator_code],
+                    )
+                    prev = (
+                        Decimal(str(previous_value))
+                        if previous_value is not None
+                        else None
+                    )
+                else:
+                    prev = snapshot_map.get((aid, indicator_id, window_key))
                 changes[window_key] = _change_payload(current_dec, prev)
             per_indicator[indicator_code] = changes
         row["changes"] = per_indicator
@@ -1617,18 +1828,26 @@ def _acc_rows_for_areas_fast(
             if code:
                 targets_by_area[target.area_id][code] = _number(target.target_value)
 
-    rows: list[dict[str, Any]] = []
+    rows_by_area: dict[int, dict[str, Any]] = {}
+    metric_codes = set(code_by_id.values())
     for r in result:
         code = code_by_id.get(r["indicator_id"])
         if code:
-            rows.append({
-                "area_id": r["area_id"],
-                "area_code": r["area_code"],
-                "area_name": r["area_name"],
-                "level_type": r["level_type"],
-                "level_no": r["level_no"],
-                "parent_id": r["parent_id"],
-                "metrics": {code: _number(r["metric_value"])},
-                "targets": {code: targets_by_area[r["area_id"]].get(code)},
-            })
-    return rows
+            row = rows_by_area.setdefault(
+                r["area_id"],
+                {
+                    "area_id": r["area_id"],
+                    "area_code": r["area_code"],
+                    "area_name": r["area_name"],
+                    "level_type": r["level_type"],
+                    "level_no": r["level_no"],
+                    "parent_id": r["parent_id"],
+                    "metrics": {metric_code: None for metric_code in metric_codes},
+                    "targets": {
+                        metric_code: targets_by_area[r["area_id"]].get(metric_code)
+                        for metric_code in metric_codes
+                    },
+                },
+            )
+            row["metrics"][code] = _number(r["metric_value"])
+    return list(rows_by_area.values())

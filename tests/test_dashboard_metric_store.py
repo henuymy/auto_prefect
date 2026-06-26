@@ -66,6 +66,8 @@ def create_test_engine():
                     name VARCHAR(200) NOT NULL,
                     enabled BOOLEAN NOT NULL,
                     source_active BOOLEAN NOT NULL DEFAULT 1,
+                    indicator_type VARCHAR(16) NOT NULL DEFAULT 'SOURCE',
+                    storage_mode VARCHAR(16) NOT NULL DEFAULT 'STORE',
                     removed_at DATETIME,
                     sort_order INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -164,6 +166,7 @@ def add_run(
 def test_parse_metric_value_accepts_integer_and_decimal():
     assert parse_metric_value("2,849") == Decimal("2849")
     assert parse_metric_value("1.2500") == Decimal("1.2500")
+    assert parse_metric_value(Decimal("316.000000")) == Decimal("316.000000")
 
 
 @pytest.mark.parametrize("value", [None, "", "--", "abc", "1.23456"])
@@ -249,6 +252,44 @@ def test_write_requires_area_validated_phase_and_rolls_back():
         write_metric_batch(
             engine,
             "batch-invalid",
+            "sgs_ajvwdz",
+            [{"area_id": 101, "raw_value": "12"}],
+            date(2026, 6, 10),
+            datetime(2026, 6, 10, 23, 55),
+        )
+
+    with engine.connect() as connection:
+        assert (
+            connection.execute(text("SELECT COUNT(*) FROM metric_current")).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT COUNT(*) FROM metric_snapshot")
+            ).scalar_one()
+            == 0
+        )
+    engine.dispose()
+
+
+def test_realtime_write_rejects_component_indicator():
+    engine = create_test_engine()
+    add_run(engine, 1, "component-indicator")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE indicator
+                SET storage_mode = 'COMPONENT'
+                WHERE code = 'sgs_ajvwdz'
+                """
+            )
+        )
+
+    with pytest.raises(MetricWriteError, match="启用指标不存在"):
+        write_metric_batch(
+            engine,
+            "component-indicator",
             "sgs_ajvwdz",
             [{"area_id": 101, "raw_value": "12"}],
             date(2026, 6, 10),

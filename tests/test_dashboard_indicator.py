@@ -10,6 +10,8 @@ def test_indicator_uses_minimal_first_version_schema():
         "name",
         "enabled",
         "source_active",
+        "indicator_type",
+        "storage_mode",
         "removed_at",
         "sort_order",
         "created_at",
