@@ -31,7 +31,7 @@ from services.dashboard_metric_store import (
     finalize_metric_run_in_session,
     normalize_metric_rows,
     write_acc_metric_batch_in_session,
-    write_metric_batch_in_session,
+    write_metric_batches_in_session,
 )
 from models.dashboard_collection_run import CollectionRun
 from services.dashboard_simple_collection import create_simple_fetcher
@@ -225,20 +225,20 @@ def execute_dashboard_pipeline(
                     if normalized_period == "DAY_ACC"
                     else "MONTHLY"
                 )
-                for indicator_code, normalized_metric_rows in normalized_rows_by_indicator.items():
-                    if normalized_period == "REALTIME":
-                        indicator_result = write_metric_batch_in_session(
-                            session,
-                            dialect_name=batch.engine.dialect.name,
-                            batch_no=batch_no,
-                            indicator_code=indicator_code,
-                            normalized_rows=normalized_metric_rows,
-                            stat_date=query_date,
-                            collected_at=collected_at,
-                            finalize_run=False,
-                        )
-                        total_written += indicator_result["snapshot_insert_count"]
-                    else:
+                if normalized_period == "REALTIME":
+                    bulk_result = write_metric_batches_in_session(
+                        session,
+                        dialect_name=batch.engine.dialect.name,
+                        batch_no=batch_no,
+                        normalized_rows_by_indicator=normalized_rows_by_indicator,
+                        stat_date=query_date,
+                        collected_at=collected_at,
+                    )
+                    indicator_results.extend(bulk_result["indicator_results"])
+                    total_written = bulk_result["snapshot_insert_count"]
+                    write_timings.update(bulk_result["timings"])
+                else:
+                    for indicator_code, normalized_metric_rows in normalized_rows_by_indicator.items():
                         indicator_result = write_acc_metric_batch_in_session(
                             session,
                             dialect_name=batch.engine.dialect.name,
@@ -252,7 +252,7 @@ def execute_dashboard_pipeline(
                             finalize_run=False,
                         )
                         total_written += indicator_result["acc_upsert_count"]
-                    indicator_results.append(indicator_result)
+                        indicator_results.append(indicator_result)
 
                 finalize_metric_run_in_session(
                     session,

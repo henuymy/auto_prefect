@@ -39,7 +39,15 @@ function Start-Backend {
     $env:PYTHONIOENCODING = "utf-8"
     $env:PYTHONNOUSERSITE = "1"
     $env:PREFECT_API_URL = $PrefectApiUrl
-    & $PythonExe -m uvicorn backend.app:app --reload --host 127.0.0.1 --port $BackendPort
+    & $PythonExe -m uvicorn backend.app:app --reload `
+        --reload-dir backend `
+        --reload-dir services `
+        --reload-dir models `
+        --reload-dir infrastructure `
+        --reload-dir utils `
+        --reload-dir flows `
+        --reload-dir tasks `
+        --host 127.0.0.1 --port $BackendPort
 }
 
 function Start-Frontend {
@@ -52,7 +60,8 @@ switch ($Mode) {
     "backend" { Start-Backend }
     "frontend" { Start-Frontend }
     "both" {
-        $backendCommand = "cd '$RepoRoot'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONNOUSERSITE='1'; `$env:PREFECT_API_URL='$PrefectApiUrl'; & '$PythonExe' -m uvicorn backend.app:app --reload --host 127.0.0.1 --port $BackendPort"
+        $reloadArgs = "--reload-dir backend --reload-dir services --reload-dir models --reload-dir infrastructure --reload-dir utils --reload-dir flows --reload-dir tasks"
+        $backendCommand = "cd '$RepoRoot'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONNOUSERSITE='1'; `$env:PREFECT_API_URL='$PrefectApiUrl'; & '$PythonExe' -m uvicorn backend.app:app --reload $reloadArgs --host 127.0.0.1 --port $BackendPort"
         $frontendDir = Join-Path $RepoRoot "admin_react"
         $frontendCommand = "cd '$frontendDir'; npm run dev -- --host 127.0.0.1 --port $FrontendPort"
 

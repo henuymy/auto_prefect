@@ -78,7 +78,7 @@ pwsh -File scripts\admin_react_start.ps1 -Mode both
 也可以分开启动：
 
 ```powershell
-python -m uvicorn backend.app:app --reload --port 8000
+python -m uvicorn backend.app:app --reload --reload-dir backend --reload-dir services --reload-dir models --reload-dir infrastructure --reload-dir utils --reload-dir flows --reload-dir tasks --port 8000
 ```
 
 ```powershell

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from services.dashboard_retention_service import cleanup_expired_data
+from services.dashboard_retention_service import (
+    _daily_partition_clause,
+    _partition_day,
+    cleanup_expired_data,
+)
 
 
 def create_test_engine():
@@ -17,6 +21,11 @@ def create_test_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    @event.listens_for(engine, "connect")
+    def enable_foreign_keys(dbapi_connection, _connection_record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
     with engine.begin() as conn:
         conn.execute(text("""
             CREATE TABLE collection_run (
@@ -45,13 +54,27 @@ def create_test_engine():
             )
         """))
         conn.execute(text("""
+            CREATE TABLE metric_current (
+                id INTEGER PRIMARY KEY,
+                area_id INTEGER NOT NULL,
+                indicator_id INTEGER NOT NULL,
+                collection_run_id INTEGER NOT NULL,
+                metric_value NUMERIC(20,4) NOT NULL,
+                stat_date DATE NOT NULL,
+                collected_at DATETIME NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(collection_run_id) REFERENCES collection_run(id) ON DELETE RESTRICT
+            )
+        """))
+        conn.execute(text("""
             CREATE TABLE metric_snapshot (
                 id INTEGER PRIMARY KEY,
                 collection_run_id INTEGER NOT NULL,
                 area_id INTEGER NOT NULL,
                 indicator_id INTEGER NOT NULL,
                 metric_value NUMERIC(20,4) NOT NULL,
-                collected_at DATETIME NOT NULL
+                collected_at DATETIME NOT NULL,
+                FOREIGN KEY(collection_run_id) REFERENCES collection_run(id) ON DELETE RESTRICT
             )
         """))
         conn.execute(text("""
@@ -64,7 +87,8 @@ def create_test_engine():
                 collection_run_id INTEGER NOT NULL,
                 metric_value NUMERIC(20,4) NOT NULL,
                 collected_at DATETIME NOT NULL,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(collection_run_id) REFERENCES collection_run(id) ON DELETE RESTRICT
             )
         """))
     return engine
@@ -89,6 +113,26 @@ def _insert_snapshot(conn, run_id, area_id, indicator_id, value, collected_at):
             "VALUES (:run, :area, :ind, :val, :ts)"
         ),
         {"run": run_id, "area": area_id, "ind": indicator_id, "val": value, "ts": collected},
+    )
+
+
+def _insert_current(conn, run_id, area_id, indicator_id, value, collected_at):
+    collected = collected_at.isoformat(sep=" ") if hasattr(collected_at, "isoformat") else collected_at
+    stat_date = collected_at.date().isoformat() if hasattr(collected_at, "date") else str(collected_at)[:10]
+    conn.execute(
+        text(
+            "INSERT INTO metric_current "
+            "(area_id, indicator_id, collection_run_id, metric_value, stat_date, collected_at) "
+            "VALUES (:area, :ind, :run, :val, :date, :ts)"
+        ),
+        {
+            "run": run_id,
+            "area": area_id,
+            "ind": indicator_id,
+            "val": value,
+            "date": stat_date,
+            "ts": collected,
+        },
     )
 
 
@@ -190,6 +234,37 @@ def test_preserve_running_and_pending_runs():
     assert result["run_deleted"] == 0
 
 
+def test_preserve_run_referenced_by_current_metric():
+    engine = create_test_engine()
+    now = datetime.now(UTC).replace(tzinfo=None)
+    old_ts = now - timedelta(days=10)
+
+    with engine.begin() as conn:
+        _insert_run(conn, 1, "SUCCESS", old_ts)
+        _insert_current(conn, 1, 100, 1, 100.0, old_ts)
+
+    with Session(engine) as session:
+        result = cleanup_expired_data(session, run_retention_days=7)
+
+    assert result["run_deleted"] == 0
+    with engine.connect() as conn:
+        remaining = conn.execute(text("SELECT COUNT(*) FROM collection_run")).scalar()
+    assert remaining == 1
+
+
+def test_delete_unreferenced_expired_run():
+    engine = create_test_engine()
+    old_ts = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=10)
+
+    with engine.begin() as conn:
+        _insert_run(conn, 1, "SUCCESS", old_ts)
+
+    with Session(engine) as session:
+        result = cleanup_expired_data(session, run_retention_days=7)
+
+    assert result["run_deleted"] == 1
+
+
 def test_no_op_when_nothing_expired():
     engine = create_test_engine()
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -201,4 +276,21 @@ def test_no_op_when_nothing_expired():
     with Session(engine) as session:
         result = cleanup_expired_data(session, snapshot_retention_days=7)
 
-    assert result == {"snapshot_deleted": 0, "acc_deleted": 0, "run_deleted": 0}
+    assert result == {
+        "snapshot_deleted": 0,
+        "acc_deleted": 0,
+        "run_deleted": 0,
+        "partition_drop_count": 0,
+        "partition_create_count": 0,
+    }
+
+
+def test_daily_partition_helpers():
+    day = _partition_day("p20260627")
+
+    assert day == datetime(2026, 6, 27)
+    assert _partition_day("p_future") is None
+    assert _partition_day("p20261340") is None
+    assert _daily_partition_clause(day) == (
+        "PARTITION p20260627 VALUES LESS THAN ('2026-06-28')"
+    )

@@ -125,6 +125,11 @@ python -m alembic -c alembic_dashboard.ini current
 python -m alembic -c alembic_dashboard.ini upgrade head
 ```
 
+`20260627_0023` 会重建 `metric_snapshot` 的主键、唯一键并按日分区。
+数据量较大时必须先暂停驾驶舱采集，在数据库维护窗口执行；执行前应确认磁盘
+至少有一份 `metric_snapshot` 表大小的额外可用空间。该迁移预建按日
+分区，保留 `p_future` 兜底分区；保留清理会自动提前创建未来 30 天分区。
+
 该迁移只操作 `DASHBOARD_MYSQL_DATABASE` 指定的独立驾驶舱数据库。
 
 ## 注意

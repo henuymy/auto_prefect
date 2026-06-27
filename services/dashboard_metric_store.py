@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from time import perf_counter
 from typing import Any, Iterable
 
 from sqlalchemy import Engine, insert, select
@@ -14,6 +15,9 @@ from models.dashboard_area import Area  # noqa: F401
 from models.dashboard_collection_run import CollectionRun
 from models.dashboard_indicator import Indicator
 from models.dashboard_metric import MetricAcc, MetricCurrent, MetricSnapshot
+
+
+_MYSQL_WRITE_CHUNK_SIZE = 10_000
 
 
 class MetricWriteError(RuntimeError):
@@ -209,6 +213,105 @@ def write_metric_batch_in_session(
     }
 
 
+def write_metric_batches_in_session(
+    session: Session,
+    *,
+    dialect_name: str,
+    batch_no: str,
+    normalized_rows_by_indicator: dict[str, list[dict[str, Any]]],
+    stat_date: date,
+    collected_at: datetime,
+) -> dict[str, Any]:
+    """Write all realtime indicators through one metadata load and bulk path."""
+    metadata_started = perf_counter()
+    run = _load_writable_run(
+        session,
+        batch_no,
+        expected_run_type="REALTIME",
+        scope="实时",
+    )
+    indicator_codes = list(normalized_rows_by_indicator)
+    indicators = session.scalars(
+        select(Indicator).where(
+            Indicator.code.in_(indicator_codes),
+            Indicator.enabled.is_(True),
+        )
+    ).all()
+    indicator_by_code = {indicator.code: indicator for indicator in indicators}
+    missing_codes = [code for code in indicator_codes if code not in indicator_by_code]
+    if missing_codes:
+        raise MetricWriteError(f"指标不存在或未启用: {', '.join(missing_codes)}")
+    metadata_load_seconds = perf_counter() - metadata_started
+
+    snapshot_values: list[dict[str, Any]] = []
+    current_values: list[dict[str, Any]] = []
+    indicator_results: list[dict[str, Any]] = []
+    updated_at = datetime.now()
+    for indicator_code, rows in normalized_rows_by_indicator.items():
+        indicator_id = indicator_by_code[indicator_code].id
+        indicator_results.append({
+            "batch_no": batch_no,
+            "indicator_code": indicator_code,
+            "current_upsert_count": len(rows),
+            "snapshot_insert_count": len(rows),
+            "status": "SUCCESS",
+            "phase": "COMPLETED",
+        })
+        for row in rows:
+            snapshot_values.append({
+                "collection_run_id": run.id,
+                "area_id": row["area_id"],
+                "indicator_id": indicator_id,
+                "metric_value": row["metric_value"],
+                "collected_at": collected_at,
+            })
+            current_values.append({
+                "area_id": row["area_id"],
+                "indicator_id": indicator_id,
+                "collection_run_id": run.id,
+                "metric_value": row["metric_value"],
+                "stat_date": stat_date,
+                "collected_at": collected_at,
+                "updated_at": updated_at,
+            })
+
+    snapshot_started = perf_counter()
+    if dialect_name == "mysql":
+        _insert_mysql_snapshots(session, snapshot_values)
+    else:
+        session.execute(insert(MetricSnapshot), snapshot_values)
+    snapshot_insert_seconds = perf_counter() - snapshot_started
+
+    current_started = perf_counter()
+    if dialect_name == "mysql":
+        _upsert_mysql_current(session, current_values)
+    else:
+        for indicator_code, rows in normalized_rows_by_indicator.items():
+            _write_orm_current_metrics(
+                session,
+                run.id,
+                indicator_by_code[indicator_code].id,
+                rows,
+                stat_date,
+                collected_at,
+            )
+    current_upsert_seconds = perf_counter() - current_started
+
+    total_written = len(snapshot_values)
+    return {
+        "batch_no": batch_no,
+        "indicator_codes": indicator_codes,
+        "indicator_results": indicator_results,
+        "current_upsert_count": total_written,
+        "snapshot_insert_count": total_written,
+        "timings": {
+            "metadata_load_seconds": metadata_load_seconds,
+            "snapshot_insert_seconds": snapshot_insert_seconds,
+            "current_upsert_seconds": current_upsert_seconds,
+        },
+    }
+
+
 def write_acc_metric_batch(
     engine: Engine,
     batch_no: str,
@@ -346,7 +449,7 @@ def _write_mysql_metrics(
         }
         for row in rows
     ]
-    session.execute(insert(MetricSnapshot), snapshot_values)
+    _insert_mysql_snapshots(session, snapshot_values)
 
     updated_at = datetime.now()
     current_values = [
@@ -361,15 +464,36 @@ def _write_mysql_metrics(
         }
         for row in rows
     ]
-    statement = mysql_insert(MetricCurrent).values(current_values)
-    statement = statement.on_duplicate_key_update(
-        collection_run_id=statement.inserted.collection_run_id,
-        metric_value=statement.inserted.metric_value,
-        stat_date=statement.inserted.stat_date,
-        collected_at=statement.inserted.collected_at,
-        updated_at=statement.inserted.updated_at,
-    )
-    session.execute(statement)
+    _upsert_mysql_current(session, current_values)
+
+
+def _chunks(values: list[dict[str, Any]]) -> Iterable[list[dict[str, Any]]]:
+    for start in range(0, len(values), _MYSQL_WRITE_CHUNK_SIZE):
+        yield values[start:start + _MYSQL_WRITE_CHUNK_SIZE]
+
+
+def _insert_mysql_snapshots(
+    session: Session,
+    values: list[dict[str, Any]],
+) -> None:
+    for chunk in _chunks(values):
+        session.execute(insert(MetricSnapshot), chunk)
+
+
+def _upsert_mysql_current(
+    session: Session,
+    values: list[dict[str, Any]],
+) -> None:
+    for chunk in _chunks(values):
+        statement = mysql_insert(MetricCurrent).values(chunk)
+        statement = statement.on_duplicate_key_update(
+            collection_run_id=statement.inserted.collection_run_id,
+            metric_value=statement.inserted.metric_value,
+            stat_date=statement.inserted.stat_date,
+            collected_at=statement.inserted.collected_at,
+            updated_at=statement.inserted.updated_at,
+        )
+        session.execute(statement)
 
 
 def _write_orm_metrics(
@@ -419,6 +543,43 @@ def _write_orm_metrics(
             current.stat_date = stat_date
             current.collected_at = collected_at
             current.updated_at = datetime.now()
+
+
+def _write_orm_current_metrics(
+    session: Session,
+    run_id: int,
+    indicator_id: int,
+    rows: list[dict[str, Any]],
+    stat_date: date,
+    collected_at: datetime,
+) -> None:
+    area_ids = [row["area_id"] for row in rows]
+    current_by_area = {
+        record.area_id: record
+        for record in session.scalars(
+            select(MetricCurrent).where(
+                MetricCurrent.indicator_id == indicator_id,
+                MetricCurrent.area_id.in_(area_ids),
+            )
+        ).all()
+    }
+    for row in rows:
+        current = current_by_area.get(row["area_id"])
+        if current is None:
+            session.add(MetricCurrent(
+                area_id=row["area_id"],
+                indicator_id=indicator_id,
+                collection_run_id=run_id,
+                metric_value=row["metric_value"],
+                stat_date=stat_date,
+                collected_at=collected_at,
+            ))
+            continue
+        current.collection_run_id = run_id
+        current.metric_value = row["metric_value"]
+        current.stat_date = stat_date
+        current.collected_at = collected_at
+        current.updated_at = datetime.now()
 
 
 def _write_orm_daily_metrics(

@@ -5,13 +5,18 @@ import {
   ArrowUp,
   BarChart3,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Database,
   Plus,
+  Palette,
+  GripVertical,
   Search,
   RefreshCw,
   Settings,
   Signal,
   Trash2,
+  X,
 } from "lucide-react";
 import {
   deleteDashboardCustomIndicator,
@@ -86,7 +91,21 @@ type SourceMetricOption = {
 type SourceFilterMode = "all" | "enabled" | "disabled" | "store" | "component";
 const COEFFICIENT_PATTERN = /^-?\d+(\.\d{0,4})?$/;
 const COEFFICIENT_INPUT_PATTERN = /^-?\d*(\.\d{0,4})?$/;
+type OverallCapMode = "CAPPED" | "UNCAPPED";
+type OverallRule = {
+  weightPercent: string;
+  capMode: OverallCapMode;
+  capPercent: string;
+};
+type MatrixProgressColors = {
+  low: string;
+  mid: string;
+  near: string;
+  good: string;
+  stretch: string;
+};
 type MatrixSortMode =
+  | "overallAsc" | "overallDesc"
   | "progressAsc" | "progressDesc"
   | "doneAsc" | "doneDesc"
   | "changeValueAsc" | "changeValueDesc"
@@ -187,8 +206,19 @@ const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
 const DASHBOARD_CACHE_MAX_ENTRIES = 24;
 const MATRIX_ROW_HEIGHT = 58;
 const MATRIX_VIRTUAL_OVERSCAN = 8;
+const MATRIX_PAGE_SIZE = 100;
 const SINGLE_ROW_HEIGHT = 38;
 const SINGLE_VIRTUAL_OVERSCAN = 10;
+const OVERALL_RULE_STORAGE_KEY = "dashboard-overall-progress-rules";
+const MATRIX_PROGRESS_COLOR_STORAGE_KEY = "dashboard-matrix-progress-colors";
+const MATRIX_INDICATOR_ORDER_STORAGE_KEY = "dashboard-matrix-indicator-order";
+const DEFAULT_MATRIX_PROGRESS_COLORS: MatrixProgressColors = {
+  low: "#a4afbe",
+  mid: "#ddc47d",
+  near: "#9bc8f5",
+  good: "#91e6ad",
+  stretch: "#7ddce8",
+};
 
 const LEVEL_CONFIG: {
   key: LevelKey;
@@ -329,6 +359,185 @@ function pct(row: BoardRow) {
 
 function progressScore(row: BoardRow) {
   return pct(row) ?? -1;
+}
+
+function defaultOverallRule(
+  indicator: DashboardCatalogIndicator,
+  level?: LevelKey,
+): OverallRule {
+  const text = `${indicator.name} ${indicator.code}`.toLowerCase();
+  let weightPercent = "10";
+  let capMode: OverallCapMode = "CAPPED";
+  let capPercent = "100";
+
+  if (/爱家|aj|亲情网|v网/.test(text)) {
+    weightPercent = "5";
+  } else if (/终端|合约/.test(text)) {
+    weightPercent = "20";
+    capMode = "UNCAPPED";
+  } else if (/云电脑|yundiannao/.test(text)) {
+    weightPercent = "15";
+    capMode = "UNCAPPED";
+  } else if (/宽带|fttr/.test(text)) {
+    weightPercent = "15";
+  } else if (/高套餐|升档|新业务|大颗粒/.test(text)) {
+    weightPercent = "10";
+  }
+
+  if (
+    level === "GRID" &&
+    (indicator.code === "custome_yundiannao" || indicator.code === "custome_zhongduanheyue")
+  ) {
+    capMode = "CAPPED";
+    capPercent = "200";
+  }
+
+  return {
+    weightPercent,
+    capMode,
+    capPercent,
+  };
+}
+
+function loadOverallRules(): Record<string, OverallRule> {
+  try {
+    const raw = window.localStorage.getItem(OVERALL_RULE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, Partial<OverallRule>>;
+    return Object.fromEntries(
+      Object.entries(parsed).map(([code, rule]) => [
+        code,
+        {
+          weightPercent: String(rule.weightPercent ?? "10"),
+          capMode: rule.capMode === "UNCAPPED" ? "UNCAPPED" : "CAPPED",
+          capPercent: String(rule.capPercent ?? "100"),
+        },
+      ]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function saveOverallRules(rules: Record<string, OverallRule>) {
+  try {
+    window.localStorage.setItem(OVERALL_RULE_STORAGE_KEY, JSON.stringify(rules));
+  } catch {
+    // 本地存储不可用时不影响页面计算。
+  }
+}
+
+function loadMatrixProgressColors(): MatrixProgressColors {
+  try {
+    const raw = window.localStorage.getItem(MATRIX_PROGRESS_COLOR_STORAGE_KEY);
+    if (!raw) return DEFAULT_MATRIX_PROGRESS_COLORS;
+    const parsed = JSON.parse(raw) as Partial<MatrixProgressColors>;
+    return Object.fromEntries(
+      Object.entries(DEFAULT_MATRIX_PROGRESS_COLORS).map(([key, fallback]) => {
+        const value = parsed[key as keyof MatrixProgressColors];
+        return [key, typeof value === "string" && /^#[\da-f]{6}$/i.test(value) ? value : fallback];
+      }),
+    ) as unknown as MatrixProgressColors;
+  } catch {
+    return DEFAULT_MATRIX_PROGRESS_COLORS;
+  }
+}
+
+function saveMatrixProgressColors(colors: MatrixProgressColors) {
+  try {
+    window.localStorage.setItem(MATRIX_PROGRESS_COLOR_STORAGE_KEY, JSON.stringify(colors));
+  } catch {
+    // 本地存储不可用时仍保留当前页面配色。
+  }
+}
+
+function loadMatrixIndicatorOrder() {
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(MATRIX_INDICATOR_ORDER_STORAGE_KEY) || "[]",
+    );
+    return Array.isArray(parsed)
+      ? parsed.filter((code): code is string => typeof code === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function applySavedIndicatorOrder(codes: string[]) {
+  const positions = new Map(
+    loadMatrixIndicatorOrder().map((code, index) => [code, index]),
+  );
+  return [...codes].sort((left, right) => {
+    const leftIndex = positions.get(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightIndex = positions.get(right) ?? Number.MAX_SAFE_INTEGER;
+    return leftIndex - rightIndex;
+  });
+}
+
+function saveMatrixIndicatorOrder(codes: string[]) {
+  try {
+    window.localStorage.setItem(MATRIX_INDICATOR_ORDER_STORAGE_KEY, JSON.stringify(codes));
+  } catch {
+    // 本地存储不可用时仍保留当前会话的排序。
+  }
+}
+
+function parsePercentInput(value: string) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function calculateOverallProgress(
+  row: DashboardRowWithChanges,
+  indicators: DashboardCatalogIndicator[],
+  rules: Record<string, OverallRule>,
+  level?: LevelKey,
+) {
+  let total = 0;
+  let validCount = 0;
+  let weightTotal = 0;
+
+  for (const indicator of indicators) {
+    const rule = rules[indicator.code] ?? defaultOverallRule(indicator, level);
+    const weightPercent = parsePercentInput(rule.weightPercent);
+    if (weightPercent == null || weightPercent <= 0) continue;
+
+    const done = row.metrics[indicator.code];
+    const target = row.targets?.[indicator.code];
+    if (done == null || target == null || target <= 0) continue;
+
+    const rawProgress = done / target;
+    const capPercent = parsePercentInput(rule.capPercent);
+    const countedProgress = rule.capMode === "CAPPED"
+      ? Math.min(rawProgress, Math.max(0, capPercent ?? 100) / 100)
+      : rawProgress;
+
+    total += countedProgress * (weightPercent / 100);
+    weightTotal += weightPercent;
+    validCount += 1;
+  }
+
+  return validCount > 0
+    ? { value: total, validCount, weightTotal }
+    : { value: null, validCount: 0, weightTotal: 0 };
+}
+
+function sortRowsByOverallProgress(
+  rows: DashboardRowWithChanges[],
+  indicators: DashboardCatalogIndicator[],
+  rules: Record<string, OverallRule>,
+  level: LevelKey,
+  direction: "asc" | "desc",
+) {
+  return [...rows].sort((left, right) => {
+    const leftValue = calculateOverallProgress(left, indicators, rules, level).value;
+    const rightValue = calculateOverallProgress(right, indicators, rules, level).value;
+    if (leftValue == null && rightValue == null) return 0;
+    if (leftValue == null) return 1;
+    if (rightValue == null) return -1;
+    return direction === "asc" ? leftValue - rightValue : rightValue - leftValue;
+  });
 }
 
 /* ── data → board transform (pure, no side‑effects) ── */
@@ -540,6 +749,7 @@ export function DashboardCockpit() {
   const [changeWindows, setChangeWindows] = useState<number[]>(DEFAULT_CHANGE_WINDOWS);
   const [multiMetricWindow, setMultiMetricWindow] = useState(60);
   const [multiSelectedCodes, setMultiSelectedCodes] = useState<string[]>([]);
+  const [progressColors, setProgressColors] = useState<MatrixProgressColors>(() => loadMatrixProgressColors());
   const [dataRevision, setDataRevision] = useState(0);
   const [drillStack, setDrillStack] = useState<DrillEntry[]>([]);
   const [scopeMode, setScopeMode] = useState<ScopeMode>("default");
@@ -931,10 +1141,9 @@ export function DashboardCockpit() {
   useEffect(() => {
     if (mode === "multi" && !multiSelectedCodes.length) {
       const initialCodes = selectableIndicators
-        .slice(0, 6)
         .map((item) => item.code);
       if (initialCodes.length) {
-        setMultiSelectedCodes(initialCodes);
+        setMultiSelectedCodes(applySavedIndicatorOrder(initialCodes));
         return;
       }
     }
@@ -955,6 +1164,10 @@ export function DashboardCockpit() {
     }, 30_000);
     return () => window.clearInterval(timer);
   }, [fetchData, mode, multiSelectedCodes.length, selectableIndicators.length]);
+
+  useEffect(() => {
+    if (multiSelectedCodes.length) saveMatrixIndicatorOrder(multiSelectedCodes);
+  }, [multiSelectedCodes]);
 
   useEffect(() => {
     if (levelAllPopup?.kind !== "error") return;
@@ -1219,6 +1432,10 @@ export function DashboardCockpit() {
     });
   }, []);
 
+  useEffect(() => {
+    saveMatrixProgressColors(progressColors);
+  }, [progressColors]);
+
   /* derive */
   const nextCollect = useMemo(() => {
     return nextFiveMinuteTimeText(data?.latestRun?.finished_at);
@@ -1226,7 +1443,16 @@ export function DashboardCockpit() {
 
   /* ── render ── */
   return (
-    <div className="cockpit-shell">
+    <div
+      className="cockpit-shell"
+      style={{
+        "--matrix-progress-low": progressColors.low,
+        "--matrix-progress-mid": progressColors.mid,
+        "--matrix-progress-near": progressColors.near,
+        "--matrix-progress-good": progressColors.good,
+        "--matrix-progress-stretch": progressColors.stretch,
+      } as React.CSSProperties}
+    >
       <Header
         mode={mode}
         onModeChange={handleModeChange}
@@ -1264,6 +1490,12 @@ export function DashboardCockpit() {
         loading={loading}
         onRefresh={() => void fetchData(true)}
         onOpenCustomManager={() => setCustomManagerOpen(true)}
+        progressColors={progressColors}
+        onProgressColorChange={(key, value) => setProgressColors((current) => ({
+          ...current,
+          [key]: value,
+        }))}
+        onResetProgressColors={() => setProgressColors(DEFAULT_MATRIX_PROGRESS_COLORS)}
       />
 
       {customManagerOpen && (
@@ -1395,6 +1627,9 @@ function Header({
   loading,
   onRefresh,
   onOpenCustomManager,
+  progressColors,
+  onProgressColorChange,
+  onResetProgressColors,
 }: {
   mode: CockpitMode;
   onModeChange: (mode: CockpitMode) => void;
@@ -1412,6 +1647,9 @@ function Header({
   loading: boolean;
   onRefresh: () => void;
   onOpenCustomManager: () => void;
+  progressColors: MatrixProgressColors;
+  onProgressColorChange: (key: keyof MatrixProgressColors, value: string) => void;
+  onResetProgressColors: () => void;
 }) {
   const indOptions = indicators.map((ind) => ({ label: ind.name || ind.code, value: ind.code }));
 
@@ -1464,6 +1702,11 @@ function Header({
         <span className="divider" />
         <span>更新时间</span>
         <strong>{updatedAt}</strong>
+        <ProgressColorConfig
+          colors={progressColors}
+          onChange={onProgressColorChange}
+          onReset={onResetProgressColors}
+        />
         <button className="refresh-button" onClick={onRefresh}>
           <RefreshCw size={15} className={loading ? "spin" : ""} />
           刷新
@@ -1558,6 +1801,15 @@ function CustomIndicatorManager({
       })),
     [catalog],
   );
+  const componentSourceCodes = useMemo(() => {
+    const codes = new Set<string>();
+    for (const indicator of customIndicators) {
+      for (const component of indicator.components) {
+        codes.add(component.source_code);
+      }
+    }
+    return codes;
+  }, [customIndicators]);
   const sourceIndicators = useMemo(() => {
     const keyword = sourceKeyword.trim().toLowerCase();
     return catalog
@@ -1566,7 +1818,7 @@ function CustomIndicatorManager({
         if (sourceFilter === "enabled") return indicator.enabled;
         if (sourceFilter === "disabled") return !indicator.enabled;
         if (sourceFilter === "store") return indicator.storage_mode === "STORE";
-        if (sourceFilter === "component") return indicator.storage_mode === "COMPONENT";
+        if (sourceFilter === "component") return componentSourceCodes.has(indicator.code);
         return true;
       })
       .filter((indicator) =>
@@ -1574,7 +1826,7 @@ function CustomIndicatorManager({
         indicator.name.toLowerCase().includes(keyword) ||
         indicator.code.toLowerCase().includes(keyword),
       );
-  }, [catalog, sourceFilter, sourceKeyword]);
+  }, [catalog, componentSourceCodes, sourceFilter, sourceKeyword]);
   const sourceStats = useMemo(() => {
     const sourceRows = catalog.filter((indicator) => indicator.indicator_type !== "CUSTOM");
     return {
@@ -1582,9 +1834,9 @@ function CustomIndicatorManager({
       enabled: sourceRows.filter((indicator) => indicator.enabled).length,
       disabled: sourceRows.filter((indicator) => !indicator.enabled).length,
       store: sourceRows.filter((indicator) => indicator.storage_mode === "STORE").length,
-      component: sourceRows.filter((indicator) => indicator.storage_mode === "COMPONENT").length,
+      component: sourceRows.filter((indicator) => componentSourceCodes.has(indicator.code)).length,
     };
-  }, [catalog]);
+  }, [catalog, componentSourceCodes]);
 
   const updateComponent = (
     index: number,
@@ -1760,7 +2012,7 @@ function CustomIndicatorManager({
                     <dd>{sourceStats.store}</dd>
                   </div>
                   <div>
-                    <dt>只计算</dt>
+                    <dt>公式引用</dt>
                     <dd>{sourceStats.component}</dd>
                   </div>
                 </dl>
@@ -1785,7 +2037,7 @@ function CustomIndicatorManager({
                       ["enabled", "已启用", sourceStats.enabled],
                       ["disabled", "未启用", sourceStats.disabled],
                       ["store", "落库", sourceStats.store],
-                      ["component", "只计算", sourceStats.component],
+                      ["component", "公式引用", sourceStats.component],
                     ].map(([key, label, count]) => (
                       <button
                         key={key}
@@ -1807,6 +2059,7 @@ function CustomIndicatorManager({
                         "source-manager-row",
                         indicator.enabled ? "is-enabled" : "is-disabled",
                         indicator.storage_mode === "COMPONENT" ? "is-component" : "",
+                        componentSourceCodes.has(indicator.code) ? "is-formula-source" : "",
                       ].filter(Boolean).join(" ")}
                     >
                       <div className="source-manager-name">
@@ -1816,6 +2069,7 @@ function CustomIndicatorManager({
                       <div className="source-manager-status">
                         <span>{indicator.enabled ? "已启用" : "未启用"}</span>
                         <span>{indicator.storage_mode === "STORE" ? "落库展示" : "只参与计算"}</span>
+                        {componentSourceCodes.has(indicator.code) && <span>公式引用</span>}
                       </div>
                       <label className="source-manager-enable">
                         <input
@@ -2161,6 +2415,8 @@ function MultiMetricMatrix({
   const [sortIndicator, setSortIndicator] = useState("");
   const [sortMode, setSortMode] = useState<MatrixSortMode>("doneDesc");
   const [indicatorSearch, setIndicatorSearch] = useState("");
+  const [draggedIndicatorCode, setDraggedIndicatorCode] = useState<string | null>(null);
+  const [overallRules, setOverallRules] = useState<Record<string, OverallRule>>(() => loadOverallRules());
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [matrixRows, setMatrixRows] = useState<DashboardRowWithChanges[]>([]);
   const [matrixTotal, setMatrixTotal] = useState(0);
@@ -2186,11 +2442,12 @@ function MultiMetricMatrix({
     if (!orderedCatalog.length) return;
     const availableCodeSet = new Set(orderedCatalog.map((indicator) => indicator.code));
     const valid = selectedCodes
-      .filter((code) => availableCodeSet.has(code))
-      .slice(0, 6);
+      .filter((code) => availableCodeSet.has(code));
     if (valid.length !== selectedCodes.length) {
       onSelectedCodesChange(
-        valid.length ? valid : orderedCatalog.slice(0, 6).map((indicator) => indicator.code),
+        valid.length
+          ? valid
+          : applySavedIndicatorOrder(orderedCatalog.map((indicator) => indicator.code)),
       );
     }
   }, [onSelectedCodesChange, orderedCatalog, selectedCodes]);
@@ -2215,10 +2472,22 @@ function MultiMetricMatrix({
   }, [level, parentId, parentLevel, scopeMode, selectedCodes, sortIndicator, sortMode, windowMinutes]);
 
   useEffect(() => {
+    if (level === "CHANNEL" && sortMode.startsWith("overall")) {
+      setSortMode("doneDesc");
+    }
+  }, [level, sortMode]);
+
+  useEffect(() => {
+    saveOverallRules(overallRules);
+  }, [overallRules]);
+
+
+  useEffect(() => {
     if (!selectedCodes.length || !sortIndicator) return;
     let cancelled = false;
     setMatrixLoading(true);
     setMatrixError("");
+    setMatrixRows([]);
     void getDashboardMatrix({
       levelType: level,
       scopeMode,
@@ -2228,9 +2497,9 @@ function MultiMetricMatrix({
       changeWindow: windowMinutes,
       search: debouncedSearch || undefined,
       sortIndicator,
-      sortMode,
+      sortMode: sortMode.startsWith("overall") ? "doneDesc" : sortMode,
       page: matrixPage,
-      pageSize: 100,
+      pageSize: MATRIX_PAGE_SIZE,
     })
       .then((result) => {
         if (cancelled) return;
@@ -2270,6 +2539,20 @@ function MultiMetricMatrix({
   const selectedIndicators = selectedCodes
     .map((code) => orderedCatalog.find((indicator) => indicator.code === code))
     .filter((indicator): indicator is DashboardCatalogIndicator => Boolean(indicator));
+  const overallEnabled = level !== "CHANNEL";
+  const overallSortActive = overallEnabled && sortMode.startsWith("overall");
+  const displayedMatrixRows = useMemo(
+    () => overallSortActive
+      ? sortRowsByOverallProgress(
+          matrixRows,
+          selectedIndicators,
+          overallRules,
+          level,
+          sortMode === "overallAsc" ? "asc" : "desc",
+        )
+      : matrixRows,
+    [level, matrixRows, overallRules, overallSortActive, selectedIndicators, sortMode],
+  );
   const filteredOptions = orderedCatalog.filter((indicator) => {
     const keyword = indicatorSearch.trim().toLowerCase();
     return !keyword ||
@@ -2284,17 +2567,17 @@ function MultiMetricMatrix({
       Math.floor(matrixScrollTop / MATRIX_ROW_HEIGHT) - MATRIX_VIRTUAL_OVERSCAN,
     );
     const end = Math.min(
-      matrixRows.length,
+      displayedMatrixRows.length,
       start + visibleCount + MATRIX_VIRTUAL_OVERSCAN * 2,
     );
     return {
       start,
       end,
-      rows: matrixRows.slice(start, end),
+      rows: displayedMatrixRows.slice(start, end),
       topHeight: start * MATRIX_ROW_HEIGHT,
-      bottomHeight: Math.max(0, (matrixRows.length - end) * MATRIX_ROW_HEIGHT),
+      bottomHeight: Math.max(0, (displayedMatrixRows.length - end) * MATRIX_ROW_HEIGHT),
     };
-  }, [matrixRows, matrixScrollTop, matrixViewportHeight]);
+  }, [displayedMatrixRows, matrixScrollTop, matrixViewportHeight]);
 
   useEffect(() => {
     const container = matrixScrollRef.current;
@@ -2302,7 +2585,32 @@ function MultiMetricMatrix({
     setMatrixViewportHeight(container.clientHeight || 600);
     container.scrollTop = 0;
     setMatrixScrollTop(0);
-  }, [level, search, sortIndicator, sortMode]);
+  }, [level, matrixPage, search, selectedCodes, sortIndicator, sortMode]);
+
+  const updateOverallRule = (code: string, patch: Partial<OverallRule>) => {
+    const indicator = selectedIndicators.find((item) => item.code === code)
+      || orderedCatalog.find((item) => item.code === code);
+    setOverallRules((current) => ({
+      ...current,
+      [code]: {
+        ...(indicator
+          ? defaultOverallRule(indicator, level)
+          : defaultOverallRule({
+            id: 0,
+            code,
+            name: code,
+            sort_order: 0,
+            enabled: true,
+            source_active: true,
+            indicator_type: "SOURCE",
+            storage_mode: "STORE",
+            removed_at: null,
+          }, level)),
+        ...current[code],
+        ...patch,
+      },
+    }));
+  };
 
   const toggleIndicator = (code: string) => {
     if (selectedCodes.includes(code)) {
@@ -2313,9 +2621,27 @@ function MultiMetricMatrix({
       );
       return;
     }
-    if (selectedCodes.length < 6) {
-      onSelectedCodesChange([...selectedCodes, code]);
-    }
+    onSelectedCodesChange([...selectedCodes, code]);
+  };
+
+  const moveIndicator = (code: string, nextIndex: number) => {
+    const currentIndex = selectedCodes.indexOf(code);
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= selectedCodes.length) return;
+    const nextCodes = [...selectedCodes];
+    nextCodes.splice(currentIndex, 1);
+    nextCodes.splice(nextIndex, 0, code);
+    onSelectedCodesChange(nextCodes);
+  };
+
+  const dropIndicatorBefore = (targetCode: string) => {
+    if (!draggedIndicatorCode || draggedIndicatorCode === targetCode) return;
+    const sourceIndex = selectedCodes.indexOf(draggedIndicatorCode);
+    const targetIndex = selectedCodes.indexOf(targetCode);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const nextCodes = [...selectedCodes];
+    nextCodes.splice(sourceIndex, 1);
+    nextCodes.splice(targetIndex, 0, draggedIndicatorCode);
+    onSelectedCodesChange(nextCodes);
   };
 
   const handleMatrixDrill = (row: DashboardRowWithChanges) => {
@@ -2366,7 +2692,19 @@ function MultiMetricMatrix({
           }))}
           onChange={setSortIndicator}
         />
-        <MatrixSortPicker value={sortMode} onChange={setSortMode} />
+        <MatrixSortPicker
+          value={sortMode}
+          onChange={setSortMode}
+          overallEnabled={overallEnabled}
+        />
+        {overallEnabled && (
+          <OverallProgressConfig
+            indicators={selectedIndicators}
+            rules={overallRules}
+            level={level}
+            onRuleChange={updateOverallRule}
+          />
+        )}
         <details
           className="metric-multi-picker"
           onMouseEnter={keepDetailsOpen}
@@ -2398,22 +2736,60 @@ function MultiMetricMatrix({
                 </label>
               ))}
             </div>
-            <div className="metric-picker-note">最多同时展示 6 个指标</div>
+            <div className="metric-picker-note">可同时展示多个指标，表格支持横向滚动</div>
           </div>
         </details>
       </section>
 
       <div className="selected-indicator-strip">
         {selectedIndicators.map((indicator, index) => (
-          <button
+          <div
             key={indicator.code}
-            type="button"
-            onClick={() => toggleIndicator(indicator.code)}
-            title="从矩阵中移除"
+            className={draggedIndicatorCode === indicator.code ? "is-dragging" : ""}
+            draggable
+            onDragStart={(event) => {
+              setDraggedIndicatorCode(indicator.code);
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", indicator.code);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              dropIndicatorBefore(indicator.code);
+              setDraggedIndicatorCode(null);
+            }}
+            onDragEnd={() => setDraggedIndicatorCode(null)}
           >
-            <i data-index={index} />
-            {indicator.name}
-          </button>
+            <GripVertical size={13} className="indicator-drag-handle" />
+            <i data-index={index % 6} />
+            <span title={indicator.name}>{indicator.name}</span>
+            <button
+              type="button"
+              disabled={index === 0}
+              onClick={() => moveIndicator(indicator.code, index - 1)}
+              title="向前移动"
+            >
+              <ChevronLeft size={13} />
+            </button>
+            <button
+              type="button"
+              disabled={index === selectedIndicators.length - 1}
+              onClick={() => moveIndicator(indicator.code, index + 1)}
+              title="向后移动"
+            >
+              <ChevronRight size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleIndicator(indicator.code)}
+              title="从矩阵中移除"
+            >
+              <X size={13} />
+            </button>
+          </div>
         ))}
       </div>
 
@@ -2421,6 +2797,7 @@ function MultiMetricMatrix({
         <div className="matrix-panel-head">
           <strong>区域 × 指标矩阵</strong>
           <span>{matrixTotal} 个区域，单元格展示完成值、目标值、完成率和 {windowMinutes} 分钟变化</span>
+          {overallSortActive && <em>综合进度为当前页前端排序，渠道级暂不启用</em>}
         </div>
         <div
           ref={matrixScrollRef}
@@ -2433,7 +2810,9 @@ function MultiMetricMatrix({
           <table className="metric-matrix">
             <thead>
               <tr>
+                <th className="matrix-index-column">序号</th>
                 <th className="matrix-area-column">区域</th>
+                {overallEnabled && <th className="matrix-overall-column">整体完成进度</th>}
                 {selectedIndicators.map((indicator) => (
                   <th key={indicator.code}>{indicator.name}</th>
                 ))}
@@ -2443,13 +2822,16 @@ function MultiMetricMatrix({
               {virtualRange.topHeight > 0 && (
                 <tr className="matrix-virtual-spacer" aria-hidden="true">
                   <td
-                    colSpan={selectedIndicators.length + 1}
+                    colSpan={selectedIndicators.length + (overallEnabled ? 3 : 2)}
                     style={{ height: virtualRange.topHeight }}
                   />
                 </tr>
               )}
-              {virtualRange.rows.map((row) => (
+              {virtualRange.rows.map((row, rowIndex) => (
                 <tr key={row.area_id}>
+                  <td className="matrix-index-column">
+                    {(matrixPage - 1) * MATRIX_PAGE_SIZE + virtualRange.start + rowIndex + 1}
+                  </td>
                   <td className="matrix-area-column">
                     <button
                       type="button"
@@ -2460,6 +2842,14 @@ function MultiMetricMatrix({
                       <span>{row.area_code} · {levelLabel(row.level_type)}</span>
                     </button>
                   </td>
+                  {overallEnabled && (
+                    <MatrixOverallCell
+                      row={row}
+                      indicators={selectedIndicators}
+                      rules={overallRules}
+                      level={level}
+                    />
+                  )}
                   {selectedIndicators.map((indicator) => (
                     <MatrixMetricCell
                       key={indicator.code}
@@ -2473,7 +2863,7 @@ function MultiMetricMatrix({
               {virtualRange.bottomHeight > 0 && (
                 <tr className="matrix-virtual-spacer" aria-hidden="true">
                   <td
-                    colSpan={selectedIndicators.length + 1}
+                    colSpan={selectedIndicators.length + (overallEnabled ? 3 : 2)}
                     style={{ height: virtualRange.bottomHeight }}
                   />
                 </tr>
@@ -2482,7 +2872,7 @@ function MultiMetricMatrix({
                 <tr>
                   <td
                     className="matrix-empty"
-                    colSpan={selectedIndicators.length + 1}
+                    colSpan={selectedIndicators.length + (overallEnabled ? 3 : 2)}
                   >
                     {matrixLoading
                       ? "正在加载..."
@@ -2530,13 +2920,7 @@ function MatrixMetricCell({
   const target = row.targets?.[indicator.code];
   const progress = done != null && target != null && target > 0 ? done / target : null;
   const change = row.changes?.[indicator.code]?.[`change_${windowMinutes}min`];
-  const progressClass = progress == null
-    ? "unknown"
-    : progress >= 0.9
-      ? "good"
-      : progress >= 0.8
-        ? "mid"
-        : "low";
+  const progressClass = matrixProgressTone(progress);
   const changeClass = (change?.value ?? 0) > 0
     ? "up"
     : (change?.value ?? 0) < 0
@@ -2560,6 +2944,181 @@ function MatrixMetricCell({
         </span>
       </div>
     </td>
+  );
+}
+
+function MatrixOverallCell({
+  row,
+  indicators,
+  rules,
+  level,
+}: {
+  row: DashboardRowWithChanges;
+  indicators: DashboardCatalogIndicator[];
+  rules: Record<string, OverallRule>;
+  level: LevelKey;
+}) {
+  const result = calculateOverallProgress(row, indicators, rules, level);
+  const progressClass = matrixProgressTone(result.value);
+
+  return (
+    <td className="matrix-overall-cell">
+      <div className="matrix-cell-main">
+        <strong className={`matrix-overall-value ${progressClass}`}>
+          {result.value == null ? "--" : fmtPct(result.value)}
+        </strong>
+        <span className="matrix-overall-count">
+          {result.validCount ? `${result.validCount}项` : "--"}
+        </span>
+      </div>
+      <div className="matrix-cell-meta">
+        <span>有效权重 {result.validCount ? `${result.weightTotal.toFixed(1)}%` : "--"}</span>
+        <span>无目标不计入</span>
+      </div>
+    </td>
+  );
+}
+
+function matrixProgressTone(progress: number | null) {
+  if (progress == null) return "unknown";
+  if (progress >= 2) return "stretch";
+  if (progress >= 1) return "good";
+  if (progress >= 0.9) return "near";
+  if (progress >= 0.6) return "mid";
+  return "low";
+}
+
+function OverallProgressConfig({
+  indicators,
+  rules,
+  level,
+  onRuleChange,
+}: {
+  indicators: DashboardCatalogIndicator[];
+  rules: Record<string, OverallRule>;
+  level: LevelKey;
+  onRuleChange: (code: string, patch: Partial<OverallRule>) => void;
+}) {
+  const totalWeight = indicators.reduce((sum, indicator) => {
+    const rule = rules[indicator.code] ?? defaultOverallRule(indicator, level);
+    const weight = parsePercentInput(rule.weightPercent);
+    return sum + (weight && weight > 0 ? weight : 0);
+  }, 0);
+
+  return (
+    <details
+      className="overall-config"
+      onMouseEnter={keepDetailsOpen}
+      onMouseLeave={closeDetailsAfterLeave}
+    >
+      <summary>
+        <span>综合进度</span>
+        <strong>{totalWeight.toFixed(0)}%</strong>
+        <ChevronDown size={15} />
+      </summary>
+      <div className="overall-config-popover">
+        <div className="overall-config-head">
+          <strong>综合进度配置</strong>
+          <span>无目标值的指标不参与计算和排序</span>
+        </div>
+        <div className="overall-config-list">
+          {indicators.map((indicator) => {
+            const rule = rules[indicator.code] ?? defaultOverallRule(indicator, level);
+            return (
+              <div key={indicator.code} className="overall-config-row">
+                <div className="overall-config-name">
+                  <strong>{indicator.name}</strong>
+                  <span>{indicator.code}</span>
+                </div>
+                <label>
+                  <span>权重%</span>
+                  <input
+                    value={rule.weightPercent}
+                    inputMode="decimal"
+                    onChange={(event) => onRuleChange(indicator.code, {
+                      weightPercent: event.target.value.replace(/[^\d.]/g, ""),
+                    })}
+                  />
+                </label>
+                <label>
+                  <span>封顶</span>
+                  <select
+                    value={rule.capMode}
+                    onChange={(event) => onRuleChange(indicator.code, {
+                      capMode: event.target.value as OverallCapMode,
+                    })}
+                  >
+                    <option value="CAPPED">固定封顶</option>
+                    <option value="UNCAPPED">不封顶</option>
+                  </select>
+                </label>
+                <label>
+                  <span>上限%</span>
+                  <input
+                    value={rule.capPercent}
+                    disabled={rule.capMode === "UNCAPPED"}
+                    inputMode="decimal"
+                    onChange={(event) => onRuleChange(indicator.code, {
+                      capPercent: event.target.value.replace(/[^\d.]/g, ""),
+                    })}
+                  />
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function ProgressColorConfig({
+  colors,
+  onChange,
+  onReset,
+}: {
+  colors: MatrixProgressColors;
+  onChange: (key: keyof MatrixProgressColors, value: string) => void;
+  onReset: () => void;
+}) {
+  return (
+    <details
+      className="progress-color-picker"
+      onMouseEnter={keepDetailsOpen}
+      onMouseLeave={closeDetailsAfterLeave}
+    >
+      <summary title="完成率配色">
+        <Palette size={15} />
+        <span>配色</span>
+      </summary>
+      <div className="progress-color-popover">
+        <div className="progress-color-config-title">
+          <strong>完成率配色</strong>
+          <button type="button" onClick={onReset}>
+            <RefreshCw size={13} />
+            恢复默认
+          </button>
+        </div>
+        <div className="progress-color-options">
+          {([
+            ["low", "< 60%"],
+            ["mid", "60–90%"],
+            ["near", "90–100%"],
+            ["good", "100–200%"],
+            ["stretch", "≥ 200%"],
+          ] as [keyof MatrixProgressColors, string][]).map(([key, label]) => (
+            <label key={key}>
+              <input
+                type="color"
+                value={colors[key]}
+                onChange={(event) => onChange(key, event.target.value)}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -2648,11 +3207,12 @@ function Selector({
 }
 
 const MATRIX_SORT_FIELDS: {
-  key: "progress" | "done" | "changeValue" | "changeRate";
+  key: "overall" | "progress" | "done" | "changeValue" | "changeRate";
   label: string;
   asc: MatrixSortMode;
   desc: MatrixSortMode;
 }[] = [
+  { key: "overall", label: "整体完成进度", asc: "overallAsc", desc: "overallDesc" },
   { key: "progress", label: "完成率", asc: "progressAsc", desc: "progressDesc" },
   { key: "done", label: "完成值", asc: "doneAsc", desc: "doneDesc" },
   { key: "changeValue", label: "变化量", asc: "changeValueAsc", desc: "changeValueDesc" },
@@ -2662,13 +3222,18 @@ const MATRIX_SORT_FIELDS: {
 function MatrixSortPicker({
   value,
   onChange,
+  overallEnabled = true,
 }: {
   value: MatrixSortMode;
   onChange: (value: MatrixSortMode) => void;
+  overallEnabled?: boolean;
 }) {
-  const selected = MATRIX_SORT_FIELDS.find(
+  const fields = overallEnabled
+    ? MATRIX_SORT_FIELDS
+    : MATRIX_SORT_FIELDS.filter((field) => field.key !== "overall");
+  const selected = fields.find(
     (field) => field.asc === value || field.desc === value,
-  ) || MATRIX_SORT_FIELDS[1];
+  ) || fields[1] || fields[0];
   const selectedDirection = selected.asc === value ? "asc" : "desc";
   const DirectionIcon = selectedDirection === "asc" ? ArrowUp : ArrowDown;
 
@@ -2685,7 +3250,7 @@ function MatrixSortPicker({
           <ChevronDown size={15} />
         </summary>
         <div className="matrix-sort-field-popover">
-          {MATRIX_SORT_FIELDS.map((field) => (
+          {fields.map((field) => (
             <button
               key={field.key}
               type="button"
@@ -2993,7 +3558,7 @@ const DataRow = memo(function DataRow({
       <span className="name" title={item.name}>{item.name}</span>
       <span className="done-cell">
         <strong>{formatNumber(item.done)}</strong>
-        <em>{fmtProgress(pct(item))}</em>
+        <em className={matrixProgressTone(pct(item))}>{fmtProgress(pct(item))}</em>
       </span>
       <span className="target-cell">
         {item.target == null ? "--" : formatNumber(item.target)}

@@ -76,6 +76,7 @@ class MetricSnapshot(DashboardBase):
             "collection_run_id",
             "area_id",
             "indicator_id",
+            "collected_at",
             name="uq_metric_snapshot_run_area_indicator",
         ),
         Index(
@@ -113,6 +114,7 @@ class MetricSnapshot(DashboardBase):
     )
     collected_at: Mapped[datetime] = mapped_column(
         mysql.DATETIME(fsp=3),
+        primary_key=True,
         nullable=False,
     )
 

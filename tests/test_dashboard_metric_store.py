@@ -17,6 +17,7 @@ from services.dashboard_metric_store import (
     write_acc_metric_batch,
     write_metric_batch,
     write_metric_batch_in_session,
+    write_metric_batches_in_session,
 )
 
 
@@ -473,4 +474,50 @@ def test_write_multiple_realtime_indicators_in_one_run():
     assert second["current_upsert_count"] == 1
     assert current_rows == [(1, 12), (2, 7)]
     assert run == ("SUCCESS", "COMPLETED", 2, 2)
+    engine.dispose()
+
+
+def test_bulk_write_multiple_realtime_indicators_with_timings():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO indicator (id, code, name, enabled, sort_order)
+            VALUES (2, 'custom_bulk', '批量指标', 1, 20)
+        """))
+    add_run(engine, 1, "bulk-realtime")
+
+    from sqlalchemy.orm import Session
+
+    with Session(engine) as session, session.begin():
+        result = write_metric_batches_in_session(
+            session,
+            dialect_name=engine.dialect.name,
+            batch_no="bulk-realtime",
+            normalized_rows_by_indicator={
+                "sgs_ajvwdz": [
+                    {"area_id": 101, "metric_value": Decimal("12")},
+                    {"area_id": 102, "metric_value": Decimal("13")},
+                ],
+                "custom_bulk": [
+                    {"area_id": 101, "metric_value": Decimal("7")},
+                ],
+            },
+            stat_date=date(2026, 6, 27),
+            collected_at=datetime(2026, 6, 27, 16, 30),
+        )
+
+    with engine.connect() as connection:
+        snapshots = connection.scalar(text("SELECT COUNT(*) FROM metric_snapshot"))
+        current = connection.scalar(text("SELECT COUNT(*) FROM metric_current"))
+
+    assert result["snapshot_insert_count"] == 3
+    assert result["current_upsert_count"] == 3
+    assert len(result["indicator_results"]) == 2
+    assert set(result["timings"]) == {
+        "metadata_load_seconds",
+        "snapshot_insert_seconds",
+        "current_upsert_seconds",
+    }
+    assert snapshots == 3
+    assert current == 3
     engine.dispose()

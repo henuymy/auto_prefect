@@ -723,6 +723,27 @@ body {
   font-size: 12px;
 }
 
+.done-cell em.low,
+.done-cell em.unknown {
+  color: var(--matrix-progress-low);
+}
+
+.done-cell em.mid {
+  color: var(--matrix-progress-mid);
+}
+
+.done-cell em.near {
+  color: var(--matrix-progress-near);
+}
+
+.done-cell em.good {
+  color: var(--matrix-progress-good);
+}
+
+.done-cell em.stretch {
+  color: var(--matrix-progress-stretch);
+}
+
 .done-cell small {
   grid-column: 1 / -1;
   margin-top: 2px;
@@ -860,6 +881,7 @@ body {
     minmax(180px, 0.85fr)
     minmax(190px, 0.95fr)
     minmax(190px, 0.95fr)
+    minmax(180px, 0.85fr)
     minmax(210px, 1fr);
   gap: 10px;
   align-items: center;
@@ -913,6 +935,7 @@ body {
 
 .matrix-search,
 .metric-multi-picker summary,
+.overall-config summary,
 .matrix-sort-picker summary {
   display: flex;
   align-items: center;
@@ -1035,7 +1058,8 @@ body {
 }
 
 .matrix-search > span,
-.metric-multi-picker summary > span {
+.metric-multi-picker summary > span,
+.overall-config summary > span {
   color: #94a3b8;
   font-size: 13px;
   white-space: nowrap;
@@ -1067,18 +1091,21 @@ body {
   min-width: 0;
 }
 
-.metric-multi-picker summary {
+.metric-multi-picker summary,
+.overall-config summary {
   gap: 10px;
   padding: 0 12px;
   list-style: none;
   cursor: pointer;
 }
 
-.metric-multi-picker summary::-webkit-details-marker {
+.metric-multi-picker summary::-webkit-details-marker,
+.overall-config summary::-webkit-details-marker {
   display: none;
 }
 
-.metric-multi-picker summary strong {
+.metric-multi-picker summary strong,
+.overall-config summary strong {
   overflow: hidden;
   flex: 1;
   color: #f8fbff;
@@ -1087,8 +1114,219 @@ body {
   white-space: nowrap;
 }
 
-.metric-multi-picker[open] summary {
+.metric-multi-picker[open] summary,
+.overall-config[open] summary {
   border-color: rgba(147, 197, 253, 0.42);
+}
+
+.overall-config {
+  position: relative;
+  min-width: 0;
+}
+
+.overall-config-popover {
+  position: absolute;
+  top: 48px;
+  right: 0;
+  z-index: 35;
+  width: min(720px, calc(100vw - 44px));
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: #101720;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+}
+
+.overall-config-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.overall-config-head strong {
+  color: #f8fbff;
+  font-size: 14px;
+}
+
+.overall-config-head span {
+  color: #8a98ab;
+  font-size: 12px;
+}
+
+.progress-color-picker {
+  position: relative;
+}
+
+.progress-color-picker summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 6px;
+  padding: 0 9px;
+  color: #b8c5d5;
+  background: rgba(15, 23, 42, 0.46);
+  font-size: 12px;
+  font-weight: 750;
+  list-style: none;
+  cursor: pointer;
+}
+
+.progress-color-picker summary::-webkit-details-marker {
+  display: none;
+}
+
+.progress-color-picker[open] summary,
+.progress-color-picker summary:hover {
+  border-color: rgba(147, 197, 253, 0.36);
+  color: #e6eef8;
+}
+
+.progress-color-popover {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  z-index: 45;
+  display: grid;
+  gap: 12px;
+  width: min(560px, calc(100vw - 32px));
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  padding: 13px 14px;
+  background: #101720;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+}
+
+.progress-color-config-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-color-config-title strong {
+  color: #dbe4ef;
+  font-size: 12px;
+}
+
+.progress-color-config-title button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 2px 0;
+  color: #8fa1b7;
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.progress-color-config-title button:hover {
+  color: #dbeafe;
+}
+
+.progress-color-options {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(86px, 1fr));
+  gap: 8px;
+}
+
+.progress-color-options label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #aab6c6;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.progress-color-options input[type="color"] {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 5px;
+  padding: 2px;
+  background: #0b1119;
+  cursor: pointer;
+}
+
+.overall-config-list {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.overall-config-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 86px 118px 86px;
+  gap: 10px;
+  align-items: end;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(8, 13, 21, 0.46);
+}
+
+.overall-config-name {
+  min-width: 0;
+}
+
+.overall-config-name strong,
+.overall-config-name span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overall-config-name strong {
+  color: #f1f5fa;
+  font-size: 13px;
+}
+
+.overall-config-name span {
+  margin-top: 3px;
+  color: #8090a5;
+  font-size: 11px;
+}
+
+.overall-config-row label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.overall-config-row label span {
+  color: #8d9bae;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.overall-config-row input,
+.overall-config-row select {
+  height: 32px;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  padding: 0 9px;
+  outline: 0;
+  color: #f8fbff;
+  background: rgba(7, 11, 18, 0.74);
+  font-weight: 800;
+}
+
+.overall-config-row input:disabled {
+  color: #64748b;
+  background: rgba(15, 23, 42, 0.42);
 }
 
 .metric-picker-popover {
@@ -1540,6 +1778,12 @@ body {
   color: #fde68a;
 }
 
+.source-manager-row.is-formula-source .source-manager-status span:last-child {
+  border-color: rgba(96, 165, 250, 0.3);
+  background: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+}
+
 .source-manager-enable {
   display: inline-flex;
   align-items: center;
@@ -1682,6 +1926,11 @@ body {
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.46);
 }
 
+.custom-component-row:nth-last-child(-n+3) .source-metric-popover {
+  top: auto;
+  bottom: 48px;
+}
+
 .source-metric-search {
   display: flex;
   align-items: center;
@@ -1712,7 +1961,7 @@ body {
 }
 
 .source-metric-options {
-  max-height: min(320px, calc(100dvh - 360px));
+  max-height: min(300px, calc(100dvh - 420px));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: rgba(88, 107, 132, 0.72) transparent;
@@ -1817,7 +2066,7 @@ body {
   z-index: 20;
 }
 
-.custom-component-row button {
+.custom-component-row > button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1828,7 +2077,7 @@ body {
   cursor: pointer;
 }
 
-.custom-component-row button:disabled {
+.custom-component-row > button:disabled {
   opacity: 0.38;
   cursor: not-allowed;
 }
@@ -1896,7 +2145,7 @@ body {
   padding: 8px 2px 0;
 }
 
-.selected-indicator-strip button {
+.selected-indicator-strip > div {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1904,12 +2153,59 @@ body {
   height: 28px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 999px;
-  padding: 0 9px;
+  padding: 0 5px 0 7px;
   color: #dce5f1;
   background: rgba(28, 36, 48, 0.9);
   font-size: 12px;
   font-weight: 800;
+  cursor: grab;
+  transition: border-color 120ms ease, opacity 120ms ease;
+}
+
+.selected-indicator-strip > div:hover {
+  border-color: rgba(147, 197, 253, 0.34);
+}
+
+.selected-indicator-strip > div.is-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.selected-indicator-strip > div > span {
+  overflow: hidden;
+  max-width: 170px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-indicator-strip .indicator-drag-handle {
+  flex: 0 0 auto;
+  color: #708198;
+}
+
+.selected-indicator-strip > div > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  color: #8797aa;
+  background: transparent;
   cursor: pointer;
+}
+
+.selected-indicator-strip > div > button:hover:not(:disabled) {
+  color: #e5edf7;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.selected-indicator-strip > div > button:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .selected-indicator-strip i {
@@ -1965,6 +2261,13 @@ body {
 .matrix-panel-head span {
   color: #8897aa;
   font-size: 12px;
+}
+
+.matrix-panel-head em {
+  margin-left: auto;
+  color: #93c5fd;
+  font-size: 12px;
+  font-style: normal;
 }
 
 .matrix-scroll {
@@ -2041,15 +2344,33 @@ body {
   white-space: nowrap;
 }
 
-.metric-matrix .matrix-area-column {
+.metric-matrix .matrix-index-column {
   position: sticky;
   left: 0;
+  z-index: 2;
+  min-width: 52px;
+  width: 52px;
+  color: #7f8ea2;
+  background: #101720;
+  text-align: center;
+}
+
+.metric-matrix .matrix-area-column {
+  position: sticky;
+  left: 52px;
   z-index: 2;
   min-width: 190px;
   width: 190px;
   background: #101720;
 }
 
+.metric-matrix .matrix-overall-column,
+.metric-matrix .matrix-overall-cell {
+  min-width: 170px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.metric-matrix thead .matrix-index-column,
 .metric-matrix thead .matrix-area-column {
   z-index: 4;
   background: #111821;
@@ -2104,32 +2425,71 @@ body {
 }
 
 .matrix-cell-main span {
-  min-width: 46px;
-  border-radius: 6px;
-  padding: 3px 5px;
+  min-width: 44px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 5px;
   font-size: 10px;
-  font-weight: 900;
+  font-weight: 750;
   text-align: center;
 }
 
-.matrix-cell-main .good {
-  color: #c9f8d6;
-  background: rgba(34, 197, 94, 0.14);
+.matrix-cell-main span.good {
+  border-color: color-mix(in srgb, var(--matrix-progress-good) 22%, transparent);
+  color: var(--matrix-progress-good);
+  background: color-mix(in srgb, var(--matrix-progress-good) 10%, transparent);
 }
 
-.matrix-cell-main .mid {
-  color: #ffe2a0;
-  background: rgba(245, 158, 11, 0.14);
+.matrix-cell-main span.stretch {
+  border-color: color-mix(in srgb, var(--matrix-progress-stretch) 22%, transparent);
+  color: var(--matrix-progress-stretch);
+  background: color-mix(in srgb, var(--matrix-progress-stretch) 10%, transparent);
 }
 
-.matrix-cell-main .low {
-  color: #ffd4d0;
-  background: rgba(239, 68, 68, 0.14);
+.matrix-cell-main span.near {
+  border-color: color-mix(in srgb, var(--matrix-progress-near) 22%, transparent);
+  color: var(--matrix-progress-near);
+  background: color-mix(in srgb, var(--matrix-progress-near) 10%, transparent);
 }
 
-.matrix-cell-main .unknown {
-  color: #8997aa;
-  background: rgba(148, 163, 184, 0.1);
+.matrix-cell-main span.mid {
+  border-color: color-mix(in srgb, var(--matrix-progress-mid) 20%, transparent);
+  color: var(--matrix-progress-mid);
+  background: color-mix(in srgb, var(--matrix-progress-mid) 9%, transparent);
+}
+
+.matrix-cell-main span.low,
+.matrix-cell-main span.unknown {
+  border-color: color-mix(in srgb, var(--matrix-progress-low) 16%, transparent);
+  color: var(--matrix-progress-low);
+  background: color-mix(in srgb, var(--matrix-progress-low) 7%, transparent);
+}
+
+.matrix-cell-main .matrix-overall-count {
+  border-color: rgba(148, 163, 184, 0.1);
+  color: #a4afbe;
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.matrix-overall-value.low,
+.matrix-overall-value.unknown {
+  color: var(--matrix-progress-low);
+}
+
+.matrix-overall-value.mid {
+  color: var(--matrix-progress-mid);
+}
+
+.matrix-overall-value.near {
+  color: var(--matrix-progress-near);
+}
+
+.matrix-overall-value.good {
+  color: var(--matrix-progress-good);
+}
+
+.matrix-overall-value.stretch {
+  color: var(--matrix-progress-stretch);
 }
 
 .matrix-cell-meta {
