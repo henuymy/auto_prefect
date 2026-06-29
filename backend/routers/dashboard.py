@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from threading import Lock
+from datetime import datetime
+import json
+from threading import Event, Lock
 from time import monotonic
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -24,16 +27,46 @@ from services.dashboard_query_service import (
     get_current_wide_table,
     get_current_with_changes,
     get_indicator_catalog,
+    get_historical_matrix_page,
+    get_historical_run_id,
+    get_historical_with_changes,
+    get_history_options,
+    get_history_range,
     get_latest_dashboard_run,
     parse_change_window_minutes,
 )
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
-_DASHBOARD_CACHE_TTL_SECONDS = 20.0
-_DASHBOARD_CACHE_MAX_ENTRIES = 64
-_dashboard_cache: OrderedDict[tuple[Any, ...], tuple[float, dict[str, Any]]] = OrderedDict()
+_SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+_DASHBOARD_CACHE_TTL_SECONDS = 120.0
+_HISTORY_CACHE_TTL_SECONDS = 10 * 60.0
+_CACHE_FAILURE_TTL_SECONDS = 2.0
+_DASHBOARD_CACHE_MAX_ENTRIES = 128
+_DASHBOARD_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_VERSION_STATE_TTL_SECONDS = 2.0
+_dashboard_cache: OrderedDict[
+    tuple[Any, ...],
+    tuple[float, dict[str, Any], int],
+] = OrderedDict()
 _dashboard_cache_lock = Lock()
+_dashboard_cache_inflight: dict[tuple[Any, ...], Event] = {}
+_dashboard_cache_failures: OrderedDict[
+    tuple[Any, ...],
+    tuple[float, Exception],
+] = OrderedDict()
+_dashboard_cache_total_bytes = 0
+_dashboard_cache_stats = {
+    "hits": 0,
+    "misses": 0,
+    "waits": 0,
+    "loads": 0,
+    "evictions": 0,
+    "failures": 0,
+}
+_version_state_lock = Lock()
+_version_state_cached_at = 0.0
+_version_state_cache: dict[str, Any] | None = None
 
 
 class CustomIndicatorComponentPayload(BaseModel):
@@ -78,32 +111,166 @@ def _parse_indicator_codes(value: str | None) -> list[str] | None:
     return codes or None
 
 
+def _history_local_time(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(_SHANGHAI_TZ).replace(tzinfo=None)
+
+
+def _get_cached_version_state(engine) -> dict[str, Any]:
+    global _version_state_cached_at, _version_state_cache
+    now = monotonic()
+    with _version_state_lock:
+        if (
+            _version_state_cache is not None
+            and now - _version_state_cached_at <= _VERSION_STATE_TTL_SECONDS
+        ):
+            return _version_state_cache
+        state = get_latest_dashboard_run(engine)
+        _version_state_cache = state
+        _version_state_cached_at = monotonic()
+        return state
+
+
+def _invalidate_version_state() -> None:
+    global _version_state_cached_at, _version_state_cache
+    with _version_state_lock:
+        _version_state_cache = None
+        _version_state_cached_at = 0.0
+
+
+def _cache_result_size(result: dict[str, Any]) -> int:
+    return len(json.dumps(
+        result,
+        ensure_ascii=False,
+        default=str,
+        separators=(",", ":"),
+    ).encode("utf-8"))
+
+
+def _remove_cache_entry(key: tuple[Any, ...]) -> None:
+    global _dashboard_cache_total_bytes
+    cached = _dashboard_cache.pop(key, None)
+    if cached is not None:
+        _dashboard_cache_total_bytes -= cached[2]
+
+
+def _load_cached_response(
+    *,
+    namespace: str,
+    resolved_key: tuple[Any, ...],
+    ttl_seconds: float,
+    loader: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    global _dashboard_cache_total_bytes
+    full_key = (namespace, *resolved_key)
+
+    while True:
+        now = monotonic()
+        with _dashboard_cache_lock:
+            failed = _dashboard_cache_failures.get(full_key)
+            if failed and now - failed[0] <= _CACHE_FAILURE_TTL_SECONDS:
+                raise failed[1]
+            if failed:
+                _dashboard_cache_failures.pop(full_key, None)
+            cached = _dashboard_cache.get(full_key)
+            if cached and now - cached[0] <= ttl_seconds:
+                _dashboard_cache_stats["hits"] += 1
+                _dashboard_cache.move_to_end(full_key)
+                return cached[1]
+            if cached:
+                _remove_cache_entry(full_key)
+            pending = _dashboard_cache_inflight.get(full_key)
+            if pending is None:
+                _dashboard_cache_stats["misses"] += 1
+                pending = Event()
+                _dashboard_cache_inflight[full_key] = pending
+                is_loader = True
+            else:
+                _dashboard_cache_stats["waits"] += 1
+                is_loader = False
+        if is_loader:
+            break
+        pending.wait(timeout=120.0)
+
+    try:
+        with _dashboard_cache_lock:
+            _dashboard_cache_stats["loads"] += 1
+        result = loader()
+        result_size = _cache_result_size(result)
+        with _dashboard_cache_lock:
+            if namespace == "realtime":
+                current_version = resolved_key[0]
+                stale_keys = [
+                    key for key in _dashboard_cache
+                    if key[0] == "realtime" and key[1] != current_version
+                ]
+                for key in stale_keys:
+                    _remove_cache_entry(key)
+            _remove_cache_entry(full_key)
+            _dashboard_cache_failures.pop(full_key, None)
+            _dashboard_cache[full_key] = (monotonic(), result, result_size)
+            _dashboard_cache_total_bytes += result_size
+            while (
+                len(_dashboard_cache) > _DASHBOARD_CACHE_MAX_ENTRIES
+                or _dashboard_cache_total_bytes > _DASHBOARD_CACHE_MAX_BYTES
+            ):
+                oldest_key = next(iter(_dashboard_cache))
+                _remove_cache_entry(oldest_key)
+                _dashboard_cache_stats["evictions"] += 1
+        return result
+    except Exception as exc:
+        with _dashboard_cache_lock:
+            _dashboard_cache_stats["failures"] += 1
+            _dashboard_cache_failures[full_key] = (monotonic(), exc)
+            while len(_dashboard_cache_failures) > _DASHBOARD_CACHE_MAX_ENTRIES:
+                _dashboard_cache_failures.popitem(last=False)
+        raise
+    finally:
+        with _dashboard_cache_lock:
+            pending = _dashboard_cache_inflight.pop(full_key, None)
+            if pending is not None:
+                pending.set()
+
+
 def _cached_response(
     engine,
     cache_key: tuple[Any, ...],
     loader: Callable[[], dict[str, Any]],
 ) -> dict[str, Any]:
-    latest_state = get_latest_dashboard_run(engine)
-    data_version = latest_state.get("data_version")
-    resolved_key = (data_version, *cache_key)
-    now = monotonic()
-    with _dashboard_cache_lock:
-        cached = _dashboard_cache.get(resolved_key)
-        if cached and now - cached[0] <= _DASHBOARD_CACHE_TTL_SECONDS:
-            _dashboard_cache.move_to_end(resolved_key)
-            return cached[1]
-        if cached:
-            _dashboard_cache.pop(resolved_key, None)
+    version_state = _get_cached_version_state(engine)
+    return _load_cached_response(
+        namespace="realtime",
+        resolved_key=(version_state.get("data_version"), *cache_key),
+        ttl_seconds=_DASHBOARD_CACHE_TTL_SECONDS,
+        loader=loader,
+    )
 
-    result = loader()
-    with _dashboard_cache_lock:
-        stale_keys = [key for key in _dashboard_cache if key[0] != data_version]
-        for key in stale_keys:
-            _dashboard_cache.pop(key, None)
-        _dashboard_cache[resolved_key] = (now, result)
-        while len(_dashboard_cache) > _DASHBOARD_CACHE_MAX_ENTRIES:
-            _dashboard_cache.popitem(last=False)
-    return result
+
+def _cached_history_response(
+    engine,
+    *,
+    as_of: datetime,
+    cache_key: tuple[Any, ...],
+    loader: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    version_state = _get_cached_version_state(engine)
+    run_id = get_historical_run_id(engine, as_of)
+    config_version = version_state.get("config_version")
+    history_version = f"{run_id or 0}:{config_version or ''}"
+
+    def load_with_version() -> dict[str, Any]:
+        result = loader()
+        result["data_version"] = history_version
+        result["config_version"] = config_version
+        return result
+
+    return _load_cached_response(
+        namespace="history",
+        resolved_key=(history_version, *cache_key),
+        ttl_seconds=_HISTORY_CACHE_TTL_SECONDS,
+        loader=load_with_version,
+    )
 
 
 @router.get("/indicators")
@@ -141,7 +308,7 @@ def dashboard_custom_indicators():
 def save_dashboard_custom_indicator(payload: CustomIndicatorPayload):
     engine = get_dashboard_engine()
     try:
-        return upsert_custom_indicator(
+        result = upsert_custom_indicator(
             engine,
             code=payload.code,
             name=payload.name,
@@ -152,6 +319,8 @@ def save_dashboard_custom_indicator(payload: CustomIndicatorPayload):
                 for component in payload.components
             ],
         )
+        _invalidate_version_state()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -165,7 +334,9 @@ def save_dashboard_custom_indicator(payload: CustomIndicatorPayload):
 def remove_dashboard_custom_indicator(code: str):
     engine = get_dashboard_engine()
     try:
-        return delete_custom_indicator(engine, code)
+        result = delete_custom_indicator(engine, code)
+        _invalidate_version_state()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -179,12 +350,14 @@ def remove_dashboard_custom_indicator(code: str):
 def update_dashboard_indicator(code: str, payload: IndicatorSettingsPayload):
     engine = get_dashboard_engine()
     try:
-        return update_indicator_settings(
+        result = update_indicator_settings(
             engine,
             code,
             enabled=payload.enabled,
             storage_mode=payload.storage_mode,
         )
+        _invalidate_version_state()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
@@ -198,11 +371,181 @@ def update_dashboard_indicator(code: str, payload: IndicatorSettingsPayload):
 def dashboard_latest_run():
     engine = get_dashboard_engine()
     try:
-        return get_latest_dashboard_run(engine)
+        return _get_cached_version_state(engine)
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=503,
             detail=f"驾驶舱最新批次查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/cache-stats")
+def dashboard_cache_stats():
+    with _dashboard_cache_lock:
+        hits = _dashboard_cache_stats["hits"]
+        misses = _dashboard_cache_stats["misses"]
+        total_lookups = hits + misses
+        namespace_entries = {
+            "realtime": sum(1 for key in _dashboard_cache if key[0] == "realtime"),
+            "history": sum(1 for key in _dashboard_cache if key[0] == "history"),
+        }
+        return {
+            **_dashboard_cache_stats,
+            "hit_rate": round(hits / total_lookups, 4) if total_lookups else 0.0,
+            "entries": len(_dashboard_cache),
+            "entries_by_namespace": namespace_entries,
+            "inflight": len(_dashboard_cache_inflight),
+            "memory_bytes": _dashboard_cache_total_bytes,
+            "memory_limit_bytes": _DASHBOARD_CACHE_MAX_BYTES,
+        }
+
+
+@router.get("/history/range")
+def dashboard_history_range():
+    engine = get_dashboard_engine()
+    try:
+        return _cached_response(
+            engine,
+            ("history-range",),
+            lambda: get_history_range(engine),
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"历史可查范围查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/history/options")
+def dashboard_history_options(indicator_codes: str | None = Query(None)):
+    engine = get_dashboard_engine()
+    try:
+        parsed_codes = _parse_indicator_codes(indicator_codes)
+        return _cached_response(
+            engine,
+            ("history-options", tuple(parsed_codes or ())),
+            lambda: get_history_options(engine, indicator_codes=parsed_codes),
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"历史可选时间查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/history/current-with-changes")
+def dashboard_history_with_changes(
+    as_of: datetime = Query(...),
+    level_type: str | None = Query(None),
+    scope_mode: str = Query("default"),
+    parent_id: int | None = Query(None, ge=1),
+    parent_level: str | None = Query(None),
+    branch_code: str | None = Query("AQ"),
+    change_windows: str | None = Query(None),
+    indicator_codes: str | None = Query(None),
+):
+    engine = get_dashboard_engine()
+    try:
+        resolved_as_of = _history_local_time(as_of)
+        parsed_windows = _parse_change_windows(change_windows)
+        parsed_codes = _parse_indicator_codes(indicator_codes)
+        return _cached_history_response(
+            engine,
+            as_of=resolved_as_of,
+            cache_key=(
+                "history-current-with-changes",
+                resolved_as_of.isoformat(),
+                level_type,
+                scope_mode,
+                parent_id,
+                parent_level,
+                branch_code,
+                tuple(parsed_windows or ()),
+                tuple(parsed_codes or ()),
+            ),
+            loader=lambda: get_historical_with_changes(
+                engine,
+                as_of=resolved_as_of,
+                level_type=level_type,
+                change_windows=parsed_windows,
+                indicator_codes=parsed_codes,
+                scope_mode=scope_mode,
+                parent_id=parent_id,
+                parent_level=parent_level,
+                branch_code=branch_code,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"历史快照查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/history/matrix")
+def dashboard_history_matrix(
+    as_of: datetime = Query(...),
+    level_type: str = Query(...),
+    scope_mode: str = Query("default"),
+    parent_id: int | None = Query(None, ge=1),
+    parent_level: str | None = Query(None),
+    branch_code: str | None = Query("AQ"),
+    indicator_codes: str | None = Query(None),
+    change_window: int = Query(60, ge=5, le=1440),
+    search: str | None = Query(None, max_length=100),
+    sort_indicator: str | None = Query(None, max_length=100),
+    sort_mode: str = Query("doneDesc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=200),
+):
+    engine = get_dashboard_engine()
+    try:
+        resolved_as_of = _history_local_time(as_of)
+        parsed_codes = _parse_indicator_codes(indicator_codes)
+        return _cached_history_response(
+            engine,
+            as_of=resolved_as_of,
+            cache_key=(
+                "history-matrix",
+                resolved_as_of.isoformat(),
+                level_type,
+                scope_mode,
+                parent_id,
+                parent_level,
+                branch_code,
+                tuple(parsed_codes or ()),
+                change_window,
+                search,
+                sort_indicator,
+                sort_mode,
+                page,
+                page_size,
+            ),
+            loader=lambda: get_historical_matrix_page(
+                engine,
+                as_of=resolved_as_of,
+                level_type=level_type,
+                scope_mode=scope_mode,
+                parent_id=parent_id,
+                parent_level=parent_level,
+                branch_code=branch_code,
+                indicator_codes=parsed_codes,
+                change_window=change_window,
+                search=search,
+                sort_indicator=sort_indicator,
+                sort_mode=sort_mode,
+                page=page,
+                page_size=page_size,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"历史矩阵查询失败: {type(exc).__name__}",
         ) from exc
 
 

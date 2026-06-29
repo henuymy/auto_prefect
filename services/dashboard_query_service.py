@@ -24,7 +24,7 @@ from models.dashboard_area import Area
 from models.dashboard_collection_run import CollectionRun
 from models.dashboard_custom_indicator import CustomIndicatorComponent
 from models.dashboard_indicator import Indicator
-from models.dashboard_metric import MetricAcc, MetricCurrent
+from models.dashboard_metric import MetricAcc, MetricCurrent, MetricSnapshot
 from models.dashboard_metric_target import MetricTarget
 
 
@@ -271,9 +271,8 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
             for row in indicators
         )
         target_updated_at = _datetime_iso_millis(target_version[2]) or ""
-        version_source = "#".join(
+        config_version_source = "#".join(
             [
-                latest_run.batch_no if latest_run else "",
                 indicator_version,
                 str(target_version[0] or 0),
                 str(target_version[1] or 0),
@@ -283,11 +282,494 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
                 _datetime_iso_millis(component_version[2]) or "",
             ]
         )
-        data_version = sha256(version_source.encode("utf-8")).hexdigest()
+        config_version = sha256(config_version_source.encode("utf-8")).hexdigest()
+        data_version = sha256(
+            "#".join([
+                latest_run.batch_no if latest_run else "",
+                config_version,
+            ]).encode("utf-8")
+        ).hexdigest()
         return {
             "latest_run": _run_payload(latest_run),
             "data_version": data_version,
+            "config_version": config_version,
         }
+
+
+def get_history_range(engine: Engine) -> dict[str, Any]:
+    """Return the retained realtime snapshot range available for restoration."""
+    with Session(engine) as session:
+        batch_time = func.coalesce(CollectionRun.started_at, CollectionRun.finished_at)
+        first_at, last_at = session.execute(
+            select(
+                func.min(batch_time),
+                func.max(batch_time),
+            )
+            .where(
+                CollectionRun.status == "SUCCESS",
+                CollectionRun.run_type == "REALTIME",
+                batch_time.is_not(None),
+                CollectionRun.snapshot_insert_count > 0,
+                select(MetricSnapshot.id)
+                .where(MetricSnapshot.collection_run_id == CollectionRun.id)
+                .exists(),
+            )
+        ).one()
+    return {
+        "earliest_at": _datetime_iso_millis(first_at),
+        "latest_at": _datetime_iso_millis(last_at),
+    }
+
+
+def get_history_options(
+    engine: Engine,
+    *,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Return selectable batch dates/minutes that still have snapshots."""
+    with Session(engine) as session:
+        first_snapshot_at, last_snapshot_at = session.execute(
+            select(
+                func.min(MetricSnapshot.collected_at),
+                func.max(MetricSnapshot.collected_at),
+            )
+        ).one()
+        if first_snapshot_at is None or last_snapshot_at is None:
+            return {"dates": [], "date_count": 0}
+        batch_time = func.coalesce(CollectionRun.started_at, CollectionRun.finished_at)
+        runs = session.execute(
+            select(CollectionRun.id, batch_time.label("batch_time"))
+            .where(
+                CollectionRun.status == "SUCCESS",
+                CollectionRun.run_type == "REALTIME",
+                batch_time.is_not(None),
+                batch_time >= first_snapshot_at - timedelta(days=1),
+                batch_time <= last_snapshot_at + timedelta(days=1),
+                CollectionRun.snapshot_insert_count > 0,
+            )
+            .order_by(batch_time.desc(), CollectionRun.id.desc())
+        ).all()
+        run_ids = [row.id for row in runs]
+        snapshot_query = select(MetricSnapshot.collection_run_id).where(
+            MetricSnapshot.collection_run_id.in_(run_ids or {-1}),
+            MetricSnapshot.collected_at >= first_snapshot_at,
+            MetricSnapshot.collected_at <= last_snapshot_at,
+        )
+        if indicator_codes:
+            indicator_ids = list(session.scalars(
+                select(Indicator.id).where(Indicator.code.in_(indicator_codes))
+            ))
+            snapshot_query = snapshot_query.where(
+                MetricSnapshot.indicator_id.in_(indicator_ids or {-1})
+            )
+        available_run_ids = set(session.scalars(snapshot_query.distinct()))
+
+    minutes_by_date: dict[str, set[str]] = defaultdict(set)
+    for run in runs:
+        if run.id not in available_run_ids or run.batch_time is None:
+            continue
+        minutes_by_date[run.batch_time.date().isoformat()].add(
+            run.batch_time.strftime("%H:%M")
+        )
+    dates = [
+        {
+            "date": date_value,
+            "times": sorted(times, reverse=True),
+        }
+        for date_value, times in sorted(minutes_by_date.items(), reverse=True)
+    ]
+    return {"dates": dates, "date_count": len(dates)}
+
+
+def _historical_run(session: Session, as_of: datetime) -> CollectionRun | None:
+    batch_time = func.coalesce(CollectionRun.started_at, CollectionRun.finished_at)
+    candidates = list(session.scalars(
+        select(CollectionRun)
+        .where(
+            CollectionRun.status == "SUCCESS",
+            CollectionRun.run_type == "REALTIME",
+            CollectionRun.snapshot_insert_count > 0,
+            CollectionRun.finished_at.is_not(None),
+            batch_time <= as_of,
+        )
+        .order_by(batch_time.desc(), CollectionRun.id.desc())
+        .limit(20)
+    ))
+    for run in candidates:
+        exists = session.scalar(
+            select(MetricSnapshot.id)
+            .where(MetricSnapshot.collection_run_id == run.id)
+            .limit(1)
+        )
+        if exists is not None:
+            return run
+    return None
+
+
+def get_historical_run_id(engine: Engine, as_of: datetime) -> int | None:
+    """Resolve the successful batch that owns a historical query time."""
+    with Session(engine) as session:
+        run = _historical_run(session, as_of)
+        return run.id if run is not None else None
+
+
+def _historical_indicators(
+    session: Session,
+    run: CollectionRun,
+    indicator_codes: list[str] | tuple[str, ...] | None,
+) -> list[Indicator]:
+    query = select(Indicator).where(Indicator.storage_mode == "STORE")
+    if indicator_codes:
+        query = query.where(Indicator.code.in_(indicator_codes))
+    else:
+        query = (
+            query
+            .join(MetricSnapshot, MetricSnapshot.indicator_id == Indicator.id)
+            .where(MetricSnapshot.collection_run_id == run.id)
+            .distinct()
+        )
+    return list(session.scalars(query.order_by(Indicator.sort_order, Indicator.id)))
+
+
+def _historical_rows(
+    session: Session,
+    *,
+    as_of: datetime,
+    change_windows: tuple[tuple[int, str], ...],
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+    level_type: str | None = None,
+    allowed_area_ids: set[int] | None = None,
+) -> tuple[CollectionRun | None, list[Indicator], list[dict[str, Any]]]:
+    run = _historical_run(session, as_of)
+    if run is None:
+        return None, [], []
+    indicators = _historical_indicators(session, run, indicator_codes)
+    if not indicators:
+        return run, [], []
+
+    indicator_ids = [indicator.id for indicator in indicators]
+    anchor = run.started_at or run.finished_at or as_of
+    run_times = [value for value in (run.started_at, run.finished_at) if value is not None]
+    first_run_time = min(run_times) if run_times else anchor
+    last_run_time = max(run_times) if run_times else anchor
+    # Include the preceding day for legacy runs whose started_at was not recorded.
+    day_start = first_run_time.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    day_end = last_run_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    snapshot_query = select(
+        MetricSnapshot.area_id,
+        MetricSnapshot.indicator_id,
+        MetricSnapshot.metric_value,
+        MetricSnapshot.collected_at,
+    ).where(
+        MetricSnapshot.collection_run_id == run.id,
+        MetricSnapshot.indicator_id.in_(indicator_ids),
+        MetricSnapshot.collected_at >= day_start,
+        MetricSnapshot.collected_at < day_end,
+    )
+    if allowed_area_ids is not None:
+        snapshot_query = snapshot_query.where(
+            MetricSnapshot.area_id.in_(allowed_area_ids or {-1})
+        )
+    snapshot_rows = session.execute(snapshot_query).all()
+    snapshot_area_ids = {snapshot.area_id for snapshot in snapshot_rows}
+
+    area_query = select(Area).where(Area.id.in_(snapshot_area_ids or {-1}))
+    if level_type:
+        normalized_level = str(level_type).strip().upper()
+        if normalized_level not in {"CITY", "BRANCH", "GRID", "CHANNEL"}:
+            raise ValueError(f"不支持的历史层级: {level_type!r}")
+        area_query = area_query.where(Area.level_type == normalized_level)
+    areas = list(session.scalars(area_query.order_by(Area.level_no, Area.sort_order, Area.id)))
+    area_ids = [area.id for area in areas]
+    rows = [
+        _area_payload(
+            area,
+            metrics={indicator.code: None for indicator in indicators},
+        )
+        for area in areas
+    ]
+    rows_by_area = {row["area_id"]: row for row in rows}
+
+    if area_ids and indicator_ids:
+        code_by_id = {indicator.id: indicator.code for indicator in indicators}
+        for snapshot in snapshot_rows:
+            row = rows_by_area.get(snapshot.area_id)
+            code = code_by_id.get(snapshot.indicator_id)
+            if row is None or code is None:
+                continue
+            row["metrics"][code] = _number(snapshot.metric_value)
+            row["collection_run_id"] = run.id
+            row["collected_at"] = _datetime_iso_millis(snapshot.collected_at)
+
+    _attach_targets(session, rows, indicators, "REALTIME")
+    if area_ids and indicator_ids:
+        _attach_changes_fast(
+            session,
+            rows,
+            indicators,
+            area_ids,
+            anchor,
+            change_windows=change_windows,
+        )
+    return run, indicators, rows
+
+
+def get_historical_with_changes(
+    engine: Engine,
+    *,
+    as_of: datetime,
+    level_type: str | None = None,
+    change_windows: list[int] | tuple[int, ...] | None = None,
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+    scope_mode: str = "default",
+    parent_id: int | None = None,
+    parent_level: str | None = None,
+    branch_code: str | None = "AQ",
+) -> dict[str, Any]:
+    normalized_windows = normalize_change_windows(change_windows)
+    with Session(engine) as session:
+        allowed_area_ids = _historical_scope_area_ids(
+            session,
+            scope_mode=scope_mode,
+            parent_id=parent_id,
+            parent_level=parent_level,
+            branch_code=branch_code,
+        )
+        run, indicators, rows = _historical_rows(
+            session,
+            as_of=as_of,
+            change_windows=normalized_windows,
+            indicator_codes=indicator_codes,
+            level_type=level_type,
+            allowed_area_ids=allowed_area_ids,
+        )
+        coverage = _historical_coverage(
+            session,
+            rows,
+            indicators,
+            allowed_area_ids=allowed_area_ids,
+        )
+    return {
+        "data_mode": "HISTORY",
+        "selected_time": _datetime_iso_millis(as_of),
+        "latest_run": _run_payload(run),
+        "indicators": _indicator_payload(indicators),
+        "rows": rows,
+        "row_count": len(rows),
+        "coverage": coverage,
+        "history_meta": _history_meta(run, as_of),
+    }
+
+
+def _historical_scope_area_ids(
+    session: Session,
+    *,
+    scope_mode: str,
+    parent_id: int | None,
+    parent_level: str | None,
+    branch_code: str | None,
+) -> set[int] | None:
+    normalized_scope = str(scope_mode or "default").strip().lower()
+    normalized_parent_level = str(parent_level or "").strip().upper()
+    if normalized_scope == "all" and parent_id is None:
+        return None
+
+    branch_ids = set(session.scalars(select(Area.id).where(Area.level_type == "BRANCH")))
+    if normalized_parent_level == "GRID" and parent_id is not None:
+        branch_id = session.scalar(select(Area.parent_id).where(Area.id == parent_id))
+        sibling_grid_ids = set(session.scalars(select(Area.id).where(
+            Area.level_type == "GRID",
+            Area.parent_id == branch_id,
+        )))
+        channel_ids = set(session.scalars(select(Area.id).where(
+            Area.level_type == "CHANNEL",
+            Area.parent_id == parent_id,
+        )))
+        return branch_ids | sibling_grid_ids | channel_ids
+
+    if normalized_parent_level == "BRANCH" and parent_id is not None:
+        branch_id = parent_id
+    else:
+        branches = list(session.scalars(
+            select(Area)
+            .where(Area.level_type == "BRANCH")
+            .order_by(Area.sort_order, Area.id)
+        ))
+        branch = _select_overview_branch(
+            branches,
+            branch_id=None,
+            branch_code=branch_code,
+        )
+        branch_id = branch.id if branch else None
+    grid_ids = set(session.scalars(select(Area.id).where(
+        Area.level_type == "GRID",
+        Area.parent_id == branch_id,
+    ))) if branch_id is not None else set()
+    channel_ids = set(session.scalars(select(Area.id).where(
+        Area.level_type == "CHANNEL",
+        Area.parent_id.in_(grid_ids or {-1}),
+    )))
+    return branch_ids | grid_ids | channel_ids
+
+
+def _historical_coverage(
+    session: Session,
+    rows: list[dict[str, Any]],
+    indicators: list[Indicator],
+    *,
+    allowed_area_ids: set[int] | None,
+) -> dict[str, Any]:
+    levels: dict[str, dict[str, int]] = {}
+    for level in ("BRANCH", "GRID", "CHANNEL"):
+        expected_query = select(Area.id).where(
+            Area.enabled.is_(True),
+            Area.level_type == level,
+        )
+        if allowed_area_ids is not None:
+            expected_query = expected_query.where(
+                Area.id.in_(allowed_area_ids or {-1})
+            )
+        expected_area_ids = set(session.scalars(expected_query))
+        level_rows = [row for row in rows if row["level_type"] == level]
+        snapshot_area_ids = {row["area_id"] for row in level_rows}
+        missing_area_ids = expected_area_ids - snapshot_area_ids
+        extra_area_ids = snapshot_area_ids - expected_area_ids
+        total_cells = len(expected_area_ids) * len(indicators)
+        available_cells = sum(
+            1
+            for row in level_rows
+            for indicator in indicators
+            if row.get("metrics", {}).get(indicator.code) is not None
+        )
+        levels[level] = {
+            "expected_areas": len(expected_area_ids),
+            "snapshot_areas": len(snapshot_area_ids),
+            "missing_areas": len(missing_area_ids),
+            "extra_areas": len(extra_area_ids),
+            "available_metric_cells": available_cells,
+            "total_metric_cells": total_cells,
+        }
+    return {"levels": levels}
+
+
+def get_historical_matrix_page(
+    engine: Engine,
+    *,
+    as_of: datetime,
+    level_type: str,
+    scope_mode: str = "default",
+    parent_id: int | None = None,
+    parent_level: str | None = None,
+    branch_code: str | None = "AQ",
+    indicator_codes: list[str] | tuple[str, ...] | None = None,
+    change_window: int = 60,
+    search: str | None = None,
+    sort_indicator: str | None = None,
+    sort_mode: str = "doneDesc",
+    page: int = 1,
+    page_size: int = 100,
+) -> dict[str, Any]:
+    normalized_level = str(level_type or "").strip().upper()
+    normalized_scope = str(scope_mode or "default").strip().lower()
+    if normalized_level not in {"BRANCH", "GRID", "CHANNEL"}:
+        raise ValueError(f"level_type 只支持 BRANCH/GRID/CHANNEL: {level_type!r}")
+    if normalized_scope not in {"default", "all"}:
+        raise ValueError(f"scope_mode 只支持 default/all: {scope_mode!r}")
+    page = max(1, int(page))
+    page_size = max(1, min(200, int(page_size)))
+    normalized_windows = normalize_change_windows([change_window])
+
+    with Session(engine) as session:
+        allowed_area_ids = _historical_scope_area_ids(
+            session,
+            scope_mode=scope_mode,
+            parent_id=parent_id,
+            parent_level=parent_level,
+            branch_code=branch_code,
+        )
+        run, indicators, rows = _historical_rows(
+            session,
+            as_of=as_of,
+            change_windows=normalized_windows,
+            indicator_codes=indicator_codes,
+            level_type=normalized_level,
+            allowed_area_ids=allowed_area_ids,
+        )
+        normalized_parent_level = str(parent_level or "").strip().upper()
+        branch_scope_id: int | None = None
+        if normalized_parent_level == "BRANCH" and parent_id is not None:
+            branch_scope_id = parent_id
+        elif normalized_parent_level == "GRID" and parent_id is not None:
+            branch_scope_id = session.scalar(select(Area.parent_id).where(Area.id == parent_id))
+        elif normalized_scope == "default":
+            branch = _resolve_branch_scope(session, branch_id=None, branch_code=branch_code)
+            branch_scope_id = branch.id if branch else None
+
+        if normalized_level == "GRID" and branch_scope_id is not None:
+            rows = [row for row in rows if row["parent_id"] == branch_scope_id]
+        elif normalized_level == "CHANNEL":
+            if normalized_parent_level == "GRID" and parent_id is not None:
+                rows = [row for row in rows if row["parent_id"] == parent_id]
+            elif branch_scope_id is not None:
+                grid_ids = set(session.scalars(select(Area.id).where(
+                    Area.level_type == "GRID",
+                    Area.parent_id == branch_scope_id,
+                )))
+                rows = [row for row in rows if row["parent_id"] in grid_ids]
+
+        coverage = _historical_coverage(
+            session,
+            rows,
+            indicators,
+            allowed_area_ids=allowed_area_ids,
+        )
+
+    if search:
+        keyword = str(search).strip().lower()
+        rows = [
+            row for row in rows
+            if keyword in row["area_name"].lower() or keyword in row["area_code"].lower()
+        ]
+    sort_code = sort_indicator if any(i.code == sort_indicator for i in indicators) else (
+        indicators[0].code if indicators else ""
+    )
+    window_key = normalized_windows[0][1]
+
+    def sort_value(row: dict[str, Any]) -> float | None:
+        if sort_mode.startswith("progress"):
+            done = row["metrics"].get(sort_code)
+            target = row.get("targets", {}).get(sort_code)
+            return float(done) / float(target) if done is not None and target and target > 0 else None
+        if sort_mode.startswith("changeRate"):
+            return row.get("changes", {}).get(sort_code, {}).get(window_key, {}).get("rate")
+        if sort_mode.startswith("changeValue"):
+            return row.get("changes", {}).get(sort_code, {}).get(window_key, {}).get("value")
+        value = row["metrics"].get(sort_code)
+        return float(value) if value is not None else None
+
+    descending = sort_mode.endswith("Desc")
+    rows.sort(key=lambda row: (
+        sort_value(row) is None,
+        -(sort_value(row) or 0) if descending else (sort_value(row) or 0),
+        row["area_id"],
+    ))
+    total = len(rows)
+    start = (page - 1) * page_size
+    page_rows = rows[start:start + page_size]
+    return {
+        "data_mode": "HISTORY",
+        "selected_time": _datetime_iso_millis(as_of),
+        "latest_run": _run_payload(run),
+        "indicators": _indicator_payload(indicators),
+        "rows": page_rows,
+        "row_count": len(page_rows),
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+        "coverage": coverage,
+        "history_meta": _history_meta(run, as_of),
+    }
 
 
 def get_dashboard_matrix_page(
@@ -1018,7 +1500,28 @@ def _run_payload(run: CollectionRun | None) -> dict[str, Any] | None:
         "id": run.id,
         "batch_no": run.batch_no,
         "stat_date": _date_iso(run.stat_date),
+        "started_at": _datetime_iso_millis(run.started_at),
         "finished_at": _datetime_iso_millis(run.finished_at),
+    }
+
+
+def _history_meta(run: CollectionRun | None, selected_time: datetime) -> dict[str, Any]:
+    batch_time = (run.started_at or run.finished_at) if run is not None else None
+    duration_seconds = None
+    if run is not None and run.started_at is not None and run.finished_at is not None:
+        duration_seconds = max(0.0, (run.finished_at - run.started_at).total_seconds())
+    selected_minute = selected_time.replace(second=0, microsecond=0)
+    batch_minute = batch_time.replace(second=0, microsecond=0) if batch_time else None
+    fallback_seconds = (
+        max(0.0, (selected_minute - batch_minute).total_seconds())
+        if batch_minute is not None else None
+    )
+    return {
+        "batch_started_at": _datetime_iso_millis(run.started_at) if run else None,
+        "batch_finished_at": _datetime_iso_millis(run.finished_at) if run else None,
+        "duration_seconds": duration_seconds,
+        "fallback_seconds": fallback_seconds,
+        "is_fallback": bool(fallback_seconds and fallback_seconds > 0),
     }
 
 

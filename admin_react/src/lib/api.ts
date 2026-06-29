@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, SaveCustomIndicatorPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
+import type { DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, SaveCustomIndicatorPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -164,6 +164,74 @@ export async function updateDashboardIndicatorSettings(
 
 export async function getDashboardLatestRun() {
   return request<DashboardLatestRunResponse>("/api/dashboard/latest-run");
+}
+
+export async function getDashboardHistoryRange() {
+  return request<DashboardHistoryRangeResponse>("/api/dashboard/history/range");
+}
+
+export async function getDashboardHistoryOptions(indicatorCodes?: string[]) {
+  const params = new URLSearchParams();
+  if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
+  const query = params.toString();
+  return request<DashboardHistoryOptionsResponse>(
+    `/api/dashboard/history/options${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function getDashboardHistoryWithChanges(
+  asOf: string,
+  levelType?: string,
+  changeWindows?: number[],
+  indicatorCodes?: string[],
+  scopeMode: "default" | "all" = "default",
+  parentId?: number,
+  parentLevel?: string,
+) {
+  const params = new URLSearchParams({ as_of: asOf, scope_mode: scopeMode });
+  if (levelType) params.set("level_type", levelType);
+  if (parentId != null) params.set("parent_id", String(parentId));
+  if (parentLevel) params.set("parent_level", parentLevel);
+  if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
+  if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
+  return request<DashboardChangesResponse>(
+    `/api/dashboard/history/current-with-changes?${params.toString()}`,
+  );
+}
+
+export async function getDashboardHistoryMatrix(params: {
+  asOf: string;
+  levelType: string;
+  scopeMode: "default" | "all";
+  parentId?: number;
+  parentLevel?: string;
+  branchCode?: string;
+  indicatorCodes: string[];
+  changeWindow: number;
+  search?: string;
+  sortIndicator?: string;
+  sortMode: string;
+  page: number;
+  pageSize: number;
+}) {
+  const query = new URLSearchParams({
+    as_of: params.asOf,
+    level_type: params.levelType,
+    scope_mode: params.scopeMode,
+    branch_code: params.branchCode || "AQ",
+    indicator_codes: params.indicatorCodes.join(","),
+    change_window: String(params.changeWindow),
+    sort_mode: params.sortMode,
+    page: String(params.page),
+    page_size: String(params.pageSize),
+  });
+  if (params.parentId != null) query.set("parent_id", String(params.parentId));
+  if (params.parentLevel) query.set("parent_level", params.parentLevel);
+  if (params.search) query.set("search", params.search);
+  if (params.sortIndicator) query.set("sort_indicator", params.sortIndicator);
+  return request<DashboardMatrixResponse>(
+    `/api/dashboard/history/matrix?${query.toString()}`,
+  );
 }
 
 export async function getDashboardMatrix(params: {

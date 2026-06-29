@@ -57,6 +57,7 @@ export type DashboardLatestRunResponse = {
     finished_at: string | null;
   } | null;
   data_version: string;
+  config_version: string;
 };
 
 export type ChangeEntry = {
@@ -89,6 +90,7 @@ export type DashboardCurrentResponse = {
     id: number;
     batch_no: string;
     stat_date: string | null;
+    started_at: string | null;
     finished_at: string | null;
   } | null;
   indicators: DashboardIndicator[];
@@ -97,15 +99,51 @@ export type DashboardCurrentResponse = {
 };
 
 export type DashboardChangesResponse = {
+  data_mode?: "REALTIME" | "HISTORY";
+  selected_time?: string | null;
+  data_version?: string;
+  config_version?: string;
+  coverage?: DashboardHistoryCoverage;
+  history_meta?: DashboardHistoryMeta;
   latest_run: {
     id: number;
     batch_no: string;
     stat_date: string | null;
+    started_at: string | null;
     finished_at: string | null;
   } | null;
   indicators: DashboardIndicator[];
   rows: DashboardRowWithChanges[];
   row_count: number;
+};
+
+export type DashboardHistoryRangeResponse = {
+  earliest_at: string | null;
+  latest_at: string | null;
+};
+
+export type DashboardHistoryOptionsResponse = {
+  dates: Array<{ date: string; times: string[] }>;
+  date_count: number;
+};
+
+export type DashboardHistoryCoverage = {
+  levels: Partial<Record<"BRANCH" | "GRID" | "CHANNEL", {
+    expected_areas: number;
+    snapshot_areas: number;
+    missing_areas: number;
+    extra_areas: number;
+    available_metric_cells: number;
+    total_metric_cells: number;
+  }>>;
+};
+
+export type DashboardHistoryMeta = {
+  batch_started_at: string | null;
+  batch_finished_at: string | null;
+  duration_seconds: number | null;
+  fallback_seconds: number | null;
+  is_fallback: boolean;
 };
 
 export type DashboardMatrixResponse = DashboardChangesResponse & {

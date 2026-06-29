@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   BarChart3,
+  CalendarClock,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -24,6 +25,10 @@ import {
   getDashboardDrillDown,
   getDashboardCustomIndicators,
   getDashboardIndicators,
+  getDashboardHistoryMatrix,
+  getDashboardHistoryOptions,
+  getDashboardHistoryRange,
+  getDashboardHistoryWithChanges,
   getDashboardLatestRun,
   getDashboardMatrix,
   getDashboardWithChanges,
@@ -38,6 +43,10 @@ import type {
   DashboardRow,
   DashboardRowWithChanges,
   DashboardIndicator,
+  DashboardHistoryCoverage,
+  DashboardHistoryMeta,
+  DashboardHistoryOptionsResponse,
+  DashboardMatrixResponse,
   IndicatorChanges,
 } from "@/types/dashboard";
 
@@ -79,10 +88,12 @@ type DrillEntry = {
 type LevelOverrideData = {
   changesRows: DashboardRowWithChanges[];
   accRows: DashboardRow[];
+  coverage?: DashboardHistoryCoverage;
 };
 
 type ScopeMode = "default" | "all";
 type CockpitMode = "single" | "multi";
+type DataTimeMode = "realtime" | "history";
 type StorageMode = "STORE" | "COMPONENT";
 type SourceMetricOption = {
   code: string;
@@ -146,6 +157,7 @@ type FetchedData = {
   online: boolean;
   latestRun: {
     batch_no: string;
+    started_at: string | null;
     finished_at: string | null;
   } | null;
   updatedAt: string;
@@ -154,12 +166,28 @@ type FetchedData = {
   changesRows: DashboardRowWithChanges[];
   accRows: DashboardRow[];
   levelOverrides: Partial<Record<LevelKey, LevelOverrideData>>;
+  coverage?: DashboardHistoryCoverage;
+  historyMeta?: DashboardHistoryMeta;
 };
 
 type DashboardCacheEntry = {
   data: FetchedData;
   cachedAt: number;
 };
+
+type MatrixCacheEntry = {
+  data: DashboardMatrixResponse;
+  cachedAt: number;
+};
+
+function historyMinuteValue(value: string | null | undefined) {
+  return value?.slice(0, 16) || "";
+}
+
+function historyMinuteQueryTime(value: string) {
+  const minute = historyMinuteValue(value);
+  return minute ? `${minute}:59.999` : "";
+}
 
 function makeDashboardCacheKey({
   mode,
@@ -170,6 +198,7 @@ function makeDashboardCacheKey({
   indicatorCodes,
   dayLevelAllMode,
   monthLevelAllMode,
+  asOf,
 }: {
   mode: CockpitMode;
   scopeMode: ScopeMode;
@@ -179,6 +208,7 @@ function makeDashboardCacheKey({
   indicatorCodes?: string[] | null;
   dayLevelAllMode: Partial<Record<LevelKey, boolean>>;
   monthLevelAllMode: Partial<Record<LevelKey, boolean>>;
+  asOf?: string | null;
 }) {
   return JSON.stringify({
     mode,
@@ -195,6 +225,7 @@ function makeDashboardCacheKey({
       grid: Boolean(monthLevelAllMode.GRID),
       channel: Boolean(monthLevelAllMode.CHANNEL),
     },
+    asOf: asOf || null,
   });
 }
 
@@ -204,6 +235,9 @@ const DEFAULT_CHANGE_WINDOWS = [5, 15, 30, 60];
 const SHOW_MONTH_ACCUMULATION = false;
 const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
 const DASHBOARD_CACHE_MAX_ENTRIES = 24;
+const HISTORY_MATRIX_CACHE_TTL_MS = 10 * 60 * 1000;
+const REALTIME_MATRIX_CACHE_TTL_MS = 2 * 60 * 1000;
+const MATRIX_CACHE_MAX_ENTRIES = 48;
 const MATRIX_ROW_HEIGHT = 58;
 const MATRIX_VIRTUAL_OVERSCAN = 8;
 const MATRIX_PAGE_SIZE = 100;
@@ -705,6 +739,37 @@ function scopeLowerLevelsToDefaultBranch<T extends DashboardRow>(
   });
 }
 
+function scopeHistoricalRowsForDrill<T extends DashboardRow>(
+  rows: T[],
+  drill: DrillEntry | null,
+) {
+  if (!drill || drill.levelType === "CITY") return rows;
+  const branches = rows.filter((row) => row.level_type === "BRANCH");
+  if (drill.levelType === "BRANCH") {
+    const gridIds = new Set(
+      rows
+        .filter((row) => row.level_type === "GRID" && row.parent_id === drill.areaId)
+        .map((row) => row.area_id),
+    );
+    return [
+      ...branches,
+      ...rows.filter((row) => row.level_type === "GRID" && gridIds.has(row.area_id)),
+      ...rows.filter((row) => row.level_type === "CHANNEL" && row.parent_id != null && gridIds.has(row.parent_id)),
+    ];
+  }
+  if (drill.levelType === "GRID") {
+    const selectedGrid = rows.find((row) => row.area_id === drill.areaId);
+    return [
+      ...branches,
+      ...rows.filter((row) => (
+        row.level_type === "GRID" && row.parent_id === selectedGrid?.parent_id
+      )),
+      ...rows.filter((row) => row.level_type === "CHANNEL" && row.parent_id === drill.areaId),
+    ];
+  }
+  return rows;
+}
+
 function _buildLevels<T extends DashboardRow>(
   rows: T[],
   code: string,
@@ -743,6 +808,14 @@ export function DashboardCockpit() {
   const [monthBranchHeight, setMonthBranchHeight] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<CockpitMode>("single");
+  const [dataTimeMode, setDataTimeMode] = useState<DataTimeMode>("realtime");
+  const [historyAsOf, setHistoryAsOf] = useState("");
+  const [historyInput, setHistoryInput] = useState("");
+  const [historyRange, setHistoryRange] = useState<{ earliest: string; latest: string }>({
+    earliest: "",
+    latest: "",
+  });
+  const [historyOptions, setHistoryOptions] = useState<DashboardHistoryOptionsResponse["dates"]>([]);
   const [data, setData] = useState<FetchedData | null>(null);
   const [error, setError] = useState(false);
   const [indicator, setIndicator] = useState("");
@@ -769,6 +842,7 @@ export function DashboardCockpit() {
   const fetchSeqRef = useRef(0);
   const queryCacheRef = useRef<Map<string, DashboardCacheEntry>>(new Map());
   const latestDataVersionRef = useRef<string | null>(null);
+  const latestConfigVersionRef = useRef<string | null>(null);
   const [daySorts, setDaySorts] = useState<Record<LevelKey, SortKey>>({
     BRANCH: "done",
     GRID: "done",
@@ -818,11 +892,15 @@ export function DashboardCockpit() {
     indicatorCodes: requestedIndicatorCodes ?? null,
     dayLevelAllMode,
     monthLevelAllMode,
+    asOf: dataTimeMode === "history" ? historyAsOf : null,
   });
   const selectableIndicators = useMemo(
     () => (data?.indicatorCatalog || [])
-      .filter((item) => item.enabled),
-    [data?.indicatorCatalog],
+      .filter((item) => (
+        item.storage_mode === "STORE"
+        && (dataTimeMode === "history" || item.enabled)
+      )),
+    [data?.indicatorCatalog, dataTimeMode],
   );
   const handleModeChange = useCallback((nextMode: CockpitMode) => {
     if (nextMode === mode) return;
@@ -842,6 +920,7 @@ export function DashboardCockpit() {
       indicatorCodes: nextIndicatorCodes ?? null,
       dayLevelAllMode,
       monthLevelAllMode,
+      asOf: dataTimeMode === "history" ? historyAsOf : null,
     });
     const cached = queryCacheRef.current.get(nextCacheKey);
     const cacheFresh = cached && Date.now() - cached.cachedAt <= DASHBOARD_CACHE_TTL_MS;
@@ -874,6 +953,8 @@ export function DashboardCockpit() {
     monthLevelAllMode,
     multiSelectedCodes,
     scopeMode,
+    dataTimeMode,
+    historyAsOf,
   ]);
 
   useEffect(() => {
@@ -881,6 +962,39 @@ export function DashboardCockpit() {
       setDrillStack(normalizedDrillStack);
     }
   }, [drillStack, normalizedDrillStack]);
+
+  const loadHistoryAvailability = useCallback(async () => {
+    const [rangeResult, optionsResult] = await Promise.allSettled([
+      getDashboardHistoryRange(),
+      getDashboardHistoryOptions(requestedIndicatorCodes),
+    ]);
+    if (rangeResult.status === "fulfilled") {
+      const range = rangeResult.value;
+      const earliest = historyMinuteValue(range.earliest_at);
+      const latest = historyMinuteValue(range.latest_at);
+      setHistoryRange({ earliest, latest });
+      setHistoryAsOf((current) => current || range.latest_at || "");
+      setHistoryInput((current) => current || latest);
+    }
+    if (optionsResult.status === "fulfilled") {
+      const dates = optionsResult.value.dates;
+      setHistoryOptions(dates);
+      setHistoryInput((current) => {
+        const currentDate = current.slice(0, 10);
+        const currentTime = current.slice(11, 16);
+        const currentDateOption = dates.find((option) => option.date === currentDate);
+        if (currentDateOption?.times.includes(currentTime)) return current;
+        const latestOption = dates[0];
+        return latestOption?.times[0]
+          ? `${latestOption.date}T${latestOption.times[0]}`
+          : "";
+      });
+    }
+  }, [requestedIndicatorCodes]);
+
+  useEffect(() => {
+    void loadHistoryAvailability();
+  }, [loadHistoryAvailability]);
 
   /* Query cache is reused for navigation/filter state; timed refresh bypasses it. */
   const fetchData = useCallback(async (forceRefresh = false) => {
@@ -910,9 +1024,29 @@ export function DashboardCockpit() {
     try {
       const parentId = drillTarget?.areaId;
       const parentLevel = drillTarget?.levelType;
-      const catalogPromise = getDashboardIndicators(false, true)
+      const historyActive = dataTimeMode === "history" && Boolean(historyAsOf);
+      const catalogPromise = getDashboardIndicators(historyActive, !historyActive)
         .catch(() => ({ indicators: [] }));
-      const [changesData, accRows] = mode === "multi"
+      const [changesData, accRows] = historyActive
+        ? await getDashboardHistoryWithChanges(
+            historyAsOf,
+            mode === "multi" ? "BRANCH" : undefined,
+            requestedChangeWindows,
+            requestedIndicatorCodes,
+            scopeMode,
+            parentId,
+            parentLevel,
+          ).then((history) => [
+            mode === "single"
+              ? {
+                  ...history,
+                  rows: scopeHistoricalRowsForDrill(history.rows, drillTarget),
+                  row_count: scopeHistoricalRowsForDrill(history.rows, drillTarget).length,
+                }
+              : history,
+            [] as DashboardRow[],
+          ] as const)
+        : mode === "multi"
         ? await getCurrentDashboard(
             "BRANCH",
             undefined,
@@ -990,24 +1124,55 @@ export function DashboardCockpit() {
               .then((changes) => [changes, [] as DashboardRow[]] as const);
 
       const progressiveAllLevels = (
+        !historyActive
+        &&
         mode === "single"
         && parentId == null
         && scopeMode === "all"
       );
       const catalog = await catalogPromise;
-      const latestRun = changesData.latest_run ?? null;
+      const responseConfigVersion = (
+        "config_version" in changesData
+        && typeof changesData.config_version === "string"
+      ) ? changesData.config_version : null;
+      if (responseConfigVersion) {
+        latestConfigVersionRef.current = responseConfigVersion;
+      }
+      const responseCoverage = (
+        "coverage" in changesData
+        && changesData.coverage
+      ) ? changesData.coverage as DashboardHistoryCoverage : undefined;
+      const responseHistoryMeta = (
+        "history_meta" in changesData
+        && changesData.history_meta
+      ) ? changesData.history_meta as DashboardHistoryMeta : undefined;
+      const rawLatestRun = changesData.latest_run ?? null;
+      const latestRun = rawLatestRun
+        ? {
+            ...rawLatestRun,
+            started_at: (
+              "started_at" in rawLatestRun
+              && typeof rawLatestRun.started_at === "string"
+            ) ? rawLatestRun.started_at : null,
+          }
+        : null;
+      const displayedRunTime = historyActive
+        ? latestRun?.started_at || latestRun?.finished_at
+        : latestRun?.finished_at;
       const levelOverrides: Partial<Record<LevelKey, LevelOverrideData>> = {};
       const makeData = (): FetchedData => ({
         online: Boolean(latestRun),
         latestRun,
-        updatedAt: latestRun?.finished_at
-          ? new Date(latestRun.finished_at).toLocaleString("zh-CN", { hour12: false })
+        updatedAt: displayedRunTime
+          ? new Date(displayedRunTime).toLocaleString("zh-CN", { hour12: false })
           : nowText(),
         indicators: changesData.indicators,
         indicatorCatalog: catalog.indicators,
         changesRows: changesData.rows,
         accRows,
         levelOverrides: { ...levelOverrides },
+        coverage: responseCoverage,
+        historyMeta: responseHistoryMeta,
       });
       const cacheData = (nextData: FetchedData) => {
         queryCacheRef.current.set(queryCacheKey, {
@@ -1042,13 +1207,21 @@ export function DashboardCockpit() {
         overrideLevels
           .map(async (level) => {
             try {
-              const overrideChanges = await getDashboardWithChanges(
-                  level,
-                  undefined,
-                  requestedChangeWindows,
-                  requestedIndicatorCodes,
-                );
-              const overrideAccRows = SHOW_MONTH_ACCUMULATION
+              const overrideChanges = historyActive
+                ? await getDashboardHistoryWithChanges(
+                    historyAsOf,
+                    level,
+                    requestedChangeWindows,
+                    requestedIndicatorCodes,
+                    "all",
+                  )
+                : await getDashboardWithChanges(
+                    level,
+                    undefined,
+                    requestedChangeWindows,
+                    requestedIndicatorCodes,
+                  );
+              const overrideAccRows = !historyActive && SHOW_MONTH_ACCUMULATION
                 ? await getAccDashboard(
                     "DAY_ACC",
                     undefined,
@@ -1062,6 +1235,7 @@ export function DashboardCockpit() {
               levelOverrides[level] = {
                 changesRows: overrideChanges.rows,
                 accRows: overrideAccRows,
+                coverage: overrideChanges.coverage,
               };
               if (progressiveAllLevels && seq === fetchSeqRef.current) {
                 const progressiveData = makeData();
@@ -1136,6 +1310,8 @@ export function DashboardCockpit() {
     dayLevelAllMode.CHANNEL,
     monthLevelAllMode.GRID,
     monthLevelAllMode.CHANNEL,
+    dataTimeMode,
+    historyAsOf,
   ]);
 
   useEffect(() => {
@@ -1147,10 +1323,30 @@ export function DashboardCockpit() {
         return;
       }
     }
+    if (dataTimeMode === "history" && !historyAsOf) return;
     void fetchData(false);
     const timer = window.setInterval(() => {
       void getDashboardLatestRun()
         .then((result) => {
+          if (dataTimeMode === "history") {
+            if (
+              latestDataVersionRef.current
+              && result.data_version !== latestDataVersionRef.current
+            ) {
+              void loadHistoryAvailability();
+            }
+            latestDataVersionRef.current = result.data_version;
+            if (
+              latestConfigVersionRef.current
+              && result.config_version !== latestConfigVersionRef.current
+            ) {
+              latestConfigVersionRef.current = result.config_version;
+              queryCacheRef.current.clear();
+              return fetchData(true);
+            }
+            latestConfigVersionRef.current = result.config_version;
+            return;
+          }
           if (
             !latestDataVersionRef.current ||
             result.data_version !== latestDataVersionRef.current
@@ -1163,7 +1359,15 @@ export function DashboardCockpit() {
         .catch(() => fetchData(true));
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [fetchData, mode, multiSelectedCodes.length, selectableIndicators.length]);
+  }, [
+    dataTimeMode,
+    fetchData,
+    historyAsOf,
+    loadHistoryAvailability,
+    mode,
+    multiSelectedCodes.length,
+    selectableIndicators.length,
+  ]);
 
   useEffect(() => {
     if (multiSelectedCodes.length) saveMatrixIndicatorOrder(multiSelectedCodes);
@@ -1456,6 +1660,7 @@ export function DashboardCockpit() {
       <Header
         mode={mode}
         onModeChange={handleModeChange}
+        dataTimeMode={dataTimeMode}
         drillName={orgScopeName}
         scopeValue={
           drillTarget?.levelType === "BRANCH"
@@ -1498,6 +1703,37 @@ export function DashboardCockpit() {
         onResetProgressColors={() => setProgressColors(DEFAULT_MATRIX_PROGRESS_COLORS)}
       />
 
+      <HistoryTimeBar
+        mode={dataTimeMode}
+        value={historyInput}
+        options={historyOptions}
+        min={historyRange.earliest}
+        max={historyRange.latest}
+        actualTime={dataTimeMode === "history"
+          ? data?.latestRun?.started_at || data?.latestRun?.finished_at
+          : null}
+        historyMeta={dataTimeMode === "history" ? data?.historyMeta : undefined}
+        loading={loading}
+        onModeChange={(nextMode) => {
+          if (nextMode === dataTimeMode) return;
+          setLoading(true);
+          setDataTimeMode(nextMode);
+          if (nextMode === "history") {
+            void loadHistoryAvailability();
+            const nextAsOf = historyAsOf || historyMinuteQueryTime(historyRange.latest);
+            setHistoryAsOf(nextAsOf);
+            setHistoryInput(historyMinuteValue(nextAsOf));
+          }
+        }}
+        onChange={setHistoryInput}
+        onQuery={() => {
+          const nextAsOf = historyMinuteQueryTime(historyInput);
+          if (!nextAsOf || nextAsOf === historyAsOf) return;
+          setLoading(true);
+          setHistoryAsOf(nextAsOf);
+        }}
+      />
+
       {customManagerOpen && (
         <CustomIndicatorManager
           onClose={() => setCustomManagerOpen(false)}
@@ -1519,7 +1755,12 @@ export function DashboardCockpit() {
       <>
       <main className="board-grid" style={{ marginBottom: 14 }}>
         <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -14 }}>
-          <strong>当日实时</strong><span>展示每30秒刷新，数据按采集批次更新</span>
+          <strong>{dataTimeMode === "history" ? "历史时刻" : "当日实时"}</strong>
+          <span>
+            {dataTimeMode === "history"
+              ? "数据固定于所选时间之前最近的成功批次"
+              : "展示每30秒刷新，数据按采集批次更新"}
+          </span>
         </div>
         {dayLevels.map((level) => (
           <LevelPanel
@@ -1539,6 +1780,12 @@ export function DashboardCockpit() {
             }
             staleIndicatorData={activeIndicatorDataPending}
             queryLoading={loading}
+            historyMode={dataTimeMode === "history"}
+            coverage={(
+              dayLevelAllMode[level.key]
+                ? data?.levelOverrides[level.key]?.coverage
+                : data?.coverage
+            )?.levels[level.key]}
             onToggleLevelAll={
               level.key !== "BRANCH" && scopeMode !== "all"
                 ? handleToggleDayLevelAll
@@ -1602,6 +1849,7 @@ export function DashboardCockpit() {
           refreshKey={dataRevision}
           drillLevel={drillTarget?.levelType}
           onDrill={handleDrill}
+          asOf={dataTimeMode === "history" ? historyAsOf : undefined}
         />
       )}
     </div>
@@ -1613,6 +1861,7 @@ export function DashboardCockpit() {
 function Header({
   mode,
   onModeChange,
+  dataTimeMode,
   drillName,
   scopeValue,
   scopeOptions,
@@ -1633,6 +1882,7 @@ function Header({
 }: {
   mode: CockpitMode;
   onModeChange: (mode: CockpitMode) => void;
+  dataTimeMode: DataTimeMode;
   drillName: string;
   scopeValue: string;
   scopeOptions: { label: string; value: string }[];
@@ -1698,9 +1948,13 @@ function Header({
       </div>
       <div className="header-status">
         <span className={online ? "pulse-dot" : "pulse-dot muted"} />
-        <span>{online ? "实时采集中" : "等待数据"}</span>
+        <span>
+          {dataTimeMode === "history"
+            ? online ? "历史快照" : "该时刻无数据"
+            : online ? "实时采集中" : "等待数据"}
+        </span>
         <span className="divider" />
-        <span>更新时间</span>
+        <span>{dataTimeMode === "history" ? "批次时间" : "更新时间"}</span>
         <strong>{updatedAt}</strong>
         <ProgressColorConfig
           colors={progressColors}
@@ -1709,7 +1963,7 @@ function Header({
         />
         <button className="refresh-button" onClick={onRefresh}>
           <RefreshCw size={15} className={loading ? "spin" : ""} />
-          刷新
+          {dataTimeMode === "history" ? "重新查询" : "刷新"}
         </button>
         <button className="refresh-button" onClick={onOpenCustomManager}>
           <Settings size={15} />
@@ -1717,6 +1971,126 @@ function Header({
         </button>
       </div>
     </header>
+  );
+}
+
+function HistoryTimeBar({
+  mode,
+  value,
+  options,
+  min,
+  max,
+  actualTime,
+  historyMeta,
+  loading,
+  onModeChange,
+  onChange,
+  onQuery,
+}: {
+  mode: DataTimeMode;
+  value: string;
+  options: DashboardHistoryOptionsResponse["dates"];
+  min: string;
+  max: string;
+  actualTime?: string | null;
+  historyMeta?: DashboardHistoryMeta;
+  loading: boolean;
+  onModeChange: (mode: DataTimeMode) => void;
+  onChange: (value: string) => void;
+  onQuery: () => void;
+}) {
+  const selectedDate = value.slice(0, 10);
+  const selectedTime = value.slice(11, 16);
+  const selectedDateOption = options.find((option) => option.date === selectedDate);
+  const availableTimes = selectedDateOption?.times || [];
+  return (
+    <section className="history-time-bar">
+      <div className="history-mode-switch" aria-label="数据时间模式">
+        <button
+          type="button"
+          className={mode === "realtime" ? "active" : ""}
+          onClick={() => onModeChange("realtime")}
+        >
+          实时
+        </button>
+        <button
+          type="button"
+          className={mode === "history" ? "active" : ""}
+          onClick={() => onModeChange("history")}
+        >
+          历史时刻
+        </button>
+      </div>
+      <div className={mode === "history" ? "history-time-input active" : "history-time-input"}>
+        <CalendarClock size={15} />
+        <span>查询时间</span>
+        <select
+          aria-label="历史日期"
+          value={selectedDate}
+          disabled={mode !== "history" || loading}
+          onChange={(event) => {
+            const nextDate = event.currentTarget.value;
+            const nextTimes = options.find((option) => option.date === nextDate)?.times || [];
+            onChange(nextTimes.length ? `${nextDate}T${nextTimes[0]}` : "");
+          }}
+        >
+          {!options.length && <option value="">暂无快照</option>}
+          {options.map((option) => (
+            <option key={option.date} value={option.date}>{option.date}</option>
+          ))}
+        </select>
+        <select
+          aria-label="历史批次时间"
+          value={selectedTime}
+          disabled={mode !== "history" || loading || !availableTimes.length}
+          onChange={(event) => onChange(`${selectedDate}T${event.currentTarget.value}`)}
+        >
+          {!availableTimes.length && <option value="">--:--</option>}
+          {availableTimes.map((time) => (
+            <option key={time} value={time}>{time}</option>
+          ))}
+        </select>
+      </div>
+      <button
+        type="button"
+        className="history-query-button"
+        disabled={mode !== "history" || loading || !value}
+        onClick={onQuery}
+      >
+        <Search size={14} />
+        查询
+      </button>
+      {mode === "history" && (
+        <div className="history-time-result">
+          {loading ? (
+            <><RefreshCw size={14} className="spin" />正在还原...</>
+          ) : actualTime ? (
+            <>
+              实际批次 <strong>{new Date(actualTime).toLocaleString("zh-CN", { hour12: false })}</strong>
+              {historyMeta?.batch_finished_at && (
+                <span>
+                  完成 {new Date(historyMeta.batch_finished_at).toLocaleTimeString("zh-CN", { hour12: false })}
+                </span>
+              )}
+              {historyMeta?.duration_seconds != null && (
+                <span>耗时 {Math.round(historyMeta.duration_seconds)}秒</span>
+              )}
+              {historyMeta?.is_fallback && <span className="history-fallback">已回退上一批次</span>}
+            </>
+          ) : (
+            <span>所选时间之前没有可用快照</span>
+          )}
+        </div>
+      )}
+      {mode === "history" && (
+        <span className="history-target-basis" title="历史完成值来自快照；目标值使用当前启用的目标配置">
+          目标：当前配置
+        </span>
+      )}
+      <span className="history-range-note">
+        可查询范围 {min ? min.slice(0, 19).replace("T", " ") : "--"} 至 {max ? max.slice(0, 19).replace("T", " ") : "--"}
+      </span>
+    </section>
   );
 }
 
@@ -2374,6 +2748,7 @@ function MultiMetricMatrix({
   refreshKey,
   drillLevel,
   onDrill,
+  asOf,
 }: {
   catalog: DashboardCatalogIndicator[];
   availableIndicators: DashboardIndicator[];
@@ -2387,6 +2762,7 @@ function MultiMetricMatrix({
   refreshKey: number;
   drillLevel?: string;
   onDrill: (row: BoardRow, levelType: string) => void;
+  asOf?: string;
 }) {
   const orderedCatalog = useMemo(() => {
     const byCode = new Map(
@@ -2420,6 +2796,7 @@ function MultiMetricMatrix({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [matrixRows, setMatrixRows] = useState<DashboardRowWithChanges[]>([]);
   const [matrixTotal, setMatrixTotal] = useState(0);
+  const [matrixCoverage, setMatrixCoverage] = useState<DashboardHistoryCoverage | undefined>();
   const [matrixPage, setMatrixPage] = useState(1);
   const [matrixTotalPages, setMatrixTotalPages] = useState(0);
   const [matrixLoading, setMatrixLoading] = useState(false);
@@ -2427,6 +2804,7 @@ function MultiMetricMatrix({
   const [matrixScrollTop, setMatrixScrollTop] = useState(0);
   const [matrixViewportHeight, setMatrixViewportHeight] = useState(600);
   const matrixScrollRef = useRef<HTMLDivElement>(null);
+  const matrixCacheRef = useRef<Map<string, MatrixCacheEntry>>(new Map());
 
   useEffect(() => {
     if (drillLevel === "BRANCH") {
@@ -2485,10 +2863,7 @@ function MultiMetricMatrix({
   useEffect(() => {
     if (!selectedCodes.length || !sortIndicator) return;
     let cancelled = false;
-    setMatrixLoading(true);
-    setMatrixError("");
-    setMatrixRows([]);
-    void getDashboardMatrix({
+    const matrixParams = {
       levelType: level,
       scopeMode,
       parentId,
@@ -2500,17 +2875,55 @@ function MultiMetricMatrix({
       sortMode: sortMode.startsWith("overall") ? "doneDesc" : sortMode,
       page: matrixPage,
       pageSize: MATRIX_PAGE_SIZE,
-    })
+    };
+    const matrixCacheKey = JSON.stringify({
+      ...matrixParams,
+      indicatorCodes: [...selectedCodes],
+      asOf: asOf || null,
+      refreshKey,
+    });
+    const cached = matrixCacheRef.current.get(matrixCacheKey);
+    const cacheTtl = asOf ? HISTORY_MATRIX_CACHE_TTL_MS : REALTIME_MATRIX_CACHE_TTL_MS;
+    if (cached && Date.now() - cached.cachedAt <= cacheTtl) {
+      matrixCacheRef.current.delete(matrixCacheKey);
+      matrixCacheRef.current.set(matrixCacheKey, cached);
+      setMatrixRows(cached.data.rows);
+      setMatrixTotal(cached.data.total);
+      setMatrixCoverage(cached.data.coverage);
+      setMatrixTotalPages(cached.data.total_pages);
+      setMatrixError("");
+      setMatrixLoading(false);
+      return;
+    }
+    if (cached) matrixCacheRef.current.delete(matrixCacheKey);
+    setMatrixLoading(true);
+    setMatrixError("");
+    setMatrixRows([]);
+    const matrixRequest = asOf
+      ? getDashboardHistoryMatrix({ ...matrixParams, asOf })
+      : getDashboardMatrix(matrixParams);
+    void matrixRequest
       .then((result) => {
         if (cancelled) return;
+        matrixCacheRef.current.set(matrixCacheKey, {
+          data: result,
+          cachedAt: Date.now(),
+        });
+        while (matrixCacheRef.current.size > MATRIX_CACHE_MAX_ENTRIES) {
+          const oldestKey = matrixCacheRef.current.keys().next().value;
+          if (oldestKey == null) break;
+          matrixCacheRef.current.delete(oldestKey);
+        }
         setMatrixRows(result.rows);
         setMatrixTotal(result.total);
+        setMatrixCoverage(result.coverage);
         setMatrixTotalPages(result.total_pages);
       })
       .catch((requestError) => {
         if (cancelled) return;
         setMatrixRows([]);
         setMatrixTotal(0);
+        setMatrixCoverage(undefined);
         setMatrixTotalPages(0);
         setMatrixError(
           requestError instanceof Error ? requestError.message : "矩阵请求失败",
@@ -2534,6 +2947,7 @@ function MultiMetricMatrix({
     sortIndicator,
     sortMode,
     windowMinutes,
+    asOf,
   ]);
 
   const selectedIndicators = selectedCodes
@@ -2797,6 +3211,17 @@ function MultiMetricMatrix({
         <div className="matrix-panel-head">
           <strong>区域 × 指标矩阵</strong>
           <span>{matrixTotal} 个区域，单元格展示完成值、目标值、完成率和 {windowMinutes} 分钟变化</span>
+          {asOf && matrixCoverage?.levels[level] && (
+            <span className={(matrixCoverage.levels[level]!.missing_areas > 0 || matrixCoverage.levels[level]!.extra_areas > 0) ? "history-coverage missing" : "history-coverage"}>
+              快照 {matrixCoverage.levels[level]!.snapshot_areas} / 当前 {matrixCoverage.levels[level]!.expected_areas}
+              {matrixCoverage.levels[level]!.missing_areas > 0
+                ? `，缺 ${matrixCoverage.levels[level]!.missing_areas}`
+                : ""}
+              {matrixCoverage.levels[level]!.extra_areas > 0
+                ? `，历史额外 ${matrixCoverage.levels[level]!.extra_areas}`
+                : ""}
+            </span>
+          )}
           {overallSortActive && <em>综合进度为当前页前端排序，渠道级暂不启用</em>}
         </div>
         <div
@@ -3290,6 +3715,8 @@ function LevelPanel({
   levelAllPending,
   staleIndicatorData,
   queryLoading,
+  historyMode,
+  coverage,
   onToggleLevelAll,
   isBranch,
   branchHeight,
@@ -3304,6 +3731,8 @@ function LevelPanel({
   levelAllPending?: boolean;
   staleIndicatorData?: boolean;
   queryLoading?: boolean;
+  historyMode?: boolean;
+  coverage?: DashboardHistoryCoverage["levels"][LevelKey];
   onToggleLevelAll?: (level: LevelKey) => void;
   isBranch?: boolean;
   branchHeight?: number;
@@ -3379,6 +3808,16 @@ function LevelPanel({
           <span className="panel-count">
             {showLoadingPlaceholder ? "加载中" : `${level.total}项`}
           </span>
+          {historyMode && coverage && !showLoadingPlaceholder && (
+            <span
+              className={(coverage.missing_areas > 0 || coverage.extra_areas > 0) ? "history-coverage missing" : "history-coverage"}
+              title={`当前区域目录 ${coverage.expected_areas} 项，历史快照 ${coverage.snapshot_areas} 项，历史额外/已停用 ${coverage.extra_areas} 项`}
+            >
+              快照 {coverage.snapshot_areas} / 当前 {coverage.expected_areas}
+              {coverage.missing_areas > 0 ? `，缺 ${coverage.missing_areas}` : ""}
+              {coverage.extra_areas > 0 ? `，历史额外 ${coverage.extra_areas}` : ""}
+            </span>
+          )}
         </div>
         <div className="panel-actions">
           {onToggleLevelAll && (

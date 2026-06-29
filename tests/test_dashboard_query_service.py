@@ -24,6 +24,10 @@ from services.dashboard_query_service import (
     get_drill_down,
     get_indicator_catalog,
     get_latest_dashboard_run,
+    get_historical_matrix_page,
+    get_historical_with_changes,
+    get_history_options,
+    get_history_range,
     parse_change_window_minutes,
 )
 
@@ -279,6 +283,171 @@ def create_test_engine():
             )
         )
     return engine
+
+
+def test_historical_query_restores_nearest_completed_run():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE collection_run SET snapshot_insert_count=2 WHERE id=1"
+        ))
+
+    result = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 11, 10, 6),
+        level_type="BRANCH",
+        change_windows=[10],
+        indicator_codes=["sgs_ajvwdz"],
+    )
+
+    assert result["data_mode"] == "HISTORY"
+    assert result["latest_run"]["batch_no"] == "batch-1"
+    assert result["row_count"] == 1
+    assert result["rows"][0]["metrics"]["sgs_ajvwdz"] == 23
+    assert result["rows"][0]["targets"]["sgs_ajvwdz"] == 50
+    assert result["coverage"]["levels"]["BRANCH"] == {
+        "expected_areas": 1,
+        "snapshot_areas": 1,
+        "missing_areas": 0,
+        "extra_areas": 0,
+        "available_metric_cells": 1,
+        "total_metric_cells": 1,
+    }
+    assert result["history_meta"]["is_fallback"] is True
+    assert result["history_meta"]["fallback_seconds"] == 60
+
+
+def test_historical_matrix_and_range():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE collection_run SET snapshot_insert_count=2 WHERE id=1"
+        ))
+
+    history_range = get_history_range(engine)
+    history_options = get_history_options(engine)
+    missing_indicator_options = get_history_options(
+        engine,
+        indicator_codes=["not_collected"],
+    )
+    matrix = get_historical_matrix_page(
+        engine,
+        as_of=datetime(2026, 6, 11, 10, 6),
+        level_type="BRANCH",
+        scope_mode="all",
+        indicator_codes=["sgs_ajvwdz"],
+        change_window=10,
+        sort_indicator="sgs_ajvwdz",
+        sort_mode="doneDesc",
+    )
+
+    assert history_range["earliest_at"] == "2026-06-11T10:05:08.000"
+    assert history_range["latest_at"] == "2026-06-11T10:05:08.000"
+    assert history_options == {
+        "dates": [{"date": "2026-06-11", "times": ["10:05"]}],
+        "date_count": 1,
+    }
+    assert missing_indicator_options == {"dates": [], "date_count": 0}
+    assert matrix["total"] == 1
+    assert matrix["rows"][0]["area_name"] == "中原区"
+
+
+def test_historical_query_keeps_disabled_snapshot_entities():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text(
+            "UPDATE collection_run SET snapshot_insert_count=3 WHERE id=1"
+        ))
+        connection.execute(text("""
+            INSERT INTO area
+                (id, area_code, area_name, level_type, level_no, parent_id, enabled)
+            VALUES (3, 'OLD', '已停用分公司', 'BRANCH', 2, 1, 0)
+        """))
+        connection.execute(text("""
+            INSERT INTO indicator
+                (id, code, name, enabled, source_active, storage_mode, sort_order)
+            VALUES (2, 'disabled_metric', '已停用指标', 0, 0, 'STORE', 20)
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_snapshot
+                (id, collection_run_id, area_id, indicator_id, metric_value, collected_at)
+            VALUES (3, 1, 3, 2, 77, '2026-06-11 09:55:08')
+        """))
+
+    result = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 11, 10, 6),
+        level_type="BRANCH",
+        scope_mode="all",
+    )
+
+    assert any(item["code"] == "disabled_metric" for item in result["indicators"])
+    archived_row = next(row for row in result["rows"] if row["area_id"] == 3)
+    assert archived_row["metrics"]["disabled_metric"] == 77
+    assert result["coverage"]["levels"]["BRANCH"]["extra_areas"] == 1
+
+
+def test_historical_query_reads_snapshot_from_previous_day_partition():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            UPDATE collection_run
+            SET started_at='2026-06-10 23:59:50',
+                finished_at='2026-06-11 00:00:10',
+                snapshot_insert_count=1
+            WHERE id=1
+        """))
+        connection.execute(text("DELETE FROM metric_snapshot WHERE id=1"))
+        connection.execute(text("""
+            UPDATE metric_snapshot
+            SET collected_at='2026-06-10 23:59:55', metric_value=23
+            WHERE id=2
+        """))
+
+    result = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 11, 0, 0, 11),
+        level_type="BRANCH",
+        indicator_codes=["sgs_ajvwdz"],
+    )
+
+    assert result["latest_run"]["batch_no"] == "batch-1"
+    assert result["rows"][0]["metrics"]["sgs_ajvwdz"] == 23
+
+
+def test_historical_query_before_first_completed_run_is_empty():
+    engine = create_test_engine()
+    result = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 11, 8, 0),
+        level_type="BRANCH",
+    )
+
+    assert result["latest_run"] is None
+    assert result["rows"] == []
+
+
+def test_historical_query_uses_started_at_when_batch_finishes_late():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            UPDATE collection_run
+            SET started_at='2026-06-11 10:05:10',
+                finished_at='2026-06-11 10:08:30',
+                snapshot_insert_count=2
+            WHERE id=1
+        """))
+
+    result = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 11, 10, 5, 59, 999000),
+        level_type="BRANCH",
+        indicator_codes=["sgs_ajvwdz"],
+    )
+
+    assert result["latest_run"]["batch_no"] == "batch-1"
+    assert result["latest_run"]["started_at"] == "2026-06-11T10:05:10.000"
+    assert result["latest_run"]["finished_at"] == "2026-06-11T10:08:30.000"
 
 
 def test_indicator_catalog_keeps_enabled_archived_indicator_visible():
