@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.dialects import mysql
 from sqlalchemy.pool import StaticPool
 
 from services.dashboard_metric_store import (
+    _insert_mysql_snapshots,
+    _mysql_write_chunk_size,
     finalize_metric_run_in_session,
     MetricConflictError,
     MetricValueError,
@@ -19,6 +23,42 @@ from services.dashboard_metric_store import (
     write_metric_batch_in_session,
     write_metric_batches_in_session,
 )
+
+
+def test_mysql_write_chunk_size_reads_valid_env(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_MYSQL_WRITE_CHUNK_SIZE", "500")
+
+    assert _mysql_write_chunk_size() == 500
+
+
+@pytest.mark.parametrize("value", ["0", "10001", "invalid"])
+def test_mysql_write_chunk_size_falls_back_for_invalid_env(monkeypatch, value):
+    monkeypatch.setenv("DASHBOARD_MYSQL_WRITE_CHUNK_SIZE", value)
+
+    assert _mysql_write_chunk_size() == 1000
+
+
+def test_mysql_snapshot_insert_uses_multi_value_chunks():
+    session = MagicMock()
+    values = [
+        {
+            "collection_run_id": 1,
+            "area_id": area_id,
+            "indicator_id": 2,
+            "metric_value": Decimal("1"),
+            "collected_at": datetime(2026, 6, 29, 16, 0),
+        }
+        for area_id in range(1, 6)
+    ]
+
+    stats = _insert_mysql_snapshots(session, values, chunk_size=2)
+
+    assert session.execute.call_count == 3
+    assert stats["row_count"] == 5
+    assert stats["chunk_count"] == 3
+    first_statement = session.execute.call_args_list[0].args[0]
+    compiled_sql = str(first_statement.compile(dialect=mysql.dialect()))
+    assert compiled_sql.count("), (") == 1
 
 
 def create_test_engine():

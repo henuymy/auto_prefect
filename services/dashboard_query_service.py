@@ -2248,7 +2248,8 @@ def _attach_changes_fast(
 
             changes: dict[str, dict[str, Any]] = {}
             for _, window_key in cutoffs:
-                if indicator_code in components:
+                prev = snapshot_map.get((aid, indicator_id, window_key))
+                if prev is None and indicator_code in components:
                     source_values = {
                         source_code: snapshot_map.get((aid, source_id, window_key))
                         for source_id, source_code in source_code_by_id.items()
@@ -2262,8 +2263,6 @@ def _attach_changes_fast(
                         if previous_value is not None
                         else None
                     )
-                else:
-                    prev = snapshot_map.get((aid, indicator_id, window_key))
                 changes[window_key] = _change_payload(current_dec, prev)
             per_indicator[indicator_code] = changes
         row["changes"] = per_indicator

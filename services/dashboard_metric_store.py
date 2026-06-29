@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from time import perf_counter
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from sqlalchemy import Engine, insert, select
 from sqlalchemy.dialects.mysql import insert as mysql_insert
@@ -17,7 +19,11 @@ from models.dashboard_indicator import Indicator
 from models.dashboard_metric import MetricAcc, MetricCurrent, MetricSnapshot
 
 
-_MYSQL_WRITE_CHUNK_SIZE = 10_000
+_DEFAULT_MYSQL_WRITE_CHUNK_SIZE = 1_000
+_MAX_MYSQL_WRITE_CHUNK_SIZE = 10_000
+_SLOW_MYSQL_WRITE_CHUNK_SECONDS = 2.0
+
+logger = logging.getLogger(__name__)
 
 
 class MetricWriteError(RuntimeError):
@@ -275,16 +281,26 @@ def write_metric_batches_in_session(
                 "updated_at": updated_at,
             })
 
+    mysql_chunk_size = _mysql_write_chunk_size() if dialect_name == "mysql" else None
     snapshot_started = perf_counter()
     if dialect_name == "mysql":
-        _insert_mysql_snapshots(session, snapshot_values)
+        snapshot_stats = _insert_mysql_snapshots(
+            session,
+            snapshot_values,
+            chunk_size=mysql_chunk_size,
+        )
     else:
         session.execute(insert(MetricSnapshot), snapshot_values)
+        snapshot_stats = _single_write_stats(snapshot_values)
     snapshot_insert_seconds = perf_counter() - snapshot_started
 
     current_started = perf_counter()
     if dialect_name == "mysql":
-        _upsert_mysql_current(session, current_values)
+        current_stats = _upsert_mysql_current(
+            session,
+            current_values,
+            chunk_size=mysql_chunk_size,
+        )
     else:
         for indicator_code, rows in normalized_rows_by_indicator.items():
             _write_orm_current_metrics(
@@ -295,6 +311,7 @@ def write_metric_batches_in_session(
                 stat_date,
                 collected_at,
             )
+        current_stats = _single_write_stats(current_values)
     current_upsert_seconds = perf_counter() - current_started
 
     total_written = len(snapshot_values)
@@ -308,6 +325,11 @@ def write_metric_batches_in_session(
             "metadata_load_seconds": metadata_load_seconds,
             "snapshot_insert_seconds": snapshot_insert_seconds,
             "current_upsert_seconds": current_upsert_seconds,
+        },
+        "write_stats": {
+            "chunk_size": mysql_chunk_size,
+            "snapshot": snapshot_stats,
+            "current": current_stats,
         },
     }
 
@@ -449,7 +471,8 @@ def _write_mysql_metrics(
         }
         for row in rows
     ]
-    _insert_mysql_snapshots(session, snapshot_values)
+    chunk_size = _mysql_write_chunk_size()
+    _insert_mysql_snapshots(session, snapshot_values, chunk_size=chunk_size)
 
     updated_at = datetime.now()
     current_values = [
@@ -464,36 +487,118 @@ def _write_mysql_metrics(
         }
         for row in rows
     ]
-    _upsert_mysql_current(session, current_values)
+    _upsert_mysql_current(session, current_values, chunk_size=chunk_size)
 
 
-def _chunks(values: list[dict[str, Any]]) -> Iterable[list[dict[str, Any]]]:
-    for start in range(0, len(values), _MYSQL_WRITE_CHUNK_SIZE):
-        yield values[start:start + _MYSQL_WRITE_CHUNK_SIZE]
+def _mysql_write_chunk_size() -> int:
+    raw_value = os.environ.get(
+        "DASHBOARD_MYSQL_WRITE_CHUNK_SIZE",
+        str(_DEFAULT_MYSQL_WRITE_CHUNK_SIZE),
+    )
+    try:
+        chunk_size = int(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "DASHBOARD_MYSQL_WRITE_CHUNK_SIZE=%r 不是整数，使用默认值 %s",
+            raw_value,
+            _DEFAULT_MYSQL_WRITE_CHUNK_SIZE,
+        )
+        return _DEFAULT_MYSQL_WRITE_CHUNK_SIZE
+    if not 1 <= chunk_size <= _MAX_MYSQL_WRITE_CHUNK_SIZE:
+        logger.warning(
+            "DASHBOARD_MYSQL_WRITE_CHUNK_SIZE=%r 超出范围 1-%s，使用默认值 %s",
+            raw_value,
+            _MAX_MYSQL_WRITE_CHUNK_SIZE,
+            _DEFAULT_MYSQL_WRITE_CHUNK_SIZE,
+        )
+        return _DEFAULT_MYSQL_WRITE_CHUNK_SIZE
+    return chunk_size
+
+
+def _chunks(
+    values: list[dict[str, Any]],
+    chunk_size: int,
+) -> Iterable[list[dict[str, Any]]]:
+    for start in range(0, len(values), chunk_size):
+        yield values[start:start + chunk_size]
+
+
+def _single_write_stats(values: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "row_count": len(values),
+        "chunk_count": 1 if values else 0,
+        "slowest_chunk_seconds": 0.0,
+    }
 
 
 def _insert_mysql_snapshots(
     session: Session,
     values: list[dict[str, Any]],
-) -> None:
-    for chunk in _chunks(values):
-        session.execute(insert(MetricSnapshot), chunk)
+    *,
+    chunk_size: int,
+) -> dict[str, Any]:
+    return _execute_mysql_chunks(
+        session,
+        values,
+        operation="snapshot_insert",
+        chunk_size=chunk_size,
+        statement_factory=lambda chunk: mysql_insert(MetricSnapshot).values(chunk),
+    )
 
 
 def _upsert_mysql_current(
     session: Session,
     values: list[dict[str, Any]],
-) -> None:
-    for chunk in _chunks(values):
+    *,
+    chunk_size: int,
+) -> dict[str, Any]:
+    def statement_factory(chunk: list[dict[str, Any]]):
         statement = mysql_insert(MetricCurrent).values(chunk)
-        statement = statement.on_duplicate_key_update(
+        return statement.on_duplicate_key_update(
             collection_run_id=statement.inserted.collection_run_id,
             metric_value=statement.inserted.metric_value,
             stat_date=statement.inserted.stat_date,
             collected_at=statement.inserted.collected_at,
             updated_at=statement.inserted.updated_at,
         )
-        session.execute(statement)
+
+    return _execute_mysql_chunks(
+        session,
+        values,
+        operation="current_upsert",
+        chunk_size=chunk_size,
+        statement_factory=statement_factory,
+    )
+
+
+def _execute_mysql_chunks(
+    session: Session,
+    values: list[dict[str, Any]],
+    *,
+    operation: str,
+    chunk_size: int,
+    statement_factory: Callable[[list[dict[str, Any]]], Any],
+) -> dict[str, Any]:
+    chunk_count = 0
+    slowest_chunk_seconds = 0.0
+    for chunk_count, chunk in enumerate(_chunks(values, chunk_size), start=1):
+        chunk_started = perf_counter()
+        session.execute(statement_factory(chunk))
+        chunk_seconds = perf_counter() - chunk_started
+        slowest_chunk_seconds = max(slowest_chunk_seconds, chunk_seconds)
+        if chunk_seconds >= _SLOW_MYSQL_WRITE_CHUNK_SECONDS:
+            logger.warning(
+                "驾驶舱 MySQL 写入分块耗时过长 operation=%s chunk=%s rows=%s seconds=%.3f",
+                operation,
+                chunk_count,
+                len(chunk),
+                chunk_seconds,
+            )
+    return {
+        "row_count": len(values),
+        "chunk_count": chunk_count,
+        "slowest_chunk_seconds": round(slowest_chunk_seconds, 3),
+    }
 
 
 def _write_orm_metrics(

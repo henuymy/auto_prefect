@@ -965,6 +965,70 @@ def test_current_with_changes_computes_custom_indicator_delta():
     engine.dispose()
 
 
+def test_current_with_changes_prefers_stored_custom_snapshot():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        anchor = datetime(2026, 6, 11, 10, 5, 8)
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (id, code, name, enabled, source_active, indicator_type,
+                     storage_mode, sort_order)
+                VALUES
+                    (2, 'source_only', '只参与计算源指标', 0, 1, 'SOURCE',
+                     'COMPONENT', 20),
+                    (3, 'stored_custom', '已落库自定义指标', 1, 0, 'CUSTOM',
+                     'STORE', 30)
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_current
+                    (id, area_id, indicator_id, collection_run_id,
+                     metric_value, stat_date, collected_at)
+                VALUES
+                    (2, 2, 3, 1, 12, '2026-06-11', '2026-06-11 10:05:08')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO metric_snapshot
+                    (id, collection_run_id, area_id, indicator_id,
+                     metric_value, collected_at)
+                VALUES
+                    (3, 1, 2, 3, 7, :ts_60min_ago)
+                """
+            ),
+            {"ts_60min_ago": (anchor - timedelta(minutes=60)).isoformat(sep=" ")},
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO custom_indicator_component
+                    (id, custom_indicator_id, source_indicator_id, coefficient)
+                VALUES
+                    (1, 3, 2, 1)
+                """
+            )
+        )
+
+    result = get_current_with_changes(
+        engine,
+        indicator_codes=["stored_custom"],
+        change_windows=[60],
+    )
+    row = next(row for row in result["rows"] if row["area_code"] == "AQ")
+
+    assert row["metrics"]["stored_custom"] == 12
+    assert row["changes"]["stored_custom"]["change_60min"]["value"] == 5.0
+    engine.dispose()
+
+
 def test_current_with_changes_supports_windows_beyond_default_lookback():
     engine = create_test_engine()
     with engine.begin() as connection:

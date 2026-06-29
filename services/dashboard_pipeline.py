@@ -156,6 +156,7 @@ def execute_dashboard_pipeline(
 
         write_started = perf_counter()
         write_timings: dict[str, float] = {}
+        metric_write_stats: dict[str, Any] = {}
         session_factory = sessionmaker(bind=batch.engine, expire_on_commit=False, class_=Session)
         with session_factory() as session:
             transaction = session.begin()
@@ -237,6 +238,7 @@ def execute_dashboard_pipeline(
                     indicator_results.extend(bulk_result["indicator_results"])
                     total_written = bulk_result["snapshot_insert_count"]
                     write_timings.update(bulk_result["timings"])
+                    metric_write_stats.update(bulk_result["write_stats"])
                 else:
                     for indicator_code, normalized_metric_rows in normalized_rows_by_indicator.items():
                         indicator_result = write_acc_metric_batch_in_session(
@@ -347,6 +349,12 @@ def execute_dashboard_pipeline(
             batch_no,
             timing["write_timings"],
         )
+        if metric_write_stats:
+            logger.info(
+                "驾驶舱批量写入统计 batch_no=%s stats=%s",
+                batch_no,
+                metric_write_stats,
+            )
         if structure_change_summary.get("changed"):
             logger.info(
                 "驾驶舱结构变化摘要 batch_no=%s summary=%s",
@@ -356,6 +364,7 @@ def execute_dashboard_pipeline(
 
         return {
             **write_result,
+            "metric_write_stats": metric_write_stats,
             "retention": retention_result,
             "sync": sync_result,
             "timing": timing,
