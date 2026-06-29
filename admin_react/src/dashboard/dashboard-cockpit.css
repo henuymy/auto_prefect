@@ -1,12 +1,76 @@
 html,
 body,
 #root {
+  width: 100%;
+  max-width: 100%;
   min-height: 100%;
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
   overflow-x: hidden;
+  background: #0b0f16;
+  scrollbar-color: rgba(88, 107, 132, 0.82) #0b1119;
+  scrollbar-width: thin;
+}
+
+.cockpit-shell,
+.cockpit-shell *,
+.cockpit-shell *::before,
+.cockpit-shell *::after {
+  box-sizing: border-box;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.cockpit-shell::-webkit-scrollbar,
+.cockpit-shell *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+.cockpit-shell::-webkit-scrollbar-track,
+.cockpit-shell *::-webkit-scrollbar-track {
+  background: #0b1119;
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+.cockpit-shell::-webkit-scrollbar-thumb,
+.cockpit-shell *::-webkit-scrollbar-thumb {
+  min-width: 40px;
+  min-height: 40px;
+  border: 2px solid #0b1119;
+  border-radius: 999px;
+  background: rgba(88, 107, 132, 0.82);
+  background-clip: padding-box;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+.cockpit-shell::-webkit-scrollbar-thumb:hover,
+.cockpit-shell *::-webkit-scrollbar-thumb:hover {
+  background: rgba(125, 148, 178, 0.94);
+  background-clip: padding-box;
+}
+
+html::-webkit-scrollbar-corner,
+body::-webkit-scrollbar-corner,
+.cockpit-shell::-webkit-scrollbar-corner,
+.cockpit-shell *::-webkit-scrollbar-corner {
+  background: #0b1119;
+}
+
+html::-webkit-scrollbar-button,
+body::-webkit-scrollbar-button,
+.cockpit-shell::-webkit-scrollbar-button,
+.cockpit-shell *::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .cockpit-shell {
@@ -1093,6 +1157,8 @@ body {
 }
 
 .multi-metric-view {
+  min-width: 0;
+  max-width: 100%;
   margin-top: 14px;
 }
 
@@ -1112,6 +1178,12 @@ body {
   border-radius: 10px;
   padding: 10px;
   background: rgba(17, 23, 32, 0.94);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.matrix-toolbar > * {
+  min-width: 0;
 }
 
 .matrix-toolbar .selector {
@@ -2347,14 +2419,43 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .source-manager-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .source-filter-tabs {
+    justify-content: flex-start;
+  }
+
+  .overall-config-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .overall-config-name {
+    grid-column: 1 / -1;
+  }
+
+  .progress-color-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
 }
 
 .selected-indicator-strip {
   display: flex;
   gap: 8px;
   overflow-x: auto;
+  max-width: 100%;
   min-height: 34px;
-  padding: 8px 2px 0;
+  padding: 8px 2px 6px;
+  overscroll-behavior-x: contain;
+  scrollbar-color: rgba(88, 107, 132, 0.82) #0b1119;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.selected-indicator-strip::-webkit-scrollbar {
+  height: 7px;
 }
 
 .selected-indicator-strip > div {
@@ -2449,6 +2550,8 @@ body {
 
 .matrix-panel {
   overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
   margin-top: 8px;
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 10px;
@@ -2504,6 +2607,8 @@ body {
 }
 
 .matrix-scroll {
+  width: 100%;
+  max-width: 100%;
   max-height: calc(100vh - 230px);
   min-height: 480px;
   overflow: auto;
@@ -2809,6 +2914,23 @@ body {
   }
 }
 
+@media (max-width: 1600px) {
+  .matrix-toolbar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .history-time-bar {
+    flex-wrap: wrap;
+  }
+
+  .history-range-note {
+    flex: 1 1 100%;
+    width: 100%;
+    margin-left: 0;
+    text-align: right;
+  }
+}
+
 @media (max-width: 1180px) {
   .cockpit-header {
     grid-template-columns: 240px 1fr;
@@ -2851,6 +2973,31 @@ body {
     display: flex;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .cockpit-header .toolbar,
+  .cockpit-header .toolbar:not(.toolbar-muted) {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .brand-title {
+    font-size: 22px;
+  }
+
+  .brand-icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .history-time-bar,
+  .matrix-toolbar,
+  .matrix-panel,
+  .selected-indicator-strip {
+    max-width: 100%;
   }
 
   .history-time-bar,
@@ -2901,5 +3048,63 @@ body {
     justify-content: center;
     gap: 3px;
     padding: 8px 12px;
+  }
+
+  .matrix-scroll {
+    min-height: 360px;
+    max-height: calc(100dvh - 220px);
+  }
+
+  .custom-metric-backdrop {
+    padding: 6px;
+  }
+
+  .custom-metric-modal {
+    width: calc(100vw - 12px);
+    height: calc(100dvh - 12px);
+    max-height: calc(100dvh - 12px);
+  }
+
+  .custom-metric-head {
+    align-items: flex-start;
+    padding: 13px 14px;
+  }
+
+  .custom-metric-head span {
+    max-width: 70vw;
+  }
+
+  .custom-metric-form {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .source-manager-toolbar {
+    margin-right: -14px;
+    margin-left: -14px;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .progress-color-popover,
+  .overall-config-popover,
+  .metric-picker-popover {
+    width: min(420px, calc(100vw - 24px));
+  }
+
+  .progress-color-options,
+  .overall-config-row {
+    grid-template-columns: 1fr;
+  }
+
+  .overall-config-name {
+    grid-column: auto;
+  }
+
+  .custom-metric-actions {
+    margin-right: -14px;
+    margin-left: -14px;
+    padding-right: 14px;
+    padding-left: 14px;
   }
 }
