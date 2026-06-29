@@ -1,4 +1,5 @@
 import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   ArrowDown,
@@ -121,6 +122,13 @@ type MatrixSortMode =
   | "doneAsc" | "doneDesc"
   | "changeValueAsc" | "changeValueDesc"
   | "changeRateAsc" | "changeRateDesc";
+type MatrixPreferences = {
+  windowMinutes: number;
+  selectedCodes: string[];
+  sortIndicator: string;
+  sortMode: MatrixSortMode;
+};
+type RequestSource = "idle" | "loading" | "cache" | "network" | "error";
 
 type LevelAllPopup = {
   kind: "loading" | "error";
@@ -180,6 +188,11 @@ type MatrixCacheEntry = {
   cachedAt: number;
 };
 
+type MatrixCacheStore = {
+  entries: Map<string, MatrixCacheEntry>;
+  inFlight: Map<string, Promise<DashboardMatrixResponse>>;
+};
+
 function historyMinuteValue(value: string | null | undefined) {
   return value?.slice(0, 16) || "";
 }
@@ -231,7 +244,7 @@ function makeDashboardCacheKey({
 
 /* ── constants ── */
 
-const DEFAULT_CHANGE_WINDOWS = [5, 15, 30, 60];
+const DEFAULT_CHANGE_WINDOWS = [5, 30, 60];
 const SHOW_MONTH_ACCUMULATION = false;
 const DASHBOARD_CACHE_TTL_MS = 2 * 60 * 1000;
 const DASHBOARD_CACHE_MAX_ENTRIES = 24;
@@ -246,6 +259,15 @@ const SINGLE_VIRTUAL_OVERSCAN = 10;
 const OVERALL_RULE_STORAGE_KEY = "dashboard-overall-progress-rules";
 const MATRIX_PROGRESS_COLOR_STORAGE_KEY = "dashboard-matrix-progress-colors";
 const MATRIX_INDICATOR_ORDER_STORAGE_KEY = "dashboard-matrix-indicator-order";
+const MATRIX_PREFERENCES_STORAGE_KEY = "dashboard-matrix-preferences";
+const SINGLE_CHANGE_WINDOWS_STORAGE_KEY = "dashboard-single-change-windows";
+const MATRIX_SORT_MODES = new Set<MatrixSortMode>([
+  "overallAsc", "overallDesc",
+  "progressAsc", "progressDesc",
+  "doneAsc", "doneDesc",
+  "changeValueAsc", "changeValueDesc",
+  "changeRateAsc", "changeRateDesc",
+]);
 const DEFAULT_MATRIX_PROGRESS_COLORS: MatrixProgressColors = {
   low: "#a4afbe",
   mid: "#ddc47d",
@@ -266,12 +288,24 @@ const LEVEL_CONFIG: {
 
 const DEFAULT_BRANCH_KEYWORDS = ["中原", "AQ"];
 
+function isDefaultBranch(row: Pick<DashboardRow, "area_name" | "area_code">) {
+  return DEFAULT_BRANCH_KEYWORDS.some(
+    (keyword) => row.area_name.includes(keyword) || row.area_code === keyword,
+  );
+}
+
 function visibleLevels(drill: DrillEntry | null): LevelKey[] {
   if (!drill) return ["BRANCH", "GRID", "CHANNEL"];
   if (drill.levelType === "CITY") return ["BRANCH", "GRID", "CHANNEL"];
   if (drill.levelType === "BRANCH") return ["BRANCH", "GRID", "CHANNEL"];
   if (drill.levelType === "GRID") return ["BRANCH", "GRID", "CHANNEL"];
   return [];
+}
+
+function matrixLevelForDrill(drillLevel?: string): LevelKey {
+  if (drillLevel === "BRANCH") return "GRID";
+  if (drillLevel === "GRID") return "CHANNEL";
+  return "BRANCH";
 }
 
 function normalizeDrillStack(items: DrillEntry[]): DrillEntry[] {
@@ -363,6 +397,36 @@ function normalizeChangeWindowMinutes(value: number, fallback = 5) {
   if (!Number.isFinite(value)) return fallback;
   const rounded = Math.round(value / 5) * 5;
   return Math.max(5, Math.min(1440, rounded));
+}
+
+function loadSingleChangeWindows(): number[] {
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(SINGLE_CHANGE_WINDOWS_STORAGE_KEY) || "[]",
+    );
+    if (!Array.isArray(parsed) || parsed.length < DEFAULT_CHANGE_WINDOWS.length) {
+      return [...DEFAULT_CHANGE_WINDOWS];
+    }
+    const normalized = DEFAULT_CHANGE_WINDOWS.map((fallback, index) =>
+      normalizeChangeWindowMinutes(Number(parsed[index]), fallback),
+    );
+    return new Set(normalized).size === DEFAULT_CHANGE_WINDOWS.length
+      ? normalized
+      : [...DEFAULT_CHANGE_WINDOWS];
+  } catch {
+    return [...DEFAULT_CHANGE_WINDOWS];
+  }
+}
+
+function saveSingleChangeWindows(windows: number[]) {
+  try {
+    window.localStorage.setItem(
+      SINGLE_CHANGE_WINDOWS_STORAGE_KEY,
+      JSON.stringify(windows.slice(0, DEFAULT_CHANGE_WINDOWS.length)),
+    );
+  } catch {
+    // 本地存储不可用时仍保留当前会话设置。
+  }
 }
 
 function sortRows(
@@ -514,6 +578,45 @@ function saveMatrixIndicatorOrder(codes: string[]) {
     window.localStorage.setItem(MATRIX_INDICATOR_ORDER_STORAGE_KEY, JSON.stringify(codes));
   } catch {
     // 本地存储不可用时仍保留当前会话的排序。
+  }
+}
+
+function loadMatrixPreferences(): MatrixPreferences {
+  const defaults: MatrixPreferences = {
+    windowMinutes: 60,
+    selectedCodes: loadMatrixIndicatorOrder(),
+    sortIndicator: "",
+    sortMode: "doneDesc",
+  };
+  try {
+    const raw = window.localStorage.getItem(MATRIX_PREFERENCES_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<MatrixPreferences>;
+    const selectedCodes = Array.isArray(parsed.selectedCodes)
+      ? parsed.selectedCodes.filter((code): code is string => typeof code === "string")
+      : defaults.selectedCodes;
+    return {
+      windowMinutes: normalizeChangeWindowMinutes(
+        Number(parsed.windowMinutes),
+        defaults.windowMinutes,
+      ),
+      selectedCodes: [...new Set(selectedCodes)],
+      sortIndicator: typeof parsed.sortIndicator === "string" ? parsed.sortIndicator : "",
+      sortMode: MATRIX_SORT_MODES.has(parsed.sortMode as MatrixSortMode)
+        ? parsed.sortMode as MatrixSortMode
+        : defaults.sortMode,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveMatrixPreferences(patch: Partial<MatrixPreferences>) {
+  try {
+    const next = { ...loadMatrixPreferences(), ...patch };
+    window.localStorage.setItem(MATRIX_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // 本地存储不可用时仍保留当前会话设置。
   }
 }
 
@@ -701,10 +804,7 @@ function buildDefaultBranchScope(rows: DashboardRow[]): {
   const defaultBranch = rows.find(
     (row) =>
       row.level_type === "BRANCH" &&
-      DEFAULT_BRANCH_KEYWORDS.some(
-        (keyword) =>
-          row.area_name.includes(keyword) || row.area_code.includes(keyword),
-      ),
+      isDefaultBranch(row),
   );
   if (!defaultBranch) return null;
 
@@ -818,9 +918,12 @@ export function DashboardCockpit() {
   const [historyOptions, setHistoryOptions] = useState<DashboardHistoryOptionsResponse["dates"]>([]);
   const [data, setData] = useState<FetchedData | null>(null);
   const [error, setError] = useState(false);
+  const [singleRequestSource, setSingleRequestSource] = useState<RequestSource>("idle");
   const [indicator, setIndicator] = useState("");
-  const [changeWindows, setChangeWindows] = useState<number[]>(DEFAULT_CHANGE_WINDOWS);
-  const [multiMetricWindow, setMultiMetricWindow] = useState(60);
+  const [changeWindows, setChangeWindows] = useState<number[]>(loadSingleChangeWindows);
+  const [multiMetricWindow, setMultiMetricWindow] = useState(
+    () => loadMatrixPreferences().windowMinutes,
+  );
   const [multiSelectedCodes, setMultiSelectedCodes] = useState<string[]>([]);
   const [progressColors, setProgressColors] = useState<MatrixProgressColors>(() => loadMatrixProgressColors());
   const [dataRevision, setDataRevision] = useState(0);
@@ -828,6 +931,17 @@ export function DashboardCockpit() {
   const [scopeMode, setScopeMode] = useState<ScopeMode>("default");
   const [dayLevelAllMode, setDayLevelAllMode] = useState<Partial<Record<LevelKey, boolean>>>({});
   const [monthLevelAllMode, setMonthLevelAllMode] = useState<Partial<Record<LevelKey, boolean>>>({});
+  const singleScopeStateRef = useRef<{
+    scopeMode: ScopeMode;
+    drillStack: DrillEntry[];
+    dayLevelAllMode: Partial<Record<LevelKey, boolean>>;
+    monthLevelAllMode: Partial<Record<LevelKey, boolean>>;
+  }>({
+    scopeMode: "default",
+    drillStack: [],
+    dayLevelAllMode: {},
+    monthLevelAllMode: {},
+  });
   const [pendingLevelAll, setPendingLevelAll] = useState<{
     section: "day" | "month";
     level: LevelKey;
@@ -841,6 +955,10 @@ export function DashboardCockpit() {
   const scopePopupTargetRef = useRef<ScopePopupTarget | null>(null);
   const fetchSeqRef = useRef(0);
   const queryCacheRef = useRef<Map<string, DashboardCacheEntry>>(new Map());
+  const matrixCacheStoreRef = useRef<MatrixCacheStore>({
+    entries: new Map(),
+    inFlight: new Map(),
+  });
   const latestDataVersionRef = useRef<string | null>(null);
   const latestConfigVersionRef = useRef<string | null>(null);
   const [daySorts, setDaySorts] = useState<Record<LevelKey, SortKey>>({
@@ -867,6 +985,16 @@ export function DashboardCockpit() {
     : scopeMode === "all"
       ? "郑州市 / 全部"
       : "郑州市 / 中原区";
+  const defaultBranchDrillActive = drillTarget?.levelType === "BRANCH" && (
+    data?.changesRows.some((row) => (
+      row.area_id === drillTarget.areaId
+      && row.level_type === "BRANCH"
+      && isDefaultBranch(row)
+    ))
+    || drillTarget.areaName.includes("中原")
+  );
+  const matrixDrillLevel = drillTarget?.levelType
+    ?? (scopeMode === "default" ? "BRANCH" : undefined);
   const requestedChangeWindows = useMemo(
     () => mode === "multi" ? [multiMetricWindow] : changeWindows,
     [changeWindows, mode, multiMetricWindow],
@@ -905,6 +1033,26 @@ export function DashboardCockpit() {
   const handleModeChange = useCallback((nextMode: CockpitMode) => {
     if (nextMode === mode) return;
 
+    if (nextMode === "multi") {
+      singleScopeStateRef.current = {
+        scopeMode,
+        drillStack: normalizedDrillStack,
+        dayLevelAllMode,
+        monthLevelAllMode,
+      };
+    }
+    const nextScopeState = nextMode === "multi"
+      ? {
+          scopeMode: "all" as ScopeMode,
+          drillStack: [] as DrillEntry[],
+          dayLevelAllMode: {} as Partial<Record<LevelKey, boolean>>,
+          monthLevelAllMode: {} as Partial<Record<LevelKey, boolean>>,
+        }
+      : singleScopeStateRef.current;
+    const nextDrillStack = normalizeDrillStack(nextScopeState.drillStack);
+    const nextDrillTarget = nextDrillStack.length
+      ? nextDrillStack[nextDrillStack.length - 1]
+      : null;
     const nextChangeWindows = nextMode === "multi" ? [] : changeWindows;
     const nextIndicatorCodes = nextMode === "multi"
       ? multiSelectedCodes
@@ -913,13 +1061,13 @@ export function DashboardCockpit() {
         : undefined;
     const nextCacheKey = makeDashboardCacheKey({
       mode: nextMode,
-      scopeMode,
-      parentId: drillTarget?.areaId ?? null,
-      parentLevel: drillTarget?.levelType ?? null,
+      scopeMode: nextScopeState.scopeMode,
+      parentId: nextDrillTarget?.areaId ?? null,
+      parentLevel: nextDrillTarget?.levelType ?? null,
       changeWindows: nextChangeWindows,
       indicatorCodes: nextIndicatorCodes ?? null,
-      dayLevelAllMode,
-      monthLevelAllMode,
+      dayLevelAllMode: nextScopeState.dayLevelAllMode,
+      monthLevelAllMode: nextScopeState.monthLevelAllMode,
       asOf: dataTimeMode === "history" ? historyAsOf : null,
     });
     const cached = queryCacheRef.current.get(nextCacheKey);
@@ -929,6 +1077,7 @@ export function DashboardCockpit() {
       setData(cached.data);
       setLoading(false);
       setError(false);
+      setSingleRequestSource("cache");
       setPendingLevelAll(null);
       setBackgroundLoadingLevels({});
       scopePopupTargetRef.current = null;
@@ -936,13 +1085,18 @@ export function DashboardCockpit() {
     } else {
       setLoading(true);
       setError(false);
+      setSingleRequestSource("loading");
       setBackgroundLoadingLevels(
-        nextMode === "single" && scopeMode === "all" && !drillTarget
+        nextMode === "single" && nextScopeState.scopeMode === "all" && !nextDrillTarget
           ? { GRID: true, CHANNEL: true }
           : {},
       );
     }
 
+    setScopeMode(nextScopeState.scopeMode);
+    setDrillStack(nextDrillStack);
+    setDayLevelAllMode(nextScopeState.dayLevelAllMode);
+    setMonthLevelAllMode(nextScopeState.monthLevelAllMode);
     setMode(nextMode);
   }, [
     changeWindows,
@@ -952,6 +1106,7 @@ export function DashboardCockpit() {
     mode,
     monthLevelAllMode,
     multiSelectedCodes,
+    normalizedDrillStack,
     scopeMode,
     dataTimeMode,
     historyAsOf,
@@ -1009,6 +1164,7 @@ export function DashboardCockpit() {
       setData(cached.data);
       setError(false);
       setLoading(false);
+      setSingleRequestSource("cache");
       setPendingLevelAll(null);
       scopePopupTargetRef.current = null;
       setLevelAllPopup((prev) => (prev?.kind === "loading" ? null : prev));
@@ -1019,6 +1175,7 @@ export function DashboardCockpit() {
     }
     setLoading(true);
     setError(false);
+    setSingleRequestSource("loading");
     let levelAllOverrideFailed = false;
     let requestFailed = false;
     try {
@@ -1278,10 +1435,12 @@ export function DashboardCockpit() {
         setData(nextData);
         setDataRevision((current) => current + 1);
       });
+      setSingleRequestSource("network");
     } catch {
       requestFailed = true;
       if (seq !== fetchSeqRef.current) return;
       setError(true);
+      setSingleRequestSource("error");
       if (scopePopupTargetRef.current) {
         setLevelAllPopup({
           kind: "error",
@@ -1319,7 +1478,14 @@ export function DashboardCockpit() {
       const initialCodes = selectableIndicators
         .map((item) => item.code);
       if (initialCodes.length) {
-        setMultiSelectedCodes(applySavedIndicatorOrder(initialCodes));
+        const availableCodes = new Set(initialCodes);
+        const savedCodes = loadMatrixPreferences().selectedCodes
+          .filter((code) => availableCodes.has(code));
+        setMultiSelectedCodes(
+          savedCodes.length
+            ? applySavedIndicatorOrder(savedCodes)
+            : applySavedIndicatorOrder(initialCodes),
+        );
         return;
       }
     }
@@ -1370,8 +1536,15 @@ export function DashboardCockpit() {
   ]);
 
   useEffect(() => {
-    if (multiSelectedCodes.length) saveMatrixIndicatorOrder(multiSelectedCodes);
+    if (multiSelectedCodes.length) {
+      saveMatrixIndicatorOrder(multiSelectedCodes);
+      saveMatrixPreferences({ selectedCodes: multiSelectedCodes });
+    }
   }, [multiSelectedCodes]);
+
+  useEffect(() => {
+    saveMatrixPreferences({ windowMinutes: multiMetricWindow });
+  }, [multiMetricWindow]);
 
   useEffect(() => {
     if (levelAllPopup?.kind !== "error") return;
@@ -1632,7 +1805,9 @@ export function DashboardCockpit() {
       if (prev.some((value, valueIndex) => valueIndex !== index && value === normalized)) {
         return prev;
       }
-      return prev.map((value, valueIndex) => valueIndex === index ? normalized : value);
+      const next = prev.map((value, valueIndex) => valueIndex === index ? normalized : value);
+      saveSingleChangeWindows(next);
+      return next;
     });
   }, []);
 
@@ -1663,7 +1838,9 @@ export function DashboardCockpit() {
         dataTimeMode={dataTimeMode}
         drillName={orgScopeName}
         scopeValue={
-          drillTarget?.levelType === "BRANCH"
+          defaultBranchDrillActive
+            ? "__default__"
+            : drillTarget?.levelType === "BRANCH"
             ? `BRANCH:${drillTarget.areaId}`
             : normalizedDrillStack.length > 0
               ? "__current__"
@@ -1672,13 +1849,13 @@ export function DashboardCockpit() {
                 : "__default__"
         }
         scopeOptions={[
-          ...(normalizedDrillStack.length > 0
+          ...(normalizedDrillStack.length > 0 && !defaultBranchDrillActive
             ? [{ label: orgScopeName, value: "__current__" }]
             : []),
           { label: "郑州市 / 中原区", value: "__default__" },
           { label: "郑州市 / 全部", value: "__all__" },
           ...(data?.changesRows || [])
-            .filter((row) => row.level_type === "BRANCH")
+            .filter((row) => row.level_type === "BRANCH" && !isDefaultBranch(row))
             .map((row) => ({
               label: `郑州市 / ${row.area_name}`,
               value: `BRANCH:${row.area_id}`,
@@ -1755,12 +1932,15 @@ export function DashboardCockpit() {
       <>
       <main className="board-grid" style={{ marginBottom: 14 }}>
         <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -14 }}>
-          <strong>{dataTimeMode === "history" ? "历史时刻" : "当日实时"}</strong>
-          <span>
-            {dataTimeMode === "history"
-              ? "数据固定于所选时间之前最近的成功批次"
-              : "展示每30秒刷新，数据按采集批次更新"}
-          </span>
+          <div className="section-title-copy">
+            <strong>{dataTimeMode === "history" ? "历史时刻" : "当日实时"}</strong>
+            <span>
+              {dataTimeMode === "history"
+                ? "数据固定于所选时间之前最近的成功批次"
+                : "展示每30秒刷新，数据按采集批次更新"}
+            </span>
+            <RequestSourceBadge source={singleRequestSource} />
+          </div>
         </div>
         {dayLevels.map((level) => (
           <LevelPanel
@@ -1847,7 +2027,8 @@ export function DashboardCockpit() {
           parentId={drillTarget?.areaId}
           parentLevel={drillTarget?.levelType}
           refreshKey={dataRevision}
-          drillLevel={drillTarget?.levelType}
+          cacheStore={matrixCacheStoreRef.current}
+          drillLevel={matrixDrillLevel}
           onDrill={handleDrill}
           asOf={dataTimeMode === "history" ? historyAsOf : undefined}
         />
@@ -2576,6 +2757,11 @@ function SourceMetricPicker({
   onChange: (value: string) => void;
 }) {
   const [keyword, setKeyword] = useState("");
+  const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const selected = options.find((option) => option.code === value);
   const normalizedKeyword = keyword.trim().toLowerCase();
   const filteredOptions = normalizedKeyword
@@ -2585,46 +2771,111 @@ function SourceMetricPicker({
       )
     : options;
 
+  const updatePopoverPosition = useCallback(() => {
+    const rect = pickerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const viewportPadding = 12;
+    const gap = 6;
+    const availableBelow = window.innerHeight - rect.bottom - viewportPadding - gap;
+    const availableAbove = rect.top - viewportPadding - gap;
+    const openBelow = availableBelow >= 260 || availableBelow >= availableAbove;
+    const maxHeight = Math.min(360, Math.max(180, openBelow ? availableBelow : availableAbove));
+    const width = Math.min(
+      Math.max(rect.width, 420),
+      640,
+      window.innerWidth - viewportPadding * 2,
+    );
+    const left = Math.min(
+      Math.max(viewportPadding, rect.left),
+      window.innerWidth - width - viewportPadding,
+    );
+    setPopoverStyle({
+      left,
+      top: openBelow
+        ? rect.bottom + gap
+        : Math.max(viewportPadding, rect.top - maxHeight - gap),
+      width,
+      maxHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    updatePopoverPosition();
+    const focusTimer = window.setTimeout(() => searchRef.current?.focus(), 0);
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (pickerRef.current?.contains(target) || popoverRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("resize", updatePopoverPosition);
+    window.addEventListener("scroll", updatePopoverPosition, true);
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("resize", updatePopoverPosition);
+      window.removeEventListener("scroll", updatePopoverPosition, true);
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open, updatePopoverPosition]);
+
   return (
-    <details className="source-metric-picker">
-      <summary>
+    <div className={open ? "source-metric-picker open" : "source-metric-picker"} ref={pickerRef}>
+      <button
+        type="button"
+        className="source-metric-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
         <span title={selected ? `${selected.name} (${selected.code})` : "选择源指标"}>
           {selected ? selected.name : "选择源指标"}
         </span>
         {selected && <em>{selected.code}</em>}
         <ChevronDown size={14} />
-      </summary>
-      <div className="source-metric-popover">
-        <label className="source-metric-search">
-          <Search size={14} />
-          <input
-            value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
-            placeholder="搜索名称或编码"
-          />
-        </label>
-        <div className="source-metric-options">
-          {filteredOptions.map((option) => (
-            <button
-              key={option.code}
-              type="button"
-              className={option.code === value ? "active" : ""}
-              onClick={(event) => {
-                onChange(option.code);
-                setKeyword("");
-                event.currentTarget.closest("details")?.removeAttribute("open");
-              }}
-            >
-              <strong>{option.name}</strong>
-              <span>{option.code}</span>
-            </button>
-          ))}
-          {!filteredOptions.length && (
-            <div className="source-metric-empty">没有匹配的源指标</div>
-          )}
-        </div>
-      </div>
-    </details>
+      </button>
+      {open && createPortal(
+        <div className="source-metric-popover" ref={popoverRef} style={popoverStyle}>
+          <label className="source-metric-search">
+            <Search size={14} />
+            <input
+              ref={searchRef}
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder="搜索名称或编码"
+            />
+          </label>
+          <div className="source-metric-options" role="listbox">
+            {filteredOptions.map((option) => (
+              <button
+                key={option.code}
+                type="button"
+                role="option"
+                aria-selected={option.code === value}
+                className={option.code === value ? "active" : ""}
+                onClick={() => {
+                  onChange(option.code);
+                  setKeyword("");
+                  setOpen(false);
+                }}
+              >
+                <strong>{option.name}</strong>
+                <span>{option.code}</span>
+              </button>
+            ))}
+            {!filteredOptions.length && (
+              <div className="source-metric-empty">没有匹配的源指标</div>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
   );
 }
 
@@ -2746,6 +2997,7 @@ function MultiMetricMatrix({
   parentId,
   parentLevel,
   refreshKey,
+  cacheStore,
   drillLevel,
   onDrill,
   asOf,
@@ -2760,6 +3012,7 @@ function MultiMetricMatrix({
   parentId?: number;
   parentLevel?: string;
   refreshKey: number;
+  cacheStore: MatrixCacheStore;
   drillLevel?: string;
   onDrill: (row: BoardRow, levelType: string) => void;
   asOf?: string;
@@ -2786,10 +3039,14 @@ function MultiMetricMatrix({
       .sort((left, right) => left.sort_order - right.sort_order);
   }, [availableIndicators, catalog]);
 
-  const [level, setLevel] = useState<LevelKey>("BRANCH");
+  const [level, setLevel] = useState<LevelKey>(() => matrixLevelForDrill(drillLevel));
   const [search, setSearch] = useState("");
-  const [sortIndicator, setSortIndicator] = useState("");
-  const [sortMode, setSortMode] = useState<MatrixSortMode>("doneDesc");
+  const [sortIndicator, setSortIndicator] = useState(
+    () => loadMatrixPreferences().sortIndicator,
+  );
+  const [sortMode, setSortMode] = useState<MatrixSortMode>(
+    () => loadMatrixPreferences().sortMode,
+  );
   const [indicatorSearch, setIndicatorSearch] = useState("");
   const [draggedIndicatorCode, setDraggedIndicatorCode] = useState<string | null>(null);
   const [overallRules, setOverallRules] = useState<Record<string, OverallRule>>(() => loadOverallRules());
@@ -2801,19 +3058,13 @@ function MultiMetricMatrix({
   const [matrixTotalPages, setMatrixTotalPages] = useState(0);
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [matrixError, setMatrixError] = useState("");
+  const [matrixRequestSource, setMatrixRequestSource] = useState<RequestSource>("idle");
   const [matrixScrollTop, setMatrixScrollTop] = useState(0);
   const [matrixViewportHeight, setMatrixViewportHeight] = useState(600);
   const matrixScrollRef = useRef<HTMLDivElement>(null);
-  const matrixCacheRef = useRef<Map<string, MatrixCacheEntry>>(new Map());
 
   useEffect(() => {
-    if (drillLevel === "BRANCH") {
-      setLevel("GRID");
-    } else if (drillLevel === "GRID") {
-      setLevel("CHANNEL");
-    } else if (!drillLevel || drillLevel === "CITY") {
-      setLevel("BRANCH");
-    }
+    setLevel(matrixLevelForDrill(drillLevel));
   }, [drillLevel]);
 
   useEffect(() => {
@@ -2836,6 +3087,11 @@ function MultiMetricMatrix({
       setSortIndicator(selectedCodes[0]);
     }
   }, [selectedCodes, sortIndicator]);
+
+  useEffect(() => {
+    if (!sortIndicator) return;
+    saveMatrixPreferences({ sortIndicator, sortMode });
+  }, [sortIndicator, sortMode]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -2882,42 +3138,60 @@ function MultiMetricMatrix({
       asOf: asOf || null,
       refreshKey,
     });
-    const cached = matrixCacheRef.current.get(matrixCacheKey);
+    const cached = cacheStore.entries.get(matrixCacheKey);
     const cacheTtl = asOf ? HISTORY_MATRIX_CACHE_TTL_MS : REALTIME_MATRIX_CACHE_TTL_MS;
     if (cached && Date.now() - cached.cachedAt <= cacheTtl) {
-      matrixCacheRef.current.delete(matrixCacheKey);
-      matrixCacheRef.current.set(matrixCacheKey, cached);
+      cacheStore.entries.delete(matrixCacheKey);
+      cacheStore.entries.set(matrixCacheKey, cached);
       setMatrixRows(cached.data.rows);
       setMatrixTotal(cached.data.total);
       setMatrixCoverage(cached.data.coverage);
       setMatrixTotalPages(cached.data.total_pages);
       setMatrixError("");
       setMatrixLoading(false);
+      setMatrixRequestSource("cache");
       return;
     }
-    if (cached) matrixCacheRef.current.delete(matrixCacheKey);
+    if (cached) cacheStore.entries.delete(matrixCacheKey);
     setMatrixLoading(true);
     setMatrixError("");
+    setMatrixRequestSource("loading");
     setMatrixRows([]);
-    const matrixRequest = asOf
-      ? getDashboardHistoryMatrix({ ...matrixParams, asOf })
-      : getDashboardMatrix(matrixParams);
+    let matrixRequest = cacheStore.inFlight.get(matrixCacheKey);
+    if (!matrixRequest) {
+      const request = asOf
+        ? getDashboardHistoryMatrix({ ...matrixParams, asOf })
+        : getDashboardMatrix(matrixParams);
+      matrixRequest = request.then(
+        (result) => {
+          cacheStore.inFlight.delete(matrixCacheKey);
+          return result;
+        },
+        (requestError) => {
+          cacheStore.inFlight.delete(matrixCacheKey);
+          throw requestError;
+        },
+      );
+      cacheStore.inFlight.set(matrixCacheKey, matrixRequest);
+    }
     void matrixRequest
       .then((result) => {
-        if (cancelled) return;
-        matrixCacheRef.current.set(matrixCacheKey, {
+        cacheStore.entries.delete(matrixCacheKey);
+        cacheStore.entries.set(matrixCacheKey, {
           data: result,
           cachedAt: Date.now(),
         });
-        while (matrixCacheRef.current.size > MATRIX_CACHE_MAX_ENTRIES) {
-          const oldestKey = matrixCacheRef.current.keys().next().value;
+        while (cacheStore.entries.size > MATRIX_CACHE_MAX_ENTRIES) {
+          const oldestKey = cacheStore.entries.keys().next().value;
           if (oldestKey == null) break;
-          matrixCacheRef.current.delete(oldestKey);
+          cacheStore.entries.delete(oldestKey);
         }
+        if (cancelled) return;
         setMatrixRows(result.rows);
         setMatrixTotal(result.total);
         setMatrixCoverage(result.coverage);
         setMatrixTotalPages(result.total_pages);
+        setMatrixRequestSource("network");
       })
       .catch((requestError) => {
         if (cancelled) return;
@@ -2925,6 +3199,7 @@ function MultiMetricMatrix({
         setMatrixTotal(0);
         setMatrixCoverage(undefined);
         setMatrixTotalPages(0);
+        setMatrixRequestSource("error");
         setMatrixError(
           requestError instanceof Error ? requestError.message : "矩阵请求失败",
         );
@@ -2948,6 +3223,7 @@ function MultiMetricMatrix({
     sortMode,
     windowMinutes,
     asOf,
+    cacheStore,
   ]);
 
   const selectedIndicators = selectedCodes
@@ -3211,6 +3487,7 @@ function MultiMetricMatrix({
         <div className="matrix-panel-head">
           <strong>区域 × 指标矩阵</strong>
           <span>{matrixTotal} 个区域，单元格展示完成值、目标值、完成率和 {windowMinutes} 分钟变化</span>
+          <RequestSourceBadge source={matrixRequestSource} />
           {asOf && matrixCoverage?.levels[level] && (
             <span className={(matrixCoverage.levels[level]!.missing_areas > 0 || matrixCoverage.levels[level]!.extra_areas > 0) ? "history-coverage missing" : "history-coverage"}>
               快照 {matrixCoverage.levels[level]!.snapshot_areas} / 当前 {matrixCoverage.levels[level]!.expected_areas}
@@ -3911,7 +4188,6 @@ function LoadingRows() {
           <span />
           <span />
           <span />
-          <span />
         </div>
       ))}
     </div>
@@ -4019,9 +4295,54 @@ function EmptyRow({ message = "暂无数据" }: { message?: string }) {
 
 function ChangeCell({ change }: { change: Change }) {
   const v = change.value; const r = change.rate;
-  if ((v === null || v === 0) && (r === null || r === 0)) return <span className="change flat"><b>--</b><i>--</i></span>;
+  if ((v === null || v === 0) && (r === null || r === 0)) {
+    return <span className="change flat">-- / --</span>;
+  }
   const cls = v != null && v > 0 ? "up" : v != null && v < 0 ? "down" : "flat";
-  return <span className={`change ${cls}`}><b>{v != null ? signed(v) : "--"}</b><i>{r != null ? signedPct(r * 100) : "--"}</i></span>;
+  return (
+    <span className={`change ${cls}`}>
+      {v != null ? signed(v) : "--"}
+      {" / "}
+      {r != null ? signedPct(r * 100) : "--"}
+    </span>
+  );
+}
+
+function RequestSourceBadge({ source }: { source: RequestSource }) {
+  if (source === "idle") return null;
+  const content = {
+    loading: {
+      label: "请求中",
+      title: "正在请求数据接口",
+      icon: <RefreshCw size={12} className="spin" />,
+    },
+    cache: {
+      label: "前端缓存",
+      title: "命中当前页面缓存，本次未发起数据接口请求",
+      icon: <Database size={12} />,
+    },
+    network: {
+      label: "接口返回",
+      title: "本次已发起数据接口请求并取得响应",
+      icon: <Signal size={12} />,
+    },
+    error: {
+      label: "请求失败",
+      title: "数据接口请求失败",
+      icon: <X size={12} />,
+    },
+  }[source];
+  return (
+    <span
+      className={`request-source-badge ${source}`}
+      role="status"
+      aria-live="polite"
+      title={content.title}
+    >
+      {content.icon}
+      {content.label}
+    </span>
+  );
 }
 
 function StatusItem({ icon: Icon, label, value, ok }: { icon: typeof Activity; label: string; value: string; ok?: boolean }) {
