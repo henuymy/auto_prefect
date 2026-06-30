@@ -673,6 +673,7 @@ def dashboard_drill_down(
         description="逗号分隔的指标编码；不传则查询全部启用指标",
     ),
     include_acc: bool = Query(True),
+    tree_mode: str = Query("full", pattern="^(full|flat)$"),
 ):
     """Lightweight drill-down: only returns children of the given parent."""
     engine = get_dashboard_engine()
@@ -689,6 +690,7 @@ def dashboard_drill_down(
                 tuple(parsed_windows or ()),
                 tuple(parsed_codes or ()),
                 include_acc,
+                tree_mode,
             ),
             lambda: get_drill_down(
                 engine,
@@ -698,8 +700,11 @@ def dashboard_drill_down(
                 change_windows=parsed_windows,
                 indicator_codes=parsed_codes,
                 include_acc=include_acc,
+                tree_mode=tree_mode,
             ),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=503,

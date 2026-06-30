@@ -329,11 +329,13 @@ export async function getDashboardDrillDown(
   changeWindows?: number[],
   indicatorCodes?: string[],
   includeAcc = true,
+  treeMode: "full" | "flat" = "full",
 ) {
   const params = new URLSearchParams({
     parent_id: String(parentId),
     parent_node_type: parentNodeType,
     period_type: periodType,
+    tree_mode: treeMode,
   });
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));

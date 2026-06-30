@@ -30,6 +30,7 @@ def get_dashboard_schema_version(
 def _adapt_kwargs(version: int, kwargs: dict[str, Any]) -> dict[str, Any]:
     adapted = dict(kwargs)
     if version == 1:
+        adapted.pop("tree_mode", None)
         if "node_type" in adapted:
             adapted["level_type"] = adapted.pop("node_type")
         if "parent_node_type" in adapted:

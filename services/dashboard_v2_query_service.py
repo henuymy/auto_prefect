@@ -915,8 +915,12 @@ def get_drill_down(
     engine: Engine, *, parent_id: int, parent_node_type: str,
     period_type: str = "DAY_ACC", change_windows: list[int] | None = None,
     indicator_codes: list[str] | None = None, include_acc: bool = True,
+    tree_mode: str = "full",
 ) -> dict[str, Any]:
     parent_type = _normalized_node_type(parent_node_type)
+    normalized_tree_mode = str(tree_mode or "").strip().lower()
+    if normalized_tree_mode not in {"full", "flat"}:
+        raise ValueError("tree_mode 只支持 full/flat")
     child_by_parent = {
         "CITY": "BRANCH", "BRANCH": "GRID", "GRID": "CHANNEL_MANAGER",
         "CHANNEL_MANAGER": "CHANNEL",
@@ -924,6 +928,59 @@ def get_drill_down(
     child_type = child_by_parent.get(parent_type or "")
     if child_type is None:
         raise ValueError(f"{parent_node_type!r} 没有可下钻层级")
+    if parent_type == "GRID" and normalized_tree_mode == "flat":
+        with Session(engine) as session:
+            managers = _nodes(
+                session,
+                node_type="CHANNEL_MANAGER",
+                parent_id=parent_id,
+            )
+            manager_ids = {row.id for row in managers}
+            nodes = [
+                row for row in _nodes(session, node_type="CHANNEL")
+                if row.parent_id in manager_ids
+            ]
+            indicators = _enabled_indicators(session, indicator_codes)
+            rows = _wide_rows(
+                session,
+                nodes=nodes,
+                indicators=indicators,
+                period_type=period_type,
+                include_targets=True,
+            )
+            run = _latest_run(session)
+            _append_changes(
+                session,
+                rows=rows,
+                indicators=indicators,
+                anchor=run.started_at if run else datetime.now(),
+                windows=change_windows or [5, 15, 30, 60],
+            )
+            acc_rows = []
+            if include_acc:
+                normalized_period = str(period_type).strip().upper()
+                acc_date = session.scalar(
+                    select(func.max(MetricAccV2.stat_date)).where(
+                        MetricAccV2.period_type == normalized_period
+                    )
+                ) or date.today()
+                acc_rows = _acc_rows_in_session(
+                    session,
+                    nodes=nodes,
+                    indicators=indicators,
+                    period_type=normalized_period,
+                    target_day=acc_date,
+                )
+            return {
+                "data_mode": "REALTIME",
+                "tree_mode": "flat",
+                "latest_run": _run_dto(run),
+                "indicators": [_indicator_dto(row) for row in indicators],
+                "rows": rows,
+                "row_count": len(rows),
+                "acc_rows": acc_rows,
+                "acc_row_count": len(acc_rows),
+            }
     result = get_current_with_changes(
         engine, node_type=child_type, parent_id=parent_id,
         change_windows=change_windows, indicator_codes=indicator_codes,
@@ -932,6 +989,7 @@ def get_drill_down(
         engine, period_type=period_type, node_type=child_type, parent_id=parent_id,
         indicator_codes=indicator_codes,
     ) if include_acc else {"rows": []}
+    result["tree_mode"] = "full"
     result.update(acc_rows=acc["rows"], acc_row_count=len(acc["rows"]))
     return result
 

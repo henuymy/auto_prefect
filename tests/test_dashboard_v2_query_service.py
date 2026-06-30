@@ -228,6 +228,21 @@ def test_drill_down_follows_grid_manager_channel_levels():
     assert [row["node_type"] for row in channels["rows"]] == ["CHANNEL"]
 
 
+def test_grid_drill_down_can_flatten_channels_for_legacy_interaction():
+    result = get_drill_down(
+        _engine(),
+        parent_id=3,
+        parent_node_type="GRID",
+        tree_mode="flat",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+    )
+
+    assert result["tree_mode"] == "flat"
+    assert [row["node_type"] for row in result["rows"]] == ["CHANNEL"]
+    assert result["rows"][0]["node_code"] == "C001"
+
+
 def test_sparse_history_carries_channel_value_forward_without_using_current():
     result = get_historical_with_changes(
         _engine(),
