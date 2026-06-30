@@ -16,6 +16,7 @@ from infrastructure.dashboard_run_store import CollectionRunStore
 from models.dashboard_area import Area
 from models.dashboard_channel_manager_area import ChannelManagerArea
 from models.dashboard_request_target import RequestTarget
+from services.dashboard_area_validation import EnabledArea
 from services.dashboard_area_validation import (
     execute_area_validation_phase,
     load_enabled_area_map,
@@ -665,14 +666,12 @@ def diff_structure_graph(
 
 def _build_candidate_area_map(
     rows: list[dict[str, Any]],
-) -> dict[tuple[str, str], "EnabledArea"]:
+) -> dict[tuple[str, str], EnabledArea]:
     """从采集行构建候选区域映射（内存中，不写库）
 
     返回:
         {(level_type, area_code): EnabledArea}
     """
-    from services.dashboard_area_validation import EnabledArea
-
     graph = build_observed_structure_graph(rows, [])
     area_map: dict[tuple[str, str], EnabledArea] = {}
     for idx, (identity, area) in enumerate(graph.areas.items()):
@@ -1273,7 +1272,7 @@ def _sync_areas_in_session(
     removed_areas: Iterable[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     """在 session 内同步 area 表"""
-    from sqlalchemy import and_, select
+    from sqlalchemy import select
 
     created = 0
     updated = 0
@@ -1384,7 +1383,7 @@ def _sync_targets_in_session(
     removed_targets: Iterable[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     """在 session 内同步 request_target 表"""
-    from sqlalchemy import and_, select
+    from sqlalchemy import select
 
     observed_targets: dict[tuple[str, str], dict[str, Any]] = {}
 

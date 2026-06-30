@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 from models.dashboard_collection_run import CollectionRun
@@ -18,8 +20,69 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SNAPSHOT_DAYS = 7
 _DEFAULT_RUN_DAYS = 7
 _DEFAULT_ACC_DAYS = 90
+_DEFAULT_ACTIVE_RUN_TIMEOUT_MINUTES = 120
 _PARTITION_AHEAD_DAYS = 30
 _DAILY_PARTITION_PATTERN = re.compile(r"^p(\d{8})$")
+_MAX_RETENTION_DAYS = 3650
+_MAX_ACTIVE_RUN_TIMEOUT_MINUTES = 7 * 24 * 60
+
+
+def _bounded_int(value: object, name: str, *, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} 必须是整数") from exc
+    if not minimum <= parsed <= maximum:
+        raise ValueError(f"{name} 必须在 {minimum}-{maximum} 之间")
+    return parsed
+
+
+def _shanghai_now() -> datetime:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+
+
+def recover_stale_collection_runs(
+    session: Session,
+    *,
+    active_run_timeout_minutes: int = _DEFAULT_ACTIVE_RUN_TIMEOUT_MINUTES,
+    now: datetime | None = None,
+) -> int:
+    """Close abandoned active runs and commit the recovery independently."""
+    timeout_minutes = _bounded_int(
+        active_run_timeout_minutes,
+        "active_run_timeout_minutes",
+        minimum=1,
+        maximum=_MAX_ACTIVE_RUN_TIMEOUT_MINUTES,
+    )
+    resolved_now = now or _shanghai_now()
+    active_run_cutoff = resolved_now - timedelta(minutes=timeout_minutes)
+    result = session.execute(
+        update(CollectionRun)
+        .where(
+            CollectionRun.status.in_(["PENDING", "RUNNING"]),
+            func.coalesce(
+                CollectionRun.updated_at,
+                CollectionRun.started_at,
+                CollectionRun.created_at,
+            ) < active_run_cutoff,
+        )
+        .values(
+            status="FAILED",
+            phase="RECOVER_TIMEOUT",
+            finished_at=resolved_now,
+            error_type="STALE_RUN_TIMEOUT",
+            error_message=json.dumps(
+                {
+                    "message": "采集进程未正常收口，已自动标记为超时失败",
+                    "timeout_minutes": timeout_minutes,
+                },
+                ensure_ascii=False,
+            ),
+            updated_at=resolved_now,
+        )
+    )
+    session.commit()
+    return result.rowcount
 
 
 def _partition_day(name: str) -> datetime | None:
@@ -112,6 +175,7 @@ def cleanup_expired_data(
     snapshot_retention_days: int = _DEFAULT_SNAPSHOT_DAYS,
     run_retention_days: int = _DEFAULT_RUN_DAYS,
     acc_retention_days: int = _DEFAULT_ACC_DAYS,
+    active_run_timeout_minutes: int = _DEFAULT_ACTIVE_RUN_TIMEOUT_MINUTES,
 ) -> dict[str, int]:
     """Delete expired snapshots, collection runs and old accumulated metrics.
 
@@ -121,15 +185,51 @@ def cleanup_expired_data(
        references them. ``metric_current`` is retained and therefore keeps its
        latest collection run alive.
 
-    Only ``SUCCESS`` / ``FAILED`` runs are eligible for deletion —
-    ``PENDING`` and ``RUNNING`` runs are always preserved.
+    Stale ``PENDING`` / ``RUNNING`` runs are first closed as ``FAILED``.
 
     Returns counts of deleted rows per table.
     """
-    now = datetime.now(UTC).replace(tzinfo=None)
-    snapshot_cutoff = now - timedelta(days=snapshot_retention_days)
+    snapshot_retention_days = _bounded_int(
+        snapshot_retention_days,
+        "snapshot_retention_days",
+        minimum=1,
+        maximum=_MAX_RETENTION_DAYS,
+    )
+    run_retention_days = _bounded_int(
+        run_retention_days,
+        "run_retention_days",
+        minimum=1,
+        maximum=_MAX_RETENTION_DAYS,
+    )
+    acc_retention_days = _bounded_int(
+        acc_retention_days,
+        "acc_retention_days",
+        minimum=1,
+        maximum=_MAX_RETENTION_DAYS,
+    )
+    active_run_timeout_minutes = _bounded_int(
+        active_run_timeout_minutes,
+        "active_run_timeout_minutes",
+        minimum=1,
+        maximum=_MAX_ACTIVE_RUN_TIMEOUT_MINUTES,
+    )
+    now = _shanghai_now()
+    # Sparse history depends on the first full checkpoint of each day.  Keep
+    # the entire boundary day; deleting at the current clock time could remove
+    # its midnight checkpoint and leave only a partial set of later changes.
+    snapshot_cutoff = (now - timedelta(days=snapshot_retention_days)).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
     run_cutoff = now - timedelta(days=run_retention_days)
     acc_cutoff_date = (now - timedelta(days=acc_retention_days)).date()
+    stale_run_recovered = recover_stale_collection_runs(
+        session,
+        active_run_timeout_minutes=active_run_timeout_minutes,
+        now=now,
+    )
 
     partition_result = _maintain_mysql_snapshot_partitions(
         session,
@@ -177,6 +277,7 @@ def cleanup_expired_data(
 
     if (
         snapshot_deleted
+        or stale_run_recovered
         or run_deleted
         or acc_deleted
         or partition_result["partition_drop_count"]
@@ -184,9 +285,10 @@ def cleanup_expired_data(
     ):
         logger.info(
             "数据清理完成: 快照删除 %d 行, 累计删除 %d 行, "
-            "采集记录删除 %d 行, 分区删除 %d 个, 分区新建 %d 个",
+            "超时批次恢复 %d 个, 采集记录删除 %d 行, 分区删除 %d 个, 分区新建 %d 个",
             snapshot_deleted,
             acc_deleted,
+            stale_run_recovered,
             run_deleted,
             partition_result["partition_drop_count"],
             partition_result["partition_create_count"],
@@ -195,6 +297,7 @@ def cleanup_expired_data(
     return {
         "snapshot_deleted": snapshot_deleted,
         "acc_deleted": acc_deleted,
+        "stale_run_recovered": stale_run_recovered,
         "run_deleted": run_deleted,
         **partition_result,
     }

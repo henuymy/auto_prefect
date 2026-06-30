@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from urllib import error, parse, request
+from urllib import parse, request
 
 
 def _request_json(url, client_token, method="GET", timeout=10):

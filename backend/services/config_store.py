@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from services.session_manager import file_lock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -14,13 +19,40 @@ DRAFTS_DIR = PROJECT_ROOT / "runtime" / "drafts"
 VERSIONS_DIR = PROJECT_ROOT / "runtime" / "config_versions"
 
 
+@contextmanager
+def _config_write_lock():
+    lock_path = PROJECT_ROOT / "runtime" / "locks" / "config_store.lock"
+    with file_lock(
+        lock_path,
+        wait_seconds=15,
+        poll_seconds=0.1,
+        stale_seconds=300,
+        lock_label="配置写入锁",
+    ):
+        yield
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as file:
+            file.write(payload)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def _safe_name(value: str) -> str:
@@ -184,13 +216,13 @@ def get_config(config_id: str, source: str = "published") -> dict[str, Any]:
     return config
 
 
-def save_config(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
+def _save_config_unlocked(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
     name = _safe_name(config.get("name") or config_id)
     path = REPORTS_DIR / f"{name}.json"
     normalized = normalize_config(config, config_id=name)
     if path.exists():
         version_dir = VERSIONS_DIR / name
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         _write_json(version_dir / f"{timestamp}.json", _read_json(path))
     _write_json(path, normalized)
     if config_id != name:
@@ -208,6 +240,11 @@ def save_config(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
     saved["source"] = "published"
     saved["has_draft"] = False
     return saved
+
+
+def save_config(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
+    with _config_write_lock():
+        return _save_config_unlocked(config_id, config)
 
 
 def list_versions(config_id: str) -> list[dict[str, Any]]:
@@ -241,7 +278,7 @@ def restore_version(config_id: str, version_id: str) -> dict[str, Any]:
     return save_config(config_id, version)
 
 
-def save_draft(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
+def _save_draft_unlocked(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
     name = _safe_name(config.get("name") or config_id)
     path = DRAFTS_DIR / f"{name}.json"
     normalized = normalize_config(config, config_id=name)
@@ -256,11 +293,21 @@ def save_draft(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
     return saved
 
 
+def save_draft(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
+    with _config_write_lock():
+        return _save_draft_unlocked(config_id, config)
+
+
 def create_config(config: dict[str, Any]) -> dict[str, Any]:
     return save_config(_safe_name(config.get("name") or "新建通报配置"), config)
 
 
 def delete_config(config_id: str, source: str = "published") -> list[str]:
+    with _config_write_lock():
+        return _delete_config_unlocked(config_id, source)
+
+
+def _delete_config_unlocked(config_id: str, source: str = "published") -> list[str]:
     name = _safe_name(config_id)
     report_path = REPORTS_DIR / f"{name}.json"
     draft_path = DRAFTS_DIR / f"{name}.json"

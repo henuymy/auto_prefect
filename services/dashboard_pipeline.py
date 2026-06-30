@@ -219,6 +219,8 @@ def execute_dashboard_pipeline(
                 stage_started = perf_counter()
                 indicator_results: list[dict[str, Any]] = []
                 total_written = 0
+                current_upsert_count = 0
+                snapshot_insert_count = 0
                 expected_run_type = (
                     "REALTIME"
                     if normalized_period == "REALTIME"
@@ -236,7 +238,8 @@ def execute_dashboard_pipeline(
                         collected_at=collected_at,
                     )
                     indicator_results.extend(bulk_result["indicator_results"])
-                    total_written = bulk_result["snapshot_insert_count"]
+                    current_upsert_count = bulk_result["current_upsert_count"]
+                    snapshot_insert_count = bulk_result["snapshot_insert_count"]
                     write_timings.update(bulk_result["timings"])
                     metric_write_stats.update(bulk_result["write_stats"])
                 else:
@@ -263,10 +266,10 @@ def execute_dashboard_pipeline(
                     stat_date=query_date,
                     collected_at=collected_at,
                     current_upsert_count=(
-                        total_written if normalized_period == "REALTIME" else 0
+                        current_upsert_count if normalized_period == "REALTIME" else 0
                     ),
                     snapshot_insert_count=(
-                        total_written if normalized_period == "REALTIME" else 0
+                        snapshot_insert_count if normalized_period == "REALTIME" else 0
                     ),
                     acc_upsert_count=(
                         total_written if normalized_period != "REALTIME" else 0
@@ -282,8 +285,8 @@ def execute_dashboard_pipeline(
                     "phase": "COMPLETED",
                 }
                 if normalized_period == "REALTIME":
-                    write_result["current_upsert_count"] = total_written
-                    write_result["snapshot_insert_count"] = total_written
+                    write_result["current_upsert_count"] = current_upsert_count
+                    write_result["snapshot_insert_count"] = snapshot_insert_count
                 else:
                     write_result["acc_upsert_count"] = total_written
                 write_timings["metric_write_seconds"] = perf_counter() - stage_started
@@ -314,6 +317,9 @@ def execute_dashboard_pipeline(
                     snapshot_retention_days=retention_config.get("snapshot_retention_days", 7),
                     run_retention_days=retention_config.get("run_retention_days", 7),
                     acc_retention_days=retention_config.get("acc_retention_days", 90),
+                    active_run_timeout_minutes=retention_config.get(
+                        "active_run_timeout_minutes", 120
+                    ),
                 )
         except Exception:
             logging.getLogger(__name__).warning(

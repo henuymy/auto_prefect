@@ -13,10 +13,28 @@ dependencies = [
   "alembic>=1.13,<2.0",
   "streamlit>=1.40.0",
   "nicegui>=2.0.0",
+  "fastapi>=0.110.0,<1.0",
   "python-multipart>=0.0.9",
+  "uvicorn[standard]>=0.29.0,<1.0",
   "openpyxl>=3.1.0",
   "pywin32>=306; platform_system == 'Windows'",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pip-tools>=7.4,<8.0",
+  "pytest>=8.0,<9.0",
+  "ruff>=0.11,<1.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "mysql_integration: requires an explicitly configured disposable MySQL test database",
+]
+
+[tool.ruff]
+exclude = ["admin_nicegui", "legacy_modules", "scripts"]
+
+[tool.ruff.lint.per-file-ignores]
+"flows/*.py" = ["E402"]

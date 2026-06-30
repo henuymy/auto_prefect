@@ -30,7 +30,7 @@
 | `request_target` | 采集目标 |
 | `channel_manager_area` | 渠道经理与渠道关系 |
 | `metric_current` | 实时当前值 |
-| `metric_snapshot` | 历史快照值 |
+| `metric_snapshot` | 区公司/网格全量快照；渠道变化事件 + 每日检查点 |
 | `metric_acc` | 日累计 / 月累计值 |
 | `metric_target` | 目标值，用于完成进度 |
 | `alembic_version` | 迁移版本 |
@@ -43,6 +43,7 @@
 - 主要字段：`run_type`、`trigger_type`、`status`、`phase`、`stat_date`、`started_at`、`finished_at`
 - 统计字段：`request_count`、`area_count`、`row_count`、`current_upsert_count`、`snapshot_insert_count`、`acc_upsert_count`
 - 排查字段：`structure_change_summary`，保存本批次结构变化摘要 JSON
+- 异常恢复：超过配置的活动批次超时后，保留任务会将遗留 `PENDING / RUNNING` 收口为 `FAILED / RECOVER_TIMEOUT`
 
 ### `area`
 - 主键：`id`
@@ -73,12 +74,19 @@
 - 唯一：`(area_id, indicator_id)`
 - 主要字段：`metric_value`、`stat_date`、`collected_at`、`collection_run_id`
 - 索引：`indicator_id, metric_value`；`stat_date, indicator_id`
+- 防倒序：仅当新批次 `collected_at` 不早于现值时才覆盖，迟到批次不会回退当前值
 
 ### `metric_snapshot`
 - 主键：`id`
-- 唯一：`(collection_run_id, area_id, indicator_id)`
+- 分区后的唯一键：`(collection_run_id, area_id, indicator_id, collected_at)`
 - 主要字段：`metric_value`、`collected_at`
-- 索引：`area_id, indicator_id, collected_at`
+- 索引：`area_id, indicator_id, collected_at`；`collected_at`
+- 写入规则：`CITY / BRANCH / GRID` 每批写完整快照；仅 `CHANNEL` 在首次出现、数值变化或每天首批时写入
+- 零变化批次仍正常更新 `metric_current` 和 `collection_run`，其 `snapshot_insert_count` 可以为 0
+- 历史恢复：对每个 `(area_id, indicator_id)` 读取目标批次完成时刻之前的最后一条值
+- 变化量：比较时刻附近有事件时保留原 ±3 分钟最近值口径；否则沿用此前最后一条值
+- 保留清理：7 天边界按自然日零点删除，完整保留边界日检查点，因此实际保留时间最多多出不足一天
+- 采集互斥：本机文件锁外再持有 MySQL 命名锁，避免不同进程或不同主机同时写入
 
 ### `metric_acc`
 - 主键：`id`

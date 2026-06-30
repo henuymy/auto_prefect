@@ -356,3 +356,16 @@ def test_lock_is_stale_when_recorded_pid_is_gone(monkeypatch):
         assert lock_is_stale(lock_path, stale_seconds=600) is True
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_lock_is_not_stale_while_recorded_pid_is_alive(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        lock_path = work_dir / "login.lock"
+        write_json(lock_path, {"pid": 12345})
+        monkeypatch.setattr(session_manager, "process_is_running", lambda pid: True)
+        monkeypatch.setattr(session_manager.time, "time", lambda: 10**12)
+
+        assert lock_is_stale(lock_path, stale_seconds=1) is False
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)

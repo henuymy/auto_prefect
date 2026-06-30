@@ -10,6 +10,8 @@ class FakeEngine:
 
 def test_matrix_route_uses_cache_and_invalidates_on_data_version(monkeypatch):
     dashboard._dashboard_cache.clear()
+    dashboard._invalidate_version_state()
+    monkeypatch.setattr(dashboard, "_VERSION_STATE_TTL_SECONDS", -1)
     version = {"value": "v1"}
     calls = {"count": 0}
 

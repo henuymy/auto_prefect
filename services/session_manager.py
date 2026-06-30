@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 import logging
 from contextlib import contextmanager
@@ -27,6 +28,14 @@ DEFAULT_LOCK_POLL_SECONDS = 5
 SESSION_EXPIRED_RE_CODES = {"1101", "401", "403"}
 SESSION_EXPIRED_URL_KEYWORDS = ("login.jsp", "logout.action", "kickedout")
 SESSION_EXPIRED_BODY_KEYWORDS = ("单点登录超时", "请登录", "logging down", "login.jsp")
+_LOCAL_FILE_LOCKS: dict[str, threading.Lock] = {}
+_LOCAL_FILE_LOCKS_GUARD = threading.Lock()
+
+
+def _local_file_lock(path: Path) -> threading.Lock:
+    key = str(path)
+    with _LOCAL_FILE_LOCKS_GUARD:
+        return _LOCAL_FILE_LOCKS.setdefault(key, threading.Lock())
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
@@ -91,8 +100,11 @@ def process_is_running(pid):
 
 def lock_is_stale(lock_path, stale_seconds):
     lock_info = read_lock_info(lock_path)
-    if lock_info.get("pid") and not process_is_running(lock_info.get("pid")):
-        return True
+    if lock_info.get("pid"):
+        # A live owner must never be evicted merely because a long-running job
+        # has exceeded the age threshold.  The mtime fallback is only for
+        # legacy/corrupt lock files without an owner PID.
+        return not process_is_running(lock_info.get("pid"))
     try:
         mtime = Path(lock_path).stat().st_mtime
     except FileNotFoundError:
@@ -101,7 +113,7 @@ def lock_is_stale(lock_path, stale_seconds):
 
 
 @contextmanager
-def file_lock(
+def _cross_process_file_lock(
     lock_path,
     wait_seconds=DEFAULT_LOCK_WAIT_SECONDS,
     poll_seconds=DEFAULT_LOCK_POLL_SECONDS,
@@ -148,6 +160,31 @@ def file_lock(
                 lock_path.unlink()
             except FileNotFoundError:
                 pass
+
+
+@contextmanager
+def file_lock(
+    lock_path,
+    wait_seconds=DEFAULT_LOCK_WAIT_SECONDS,
+    poll_seconds=DEFAULT_LOCK_POLL_SECONDS,
+    stale_seconds=DEFAULT_LOCK_STALE_SECONDS,
+    lock_label="登录锁",
+):
+    resolved_path = Path(lock_path).resolve()
+    local_lock = _local_file_lock(resolved_path)
+    if not local_lock.acquire(timeout=max(0.0, float(wait_seconds))):
+        raise TimeoutError(f"等待{lock_label}线程锁超时: {resolved_path}")
+    try:
+        with _cross_process_file_lock(
+            resolved_path,
+            wait_seconds=wait_seconds,
+            poll_seconds=poll_seconds,
+            stale_seconds=stale_seconds,
+            lock_label=lock_label,
+        ) as result:
+            yield result
+    finally:
+        local_lock.release()
 
 
 def stage_names(cookie_dump):

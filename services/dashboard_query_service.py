@@ -5,7 +5,7 @@ Performance notes
 ``get_dashboard_overview`` is the hot path for the cockpit.  It was
 originally 7-8 sequential ORM queries; the optimised version collapses
 area+metric_current into a single JOIN, fetches only the snapshots
-needed for the configured change windows with a DB-side nearest-snapshot
+needed for the configured change windows with a DB-side last-value
 window function, and runs the acc query in a second cursor — effectively
 two DB round-trips instead of seven.
 """
@@ -299,6 +299,9 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
 def get_history_range(engine: Engine) -> dict[str, Any]:
     """Return the retained realtime snapshot range available for restoration."""
     with Session(engine) as session:
+        first_snapshot_at = session.scalar(select(func.min(MetricSnapshot.collected_at)))
+        if first_snapshot_at is None:
+            return {"earliest_at": None, "latest_at": None}
         batch_time = func.coalesce(CollectionRun.started_at, CollectionRun.finished_at)
         first_at, last_at = session.execute(
             select(
@@ -309,10 +312,7 @@ def get_history_range(engine: Engine) -> dict[str, Any]:
                 CollectionRun.status == "SUCCESS",
                 CollectionRun.run_type == "REALTIME",
                 batch_time.is_not(None),
-                CollectionRun.snapshot_insert_count > 0,
-                select(MetricSnapshot.id)
-                .where(MetricSnapshot.collection_run_id == CollectionRun.id)
-                .exists(),
+                CollectionRun.finished_at >= first_snapshot_at,
             )
         ).one()
     return {
@@ -328,13 +328,16 @@ def get_history_options(
 ) -> dict[str, Any]:
     """Return selectable batch dates/minutes that still have snapshots."""
     with Session(engine) as session:
-        first_snapshot_at, last_snapshot_at = session.execute(
-            select(
-                func.min(MetricSnapshot.collected_at),
-                func.max(MetricSnapshot.collected_at),
+        snapshot_range_query = select(func.min(MetricSnapshot.collected_at))
+        if indicator_codes:
+            indicator_ids = list(session.scalars(
+                select(Indicator.id).where(Indicator.code.in_(indicator_codes))
+            ))
+            snapshot_range_query = snapshot_range_query.where(
+                MetricSnapshot.indicator_id.in_(indicator_ids or {-1})
             )
-        ).one()
-        if first_snapshot_at is None or last_snapshot_at is None:
+        first_snapshot_at = session.scalar(snapshot_range_query)
+        if first_snapshot_at is None:
             return {"dates": [], "date_count": 0}
         batch_time = func.coalesce(CollectionRun.started_at, CollectionRun.finished_at)
         runs = session.execute(
@@ -343,30 +346,14 @@ def get_history_options(
                 CollectionRun.status == "SUCCESS",
                 CollectionRun.run_type == "REALTIME",
                 batch_time.is_not(None),
-                batch_time >= first_snapshot_at - timedelta(days=1),
-                batch_time <= last_snapshot_at + timedelta(days=1),
-                CollectionRun.snapshot_insert_count > 0,
+                CollectionRun.finished_at >= first_snapshot_at,
             )
             .order_by(batch_time.desc(), CollectionRun.id.desc())
         ).all()
-        run_ids = [row.id for row in runs]
-        snapshot_query = select(MetricSnapshot.collection_run_id).where(
-            MetricSnapshot.collection_run_id.in_(run_ids or {-1}),
-            MetricSnapshot.collected_at >= first_snapshot_at,
-            MetricSnapshot.collected_at <= last_snapshot_at,
-        )
-        if indicator_codes:
-            indicator_ids = list(session.scalars(
-                select(Indicator.id).where(Indicator.code.in_(indicator_codes))
-            ))
-            snapshot_query = snapshot_query.where(
-                MetricSnapshot.indicator_id.in_(indicator_ids or {-1})
-            )
-        available_run_ids = set(session.scalars(snapshot_query.distinct()))
 
     minutes_by_date: dict[str, set[str]] = defaultdict(set)
     for run in runs:
-        if run.id not in available_run_ids or run.batch_time is None:
+        if run.batch_time is None:
             continue
         minutes_by_date[run.batch_time.date().isoformat()].add(
             run.batch_time.strftime("%H:%M")
@@ -383,27 +370,20 @@ def get_history_options(
 
 def _historical_run(session: Session, as_of: datetime) -> CollectionRun | None:
     batch_time = func.coalesce(CollectionRun.started_at, CollectionRun.finished_at)
-    candidates = list(session.scalars(
+    return session.scalar(
         select(CollectionRun)
         .where(
             CollectionRun.status == "SUCCESS",
             CollectionRun.run_type == "REALTIME",
-            CollectionRun.snapshot_insert_count > 0,
             CollectionRun.finished_at.is_not(None),
             batch_time <= as_of,
+            select(MetricSnapshot.id)
+            .where(MetricSnapshot.collected_at <= CollectionRun.finished_at)
+            .exists(),
         )
         .order_by(batch_time.desc(), CollectionRun.id.desc())
-        .limit(20)
-    ))
-    for run in candidates:
-        exists = session.scalar(
-            select(MetricSnapshot.id)
-            .where(MetricSnapshot.collection_run_id == run.id)
-            .limit(1)
-        )
-        if exists is not None:
-            return run
-    return None
+        .limit(1)
+    )
 
 
 def get_historical_run_id(engine: Engine, as_of: datetime) -> int | None:
@@ -422,10 +402,16 @@ def _historical_indicators(
     if indicator_codes:
         query = query.where(Indicator.code.in_(indicator_codes))
     else:
+        value_cutoff = run.finished_at or run.started_at
         query = (
             query
             .join(MetricSnapshot, MetricSnapshot.indicator_id == Indicator.id)
-            .where(MetricSnapshot.collection_run_id == run.id)
+            .where(
+                MetricSnapshot.collected_at >= value_cutoff - timedelta(
+                    days=SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS
+                ),
+                MetricSnapshot.collected_at <= value_cutoff,
+            )
             .distinct()
         )
     return list(session.scalars(query.order_by(Indicator.sort_order, Indicator.id)))
@@ -449,28 +435,36 @@ def _historical_rows(
 
     indicator_ids = [indicator.id for indicator in indicators]
     anchor = run.started_at or run.finished_at or as_of
-    run_times = [value for value in (run.started_at, run.finished_at) if value is not None]
-    first_run_time = min(run_times) if run_times else anchor
-    last_run_time = max(run_times) if run_times else anchor
-    # Include the preceding day for legacy runs whose started_at was not recorded.
-    day_start = first_run_time.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
-    day_end = last_run_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    snapshot_query = select(
+    value_cutoff = run.finished_at or run.started_at or as_of
+    ranked_snapshots = select(
         MetricSnapshot.area_id,
         MetricSnapshot.indicator_id,
         MetricSnapshot.metric_value,
         MetricSnapshot.collected_at,
+        func.row_number().over(
+            partition_by=(MetricSnapshot.area_id, MetricSnapshot.indicator_id),
+            order_by=(MetricSnapshot.collected_at.desc(), MetricSnapshot.id.desc()),
+        ).label("rn"),
     ).where(
-        MetricSnapshot.collection_run_id == run.id,
         MetricSnapshot.indicator_id.in_(indicator_ids),
-        MetricSnapshot.collected_at >= day_start,
-        MetricSnapshot.collected_at < day_end,
+        MetricSnapshot.collected_at >= value_cutoff - timedelta(
+            days=SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS
+        ),
+        MetricSnapshot.collected_at <= value_cutoff,
     )
     if allowed_area_ids is not None:
-        snapshot_query = snapshot_query.where(
+        ranked_snapshots = ranked_snapshots.where(
             MetricSnapshot.area_id.in_(allowed_area_ids or {-1})
         )
-    snapshot_rows = session.execute(snapshot_query).all()
+    ranked_snapshots = ranked_snapshots.subquery()
+    snapshot_rows = session.execute(
+        select(
+            ranked_snapshots.c.area_id,
+            ranked_snapshots.c.indicator_id,
+            ranked_snapshots.c.metric_value,
+            ranked_snapshots.c.collected_at,
+        ).where(ranked_snapshots.c.rn == 1)
+    ).all()
     snapshot_area_ids = {snapshot.area_id for snapshot in snapshot_rows}
 
     area_query = select(Area).where(Area.id.in_(snapshot_area_ids or {-1}))
@@ -499,7 +493,10 @@ def _historical_rows(
                 continue
             row["metrics"][code] = _number(snapshot.metric_value)
             row["collection_run_id"] = run.id
-            row["collected_at"] = _datetime_iso_millis(snapshot.collected_at)
+            # A sparse event timestamp means "last changed", not "last
+            # observed".  Preserve the historical batch timestamp exposed by
+            # the former full-snapshot implementation.
+            row["collected_at"] = _datetime_iso_millis(value_cutoff)
 
     _attach_targets(session, rows, indicators, "REALTIME")
     if area_ids and indicator_ids:
@@ -1268,6 +1265,10 @@ _CHANGE_WINDOWS: tuple[tuple[int, str], ...] = (
     (30, "change_30min"),
     (60, "change_60min"),
 )
+# The writer emits a full checkpoint on the first observation of every day.
+# Two days leaves room for midnight boundaries and legacy pre-sparse data while
+# keeping as-of window queries away from the full retention history.
+SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS = 2
 CHANGE_WINDOW_TOLERANCE_MINUTES = 3
 CHANGE_WINDOW_MINUTES_MIN = 5
 CHANGE_WINDOW_MINUTES_MAX = 1440
@@ -1536,8 +1537,9 @@ def get_current_with_changes(
     per-area change deltas computed from MetricSnapshot history.
 
     For each enabled indicator, the service looks back the given number of
-    minutes, finds the nearest snapshot within the shared tolerance around
-    that cutoff, and computes ``value - previous_value`` (value delta) and
+    minutes, keeps the existing nearest-value tolerance around that cutoff,
+    falls back to the last earlier value for sparse data, and computes
+    ``value - previous_value`` (value delta) and
     ``(value - previous_value) / previous_value`` (rate delta).
     """
     result = get_current_wide_table(
@@ -1570,11 +1572,6 @@ def get_current_with_changes(
 
 def _snapshot_cutoff_time(now: datetime, target_minutes: int) -> datetime:
     return now - timedelta(minutes=target_minutes)
-
-
-def _snapshot_bounds(cutoff_time: datetime) -> tuple[datetime, datetime]:
-    tolerance = timedelta(minutes=CHANGE_WINDOW_TOLERANCE_MINUTES)
-    return cutoff_time - tolerance, cutoff_time + tolerance
 
 
 def _empty_change_payload() -> dict[str, Any]:
@@ -2156,11 +2153,10 @@ def _attach_changes_fast(
     change_windows: tuple[tuple[int, str], ...] = _CHANGE_WINDOWS,
     components: dict[str, list[tuple[str, Decimal]]] | None = None,
 ) -> None:
-    """Attach change deltas using only the 4 cutoff-point snapshots.
+    """Attach deltas from the last known value at each cutoff point.
 
-    Instead of loading 120 min of full snapshot history, we load the
-    single nearest snapshot at each cutoff (5/15/30/60 min ago) per
-    (area, indicator) via a correlated subquery.
+    Sparse snapshots only record changes and daily checkpoints, so an
+    unchanged key normally has no row close to the nominal cutoff.
     """
     components = components or {}
     indicator_ids = [_indicator_id(ind) for ind in indicators]
@@ -2182,12 +2178,13 @@ def _attach_changes_fast(
 
     cutoffs = [(_snapshot_cutoff_time(now, m), k) for m, k in change_windows]
 
-    # One query per cutoff window — 4 small bounded queries instead of 1 huge
-    # dump.  Pick the nearest snapshot within +/- tolerance; scheduled runs can
-    # finish a few seconds before or after the nominal 5-minute boundary.
+    # One query per cutoff window.  Preserve the former +/- tolerance when a
+    # nearby event exists, otherwise carry the latest earlier value forward.
     snapshot_map: dict[tuple[int, int, str], Decimal] = {}
     for cutoff_ts, window_key in cutoffs:
-        lower_bound, upper_bound = _snapshot_bounds(cutoff_ts)
+        tolerance = timedelta(minutes=CHANGE_WINDOW_TOLERANCE_MINUTES)
+        near_lower = cutoff_ts - tolerance
+        upper_bound = cutoff_ts + tolerance
         dialect_name = session.get_bind().dialect.name
         if dialect_name in {"mysql", "mariadb"}:
             distance_expr = (
@@ -2207,12 +2204,17 @@ def _attach_changes_fast(
                     metric_value,
                     ROW_NUMBER() OVER (
                         PARTITION BY area_id, indicator_id
-                        ORDER BY {distance_expr}, collected_at DESC
+                        ORDER BY
+                            CASE WHEN collected_at >= :near_lower THEN 0 ELSE 1 END,
+                            CASE WHEN collected_at >= :near_lower
+                                THEN {distance_expr} ELSE 0 END,
+                            collected_at DESC,
+                            id DESC
                     ) AS rn
                 FROM metric_snapshot
                 WHERE area_id IN :area_ids
                   AND indicator_id IN :ind_ids
-                  AND collected_at >= :lower_bound
+                  AND collected_at >= :baseline_start
                   AND collected_at <= :upper_bound
             ) ranked
             WHERE rn = 1
@@ -2225,7 +2227,10 @@ def _attach_changes_fast(
             {
                 "area_ids": tuple(area_ids) if area_ids else (-1,),
                 "ind_ids": tuple(indicator_ids) if indicator_ids else (-1,),
-                "lower_bound": lower_bound,
+                "baseline_start": cutoff_ts - timedelta(
+                    days=SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS
+                ),
+                "near_lower": near_lower,
                 "upper_bound": upper_bound,
                 "cutoff_ts": cutoff_ts,
             },

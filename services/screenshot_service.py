@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-from infrastructure.excel_client import require_win32, get_sheet, open_excel, open_workbook
+from infrastructure.excel_client import get_sheet, open_excel, open_workbook
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 OPENPYXL_FALLBACK_NOTICE = "Excel COM 截图失败，已使用 openpyxl/Pillow 简化渲染兜底"

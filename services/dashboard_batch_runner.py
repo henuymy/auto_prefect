@@ -12,9 +12,10 @@ from time import perf_counter
 from typing import Any, Callable, Iterator
 
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from infrastructure.dashboard_run_store import CollectionRunStore
-from infrastructure.dashboard_mysql import create_dashboard_engine
+from infrastructure.dashboard_mysql import create_dashboard_engine, dashboard_mysql_lock
 from services.dashboard_collection_orchestrator import (
     collect_validate_metric_rows_simple,
     naive_shanghai_now,
@@ -28,6 +29,7 @@ from services.dashboard_failure_report import (
     DEFAULT_FAILURE_DIRECTORY,
     write_dashboard_failure_report,
 )
+from services.dashboard_retention_service import recover_stale_collection_runs
 from services.dashboard_trigger import (
     build_run_store,
     execute_session_phase,
@@ -152,44 +154,73 @@ def dashboard_batch(
                 phase="QUERY_DATE_CHECKED",
                 stat_date=query_date,
             )
-            targets_started = perf_counter()
-            targets = load_collection_targets(engine)
-            targets_seconds = perf_counter() - targets_started
-            indicators_started = perf_counter()
-            indicator_codes = load_enabled_indicator_codes(engine)
-            indicators_seconds = perf_counter() - indicators_started
-            logger.info(
-                "驾驶舱批次预加载耗时 batch_no=%s engine=%.3fs targets=%.3fs indicators=%.3fs target_count=%s indicator_count=%s",
-                batch_no,
-                engine_seconds,
-                targets_seconds,
-                indicators_seconds,
-                len(targets),
-                len(indicator_codes),
-            )
-            if not indicator_codes:
-                raise RuntimeError(f"{indicator_scope}批次没有启用的指标")
+            with dashboard_mysql_lock(
+                engine,
+                lock_name=str(
+                    dashboard_config.get("collection_database_lock_name")
+                    or "auto_notify_dashboard_collection"
+                ),
+                wait_seconds=int(
+                    dashboard_config.get("collection_database_lock_wait_seconds", 5)
+                    or 5
+                ),
+            ) as database_lock_result:
+                with Session(engine) as recovery_session:
+                    recovered_runs = recover_stale_collection_runs(
+                        recovery_session,
+                        active_run_timeout_minutes=int(
+                            (dashboard_config.get("retention") or {}).get(
+                                "active_run_timeout_minutes", 120
+                            )
+                            or 120
+                        ),
+                    )
+                if recovered_runs:
+                    logger.warning(
+                        "驾驶舱已自动收口超时批次 count=%s",
+                        recovered_runs,
+                    )
+                targets_started = perf_counter()
+                targets = load_collection_targets(engine)
+                targets_seconds = perf_counter() - targets_started
+                indicators_started = perf_counter()
+                indicator_codes = load_enabled_indicator_codes(engine)
+                indicators_seconds = perf_counter() - indicators_started
+                logger.info(
+                    "驾驶舱批次预加载耗时 batch_no=%s engine=%.3fs targets=%.3fs indicators=%.3fs target_count=%s indicator_count=%s",
+                    batch_no,
+                    engine_seconds,
+                    targets_seconds,
+                    indicators_seconds,
+                    len(targets),
+                    len(indicator_codes),
+                )
+                if not indicator_codes:
+                    raise RuntimeError(f"{indicator_scope}批次没有启用的指标")
 
-            cookie_dump_path = session_result.get("cookie_dump_path")
-            if not cookie_dump_path:
-                raise RuntimeError("会话阶段未返回 cookie_dump_path")
-            stage = find_stage(
-                load_json(resolve_project_path(cookie_dump_path)),
-                str(dashboard_config.get("required_stage") or "city_ops"),
-            )
-            yield DashboardBatchContext(
-                config={**dashboard_config, "event_logger": event_logger},
-                batch_no=batch_no,
-                query_date=query_date,
-                engine=engine,
-                run_store=run_store,
-                session_result=session_result,
-                targets=targets,
-                indicator_codes=indicator_codes,
-                indicator_code=indicator_codes[0],
-                stage=stage,
-                lock_result=lock_result,
-            )
+                cookie_dump_path = session_result.get("cookie_dump_path")
+                if not cookie_dump_path:
+                    raise RuntimeError("会话阶段未返回 cookie_dump_path")
+                stage = find_stage(
+                    load_json(resolve_project_path(cookie_dump_path)),
+                    str(dashboard_config.get("required_stage") or "city_ops"),
+                )
+                yield DashboardBatchContext(
+                    config={**dashboard_config, "event_logger": event_logger},
+                    batch_no=batch_no,
+                    query_date=query_date,
+                    engine=engine,
+                    run_store=run_store,
+                    session_result=session_result,
+                    targets=targets,
+                    indicator_codes=indicator_codes,
+                    indicator_code=indicator_codes[0],
+                    stage=stage,
+                    lock_result={
+                        **lock_result,
+                        "database_lock": database_lock_result,
+                    },
+                )
         except Exception as exc:
             if run_store is not None:
                 try:

@@ -7,11 +7,13 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.dialects import mysql
+from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from services.dashboard_metric_store import (
     _insert_mysql_snapshots,
     _mysql_write_chunk_size,
+    _upsert_mysql_current,
     finalize_metric_run_in_session,
     MetricConflictError,
     MetricValueError,
@@ -35,7 +37,7 @@ def test_mysql_write_chunk_size_reads_valid_env(monkeypatch):
 def test_mysql_write_chunk_size_falls_back_for_invalid_env(monkeypatch, value):
     monkeypatch.setenv("DASHBOARD_MYSQL_WRITE_CHUNK_SIZE", value)
 
-    assert _mysql_write_chunk_size() == 1000
+    assert _mysql_write_chunk_size() == 2000
 
 
 def test_mysql_snapshot_insert_uses_multi_value_chunks():
@@ -61,6 +63,26 @@ def test_mysql_snapshot_insert_uses_multi_value_chunks():
     assert compiled_sql.count("), (") == 1
 
 
+def test_mysql_current_upsert_only_accepts_not_older_observation():
+    session = MagicMock()
+    values = [{
+        "area_id": 101,
+        "indicator_id": 2,
+        "collection_run_id": 3,
+        "metric_value": Decimal("12"),
+        "stat_date": date(2026, 6, 29),
+        "collected_at": datetime(2026, 6, 29, 16, 0),
+        "updated_at": datetime(2026, 6, 29, 16, 0),
+    }]
+
+    _upsert_mysql_current(session, values, chunk_size=1000)
+
+    statement = session.execute.call_args.args[0]
+    compiled_sql = str(statement.compile(dialect=mysql.dialect()))
+    assert "CASE WHEN" in compiled_sql
+    assert "VALUES(collected_at) >= metric_current.collected_at" in compiled_sql
+
+
 def create_test_engine():
     engine = create_engine(
         "sqlite+pysqlite://",
@@ -68,6 +90,12 @@ def create_test_engine():
         poolclass=StaticPool,
     )
     with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE area (
+                id INTEGER PRIMARY KEY,
+                level_type VARCHAR(20) NOT NULL
+            )
+        """))
         connection.execute(
             text(
                 """
@@ -164,6 +192,18 @@ def create_test_engine():
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(period_type, stat_date, area_id, indicator_id)
                 )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO area (id, level_type)
+                VALUES
+                    (101, 'CHANNEL'),
+                    (102, 'GRID'),
+                    (103, 'BRANCH'),
+                    (104, 'CITY')
                 """
             )
         )
@@ -282,6 +322,96 @@ def test_write_metric_batch_inserts_snapshot_and_upserts_current():
         ("batch-1", "SUCCESS", "COMPLETED", 1, 1),
         ("batch-2", "SUCCESS", "COMPLETED", 1, 1),
     ]
+    engine.dispose()
+
+
+def test_older_batch_cannot_roll_back_metric_current():
+    engine = create_test_engine()
+    add_run(engine, 1, "newer-batch")
+    write_metric_batch(
+        engine,
+        "newer-batch",
+        "sgs_ajvwdz",
+        [{"area_id": 101, "raw_value": "15"}],
+        date(2026, 6, 10),
+        datetime(2026, 6, 10, 10, 10),
+    )
+    add_run(engine, 2, "older-batch")
+    write_metric_batch(
+        engine,
+        "older-batch",
+        "sgs_ajvwdz",
+        [{"area_id": 101, "raw_value": "12"}],
+        date(2026, 6, 10),
+        datetime(2026, 6, 10, 10, 5),
+    )
+
+    with engine.connect() as connection:
+        current = connection.execute(text(
+            "SELECT collection_run_id, metric_value, collected_at FROM metric_current"
+        )).one()
+
+    assert current == (1, 15, "2026-06-10 10:10:00.000000")
+    engine.dispose()
+
+
+def test_write_metric_batch_skips_unchanged_snapshot_and_checkpoints_next_day():
+    engine = create_test_engine()
+    observations = [
+        (1, "sparse-1", date(2026, 6, 10), datetime(2026, 6, 10, 10, 0), "12"),
+        (2, "sparse-2", date(2026, 6, 10), datetime(2026, 6, 10, 10, 5), "12"),
+        (3, "sparse-3", date(2026, 6, 10), datetime(2026, 6, 10, 10, 10), "15"),
+        (4, "sparse-4", date(2026, 6, 11), datetime(2026, 6, 11, 0, 0), "15"),
+    ]
+    results = []
+    for run_id, batch_no, stat_date, collected_at, value in observations:
+        add_run(engine, run_id, batch_no)
+        results.append(write_metric_batch(
+            engine,
+            batch_no,
+            "sgs_ajvwdz",
+            [{"area_id": 101, "raw_value": value}],
+            stat_date,
+            collected_at,
+        ))
+
+    with engine.connect() as connection:
+        snapshots = connection.execute(text(
+            "SELECT collection_run_id, metric_value FROM metric_snapshot ORDER BY id"
+        )).all()
+        current = connection.execute(text(
+            "SELECT collection_run_id, metric_value, stat_date FROM metric_current"
+        )).one()
+
+    assert [result["snapshot_insert_count"] for result in results] == [1, 0, 1, 1]
+    assert snapshots == [(1, 12), (3, 15), (4, 15)]
+    assert current == (4, 15, "2026-06-11")
+    engine.dispose()
+
+
+@pytest.mark.parametrize("area_id", [102, 103, 104])
+def test_write_metric_batch_keeps_unchanged_non_channel_as_full_snapshot(area_id):
+    engine = create_test_engine()
+    results = []
+    for run_id, minute in ((1, 0), (2, 5)):
+        batch_no = f"non-channel-full-{area_id}-{run_id}"
+        add_run(engine, run_id, batch_no)
+        results.append(write_metric_batch(
+            engine,
+            batch_no,
+            "sgs_ajvwdz",
+            [{"area_id": area_id, "raw_value": "12"}],
+            date(2026, 6, 10),
+            datetime(2026, 6, 10, 10, minute),
+        ))
+
+    with engine.connect() as connection:
+        snapshots = connection.execute(text(
+            "SELECT collection_run_id, metric_value FROM metric_snapshot ORDER BY id"
+        )).all()
+
+    assert [result["snapshot_insert_count"] for result in results] == [1, 1]
+    assert snapshots == [(1, 12), (2, 12)]
     engine.dispose()
 
 
@@ -560,4 +690,60 @@ def test_bulk_write_multiple_realtime_indicators_with_timings():
     }
     assert snapshots == 3
     assert current == 3
+    engine.dispose()
+
+
+def test_bulk_write_reports_full_current_count_when_no_snapshot_changes():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO indicator (id, code, name, enabled, sort_order)
+            VALUES (2, 'custom_bulk', '批量指标', 1, 20)
+        """))
+    values = {
+        "sgs_ajvwdz": [
+            {"area_id": 101, "metric_value": Decimal("12")},
+            {"area_id": 102, "metric_value": Decimal("13")},
+        ],
+        "custom_bulk": [{"area_id": 101, "metric_value": Decimal("7")}],
+    }
+    results = []
+    for run_id, batch_no, minute in ((1, "bulk-first", 0), (2, "bulk-same", 5)):
+        add_run(engine, run_id, batch_no)
+        with Session(engine) as session, session.begin():
+            results.append(write_metric_batches_in_session(
+                session,
+                dialect_name=engine.dialect.name,
+                batch_no=batch_no,
+                normalized_rows_by_indicator=values,
+                stat_date=date(2026, 6, 27),
+                collected_at=datetime(2026, 6, 27, 16, minute),
+            ))
+
+    with engine.connect() as connection:
+        snapshot_count = connection.scalar(text("SELECT COUNT(*) FROM metric_snapshot"))
+        current_run_ids = connection.execute(text(
+            "SELECT collection_run_id FROM metric_current ORDER BY indicator_id"
+        )).scalars().all()
+
+    assert results[0]["snapshot_insert_count"] == 3
+    assert results[1]["snapshot_insert_count"] == 1
+    assert results[1]["current_upsert_count"] == 3
+    assert [row["snapshot_insert_count"] for row in results[1]["indicator_results"]] == [1, 0]
+    assert results[1]["write_stats"]["sparse"] == {
+        "input_row_count": 3,
+        "snapshot_inserted_row_count": 1,
+        "snapshot_skipped_row_count": 2,
+        "reduction_percent": 66.67,
+        "channel_new_row_count": 0,
+        "channel_changed_row_count": 0,
+        "channel_daily_checkpoint_row_count": 0,
+        "channel_unchanged_skipped_row_count": 2,
+        "non_channel_full_row_count": 1,
+        "unknown_area_level_row_count": 0,
+    }
+    assert results[1]["write_stats"]["snapshot"]["rows_per_second"] >= 0
+    assert results[1]["write_stats"]["current"]["rows_per_second"] > 0
+    assert snapshot_count == 4
+    assert current_run_ids == [2, 2, 2]
     engine.dispose()

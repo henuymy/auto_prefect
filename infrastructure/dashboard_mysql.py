@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Mapping
@@ -15,6 +17,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 
 ENV_PREFIX = "DASHBOARD_MYSQL_"
+logger = logging.getLogger(__name__)
 REQUIRED_ENV_NAMES = (
     "DASHBOARD_MYSQL_HOST",
     "DASHBOARD_MYSQL_DATABASE",
@@ -139,6 +142,42 @@ def create_dashboard_engine(
             "write_timeout": resolved.io_timeout_seconds,
         },
     )
+
+
+@contextmanager
+def dashboard_mysql_lock(
+    engine: Engine,
+    *,
+    lock_name: str = "auto_notify_dashboard_collection",
+    wait_seconds: int = 5,
+):
+    """Hold a server-wide MySQL named lock on one dedicated connection."""
+    normalized_name = str(lock_name or "").strip()
+    if not normalized_name or len(normalized_name) > 64:
+        raise ValueError("MySQL 锁名称长度必须为 1-64 个字符")
+    wait_seconds = max(0, int(wait_seconds))
+    if engine.dialect.name not in {"mysql", "mariadb"}:
+        yield {"name": normalized_name, "backend": engine.dialect.name}
+        return
+
+    with engine.connect() as connection:
+        acquired = connection.scalar(
+            text("SELECT GET_LOCK(:lock_name, :wait_seconds)"),
+            {"lock_name": normalized_name, "wait_seconds": wait_seconds},
+        )
+        if acquired != 1:
+            raise TimeoutError(
+                f"等待 MySQL 驾驶舱采集锁超时: {normalized_name}"
+            )
+        try:
+            yield {"name": normalized_name, "backend": engine.dialect.name}
+        finally:
+            released = connection.scalar(
+                text("SELECT RELEASE_LOCK(:lock_name)"),
+                {"lock_name": normalized_name},
+            )
+            if released != 1:
+                logger.warning("MySQL 驾驶舱采集锁释放结果异常: %s", normalized_name)
 
 
 @lru_cache(maxsize=1)

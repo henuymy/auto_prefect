@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: test-password
+          MYSQL_DATABASE: auto_notify_test
+          MYSQL_USER: auto_notify_test
+          MYSQL_PASSWORD: test-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ptest-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+
+    env:
+      PYTHONPATH: .
+      DASHBOARD_TEST_MYSQL_URL: mysql+pymysql://auto_notify_test:test-password@127.0.0.1:3306/auto_notify_test
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.lock
+      - name: Verify dependency locks
+        run: |
+          python -m piptools compile pyproject.toml --output-file requirements.lock --strip-extras --quiet
+          python -m piptools compile pyproject.toml --extra dev --output-file requirements-dev.lock --strip-extras --quiet
+          git diff --exit-code -- requirements.lock requirements-dev.lock
+      - run: ruff check backend infrastructure models services tasks flows tests migrations
+      - run: pytest -q

@@ -1,5 +1,6 @@
 """Gotify OTP provider for SMSForwarder-based login."""
 
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -7,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib import error
 
-from infrastructure.gotify_client import fetch_messages, delete_message
+from infrastructure.gotify_client import delete_message as delete_message
+from infrastructure.gotify_client import fetch_messages
 
 
 @dataclass

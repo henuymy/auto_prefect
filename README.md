@@ -768,6 +768,16 @@ C:\Users\yuyu\.conda\envs\auto-notify\python.exe -c "from flows.notify_single_fl
 
 这个方式适合排查业务问题，但不提供 UI 调度能力。
 
+## 依赖锁与健康检查
+
+- `pyproject.toml` 是唯一依赖声明来源。
+- `requirements.lock` 是 Python 3.11 运行依赖锁；`requirements-dev.lock` 额外包含测试工具。
+- `requirements.txt` 仅转引运行锁，兼容现有安装脚本。
+- `/api/live` 只检查后端进程存活。
+- `/api/health` 检查 Dashboard MySQL、Prefect API、runtime 可写性和剩余磁盘；任一失败返回 HTTP 503。
+
+真实 MySQL 集成测试的安全要求和运行方式见 `docs/MySQL集成测试.md`。
+
 ## 相关文档
 
 ```text

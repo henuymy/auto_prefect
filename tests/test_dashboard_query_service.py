@@ -317,6 +317,36 @@ def test_historical_query_restores_nearest_completed_run():
     assert result["history_meta"]["fallback_seconds"] == 60
 
 
+def test_historical_query_restores_zero_change_sparse_run():
+    engine = create_test_engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO collection_run
+                (id, batch_no, run_type, trigger_type, status, phase,
+                 stat_date, started_at, finished_at, current_upsert_count,
+                 snapshot_insert_count)
+            VALUES
+                (3, 'sparse-no-change', 'REALTIME', 'SCHEDULED', 'SUCCESS',
+                 'COMPLETED', '2026-06-11', '2026-06-11 10:10:00',
+                 '2026-06-11 10:10:08', 1, 0)
+        """))
+
+    result = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 11, 10, 11),
+        level_type="BRANCH",
+        indicator_codes=["sgs_ajvwdz"],
+    )
+    options = get_history_options(engine, indicator_codes=["sgs_ajvwdz"])
+
+    assert result["latest_run"]["batch_no"] == "sparse-no-change"
+    assert result["rows"][0]["metrics"]["sgs_ajvwdz"] == 23
+    assert result["rows"][0]["collection_run_id"] == 3
+    assert result["rows"][0]["collected_at"] == "2026-06-11T10:10:08.000"
+    assert "10:10" in options["dates"][0]["times"]
+    engine.dispose()
+
+
 def test_historical_matrix_and_range():
     engine = create_test_engine()
     with engine.begin() as connection:
@@ -342,9 +372,9 @@ def test_historical_matrix_and_range():
     )
 
     assert history_range["earliest_at"] == "2026-06-11T10:05:08.000"
-    assert history_range["latest_at"] == "2026-06-11T10:05:08.000"
+    assert history_range["latest_at"] == "2026-06-11T11:05:08.000"
     assert history_options == {
-        "dates": [{"date": "2026-06-11", "times": ["10:05"]}],
+        "dates": [{"date": "2026-06-11", "times": ["11:05", "10:05"]}],
         "date_count": 1,
     }
     assert missing_indicator_options == {"dates": [], "date_count": 0}
@@ -1057,7 +1087,7 @@ def test_current_with_changes_supports_windows_beyond_default_lookback():
     engine.dispose()
 
 
-def test_current_with_changes_ignores_stale_cutoff_snapshot():
+def test_current_with_changes_carries_forward_value_before_cutoff():
     engine = create_test_engine()
     with engine.begin() as connection:
         connection.execute(text("DELETE FROM metric_snapshot"))
@@ -1081,13 +1111,13 @@ def test_current_with_changes_ignores_stale_cutoff_snapshot():
     row_with_data = [r for r in result["rows"] if r["area_code"] == "AQ"][0]
 
     assert row_with_data["changes"]["sgs_ajvwdz"]["change_60min"] == {
-        "value": None,
-        "rate": None,
+        "value": 5.0,
+        "rate": 0.25,
     }
     engine.dispose()
 
 
-def test_dashboard_overview_uses_nearest_snapshot_after_cutoff():
+def test_dashboard_overview_keeps_nearest_snapshot_tolerance():
     engine = create_test_engine()
     with engine.begin() as connection:
         connection.execute(text("DELETE FROM metric_snapshot"))

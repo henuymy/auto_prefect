@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 import requests
 
+from services.dashboard_collection_service import CollectionTarget
 from services.method_service import (
     build_cookie_jar,
     build_headers,
@@ -102,7 +103,7 @@ def create_simple_fetcher(
         stage,
     )
 
-    def fetch(target: RequestTarget) -> dict[str, Any]:
+    def fetch(target: CollectionTarget) -> dict[str, Any]:
         session = getattr(thread_local, "session", None)
         if session is None:
             session = requests.Session()

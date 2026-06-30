@@ -132,3 +132,57 @@ def test_shared_dashboard_engine_is_created_once(monkeypatch):
 
     dashboard_mysql.dispose_dashboard_engine()
     assert first.disposed is True
+
+
+def test_dashboard_mysql_lock_acquires_and_releases_named_lock():
+    calls = []
+
+    class FakeConnection:
+        results = iter([1, 1])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def scalar(self, statement, params):
+            calls.append((str(statement), params))
+            return next(self.results)
+
+    class FakeEngine:
+        dialect = type("Dialect", (), {"name": "mysql"})()
+
+        def connect(self):
+            return FakeConnection()
+
+    with dashboard_mysql.dashboard_mysql_lock(
+        FakeEngine(), lock_name="dashboard-test", wait_seconds=3
+    ) as lock:
+        assert lock == {"name": "dashboard-test", "backend": "mysql"}
+
+    assert "GET_LOCK" in calls[0][0]
+    assert calls[0][1]["wait_seconds"] == 3
+    assert "RELEASE_LOCK" in calls[1][0]
+
+
+def test_dashboard_mysql_lock_times_out_without_entering_body():
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def scalar(self, _statement, _params):
+            return 0
+
+    class FakeEngine:
+        dialect = type("Dialect", (), {"name": "mysql"})()
+
+        def connect(self):
+            return FakeConnection()
+
+    with pytest.raises(TimeoutError, match="MySQL 驾驶舱采集锁"):
+        with dashboard_mysql.dashboard_mysql_lock(FakeEngine()):
+            raise AssertionError("lock body must not run")

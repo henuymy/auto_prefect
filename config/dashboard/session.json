@@ -5,6 +5,8 @@
   "collection_lock_wait_seconds": 5,
   "collection_lock_poll_seconds": 1,
   "collection_lock_stale_seconds": 1800,
+  "collection_database_lock_name": "auto_notify_dashboard_collection",
+  "collection_database_lock_wait_seconds": 5,
   "collection_max_workers": 24,
   "collection_hard_max_workers": 32,
   "collection_timeout_seconds": 30,
@@ -22,6 +24,7 @@
   "retention": {
     "snapshot_retention_days": 7,
     "run_retention_days": 7,
-    "acc_retention_days": 90
+    "acc_retention_days": 90,
+    "active_run_timeout_minutes": 120
   }
 }

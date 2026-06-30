@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
 
 from backend.services import config_store
 
@@ -89,3 +92,39 @@ def test_normalize_config_fills_compare_defaults():
     source = normalized["compare_sources"][0]
     assert source["engine"] == "openpyxl"
     assert source["max_workers"] == 4
+
+
+def test_atomic_write_preserves_previous_file_when_replace_fails(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "config.json"
+    path.write_text('{"value": "old"}', encoding="utf-8")
+    monkeypatch.setattr(
+        config_store.os,
+        "replace",
+        lambda *_args: (_ for _ in ()).throw(OSError("replace failed")),
+    )
+
+    with pytest.raises(OSError, match="replace failed"):
+        config_store._write_json(path, {"value": "new"})
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"value": "old"}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_concurrent_config_saves_never_produce_partial_json(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+
+    def save(index: int):
+        return config_store.save_config(
+            "并发配置",
+            {"name": "并发配置", "description": f"version-{index}"},
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(save, range(8)))
+
+    path = config_store.REPORTS_DIR / "并发配置.json"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["description"].startswith("version-")
+    assert list(path.parent.glob("*.tmp")) == []
