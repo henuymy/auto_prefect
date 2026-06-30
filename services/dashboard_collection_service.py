@@ -113,6 +113,8 @@ def extract_target_metric_rows(
     target: CollectionTarget,
     payload: dict[str, Any],
     indicator_codes: Iterable[str],
+    *,
+    include_manager_self_row: bool = False,
 ) -> list[dict[str, Any]]:
     validate_payload(payload, target)
     source_rows = extract_rows(payload, "result.tableData")
@@ -143,7 +145,18 @@ def extract_target_metric_rows(
         for row in source_rows:
             area_code = str(row.get("areaCode") or "").strip()
             area_name = str(row.get("areaName") or "").strip()
-            if not area_code or not area_name or area_code == target.target_code:
+            if not area_code or not area_name:
+                continue
+            if area_code == target.target_code:
+                if include_manager_self_row:
+                    result.append(
+                        _metric_row(
+                            row,
+                            level_type="CHANNEL_MANAGER",
+                            parent_request_code=target.target_code,
+                            indicator_codes=indicator_codes,
+                        )
+                    )
                 continue
             result.append(
                 _metric_row(
@@ -290,6 +303,7 @@ def collect_metric_rows(
     max_workers: int = DEFAULT_MAX_WORKERS,
     hard_limit: int = HARD_MAX_WORKERS,
     allow_recoverable_manager_failures: bool = False,
+    include_manager_self_rows: bool = False,
 ) -> dict[str, Any]:
     target_list = list(targets)
     codes = list(indicator_codes)
@@ -318,6 +332,7 @@ def collect_metric_rows(
                     target,
                     payload,
                     codes,
+                    include_manager_self_row=include_manager_self_rows,
                 )
                 structure_by_target[target.id] = extract_structure_observations(
                     target,
@@ -378,6 +393,7 @@ def execute_collection_phase(
     hard_limit: int = HARD_MAX_WORKERS,
     now_provider: Callable[[], Any] | None = None,
     allow_recoverable_manager_failures: bool = False,
+    include_manager_self_rows: bool = False,
 ) -> dict[str, Any]:
     target_list = list(targets)
     run_store.update(
@@ -400,6 +416,7 @@ def execute_collection_phase(
             allow_recoverable_manager_failures=(
                 allow_recoverable_manager_failures
             ),
+            include_manager_self_rows=include_manager_self_rows,
         )
     except DashboardCollectionError as exc:
         error_preview = "; ".join(

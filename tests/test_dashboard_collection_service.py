@@ -101,6 +101,23 @@ def test_extracts_formal_self_row_and_manager_channels_without_duplicates():
     ]
 
 
+def test_v2_keeps_manager_self_metric_row_before_channel_rows():
+    manager = extract_target_metric_rows(
+        target(2, "M001", "CHANNEL_MANAGER"),
+        payload(
+            {"areaCode": "M001", "areaName": "经理1", "metric": 10},
+            {"areaCode": "C001", "areaName": "渠道1", "metric": 3},
+        ),
+        ["metric"],
+        include_manager_self_row=True,
+    )
+
+    assert [(row["level_type"], row["area_code"], row["metric"]) for row in manager] == [
+        ("CHANNEL_MANAGER", "M001", 10),
+        ("CHANNEL", "C001", 3),
+    ]
+
+
 def test_channel_is_not_a_supported_request_target():
     with pytest.raises(DashboardCollectionError, match="不支持的请求目标类型"):
         extract_target_metric_rows(
