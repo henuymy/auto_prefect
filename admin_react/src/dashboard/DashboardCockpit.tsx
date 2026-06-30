@@ -53,7 +53,7 @@ import type {
 
 /* ── types ── */
 
-type LevelKey = "BRANCH" | "GRID" | "CHANNEL";
+type LevelKey = "BRANCH" | "GRID" | "CHANNEL_MANAGER" | "CHANNEL";
 type SortKey =
   | "progress"
   | "done"
@@ -63,7 +63,7 @@ type SortKey =
 type Change = { value: number | null; rate: number | null };
 
 type BoardRow = {
-  areaId: number;
+  nodeId: number;
   parentId: number | null;
   name: string;
   done: number;
@@ -81,9 +81,9 @@ type LevelBoard = {
 };
 
 type DrillEntry = {
-  areaId: number;
-  areaName: string;
-  levelType: string;
+  nodeId: number;
+  nodeName: string;
+  nodeType: string;
 };
 
 type LevelOverrideData = {
@@ -206,7 +206,7 @@ function makeDashboardCacheKey({
   mode,
   scopeMode,
   parentId,
-  parentLevel,
+  parentNodeType,
   changeWindows,
   indicatorCodes,
   dayLevelAllMode,
@@ -216,7 +216,7 @@ function makeDashboardCacheKey({
   mode: CockpitMode;
   scopeMode: ScopeMode;
   parentId?: number | null;
-  parentLevel?: string | null;
+  parentNodeType?: string | null;
   changeWindows: number[];
   indicatorCodes?: string[] | null;
   dayLevelAllMode: Partial<Record<LevelKey, boolean>>;
@@ -227,15 +227,17 @@ function makeDashboardCacheKey({
     mode,
     scopeMode,
     parentId: parentId ?? null,
-    parentLevel: parentLevel ?? null,
+    parentNodeType: parentNodeType ?? null,
     changeWindows,
     indicatorCodes: indicatorCodes ?? null,
     dayLevelAll: {
       grid: Boolean(dayLevelAllMode.GRID),
+      manager: Boolean(dayLevelAllMode.CHANNEL_MANAGER),
       channel: Boolean(dayLevelAllMode.CHANNEL),
     },
     monthLevelAll: {
       grid: Boolean(monthLevelAllMode.GRID),
+      manager: Boolean(monthLevelAllMode.CHANNEL_MANAGER),
       channel: Boolean(monthLevelAllMode.CHANNEL),
     },
     asOf: asOf || null,
@@ -256,11 +258,11 @@ const MATRIX_VIRTUAL_OVERSCAN = 8;
 const MATRIX_PAGE_SIZE = 100;
 const SINGLE_ROW_HEIGHT = 38;
 const SINGLE_VIRTUAL_OVERSCAN = 10;
-const OVERALL_RULE_STORAGE_KEY = "dashboard-overall-progress-rules";
-const MATRIX_PROGRESS_COLOR_STORAGE_KEY = "dashboard-matrix-progress-colors";
-const MATRIX_INDICATOR_ORDER_STORAGE_KEY = "dashboard-matrix-indicator-order";
-const MATRIX_PREFERENCES_STORAGE_KEY = "dashboard-matrix-preferences";
-const SINGLE_CHANGE_WINDOWS_STORAGE_KEY = "dashboard-single-change-windows";
+const OVERALL_RULE_STORAGE_KEY = "dashboard-v2-overall-progress-rules";
+const MATRIX_PROGRESS_COLOR_STORAGE_KEY = "dashboard-v2-matrix-progress-colors";
+const MATRIX_INDICATOR_ORDER_STORAGE_KEY = "dashboard-v2-matrix-indicator-order";
+const MATRIX_PREFERENCES_STORAGE_KEY = "dashboard-v2-matrix-preferences";
+const SINGLE_CHANGE_WINDOWS_STORAGE_KEY = "dashboard-v2-single-change-windows";
 const MATRIX_SORT_MODES = new Set<MatrixSortMode>([
   "overallAsc", "overallDesc",
   "progressAsc", "progressDesc",
@@ -283,57 +285,66 @@ const LEVEL_CONFIG: {
 }[] = [
   { key: "BRANCH", index: "01", title: "分公司级" },
   { key: "GRID", index: "02", title: "网格级" },
-  { key: "CHANNEL", index: "03", title: "渠道级" },
+  { key: "CHANNEL_MANAGER", index: "03", title: "渠道经理级" },
+  { key: "CHANNEL", index: "04", title: "渠道级" },
 ];
 
 const DEFAULT_BRANCH_KEYWORDS = ["中原", "AQ"];
 
-function isDefaultBranch(row: Pick<DashboardRow, "area_name" | "area_code">) {
+function isDefaultBranch(row: Pick<DashboardRow, "node_name" | "node_code">) {
   return DEFAULT_BRANCH_KEYWORDS.some(
-    (keyword) => row.area_name.includes(keyword) || row.area_code === keyword,
+    (keyword) => row.node_name.includes(keyword) || row.node_code === keyword,
   );
 }
 
 function visibleLevels(drill: DrillEntry | null): LevelKey[] {
-  if (!drill) return ["BRANCH", "GRID", "CHANNEL"];
-  if (drill.levelType === "CITY") return ["BRANCH", "GRID", "CHANNEL"];
-  if (drill.levelType === "BRANCH") return ["BRANCH", "GRID", "CHANNEL"];
-  if (drill.levelType === "GRID") return ["BRANCH", "GRID", "CHANNEL"];
+  if (!drill) return ["BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"];
+  if (drill.nodeType === "CITY") return ["BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"];
+  if (drill.nodeType === "BRANCH") return ["BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"];
+  if (drill.nodeType === "GRID") return ["BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"];
+  if (drill.nodeType === "CHANNEL_MANAGER") return ["BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"];
   return [];
 }
 
 function matrixLevelForDrill(drillLevel?: string): LevelKey {
   if (drillLevel === "BRANCH") return "GRID";
-  if (drillLevel === "GRID") return "CHANNEL";
+  if (drillLevel === "GRID") return "CHANNEL_MANAGER";
+  if (drillLevel === "CHANNEL_MANAGER") return "CHANNEL";
   return "BRANCH";
 }
 
 function normalizeDrillStack(items: DrillEntry[]): DrillEntry[] {
   let lastBranchIndex = -1;
   for (let index = items.length - 1; index >= 0; index -= 1) {
-    if (items[index].levelType === "BRANCH") {
+    if (items[index].nodeType === "BRANCH") {
       lastBranchIndex = index;
       break;
     }
   }
   if (lastBranchIndex < 0) {
-    const grid = items.find((item) => item.levelType === "GRID");
-    return grid ? [grid] : [];
+    const grid = items.find((item) => item.nodeType === "GRID");
+    const manager = items.find((item) => item.nodeType === "CHANNEL_MANAGER");
+    return [grid, manager].filter((item): item is DrillEntry => Boolean(item));
   }
 
   const branch = items[lastBranchIndex];
   const grid = items
     .slice(lastBranchIndex + 1)
-    .find((item) => item.levelType === "GRID");
-  return grid ? [branch, grid] : [branch];
+    .find((item) => item.nodeType === "GRID");
+  const manager = items
+    .slice(lastBranchIndex + 1)
+    .find((item) => item.nodeType === "CHANNEL_MANAGER");
+  return [branch, grid, manager].filter(
+    (item): item is DrillEntry => Boolean(item),
+  );
 }
 
 function sameDrillStack(left: DrillEntry[], right: DrillEntry[]) {
   return (
     left.length === right.length &&
     left.every((item, index) => (
-      item.areaId === right[index].areaId &&
-      item.levelType === right[index].levelType
+      item.nodeId === right[index].nodeId &&
+      item.nodeType === right[index].nodeType
     ))
   );
 }
@@ -702,7 +713,7 @@ function buildBoards(
   const accBy = new Map<number, number>();
   for (const r of scopedAccRows) {
     const v = r.metrics[activeCode];
-    if (v != null) accBy.set(r.area_id, v);
+    if (v != null) accBy.set(r.id, v);
   }
 
   const dayLevels = _buildLevels(
@@ -713,9 +724,9 @@ function buildBoards(
       const done = r.metrics[activeCode] ?? 0;
       const cs = (r.changes || {})[activeCode] || {};
       return {
-        areaId: r.area_id,
+        nodeId: r.id,
         parentId: r.parent_id,
-        name: r.area_name,
+        name: r.node_name,
         done,
         target: r.targets?.[activeCode] ?? null,
         changes: changesForWindows(cs, changeWindows),
@@ -725,9 +736,9 @@ function buildBoards(
 
   const monthLevels = scopedAccRows.length
     ? _buildLevels(scopedAccRows, activeCode, visible, (r, _max) => ({
-        areaId: r.area_id,
+        nodeId: r.id,
         parentId: r.parent_id,
-        name: r.area_name,
+        name: r.node_name,
         done: r.metrics[activeCode] ?? 0,
         target: r.targets?.[activeCode] ?? null,
         changes: emptyChanges(changeWindows),
@@ -785,11 +796,11 @@ function applyLevelOverrides<T extends DashboardRow>(
   field: "changesRows" | "accRows",
 ): T[] {
   let result = rows;
-  for (const level of ["GRID", "CHANNEL"] as LevelKey[]) {
+  for (const level of ["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[]) {
     const override = overrides[level]?.[field] as T[] | undefined;
     if (override) {
       result = [
-        ...result.filter((row) => row.level_type !== level),
+        ...result.filter((row) => row.node_type !== level),
         ...override,
       ];
     }
@@ -800,10 +811,11 @@ function applyLevelOverrides<T extends DashboardRow>(
 function buildDefaultBranchScope(rows: DashboardRow[]): {
   branchId: number;
   gridIds: Set<number>;
+  managerIds: Set<number>;
 } | null {
   const defaultBranch = rows.find(
     (row) =>
-      row.level_type === "BRANCH" &&
+      row.node_type === "BRANCH" &&
       isDefaultBranch(row),
   );
   if (!defaultBranch) return null;
@@ -812,28 +824,45 @@ function buildDefaultBranchScope(rows: DashboardRow[]): {
     rows
       .filter(
         (row) =>
-          row.level_type === "GRID" && row.parent_id === defaultBranch.area_id,
+          row.node_type === "GRID" && row.parent_id === defaultBranch.id,
       )
-      .map((row) => row.area_id),
+      .map((row) => row.id),
+  );
+  const managerIds = new Set(
+    rows
+      .filter(
+        (row) =>
+          row.node_type === "CHANNEL_MANAGER"
+          && row.parent_id != null
+          && gridIds.has(row.parent_id),
+      )
+      .map((row) => row.id),
   );
 
-  return { branchId: defaultBranch.area_id, gridIds };
+  return { branchId: defaultBranch.id, gridIds, managerIds };
 }
 
 function scopeLowerLevelsToDefaultBranch<T extends DashboardRow>(
   rows: T[],
-  scope: { branchId: number; gridIds: Set<number> } | null,
+  scope: {
+    branchId: number;
+    gridIds: Set<number>;
+    managerIds: Set<number>;
+  } | null,
   unscopedLevels: LevelKey[] = [],
 ): T[] {
   if (!scope) return rows;
   const unscoped = new Set(unscopedLevels);
 
   return rows.filter((row) => {
-    if (unscoped.has(row.level_type as LevelKey)) return true;
-    if (row.level_type === "BRANCH") return true;
-    if (row.level_type === "GRID") return row.parent_id === scope.branchId;
-    if (row.level_type === "CHANNEL") {
+    if (unscoped.has(row.node_type as LevelKey)) return true;
+    if (row.node_type === "BRANCH") return true;
+    if (row.node_type === "GRID") return row.parent_id === scope.branchId;
+    if (row.node_type === "CHANNEL_MANAGER") {
       return row.parent_id != null && scope.gridIds.has(row.parent_id);
+    }
+    if (row.node_type === "CHANNEL") {
+      return row.parent_id != null && scope.managerIds.has(row.parent_id);
     }
     return true;
   });
@@ -843,28 +872,63 @@ function scopeHistoricalRowsForDrill<T extends DashboardRow>(
   rows: T[],
   drill: DrillEntry | null,
 ) {
-  if (!drill || drill.levelType === "CITY") return rows;
-  const branches = rows.filter((row) => row.level_type === "BRANCH");
-  if (drill.levelType === "BRANCH") {
+  if (!drill || drill.nodeType === "CITY") return rows;
+  const branches = rows.filter((row) => row.node_type === "BRANCH");
+  if (drill.nodeType === "BRANCH") {
     const gridIds = new Set(
       rows
-        .filter((row) => row.level_type === "GRID" && row.parent_id === drill.areaId)
-        .map((row) => row.area_id),
+        .filter((row) => row.node_type === "GRID" && row.parent_id === drill.nodeId)
+        .map((row) => row.id),
+    );
+    const managerIds = new Set(
+      rows
+        .filter((row) => (
+          row.node_type === "CHANNEL_MANAGER"
+          && row.parent_id != null
+          && gridIds.has(row.parent_id)
+        ))
+        .map((row) => row.id),
     );
     return [
       ...branches,
-      ...rows.filter((row) => row.level_type === "GRID" && gridIds.has(row.area_id)),
-      ...rows.filter((row) => row.level_type === "CHANNEL" && row.parent_id != null && gridIds.has(row.parent_id)),
+      ...rows.filter((row) => row.node_type === "GRID" && gridIds.has(row.id)),
+      ...rows.filter((row) => row.node_type === "CHANNEL_MANAGER" && managerIds.has(row.id)),
+      ...rows.filter((row) => row.node_type === "CHANNEL" && row.parent_id != null && managerIds.has(row.parent_id)),
     ];
   }
-  if (drill.levelType === "GRID") {
-    const selectedGrid = rows.find((row) => row.area_id === drill.areaId);
+  if (drill.nodeType === "GRID") {
+    const selectedGrid = rows.find((row) => row.id === drill.nodeId);
+    const managerIds = new Set(
+      rows
+        .filter((row) => (
+          row.node_type === "CHANNEL_MANAGER" && row.parent_id === drill.nodeId
+        ))
+        .map((row) => row.id),
+    );
     return [
       ...branches,
       ...rows.filter((row) => (
-        row.level_type === "GRID" && row.parent_id === selectedGrid?.parent_id
+        row.node_type === "GRID" && row.parent_id === selectedGrid?.parent_id
       )),
-      ...rows.filter((row) => row.level_type === "CHANNEL" && row.parent_id === drill.areaId),
+      ...rows.filter((row) => row.node_type === "CHANNEL_MANAGER" && managerIds.has(row.id)),
+      ...rows.filter((row) => row.node_type === "CHANNEL" && row.parent_id != null && managerIds.has(row.parent_id)),
+    ];
+  }
+  if (drill.nodeType === "CHANNEL_MANAGER") {
+    const selectedManager = rows.find((row) => row.id === drill.nodeId);
+    const selectedGrid = rows.find((row) => row.id === selectedManager?.parent_id);
+    return [
+      ...branches,
+      ...rows.filter((row) => (
+        row.node_type === "GRID" && row.parent_id === selectedGrid?.parent_id
+      )),
+      ...rows.filter((row) => (
+        row.node_type === "CHANNEL_MANAGER"
+        && row.parent_id === selectedManager?.parent_id
+      )),
+      ...rows.filter((row) => (
+        row.node_type === "CHANNEL" && row.parent_id === drill.nodeId
+      )),
     ];
   }
   return rows;
@@ -878,7 +942,7 @@ function _buildLevels<T extends DashboardRow>(
 ): LevelBoard[] {
   const byLevel = new Map<LevelKey, T[]>();
   for (const r of rows) {
-    const k = r.level_type as LevelKey;
+    const k = r.node_type as LevelKey;
     if (!visible.includes(k)) continue;
     const list = byLevel.get(k) || [];
     list.push(r);
@@ -964,11 +1028,13 @@ export function DashboardCockpit() {
   const [daySorts, setDaySorts] = useState<Record<LevelKey, SortKey>>({
     BRANCH: "done",
     GRID: "done",
+    CHANNEL_MANAGER: "done",
     CHANNEL: "done",
   });
   const [monthSorts, setMonthSorts] = useState<Record<LevelKey, SortKey>>({
     BRANCH: "done",
     GRID: "done",
+    CHANNEL_MANAGER: "done",
     CHANNEL: "done",
   });
 
@@ -981,19 +1047,19 @@ export function DashboardCockpit() {
     : null;
   const visible = visibleLevels(drillTarget);
   const orgScopeName = normalizedDrillStack.length
-    ? `郑州市 / ${normalizedDrillStack.map((item) => item.areaName).join(" / ")}`
+    ? `郑州市 / ${normalizedDrillStack.map((item) => item.nodeName).join(" / ")}`
     : scopeMode === "all"
       ? "郑州市 / 全部"
       : "郑州市 / 中原区";
-  const defaultBranchDrillActive = drillTarget?.levelType === "BRANCH" && (
+  const defaultBranchDrillActive = drillTarget?.nodeType === "BRANCH" && (
     data?.changesRows.some((row) => (
-      row.area_id === drillTarget.areaId
-      && row.level_type === "BRANCH"
+      row.id === drillTarget.nodeId
+      && row.node_type === "BRANCH"
       && isDefaultBranch(row)
     ))
-    || drillTarget.areaName.includes("中原")
+    || drillTarget.nodeName.includes("中原")
   );
-  const matrixDrillLevel = drillTarget?.levelType
+  const matrixDrillLevel = drillTarget?.nodeType
     ?? (scopeMode === "default" ? "BRANCH" : undefined);
   const requestedChangeWindows = useMemo(
     () => mode === "multi" ? [multiMetricWindow] : changeWindows,
@@ -1014,8 +1080,8 @@ export function DashboardCockpit() {
   const queryCacheKey = makeDashboardCacheKey({
     mode,
     scopeMode,
-    parentId: drillTarget?.areaId ?? null,
-    parentLevel: drillTarget?.levelType ?? null,
+    parentId: drillTarget?.nodeId ?? null,
+    parentNodeType: drillTarget?.nodeType ?? null,
     changeWindows: parentChangeWindows,
     indicatorCodes: requestedIndicatorCodes ?? null,
     dayLevelAllMode,
@@ -1062,8 +1128,8 @@ export function DashboardCockpit() {
     const nextCacheKey = makeDashboardCacheKey({
       mode: nextMode,
       scopeMode: nextScopeState.scopeMode,
-      parentId: nextDrillTarget?.areaId ?? null,
-      parentLevel: nextDrillTarget?.levelType ?? null,
+      parentId: nextDrillTarget?.nodeId ?? null,
+      parentNodeType: nextDrillTarget?.nodeType ?? null,
       changeWindows: nextChangeWindows,
       indicatorCodes: nextIndicatorCodes ?? null,
       dayLevelAllMode: nextScopeState.dayLevelAllMode,
@@ -1088,7 +1154,7 @@ export function DashboardCockpit() {
       setSingleRequestSource("loading");
       setBackgroundLoadingLevels(
         nextMode === "single" && nextScopeState.scopeMode === "all" && !nextDrillTarget
-          ? { GRID: true, CHANNEL: true }
+          ? { GRID: true, CHANNEL_MANAGER: true, CHANNEL: true }
           : {},
       );
     }
@@ -1179,8 +1245,8 @@ export function DashboardCockpit() {
     let levelAllOverrideFailed = false;
     let requestFailed = false;
     try {
-      const parentId = drillTarget?.areaId;
-      const parentLevel = drillTarget?.levelType;
+      const parentId = drillTarget?.nodeId;
+      const parentNodeType = drillTarget?.nodeType;
       const historyActive = dataTimeMode === "history" && Boolean(historyAsOf);
       const catalogPromise = getDashboardIndicators(historyActive, !historyActive)
         .catch(() => ({ indicators: [] }));
@@ -1192,7 +1258,7 @@ export function DashboardCockpit() {
             requestedIndicatorCodes,
             scopeMode,
             parentId,
-            parentLevel,
+            parentNodeType,
           ).then((history) => [
             mode === "single"
               ? {
@@ -1244,10 +1310,10 @@ export function DashboardCockpit() {
               overview,
               overview.acc_rows,
             ] as const)
-        : parentLevel
+        : parentNodeType
           ? await getDashboardDrillDown(
               parentId,
-              parentLevel,
+              parentNodeType,
               "DAY_ACC",
               requestedChangeWindows,
               requestedIndicatorCodes,
@@ -1345,7 +1411,11 @@ export function DashboardCockpit() {
 
       if (progressiveAllLevels && seq === fetchSeqRef.current) {
         const branchData = makeData();
-        setBackgroundLoadingLevels({ GRID: true, CHANNEL: true });
+        setBackgroundLoadingLevels({
+          GRID: true,
+          CHANNEL_MANAGER: true,
+          CHANNEL: true,
+        });
         startTransition(() => {
           setData(branchData);
           setDataRevision((current) => current + 1);
@@ -1354,7 +1424,7 @@ export function DashboardCockpit() {
         setBackgroundLoadingLevels({});
       }
 
-      const overrideLevels = (["GRID", "CHANNEL"] as LevelKey[])
+      const overrideLevels = (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[])
         .filter((level) => (
           progressiveAllLevels
           || dayLevelAllMode[level]
@@ -1408,7 +1478,7 @@ export function DashboardCockpit() {
             } catch {
               levelAllOverrideFailed = true;
               if (seq === fetchSeqRef.current) {
-                const failedLabel = level === "GRID" ? "全部网格" : "全部渠道";
+                const failedLabel = `全部${levelLabel(level).replace("级", "")}`;
                 setLevelAllPopup({
                   kind: "error",
                   message: `${failedLabel}请求失败，请重试`,
@@ -1459,15 +1529,17 @@ export function DashboardCockpit() {
       }
     }
   }, [
-    drillTarget?.areaId,
-    drillTarget?.levelType,
+    drillTarget?.nodeId,
+    drillTarget?.nodeType,
     queryCacheKey,
     parentChangeWindows,
     requestedIndicatorCodes,
     scopeMode,
     dayLevelAllMode.GRID,
+    dayLevelAllMode.CHANNEL_MANAGER,
     dayLevelAllMode.CHANNEL,
     monthLevelAllMode.GRID,
+    monthLevelAllMode.CHANNEL_MANAGER,
     monthLevelAllMode.CHANNEL,
     dataTimeMode,
     historyAsOf,
@@ -1583,12 +1655,12 @@ export function DashboardCockpit() {
   const { dayLevels, monthLevels } = useMemo(() => {
     if (!data) return { dayLevels: [] as LevelBoard[], monthLevels: [] as LevelBoard[] };
     const dayOverrides = Object.fromEntries(
-      (["GRID", "CHANNEL"] as LevelKey[])
+      (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[])
         .filter((level) => scopeMode === "all" || dayLevelAllMode[level])
         .map((level) => [level, data.levelOverrides[level]]),
     ) as Partial<Record<LevelKey, LevelOverrideData>>;
     const monthOverrides = Object.fromEntries(
-      (["GRID", "CHANNEL"] as LevelKey[])
+      (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[])
         .filter((level) => scopeMode === "all" || monthLevelAllMode[level])
         .map((level) => [level, data.levelOverrides[level]]),
     ) as Partial<Record<LevelKey, LevelOverrideData>>;
@@ -1608,8 +1680,8 @@ export function DashboardCockpit() {
       activeCode,
       visible,
       normalizedDrillStack.length === 0 && scopeMode === "default",
-      (["GRID", "CHANNEL"] as LevelKey[]).filter((level) => dayLevelAllMode[level]),
-      (["GRID", "CHANNEL"] as LevelKey[]).filter((level) => monthLevelAllMode[level]),
+      (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[]).filter((level) => dayLevelAllMode[level]),
+      (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[]).filter((level) => monthLevelAllMode[level]),
       changeWindows,
     );
   }, [
@@ -1620,8 +1692,10 @@ export function DashboardCockpit() {
     scopeMode,
     changeWindows,
     dayLevelAllMode.GRID,
+    dayLevelAllMode.CHANNEL_MANAGER,
     dayLevelAllMode.CHANNEL,
     monthLevelAllMode.GRID,
+    monthLevelAllMode.CHANNEL_MANAGER,
     monthLevelAllMode.CHANNEL,
   ]);
 
@@ -1672,22 +1746,22 @@ export function DashboardCockpit() {
   }, [monthLevels.length, data?.latestRun]);
 
   /* handlers */
-  const handleDrill = useCallback((row: BoardRow, levelType: string) => {
-    if (levelType === "CHANNEL") return;
+  const handleDrill = useCallback((row: BoardRow, nodeType: string) => {
+    if (nodeType === "CHANNEL") return;
     setScopeMode("default");
     setDayLevelAllMode({});
     setMonthLevelAllMode({});
-    const nextEntry = { areaId: row.areaId, areaName: row.name, levelType };
-    if (levelType === "GRID") {
+    const nextEntry = { nodeId: row.nodeId, nodeName: row.name, nodeType };
+    if (nodeType === "GRID") {
       const parentBranch = data?.changesRows.find(
-        (item) => item.level_type === "BRANCH" && item.area_id === row.parentId,
+        (item) => item.node_type === "BRANCH" && item.id === row.parentId,
       );
       const nextStack = parentBranch
         ? [
             {
-              areaId: parentBranch.area_id,
-              areaName: parentBranch.area_name,
-              levelType: parentBranch.level_type,
+              nodeId: parentBranch.id,
+              nodeName: parentBranch.node_name,
+              nodeType: parentBranch.node_type,
             },
             nextEntry,
           ]
@@ -1699,12 +1773,12 @@ export function DashboardCockpit() {
       const last = prev[prev.length - 1];
       if (
         last &&
-        last.areaId === nextEntry.areaId &&
-        last.levelType === nextEntry.levelType
+        last.nodeId === nextEntry.nodeId &&
+        last.nodeType === nextEntry.nodeType
       ) {
         return prev;
       }
-      if (levelType === "BRANCH") {
+      if (nodeType === "BRANCH") {
         return [nextEntry];
       }
       return [...prev, nextEntry];
@@ -1734,14 +1808,14 @@ export function DashboardCockpit() {
       setDrillStack([]);
       return;
     }
-    const [levelType, rawAreaId] = value.split(":");
-    const areaId = Number(rawAreaId);
-    if (levelType !== "BRANCH" || !Number.isFinite(areaId)) return;
+    const [nodeType, rawNodeId] = value.split(":");
+    const nodeId = Number(rawNodeId);
+    if (nodeType !== "BRANCH" || !Number.isFinite(nodeId)) return;
     const branch = data?.changesRows.find(
-      (item) => item.level_type === "BRANCH" && item.area_id === areaId,
+      (item) => item.node_type === "BRANCH" && item.id === nodeId,
     );
     if (!branch) return;
-    const branchLabel = `郑州市 / ${branch.area_name}`;
+    const branchLabel = `郑州市 / ${branch.node_name}`;
     scopePopupTargetRef.current = { label: branchLabel };
     setLevelAllPopup({
       kind: "loading",
@@ -1749,9 +1823,9 @@ export function DashboardCockpit() {
     });
     setScopeMode("default");
     setDrillStack([{
-      areaId: branch.area_id,
-      areaName: branch.area_name,
-      levelType: branch.level_type,
+      nodeId: branch.id,
+      nodeName: branch.node_name,
+      nodeType: branch.node_type,
     }]);
   }, [data?.changesRows]);
 
@@ -1762,13 +1836,13 @@ export function DashboardCockpit() {
       section: "day",
       level,
       label: nextActive
-        ? level === "GRID" ? "全部网格" : "全部渠道"
+        ? `全部${levelLabel(level).replace("级", "")}`
         : "当前范围",
     });
     setLevelAllPopup({
       kind: "loading",
       message: nextActive
-        ? `正在请求${level === "GRID" ? "全部网格" : "全部渠道"}...`
+        ? `正在请求全部${levelLabel(level).replace("级", "")}...`
         : "正在切回当前范围...",
     });
     setDayLevelAllMode((prev) => ({
@@ -1784,13 +1858,13 @@ export function DashboardCockpit() {
       section: "month",
       level,
       label: nextActive
-        ? level === "GRID" ? "全部网格" : "全部渠道"
+        ? `全部${levelLabel(level).replace("级", "")}`
         : "当前范围",
     });
     setLevelAllPopup({
       kind: "loading",
       message: nextActive
-        ? `正在请求${level === "GRID" ? "全部网格" : "全部渠道"}...`
+        ? `正在请求全部${levelLabel(level).replace("级", "")}...`
         : "正在切回当前范围...",
     });
     setMonthLevelAllMode((prev) => ({
@@ -1840,8 +1914,8 @@ export function DashboardCockpit() {
         scopeValue={
           defaultBranchDrillActive
             ? "__default__"
-            : drillTarget?.levelType === "BRANCH"
-            ? `BRANCH:${drillTarget.areaId}`
+            : drillTarget?.nodeType === "BRANCH"
+            ? `BRANCH:${drillTarget.nodeId}`
             : normalizedDrillStack.length > 0
               ? "__current__"
               : scopeMode === "all"
@@ -1855,10 +1929,10 @@ export function DashboardCockpit() {
           { label: "郑州市 / 中原区", value: "__default__" },
           { label: "郑州市 / 全部", value: "__all__" },
           ...(data?.changesRows || [])
-            .filter((row) => row.level_type === "BRANCH" && !isDefaultBranch(row))
+            .filter((row) => row.node_type === "BRANCH" && !isDefaultBranch(row))
             .map((row) => ({
-              label: `郑州市 / ${row.area_name}`,
-              value: `BRANCH:${row.area_id}`,
+              label: `郑州市 / ${row.node_name}`,
+              value: `BRANCH:${row.id}`,
             })),
         ]}
         onScopeChange={handleScopeChange}
@@ -2024,8 +2098,8 @@ export function DashboardCockpit() {
           windowMinutes={multiMetricWindow}
           onWindowChange={setMultiMetricWindow}
           scopeMode={scopeMode}
-          parentId={drillTarget?.areaId}
-          parentLevel={drillTarget?.levelType}
+          parentId={drillTarget?.nodeId}
+          parentNodeType={drillTarget?.nodeType}
           refreshKey={dataRevision}
           cacheStore={matrixCacheStoreRef.current}
           drillLevel={matrixDrillLevel}
@@ -2995,7 +3069,7 @@ function MultiMetricMatrix({
   onWindowChange,
   scopeMode,
   parentId,
-  parentLevel,
+  parentNodeType,
   refreshKey,
   cacheStore,
   drillLevel,
@@ -3010,11 +3084,11 @@ function MultiMetricMatrix({
   onWindowChange: (minutes: number) => void;
   scopeMode: ScopeMode;
   parentId?: number;
-  parentLevel?: string;
+  parentNodeType?: string;
   refreshKey: number;
   cacheStore: MatrixCacheStore;
   drillLevel?: string;
-  onDrill: (row: BoardRow, levelType: string) => void;
+  onDrill: (row: BoardRow, nodeType: string) => void;
   asOf?: string;
 }) {
   const orderedCatalog = useMemo(() => {
@@ -3103,7 +3177,7 @@ function MultiMetricMatrix({
 
   useEffect(() => {
     setMatrixPage(1);
-  }, [level, parentId, parentLevel, scopeMode, selectedCodes, sortIndicator, sortMode, windowMinutes]);
+  }, [level, parentId, parentNodeType, scopeMode, selectedCodes, sortIndicator, sortMode, windowMinutes]);
 
   useEffect(() => {
     if (level === "CHANNEL" && sortMode.startsWith("overall")) {
@@ -3120,10 +3194,10 @@ function MultiMetricMatrix({
     if (!selectedCodes.length || !sortIndicator) return;
     let cancelled = false;
     const matrixParams = {
-      levelType: level,
+      nodeType: level,
       scopeMode,
       parentId,
-      parentLevel,
+      parentNodeType,
       indicatorCodes: selectedCodes,
       changeWindow: windowMinutes,
       search: debouncedSearch || undefined,
@@ -3215,7 +3289,7 @@ function MultiMetricMatrix({
     level,
     matrixPage,
     parentId,
-    parentLevel,
+    parentNodeType,
     refreshKey,
     scopeMode,
     selectedCodes,
@@ -3335,16 +3409,16 @@ function MultiMetricMatrix({
   };
 
   const handleMatrixDrill = (row: DashboardRowWithChanges) => {
-    if (row.level_type === "CHANNEL") return;
-    setLevel(row.level_type === "BRANCH" ? "GRID" : "CHANNEL");
+    if (row.node_type === "CHANNEL") return;
+    setLevel(matrixLevelForDrill(row.node_type));
     onDrill({
-      areaId: row.area_id,
+      nodeId: row.id,
       parentId: row.parent_id,
-      name: row.area_name,
+      name: row.node_name,
       done: 0,
       target: null,
       changes: {},
-    }, row.level_type);
+    }, row.node_type);
   };
 
   return (
@@ -3356,6 +3430,7 @@ function MultiMetricMatrix({
           options={[
             { label: "分公司级", value: "BRANCH" },
             { label: "网格级", value: "GRID" },
+            { label: "渠道经理级", value: "CHANNEL_MANAGER" },
             { label: "渠道级", value: "CHANNEL" },
           ]}
           onChange={(value) => setLevel(value as LevelKey)}
@@ -3489,13 +3564,13 @@ function MultiMetricMatrix({
           <span>{matrixTotal} 个区域，单元格展示完成值、目标值、完成率和 {windowMinutes} 分钟变化</span>
           <RequestSourceBadge source={matrixRequestSource} />
           {asOf && matrixCoverage?.levels[level] && (
-            <span className={(matrixCoverage.levels[level]!.missing_areas > 0 || matrixCoverage.levels[level]!.extra_areas > 0) ? "history-coverage missing" : "history-coverage"}>
-              快照 {matrixCoverage.levels[level]!.snapshot_areas} / 当前 {matrixCoverage.levels[level]!.expected_areas}
-              {matrixCoverage.levels[level]!.missing_areas > 0
-                ? `，缺 ${matrixCoverage.levels[level]!.missing_areas}`
+            <span className={(matrixCoverage.levels[level]!.missing_nodes > 0 || matrixCoverage.levels[level]!.extra_nodes > 0) ? "history-coverage missing" : "history-coverage"}>
+              快照 {matrixCoverage.levels[level]!.snapshot_nodes} / 当前 {matrixCoverage.levels[level]!.expected_nodes}
+              {matrixCoverage.levels[level]!.missing_nodes > 0
+                ? `，缺 ${matrixCoverage.levels[level]!.missing_nodes}`
                 : ""}
-              {matrixCoverage.levels[level]!.extra_areas > 0
-                ? `，历史额外 ${matrixCoverage.levels[level]!.extra_areas}`
+              {matrixCoverage.levels[level]!.extra_nodes > 0
+                ? `，历史额外 ${matrixCoverage.levels[level]!.extra_nodes}`
                 : ""}
             </span>
           )}
@@ -3530,7 +3605,7 @@ function MultiMetricMatrix({
                 </tr>
               )}
               {virtualRange.rows.map((row, rowIndex) => (
-                <tr key={row.area_id}>
+                <tr key={row.id}>
                   <td className="matrix-index-column">
                     {(matrixPage - 1) * MATRIX_PAGE_SIZE + virtualRange.start + rowIndex + 1}
                   </td>
@@ -3540,8 +3615,8 @@ function MultiMetricMatrix({
                       disabled={level === "CHANNEL"}
                       onClick={() => handleMatrixDrill(row)}
                     >
-                      <strong>{row.area_name}</strong>
-                      <span>{row.area_code} · {levelLabel(row.level_type)}</span>
+                      <strong>{row.node_name}</strong>
+                      <span>{row.node_code} · {levelLabel(row.node_type)}</span>
                     </button>
                   </td>
                   {overallEnabled && (
@@ -3824,9 +3899,10 @@ function ProgressColorConfig({
   );
 }
 
-function levelLabel(level: DashboardRow["level_type"]) {
+function levelLabel(level: DashboardRow["node_type"]) {
   if (level === "BRANCH") return "分公司级";
   if (level === "GRID") return "网格级";
+  if (level === "CHANNEL_MANAGER") return "渠道经理级";
   if (level === "CHANNEL") return "渠道级";
   return "市级";
 }
@@ -4003,7 +4079,7 @@ function LevelPanel({
   sortKey: SortKey;
   onSortChange: (k: SortKey) => void;
   changeWindows: number[];
-  onDrill: (row: BoardRow, levelType: string) => void;
+  onDrill: (row: BoardRow, nodeType: string) => void;
   levelAllActive?: boolean;
   levelAllPending?: boolean;
   staleIndicatorData?: boolean;
@@ -4087,12 +4163,12 @@ function LevelPanel({
           </span>
           {historyMode && coverage && !showLoadingPlaceholder && (
             <span
-              className={(coverage.missing_areas > 0 || coverage.extra_areas > 0) ? "history-coverage missing" : "history-coverage"}
-              title={`当前区域目录 ${coverage.expected_areas} 项，历史快照 ${coverage.snapshot_areas} 项，历史额外/已停用 ${coverage.extra_areas} 项`}
+              className={(coverage.missing_nodes > 0 || coverage.extra_nodes > 0) ? "history-coverage missing" : "history-coverage"}
+              title={`当前区域目录 ${coverage.expected_nodes} 项，历史快照 ${coverage.snapshot_nodes} 项，历史额外/已停用 ${coverage.extra_nodes} 项`}
             >
-              快照 {coverage.snapshot_areas} / 当前 {coverage.expected_areas}
-              {coverage.missing_areas > 0 ? `，缺 ${coverage.missing_areas}` : ""}
-              {coverage.extra_areas > 0 ? `，历史额外 ${coverage.extra_areas}` : ""}
+              快照 {coverage.snapshot_nodes} / 当前 {coverage.expected_nodes}
+              {coverage.missing_nodes > 0 ? `，缺 ${coverage.missing_nodes}` : ""}
+              {coverage.extra_nodes > 0 ? `，历史额外 ${coverage.extra_nodes}` : ""}
             </span>
           )}
         </div>
@@ -4143,11 +4219,11 @@ function LevelPanel({
         )}
         {visibleRows.map((r, i) => (
           <DataRow
-            key={r.areaId}
+            key={r.nodeId}
             rank={virtualRows.start + i + 1}
             item={r}
             changeWindows={changeWindows}
-            levelType={level.key}
+            nodeType={level.key}
             onDrill={onDrill}
           />
         ))}
@@ -4254,20 +4330,20 @@ const DataRow = memo(function DataRow({
   rank,
   item,
   changeWindows,
-  levelType,
+  nodeType,
   onDrill,
 }: {
   rank: number;
   item: BoardRow;
   changeWindows: number[];
-  levelType: LevelKey;
-  onDrill: (row: BoardRow, levelType: string) => void;
+  nodeType: LevelKey;
+  onDrill: (row: BoardRow, nodeType: string) => void;
 }) {
-  const clickable = levelType !== "CHANNEL";
+  const clickable = nodeType !== "CHANNEL";
   return (
     <div
       className={clickable ? "table-row clickable-row" : "table-row"}
-      onClick={clickable ? () => onDrill(item, levelType) : undefined}
+      onClick={clickable ? () => onDrill(item, nodeType) : undefined}
     >
       <span className="rank">{String(rank).padStart(2, "0")}</span>
       <span className="name" title={item.name}>{item.name}</span>

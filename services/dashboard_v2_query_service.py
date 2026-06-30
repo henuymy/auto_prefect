@@ -1,0 +1,938 @@
+"""Dashboard V2 read service.
+
+All public node DTOs use the V2 hierarchy vocabulary directly.  Historical
+queries reconstruct sparse snapshots by selecting the last value at or before
+the requested time; they never fall back to ``metric_current``.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from hashlib import sha256
+from typing import Any, Iterable
+
+from sqlalchemy import Engine, func, or_, select
+from sqlalchemy.orm import Session, aliased
+
+from models.dashboard_v2 import (
+    CollectionRunV2,
+    HierarchyNode,
+    HierarchyParentHistory,
+    IndicatorFormulaComponent,
+    IndicatorV2,
+    MetricAccV2,
+    MetricCurrentV2,
+    MetricSnapshotV2,
+    MetricTargetValue,
+    TargetPlan,
+)
+from services.dashboard_query_service import parse_change_window_minutes
+
+
+NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
+
+
+def _number(value: Decimal | int | float | None) -> float | int | None:
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        return value
+    if value == value.to_integral_value():
+        return int(value)
+    return float(value)
+
+
+def _iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="milliseconds")
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _indicator_dto(indicator: IndicatorV2) -> dict[str, Any]:
+    return {
+        "id": indicator.id,
+        "code": indicator.code,
+        "name": indicator.name,
+        "sort_order": indicator.sort_order,
+    }
+
+
+def _enabled_indicators(
+    session: Session,
+    indicator_codes: Iterable[str] | None = None,
+) -> list[IndicatorV2]:
+    stmt = select(IndicatorV2).where(
+        IndicatorV2.enabled.is_(True),
+        IndicatorV2.storage_mode == "STORE",
+    )
+    if indicator_codes:
+        stmt = stmt.where(IndicatorV2.code.in_(list(indicator_codes)))
+    return list(session.scalars(stmt.order_by(IndicatorV2.sort_order, IndicatorV2.id)))
+
+
+def _components(
+    session: Session,
+    indicators: list[IndicatorV2],
+) -> tuple[dict[str, list[tuple[str, Decimal]]], list[IndicatorV2]]:
+    custom_ids = [row.id for row in indicators if row.indicator_type == "CUSTOM"]
+    if not custom_ids:
+        return {}, indicators
+    source = aliased(IndicatorV2)
+    rows = session.execute(
+        select(
+            IndicatorFormulaComponent.custom_indicator_id,
+            source.code,
+            IndicatorFormulaComponent.coefficient,
+        )
+        .join(source, source.id == IndicatorFormulaComponent.source_indicator_id)
+        .where(IndicatorFormulaComponent.custom_indicator_id.in_(custom_ids))
+        .order_by(IndicatorFormulaComponent.sort_order, IndicatorFormulaComponent.id)
+    ).all()
+    code_by_id = {row.id: row.code for row in indicators}
+    result: dict[str, list[tuple[str, Decimal]]] = defaultdict(list)
+    source_codes: set[str] = set()
+    for custom_id, source_code, coefficient in rows:
+        custom_code = code_by_id.get(custom_id)
+        if custom_code:
+            result[custom_code].append((source_code, Decimal(str(coefficient))))
+            source_codes.add(source_code)
+    physical = list(indicators)
+    known = {row.code for row in physical}
+    if source_codes - known:
+        physical.extend(
+            session.scalars(
+                select(IndicatorV2).where(IndicatorV2.code.in_(source_codes - known))
+            ).all()
+        )
+    return dict(result), physical
+
+
+def _weighted_sum(
+    values: dict[str, Any], components: list[tuple[str, Decimal]]
+) -> float | int | None:
+    total = Decimal("0")
+    found = False
+    for source_code, coefficient in components:
+        value = values.get(source_code)
+        if value is not None:
+            total += Decimal(str(value)) * coefficient
+            found = True
+    if not found:
+        return None
+    return _number(total.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+
+def _apply_custom(
+    rows: list[dict[str, Any]],
+    indicators: list[IndicatorV2],
+    components: dict[str, list[tuple[str, Decimal]]],
+) -> None:
+    response_codes = [row.code for row in indicators]
+    for row in rows:
+        metrics = row["metrics"]
+        targets = row.get("targets")
+        for code, parts in components.items():
+            if metrics.get(code) is None:
+                metrics[code] = _weighted_sum(metrics, parts)
+            if isinstance(targets, dict) and targets.get(code) is None:
+                targets[code] = _weighted_sum(targets, parts)
+        row["metrics"] = {code: metrics.get(code) for code in response_codes}
+        if isinstance(targets, dict):
+            row["targets"] = {code: targets.get(code) for code in response_codes}
+
+
+def _latest_run(session: Session, *, as_of: datetime | None = None) -> CollectionRunV2 | None:
+    stmt = select(CollectionRunV2).where(
+        CollectionRunV2.run_type == "REALTIME",
+        CollectionRunV2.status == "SUCCESS",
+    )
+    if as_of is not None:
+        stmt = stmt.where(CollectionRunV2.started_at <= as_of)
+    return session.scalar(
+        stmt.order_by(CollectionRunV2.started_at.desc(), CollectionRunV2.id.desc()).limit(1)
+    )
+
+
+def _run_dto(run: CollectionRunV2 | None, *, full: bool = True) -> dict[str, Any] | None:
+    if run is None:
+        return None
+    result = {
+        "id": run.id,
+        "batch_no": run.batch_no,
+        "stat_date": _iso(run.stat_date),
+        "finished_at": _iso(run.finished_at),
+    }
+    if full:
+        result["started_at"] = _iso(run.started_at)
+    return result
+
+
+def _normalized_node_type(node_type: str | None) -> str | None:
+    value = str(node_type or "").strip().upper() or None
+    if value is not None and value not in NODE_TYPES:
+        raise ValueError(f"node_type 不受支持: {node_type!r}")
+    return value
+
+
+def _historical_parent_map(session: Session, as_of: datetime) -> dict[int, int]:
+    rows = session.execute(
+        select(
+            HierarchyParentHistory.child_node_id,
+            HierarchyParentHistory.parent_node_id,
+        ).where(
+            HierarchyParentHistory.valid_from <= as_of,
+            or_(
+                HierarchyParentHistory.valid_to.is_(None),
+                HierarchyParentHistory.valid_to > as_of,
+            ),
+        )
+    ).all()
+    return {row.child_node_id: row.parent_node_id for row in rows}
+
+
+def _nodes(
+    session: Session,
+    *,
+    node_type: str | None = None,
+    parent_id: int | None = None,
+    as_of: datetime | None = None,
+    include_disabled: bool = False,
+) -> list[HierarchyNode]:
+    normalized = _normalized_node_type(node_type)
+    stmt = select(HierarchyNode)
+    if not include_disabled:
+        stmt = stmt.where(HierarchyNode.enabled.is_(True))
+    if normalized:
+        stmt = stmt.where(HierarchyNode.node_type == normalized)
+    result = list(session.scalars(stmt.order_by(HierarchyNode.level_no, HierarchyNode.sort_order, HierarchyNode.id)))
+    if parent_id is None:
+        return result
+    if as_of is None:
+        return [row for row in result if row.parent_id == parent_id]
+    parents = _historical_parent_map(session, as_of)
+    return [row for row in result if parents.get(row.id, row.parent_id) == parent_id]
+
+
+def _node_dto(node: HierarchyNode, *, parent_id: int | None = None) -> dict[str, Any]:
+    return {
+        "id": node.id,
+        "node_code": node.node_code,
+        "node_name": node.node_name,
+        "node_type": node.node_type,
+        "level_no": node.level_no,
+        "parent_id": node.parent_id if parent_id is None else parent_id,
+    }
+
+
+def _descendant_nodes(
+    session: Session,
+    root_id: int,
+    *,
+    as_of: datetime | None = None,
+    include_root: bool = False,
+) -> list[HierarchyNode]:
+    nodes = _nodes(session, as_of=as_of)
+    parents = _historical_parent_map(session, as_of) if as_of else {}
+    children: dict[int, list[HierarchyNode]] = defaultdict(list)
+    by_id = {row.id: row for row in nodes}
+    for node in nodes:
+        parent_id = parents.get(node.id, node.parent_id)
+        if parent_id is not None:
+            children[parent_id].append(node)
+    result: list[HierarchyNode] = [by_id[root_id]] if include_root and root_id in by_id else []
+    pending = list(children.get(root_id, []))
+    while pending:
+        node = pending.pop(0)
+        result.append(node)
+        pending.extend(children.get(node.id, []))
+    return result
+
+
+def _scoped_nodes(
+    session: Session,
+    *,
+    node_type: str,
+    scope_mode: str,
+    parent_id: int | None,
+    branch_code: str | None,
+    as_of: datetime | None = None,
+) -> list[HierarchyNode]:
+    if parent_id is not None:
+        return _nodes(
+            session,
+            node_type=node_type,
+            parent_id=parent_id,
+            as_of=as_of,
+        )
+    candidates = _nodes(session, node_type=node_type, as_of=as_of)
+    if str(scope_mode or "").strip().lower() == "all" or node_type == "BRANCH":
+        return candidates
+    branch = session.scalar(
+        select(HierarchyNode)
+        .where(
+            HierarchyNode.node_type == "BRANCH",
+            HierarchyNode.enabled.is_(True),
+            HierarchyNode.node_code == (branch_code or "AQ"),
+        )
+        .limit(1)
+    )
+    if branch is None:
+        return candidates
+    allowed = {row.id for row in _descendant_nodes(session, branch.id, as_of=as_of)}
+    return [row for row in candidates if row.id in allowed]
+
+
+def _value_rows_at(
+    session: Session,
+    *,
+    node_ids: list[int],
+    indicator_ids: list[int],
+    as_of: datetime | None,
+) -> list[Any]:
+    if not node_ids or not indicator_ids:
+        return []
+    if as_of is None:
+        return session.execute(
+            select(
+                MetricCurrentV2.node_id,
+                MetricCurrentV2.indicator_id,
+                MetricCurrentV2.metric_value,
+                MetricCurrentV2.collection_run_id,
+                MetricCurrentV2.collected_at,
+            ).where(
+                MetricCurrentV2.node_id.in_(node_ids),
+                MetricCurrentV2.indicator_id.in_(indicator_ids),
+            )
+        ).all()
+    ranked = (
+        select(
+            MetricSnapshotV2.node_id.label("node_id"),
+            MetricSnapshotV2.indicator_id.label("indicator_id"),
+            MetricSnapshotV2.metric_value.label("metric_value"),
+            MetricSnapshotV2.collection_run_id.label("collection_run_id"),
+            MetricSnapshotV2.collected_at.label("collected_at"),
+            func.row_number().over(
+                partition_by=(MetricSnapshotV2.node_id, MetricSnapshotV2.indicator_id),
+                order_by=(MetricSnapshotV2.collected_at.desc(), MetricSnapshotV2.id.desc()),
+            ).label("rn"),
+        )
+        .where(
+            MetricSnapshotV2.node_id.in_(node_ids),
+            MetricSnapshotV2.indicator_id.in_(indicator_ids),
+            MetricSnapshotV2.collected_at <= as_of,
+        )
+        .subquery()
+    )
+    return session.execute(
+        select(
+            ranked.c.node_id,
+            ranked.c.indicator_id,
+            ranked.c.metric_value,
+            ranked.c.collection_run_id,
+            ranked.c.collected_at,
+        ).where(ranked.c.rn == 1)
+    ).all()
+
+
+def _target_period(period_type: str) -> str:
+    normalized = str(period_type or "").strip().upper()
+    if normalized in {"DAY", "DAY_ACC"}:
+        return "DAY"
+    if normalized == "MONTH":
+        return "MONTH"
+    raise ValueError(f"period_type 只支持 DAY_ACC/MONTH: {period_type!r}")
+
+
+def _active_target_map(
+    session: Session,
+    *,
+    node_ids: list[int],
+    indicator_ids: list[int],
+    period_type: str,
+    target_date: date,
+) -> dict[tuple[int, int], Decimal]:
+    if not node_ids or not indicator_ids:
+        return {}
+    period = _target_period(period_type)
+    plans = list(
+        session.scalars(
+            select(TargetPlan)
+            .where(
+                TargetPlan.status == "ACTIVE",
+                TargetPlan.period_type == period,
+                TargetPlan.effective_from <= target_date,
+                or_(TargetPlan.effective_to.is_(None), TargetPlan.effective_to >= target_date),
+            )
+            .order_by(
+                (TargetPlan.scenario == "PK").desc(),
+                TargetPlan.priority.desc(),
+                TargetPlan.effective_from.desc(),
+                TargetPlan.version_no.desc(),
+                TargetPlan.id.desc(),
+            )
+        )
+    )
+    if not plans:
+        return {}
+    scenario = "PK" if any(row.scenario == "PK" for row in plans) else "NORMAL"
+    selected = next(row for row in plans if row.scenario == scenario)
+    rows = session.execute(
+        select(
+            MetricTargetValue.node_id,
+            MetricTargetValue.indicator_id,
+            MetricTargetValue.target_value,
+        ).where(
+            MetricTargetValue.plan_id == selected.id,
+            MetricTargetValue.node_id.in_(node_ids),
+            MetricTargetValue.indicator_id.in_(indicator_ids),
+        )
+    ).all()
+    return {(row.node_id, row.indicator_id): row.target_value for row in rows}
+
+
+def _wide_rows(
+    session: Session,
+    *,
+    nodes: list[HierarchyNode],
+    indicators: list[IndicatorV2],
+    as_of: datetime | None = None,
+    period_type: str | None = None,
+    include_targets: bool = False,
+) -> list[dict[str, Any]]:
+    components, physical = _components(session, indicators)
+    values = _value_rows_at(
+        session,
+        node_ids=[row.id for row in nodes],
+        indicator_ids=[row.id for row in physical],
+        as_of=as_of,
+    )
+    code_by_id = {row.id: row.code for row in physical}
+    parent_map = _historical_parent_map(session, as_of) if as_of else {}
+    rows = []
+    by_id: dict[int, dict[str, Any]] = {}
+    for node in nodes:
+        dto = _node_dto(node, parent_id=parent_map.get(node.id) if as_of else None)
+        dto.update(
+            collection_run_id=None,
+            collected_at=None,
+            metrics={row.code: None for row in physical},
+        )
+        rows.append(dto)
+        by_id[node.id] = dto
+    for value in values:
+        row = by_id[value.node_id]
+        row["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
+        current_at = row["collected_at"]
+        value_at = _iso(value.collected_at)
+        if current_at is None or (value_at and value_at > current_at):
+            row["collection_run_id"] = value.collection_run_id
+            row["collected_at"] = value_at
+    if include_targets and period_type:
+        target_map = _active_target_map(
+            session,
+            node_ids=list(by_id),
+            indicator_ids=[row.id for row in physical],
+            period_type=period_type,
+            target_date=(as_of.date() if as_of else date.today()),
+        )
+        for node_id, row in by_id.items():
+            row["targets"] = {
+                indicator.code: _number(target_map.get((node_id, indicator.id)))
+                for indicator in physical
+            }
+    _apply_custom(rows, indicators, components)
+    return rows
+
+
+def _append_changes(
+    session: Session,
+    *,
+    rows: list[dict[str, Any]],
+    indicators: list[IndicatorV2],
+    anchor: datetime,
+    windows: list[int],
+) -> None:
+    if not rows or not indicators:
+        return
+    components, physical = _components(session, indicators)
+    for minutes in windows:
+        historical = _value_rows_at(
+            session,
+            node_ids=[row["id"] for row in rows],
+            indicator_ids=[row.id for row in physical],
+            as_of=anchor - timedelta(minutes=minutes),
+        )
+        values: dict[int, dict[str, Any]] = defaultdict(dict)
+        code_by_id = {row.id: row.code for row in physical}
+        for value in historical:
+            values[value.node_id][code_by_id[value.indicator_id]] = _number(value.metric_value)
+        for node_values in values.values():
+            for code, parts in components.items():
+                node_values[code] = _weighted_sum(node_values, parts)
+        key = f"change_{minutes}min"
+        for row in rows:
+            changes = row.setdefault("changes", {})
+            previous = values.get(row["id"], {})
+            for indicator in indicators:
+                current = row["metrics"].get(indicator.code)
+                old = previous.get(indicator.code)
+                value = None if current is None or old is None else current - old
+                rate = None if value is None or old in (None, 0) else value / abs(old)
+                changes.setdefault(indicator.code, {})[key] = {"value": value, "rate": rate}
+
+
+def get_indicator_catalog(
+    engine: Engine, *, include_archived: bool = False, enabled_only: bool = False
+) -> dict[str, Any]:
+    with Session(engine) as session:
+        stmt = select(IndicatorV2).order_by(IndicatorV2.sort_order, IndicatorV2.id)
+        if not include_archived:
+            stmt = stmt.where(or_(IndicatorV2.source_active.is_(True), IndicatorV2.enabled.is_(True)))
+        if enabled_only:
+            stmt = stmt.where(IndicatorV2.enabled.is_(True))
+        rows = list(session.scalars(stmt))
+        return {"indicators": [{
+            **_indicator_dto(row),
+            "enabled": row.enabled,
+            "source_active": row.source_active,
+            "indicator_type": row.indicator_type,
+            "storage_mode": row.storage_mode,
+            "removed_at": _iso(row.removed_at),
+        } for row in rows]}
+
+
+def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
+    with Session(engine) as session:
+        run = _latest_run(session)
+        indicator_state = session.execute(
+            select(func.count(IndicatorV2.id), func.max(IndicatorV2.updated_at))
+        ).one()
+        target_state = session.execute(
+            select(func.count(TargetPlan.id), func.max(TargetPlan.updated_at))
+        ).one()
+        config_version = sha256(repr((*indicator_state, *target_state)).encode()).hexdigest()[:16]
+        return {
+            "latest_run": _run_dto(run, full=False),
+            "data_version": f"{run.id}:{_iso(run.finished_at)}" if run else "0",
+            "config_version": config_version,
+        }
+
+
+def get_history_range(engine: Engine) -> dict[str, Any]:
+    with Session(engine) as session:
+        earliest, latest = session.execute(
+            select(func.min(CollectionRunV2.started_at), func.max(CollectionRunV2.started_at)).where(
+                CollectionRunV2.run_type == "REALTIME",
+                CollectionRunV2.status == "SUCCESS",
+            )
+        ).one()
+        return {"earliest_at": _iso(earliest), "latest_at": _iso(latest)}
+
+
+def get_history_options(
+    engine: Engine, *, indicator_codes: list[str] | None = None
+) -> dict[str, Any]:
+    del indicator_codes
+    with Session(engine) as session:
+        values = list(session.scalars(
+            select(CollectionRunV2.started_at).where(
+                CollectionRunV2.run_type == "REALTIME",
+                CollectionRunV2.status == "SUCCESS",
+            ).order_by(CollectionRunV2.started_at)
+        ))
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for value in values:
+        day = value.date().isoformat()
+        clock = value.time().isoformat(timespec="seconds")
+        if clock not in grouped[day]:
+            grouped[day].append(clock)
+    dates = [{"date": day, "times": times} for day, times in grouped.items()]
+    return {"dates": dates, "date_count": len(dates)}
+
+
+def get_historical_run_id(engine: Engine, as_of: datetime) -> int | None:
+    with Session(engine) as session:
+        run = _latest_run(session, as_of=as_of)
+        return run.id if run else None
+
+
+def get_current_wide_table(
+    engine: Engine,
+    *,
+    node_type: str | None = None,
+    parent_id: int | None = None,
+    indicator_codes: list[str] | None = None,
+) -> dict[str, Any]:
+    with Session(engine) as session:
+        indicators = _enabled_indicators(session, indicator_codes)
+        nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
+        rows = _wide_rows(
+            session,
+            nodes=nodes,
+            indicators=indicators,
+            period_type="DAY_ACC",
+            include_targets=True,
+        )
+        run = _latest_run(session)
+        return {
+            "latest_run": _run_dto(run),
+            "indicators": [_indicator_dto(row) for row in indicators],
+            "rows": rows,
+            "row_count": len(rows),
+        }
+
+
+def get_current_with_changes(
+    engine: Engine,
+    *,
+    node_type: str | None = None,
+    parent_id: int | None = None,
+    change_windows: list[int] | None = None,
+    indicator_codes: list[str] | None = None,
+) -> dict[str, Any]:
+    windows = change_windows or [5, 15, 30, 60]
+    with Session(engine) as session:
+        indicators = _enabled_indicators(session, indicator_codes)
+        nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
+        rows = _wide_rows(
+            session,
+            nodes=nodes,
+            indicators=indicators,
+            period_type="DAY_ACC",
+            include_targets=True,
+        )
+        run = _latest_run(session)
+        anchor = run.started_at if run else datetime.now()
+        _append_changes(session, rows=rows, indicators=indicators, anchor=anchor, windows=windows)
+        return {
+            "data_mode": "REALTIME",
+            "latest_run": _run_dto(run),
+            "indicators": [_indicator_dto(row) for row in indicators],
+            "rows": rows,
+            "row_count": len(rows),
+        }
+
+
+def get_historical_with_changes(
+    engine: Engine,
+    *,
+    as_of: datetime,
+    node_type: str | None = None,
+    change_windows: list[int] | None = None,
+    indicator_codes: list[str] | None = None,
+    scope_mode: str = "default",
+    parent_id: int | None = None,
+    parent_node_type: str | None = None,
+    branch_code: str | None = "AQ",
+) -> dict[str, Any]:
+    del parent_node_type
+    windows = change_windows or [5, 15, 30, 60]
+    with Session(engine) as session:
+        run = _latest_run(session, as_of=as_of)
+        indicators = _enabled_indicators(session, indicator_codes)
+        if node_type:
+            nodes = _scoped_nodes(
+                session,
+                node_type=_normalized_node_type(node_type) or "BRANCH",
+                scope_mode=scope_mode,
+                parent_id=parent_id,
+                branch_code=branch_code,
+                as_of=as_of,
+            )
+        elif parent_id is not None:
+            nodes = _nodes(session, parent_id=parent_id, as_of=as_of)
+        else:
+            nodes = _nodes(session, as_of=as_of)
+        rows = _wide_rows(
+            session,
+            nodes=nodes,
+            indicators=indicators,
+            as_of=as_of,
+            period_type="DAY_ACC",
+            include_targets=True,
+        )
+        _append_changes(session, rows=rows, indicators=indicators, anchor=as_of, windows=windows)
+        return {
+            "data_mode": "HISTORY",
+            "selected_time": _iso(as_of),
+            "latest_run": _run_dto(run),
+            "indicators": [_indicator_dto(row) for row in indicators],
+            "rows": rows,
+            "row_count": len(rows),
+            "coverage": _coverage(nodes, rows, indicators),
+            "history_meta": {
+                "batch_started_at": _iso(run.started_at) if run else None,
+                "batch_finished_at": _iso(run.finished_at) if run else None,
+                "duration_seconds": (
+                    (run.finished_at - run.started_at).total_seconds()
+                    if run and run.finished_at else None
+                ),
+                "fallback_seconds": (
+                    (as_of - run.started_at).total_seconds() if run else None
+                ),
+                "is_fallback": bool(run and run.started_at != as_of),
+            },
+        }
+
+
+def _coverage(
+    nodes: list[HierarchyNode], rows: list[dict[str, Any]], indicators: list[IndicatorV2]
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"levels": {}}
+    by_id = {row["id"]: row for row in rows}
+    for node_type in sorted({row.node_type for row in nodes}):
+        expected = [row for row in nodes if row.node_type == node_type]
+        available = [row for row in expected if any(v is not None for v in by_id[row.id]["metrics"].values())]
+        cells = sum(
+            value is not None
+            for row in expected
+            for value in by_id[row.id]["metrics"].values()
+        )
+        result["levels"][node_type] = {
+            "expected_nodes": len(expected),
+            "snapshot_nodes": len(available),
+            "missing_nodes": len(expected) - len(available),
+            "extra_nodes": 0,
+            "available_metric_cells": cells,
+            "total_metric_cells": len(expected) * len(indicators),
+        }
+    return result
+
+
+def _sort_rows(
+    rows: list[dict[str, Any]], sort_indicator: str | None, sort_mode: str
+) -> list[dict[str, Any]]:
+    if not sort_indicator:
+        return rows
+    reverse = str(sort_mode).lower().endswith("desc")
+    def key(row: dict[str, Any]) -> tuple[bool, float]:
+        value = row["metrics"].get(sort_indicator)
+        if str(sort_mode).lower().startswith("rate"):
+            target = (row.get("targets") or {}).get(sort_indicator)
+            value = None if value is None or target in (None, 0) else value / target
+        return (value is not None, float(value or 0))
+    return sorted(rows, key=key, reverse=reverse)
+
+
+def _matrix_result(
+    result: dict[str, Any], *, search: str | None, sort_indicator: str | None,
+    sort_mode: str, page: int, page_size: int
+) -> dict[str, Any]:
+    rows = result["rows"]
+    keyword = str(search or "").strip().lower()
+    if keyword:
+        rows = [row for row in rows if keyword in row["node_name"].lower() or keyword in row["node_code"].lower()]
+    rows = _sort_rows(rows, sort_indicator, sort_mode)
+    total = len(rows)
+    start = (page - 1) * page_size
+    result["rows"] = rows[start:start + page_size]
+    result["row_count"] = len(result["rows"])
+    result.update(total=total, page=page, page_size=page_size, total_pages=max(1, (total + page_size - 1) // page_size))
+    return result
+
+
+def get_dashboard_matrix_page(
+    engine: Engine, *, node_type: str, scope_mode: str = "default",
+    parent_id: int | None = None, parent_node_type: str | None = None,
+    branch_code: str | None = "AQ", indicator_codes: list[str] | None = None,
+    change_window: int = 60, search: str | None = None,
+    sort_indicator: str | None = None, sort_mode: str = "doneDesc",
+    page: int = 1, page_size: int = 100,
+) -> dict[str, Any]:
+    del parent_node_type
+    with Session(engine) as session:
+        normalized = _normalized_node_type(node_type) or "BRANCH"
+        indicators = _enabled_indicators(session, indicator_codes)
+        nodes = _scoped_nodes(
+            session,
+            node_type=normalized,
+            scope_mode=scope_mode,
+            parent_id=parent_id,
+            branch_code=branch_code,
+        )
+        rows = _wide_rows(
+            session,
+            nodes=nodes,
+            indicators=indicators,
+            period_type="DAY_ACC",
+            include_targets=True,
+        )
+        run = _latest_run(session)
+        anchor = run.started_at if run else datetime.now()
+        _append_changes(
+            session,
+            rows=rows,
+            indicators=indicators,
+            anchor=anchor,
+            windows=[change_window],
+        )
+        result = {
+            "data_mode": "REALTIME",
+            "latest_run": _run_dto(run),
+            "indicators": [_indicator_dto(row) for row in indicators],
+            "rows": rows,
+            "row_count": len(rows),
+        }
+    return _matrix_result(result, search=search, sort_indicator=sort_indicator, sort_mode=sort_mode, page=page, page_size=page_size)
+
+
+def get_historical_matrix_page(
+    engine: Engine, *, as_of: datetime, node_type: str,
+    scope_mode: str = "default", parent_id: int | None = None,
+    parent_node_type: str | None = None, branch_code: str | None = "AQ",
+    indicator_codes: list[str] | None = None, change_window: int = 60,
+    search: str | None = None, sort_indicator: str | None = None,
+    sort_mode: str = "doneDesc", page: int = 1, page_size: int = 100,
+) -> dict[str, Any]:
+    result = get_historical_with_changes(
+        engine, as_of=as_of, node_type=node_type, change_windows=[change_window],
+        indicator_codes=indicator_codes, scope_mode=scope_mode, parent_id=parent_id,
+        parent_node_type=parent_node_type, branch_code=branch_code,
+    )
+    return _matrix_result(result, search=search, sort_indicator=sort_indicator, sort_mode=sort_mode, page=page, page_size=page_size)
+
+
+def get_acc_wide_table(
+    engine: Engine, *, period_type: str = "DAY_ACC", node_type: str | None = None,
+    parent_id: int | None = None, stat_date: str | None = None,
+    indicator_codes: list[str] | None = None,
+) -> dict[str, Any]:
+    normalized = str(period_type).strip().upper()
+    if normalized not in {"DAY_ACC", "MONTH"}:
+        raise ValueError(f"period_type 只支持 DAY_ACC/MONTH: {period_type!r}")
+    target_day = date.fromisoformat(stat_date) if stat_date else date.today()
+    with Session(engine) as session:
+        indicators = _enabled_indicators(session, indicator_codes)
+        components, physical = _components(session, indicators)
+        nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
+        values = session.execute(
+            select(MetricAccV2).where(
+                MetricAccV2.period_type == normalized,
+                MetricAccV2.stat_date == target_day,
+                MetricAccV2.node_id.in_([row.id for row in nodes] or [-1]),
+                MetricAccV2.indicator_id.in_([row.id for row in physical] or [-1]),
+            )
+        ).scalars().all()
+        code_by_id = {row.id: row.code for row in physical}
+        rows = []
+        by_id = {}
+        for node in nodes:
+            dto = _node_dto(node)
+            dto.update(collection_run_id=None, collected_at=None, metrics={row.code: None for row in physical})
+            rows.append(dto)
+            by_id[node.id] = dto
+        for value in values:
+            row = by_id[value.node_id]
+            row["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
+            row["collection_run_id"] = value.collection_run_id
+            row["collected_at"] = _iso(value.collected_at)
+        _apply_custom(rows, indicators, components)
+        return {"indicators": [_indicator_dto(row) for row in indicators], "rows": rows, "row_count": len(rows)}
+
+
+def get_dashboard_overview(
+    engine: Engine, *, branch_id: int | None = None, branch_code: str | None = None,
+    period_type: str = "DAY_ACC", change_windows: list[int] | None = None,
+    indicator_codes: list[str] | None = None, include_acc: bool = True,
+) -> dict[str, Any]:
+    with Session(engine) as session:
+        branch_stmt = select(HierarchyNode).where(
+            HierarchyNode.node_type == "BRANCH", HierarchyNode.enabled.is_(True)
+        )
+        if branch_id:
+            branch_stmt = branch_stmt.where(HierarchyNode.id == branch_id)
+        elif branch_code:
+            branch_stmt = branch_stmt.where(HierarchyNode.node_code == branch_code)
+        branch = session.scalar(branch_stmt.order_by(HierarchyNode.sort_order, HierarchyNode.id).limit(1))
+        indicators = _enabled_indicators(session, indicator_codes)
+        nodes = (
+            _descendant_nodes(session, branch.id, include_root=True)
+            if branch else []
+        )
+        rows = _wide_rows(
+            session,
+            nodes=nodes,
+            indicators=indicators,
+            period_type=period_type,
+            include_targets=True,
+        )
+        run = _latest_run(session)
+        _append_changes(
+            session,
+            rows=rows,
+            indicators=indicators,
+            anchor=run.started_at if run else datetime.now(),
+            windows=change_windows or [5, 15, 30, 60],
+        )
+        acc_rows: list[dict[str, Any]] = []
+        if include_acc:
+            acc_values = session.execute(
+                select(MetricAccV2).where(
+                    MetricAccV2.period_type == str(period_type).strip().upper(),
+                    MetricAccV2.stat_date == date.today(),
+                    MetricAccV2.node_id.in_([row.id for row in nodes] or [-1]),
+                    MetricAccV2.indicator_id.in_([row.id for row in indicators] or [-1]),
+                )
+            ).scalars().all()
+            acc_rows = [_node_dto(node) for node in nodes]
+            acc_by_id = {row["id"]: row for row in acc_rows}
+            code_by_id = {row.id: row.code for row in indicators}
+            for row in acc_rows:
+                row.update(collection_run_id=None, collected_at=None, metrics={code: None for code in code_by_id.values()})
+            for value in acc_values:
+                if value.node_id not in acc_by_id or value.indicator_id not in code_by_id:
+                    continue
+                target = acc_by_id[value.node_id]
+                target["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
+                target["collection_run_id"] = value.collection_run_id
+                target["collected_at"] = _iso(value.collected_at)
+        return {
+            "data_mode": "REALTIME",
+            "latest_run": _run_dto(run),
+            "selected_branch": _node_dto(branch) if branch else None,
+            "indicators": [_indicator_dto(row) for row in indicators],
+            "rows": rows,
+            "row_count": len(rows),
+            "acc_rows": acc_rows,
+            "acc_row_count": len(acc_rows),
+        }
+
+
+def get_drill_down(
+    engine: Engine, *, parent_id: int, parent_node_type: str,
+    period_type: str = "DAY_ACC", change_windows: list[int] | None = None,
+    indicator_codes: list[str] | None = None, include_acc: bool = True,
+) -> dict[str, Any]:
+    parent_type = _normalized_node_type(parent_node_type)
+    child_by_parent = {
+        "CITY": "BRANCH", "BRANCH": "GRID", "GRID": "CHANNEL_MANAGER",
+        "CHANNEL_MANAGER": "CHANNEL",
+    }
+    child_type = child_by_parent.get(parent_type or "")
+    if child_type is None:
+        raise ValueError(f"{parent_node_type!r} 没有可下钻层级")
+    result = get_current_with_changes(
+        engine, node_type=child_type, parent_id=parent_id,
+        change_windows=change_windows, indicator_codes=indicator_codes,
+    )
+    acc = get_acc_wide_table(
+        engine, period_type=period_type, node_type=child_type, parent_id=parent_id,
+        indicator_codes=indicator_codes,
+    ) if include_acc else {"rows": []}
+    result.update(acc_rows=acc["rows"], acc_row_count=len(acc["rows"]))
+    return result
+
+
+__all__ = [
+    "get_acc_wide_table", "get_current_wide_table", "get_current_with_changes",
+    "get_dashboard_matrix_page", "get_dashboard_overview", "get_drill_down",
+    "get_historical_matrix_page", "get_historical_run_id",
+    "get_historical_with_changes", "get_history_options", "get_history_range",
+    "get_indicator_catalog", "get_latest_dashboard_run", "parse_change_window_minutes",
+]

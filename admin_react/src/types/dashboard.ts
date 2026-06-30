@@ -50,6 +50,7 @@ export type UpdateIndicatorSettingsPayload = {
 };
 
 export type DashboardLatestRunResponse = {
+  schema_version: 1 | 2;
   latest_run: {
     id: number;
     batch_no: string;
@@ -66,10 +67,10 @@ export type ChangeEntry = {
 };
 
 export type DashboardRow = {
-  area_id: number;
-  area_code: string;
-  area_name: string;
-  level_type: "CITY" | "BRANCH" | "GRID" | "CHANNEL";
+  id: number;
+  node_code: string;
+  node_name: string;
+  node_type: "CITY" | "BRANCH" | "GRID" | "CHANNEL_MANAGER" | "CHANNEL";
   level_no: number;
   parent_id: number | null;
   collection_run_id: number | null;
@@ -128,11 +129,11 @@ export type DashboardHistoryOptionsResponse = {
 };
 
 export type DashboardHistoryCoverage = {
-  levels: Partial<Record<"BRANCH" | "GRID" | "CHANNEL", {
-    expected_areas: number;
-    snapshot_areas: number;
-    missing_areas: number;
-    extra_areas: number;
+  levels: Partial<Record<"BRANCH" | "GRID" | "CHANNEL_MANAGER" | "CHANNEL", {
+    expected_nodes: number;
+    snapshot_nodes: number;
+    missing_nodes: number;
+    extra_nodes: number;
     available_metric_cells: number;
     total_metric_cells: number;
   }>>;

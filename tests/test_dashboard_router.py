@@ -29,10 +29,10 @@ def test_matrix_route_uses_cache_and_invalidates_on_data_version(monkeypatch):
     monkeypatch.setattr(dashboard, "get_dashboard_matrix_page", load_matrix)
 
     params = {
-        "level_type": "CHANNEL",
+        "node_type": "CHANNEL",
         "scope_mode": "all",
         "parent_id": None,
-        "parent_level": None,
+        "parent_node_type": None,
         "branch_code": "AQ",
         "indicator_codes": "metric_a",
         "change_window": 60,

@@ -104,12 +104,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function getCurrentDashboard(
-  levelType?: string,
+  nodeType?: string,
   parentId?: number,
   indicatorCodes?: string[],
 ) {
   const params = new URLSearchParams();
-  if (levelType) params.set("level_type", levelType);
+  if (nodeType) params.set("node_type", nodeType);
   if (parentId != null) params.set("parent_id", String(parentId));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   const qs = params.toString();
@@ -181,17 +181,17 @@ export async function getDashboardHistoryOptions(indicatorCodes?: string[]) {
 
 export async function getDashboardHistoryWithChanges(
   asOf: string,
-  levelType?: string,
+  nodeType?: string,
   changeWindows?: number[],
   indicatorCodes?: string[],
   scopeMode: "default" | "all" = "default",
   parentId?: number,
-  parentLevel?: string,
+  parentNodeType?: string,
 ) {
   const params = new URLSearchParams({ as_of: asOf, scope_mode: scopeMode });
-  if (levelType) params.set("level_type", levelType);
+  if (nodeType) params.set("node_type", nodeType);
   if (parentId != null) params.set("parent_id", String(parentId));
-  if (parentLevel) params.set("parent_level", parentLevel);
+  if (parentNodeType) params.set("parent_node_type", parentNodeType);
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   return request<DashboardChangesResponse>(
@@ -201,10 +201,10 @@ export async function getDashboardHistoryWithChanges(
 
 export async function getDashboardHistoryMatrix(params: {
   asOf: string;
-  levelType: string;
+  nodeType: string;
   scopeMode: "default" | "all";
   parentId?: number;
-  parentLevel?: string;
+  parentNodeType?: string;
   branchCode?: string;
   indicatorCodes: string[];
   changeWindow: number;
@@ -216,7 +216,7 @@ export async function getDashboardHistoryMatrix(params: {
 }) {
   const query = new URLSearchParams({
     as_of: params.asOf,
-    level_type: params.levelType,
+    node_type: params.nodeType,
     scope_mode: params.scopeMode,
     branch_code: params.branchCode || "AQ",
     indicator_codes: params.indicatorCodes.join(","),
@@ -226,7 +226,7 @@ export async function getDashboardHistoryMatrix(params: {
     page_size: String(params.pageSize),
   });
   if (params.parentId != null) query.set("parent_id", String(params.parentId));
-  if (params.parentLevel) query.set("parent_level", params.parentLevel);
+  if (params.parentNodeType) query.set("parent_node_type", params.parentNodeType);
   if (params.search) query.set("search", params.search);
   if (params.sortIndicator) query.set("sort_indicator", params.sortIndicator);
   return request<DashboardMatrixResponse>(
@@ -235,10 +235,10 @@ export async function getDashboardHistoryMatrix(params: {
 }
 
 export async function getDashboardMatrix(params: {
-  levelType: string;
+  nodeType: string;
   scopeMode: "default" | "all";
   parentId?: number;
-  parentLevel?: string;
+  parentNodeType?: string;
   branchCode?: string;
   indicatorCodes: string[];
   changeWindow: number;
@@ -249,7 +249,7 @@ export async function getDashboardMatrix(params: {
   pageSize: number;
 }) {
   const query = new URLSearchParams({
-    level_type: params.levelType,
+    node_type: params.nodeType,
     scope_mode: params.scopeMode,
     branch_code: params.branchCode || "AQ",
     indicator_codes: params.indicatorCodes.join(","),
@@ -259,7 +259,7 @@ export async function getDashboardMatrix(params: {
     page_size: String(params.pageSize),
   });
   if (params.parentId != null) query.set("parent_id", String(params.parentId));
-  if (params.parentLevel) query.set("parent_level", params.parentLevel);
+  if (params.parentNodeType) query.set("parent_node_type", params.parentNodeType);
   if (params.search) query.set("search", params.search);
   if (params.sortIndicator) query.set("sort_indicator", params.sortIndicator);
   return request<DashboardMatrixResponse>(
@@ -288,13 +288,13 @@ export async function getDashboardOverview(
 }
 
 export async function getDashboardWithChanges(
-  levelType?: string,
+  nodeType?: string,
   parentId?: number,
   changeWindows?: number[],
   indicatorCodes?: string[],
 ) {
   const params = new URLSearchParams();
-  if (levelType) params.set("level_type", levelType);
+  if (nodeType) params.set("node_type", nodeType);
   if (parentId != null) params.set("parent_id", String(parentId));
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
@@ -307,14 +307,14 @@ export async function getDashboardWithChanges(
 export async function getAccDashboard(
   periodType: "DAY_ACC" | "MONTH" = "DAY_ACC",
   statDate?: string,
-  levelType?: string,
+  nodeType?: string,
   parentId?: number,
   indicatorCodes?: string[],
 ) {
   const params = new URLSearchParams();
   params.set("period_type", periodType);
   if (statDate) params.set("stat_date", statDate);
-  if (levelType) params.set("level_type", levelType);
+  if (nodeType) params.set("node_type", nodeType);
   if (parentId != null) params.set("parent_id", String(parentId));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   return request<DashboardAccResponse>(
@@ -324,7 +324,7 @@ export async function getAccDashboard(
 
 export async function getDashboardDrillDown(
   parentId: number,
-  parentLevel: string,
+  parentNodeType: string,
   periodType: "DAY_ACC" | "MONTH" = "DAY_ACC",
   changeWindows?: number[],
   indicatorCodes?: string[],
@@ -332,7 +332,7 @@ export async function getDashboardDrillDown(
 ) {
   const params = new URLSearchParams({
     parent_id: String(parentId),
-    parent_level: parentLevel,
+    parent_node_type: parentNodeType,
     period_type: periodType,
   });
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));

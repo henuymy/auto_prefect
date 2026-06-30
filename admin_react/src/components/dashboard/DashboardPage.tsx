@@ -19,10 +19,11 @@ import type {
   DashboardRow,
 } from "@/types/dashboard";
 
-const LEVEL_LABELS: Record<DashboardRow["level_type"], string> = {
+const LEVEL_LABELS: Record<DashboardRow["node_type"], string> = {
   CITY: "地市",
   BRANCH: "分公司",
   GRID: "网格",
+  CHANNEL_MANAGER: "渠道经理",
   CHANNEL: "渠道",
 };
 
@@ -47,11 +48,12 @@ function formatTime(value: string | null | undefined) {
   });
 }
 
-function levelDescription(level: DashboardRow["level_type"]) {
+function levelDescription(level: DashboardRow["node_type"]) {
   const next = {
     CITY: "选择分公司继续查看",
     BRANCH: "选择网格继续查看",
-    GRID: "选择渠道查看明细",
+    GRID: "选择渠道经理继续查看",
+    CHANNEL_MANAGER: "选择渠道查看明细",
     CHANNEL: "当前已到渠道层级",
   } as const;
   return next[level];
@@ -59,7 +61,7 @@ function levelDescription(level: DashboardRow["level_type"]) {
 
 export function DashboardPage() {
   const [data, setData] = useState<DashboardCurrentResponse | null>(null);
-  const [selectedAreaId, setSelectedAreaId] = useState<number | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
   const [indicatorCode, setIndicatorCode] = useState("");
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(true);
@@ -76,18 +78,18 @@ export function DashboardPage() {
           ? current
           : result.indicators[0]?.code || "",
       );
-      setSelectedAreaId((current) => {
-        if (current && result.rows.some((row) => row.area_id === current)) {
+      setSelectedNodeId((current) => {
+        if (current && result.rows.some((row) => row.id === current)) {
           return current;
         }
-        return result.rows.find((row) => row.level_type === "CITY")?.area_id ?? null;
+        return result.rows.find((row) => row.node_type === "CITY")?.id ?? null;
       });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       setLoading(false);
     }
-  }, [selectedAreaId, indicatorCode]);
+  }, [selectedNodeId, indicatorCode]);
 
   useEffect(() => {
     void refresh();
@@ -96,17 +98,17 @@ export function DashboardPage() {
   }, [refresh]);
 
   const rowById = useMemo(
-    () => new Map((data?.rows || []).map((row) => [row.area_id, row])),
+    () => new Map((data?.rows || []).map((row) => [row.id, row])),
     [data],
   );
-  const selectedArea = selectedAreaId ? rowById.get(selectedAreaId) : undefined;
+  const selectedArea = selectedNodeId ? rowById.get(selectedNodeId) : undefined;
   const selectedIndicator = data?.indicators.find(
     (item) => item.code === indicatorCode,
   );
   const children = useMemo(
     () =>
       selectedArea
-        ? (data?.rows || []).filter((row) => row.parent_id === selectedArea.area_id)
+        ? (data?.rows || []).filter((row) => row.parent_id === selectedArea.id)
         : [],
     [data, selectedArea],
   );
@@ -115,8 +117,8 @@ export function DashboardPage() {
     if (!normalized) return children;
     return children.filter(
       (row) =>
-        row.area_name.toLowerCase().includes(normalized) ||
-        row.area_code.toLowerCase().includes(normalized),
+        row.node_name.toLowerCase().includes(normalized) ||
+        row.node_code.toLowerCase().includes(normalized),
     );
   }, [children, keyword]);
   const rankedChildren = useMemo(
@@ -212,20 +214,20 @@ export function DashboardPage() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {breadcrumbs.map((row, index) => (
-                <div key={row.area_id} className="flex items-center gap-2">
+                <div key={row.id} className="flex items-center gap-2">
                   {index > 0 && <ChevronRight className="h-4 w-4 text-slate-600" />}
                   <button
                     className={`rounded-lg px-3 py-1.5 text-sm font-bold transition ${
-                      row.area_id === selectedArea?.area_id
+                      row.id === selectedArea?.id
                         ? "bg-cyan-400 text-slate-950"
                         : "bg-white/5 text-slate-300 hover:bg-white/10"
                     }`}
                     onClick={() => {
-                      setSelectedAreaId(row.area_id);
+                      setSelectedNodeId(row.id);
                       setKeyword("");
                     }}
                   >
-                    {row.area_name}
+                    {row.node_name}
                   </button>
                 </div>
               ))}
@@ -257,9 +259,9 @@ export function DashboardPage() {
           />
           <MetricCard
             icon={MapPinned}
-            eyebrow={`下级${children[0] ? LEVEL_LABELS[children[0].level_type] : "区域"}`}
+            eyebrow={`下级${children[0] ? LEVEL_LABELS[children[0].node_type] : "区域"}`}
             value={children.length.toLocaleString("zh-CN")}
-            detail={selectedArea ? levelDescription(selectedArea.level_type) : "--"}
+            detail={selectedArea ? levelDescription(selectedArea.node_type) : "--"}
             accent="violet"
           />
           <MetricCard
@@ -282,8 +284,8 @@ export function DashboardPage() {
           <div className="dashboard-panel min-w-0 p-5">
             <PanelTitle
               icon={Trophy}
-              title={`${children[0] ? LEVEL_LABELS[children[0].level_type] : "区域"}排名`}
-              description={`${selectedArea?.area_name || "郑州市"} · ${selectedIndicator?.name || "当前指标"}`}
+              title={`${children[0] ? LEVEL_LABELS[children[0].node_type] : "区域"}排名`}
+              description={`${selectedArea?.node_name || "郑州市"} · ${selectedIndicator?.name || "当前指标"}`}
             />
             <div className="mt-6 grid gap-x-7 gap-y-5 md:grid-cols-2">
               {rankedChildren.slice(0, 10).map((row, index) => {
@@ -291,10 +293,10 @@ export function DashboardPage() {
                 const width = maxValue ? Math.max(3, (value / maxValue) * 100) : 0;
                 return (
                   <button
-                    key={row.area_id}
+                    key={row.id}
                     className="group text-left"
                     onClick={() => {
-                      setSelectedAreaId(row.area_id);
+                      setSelectedNodeId(row.id);
                       setKeyword("");
                     }}
                   >
@@ -310,7 +312,7 @@ export function DashboardPage() {
                           {index + 1}
                         </span>
                         <span className="truncate text-sm font-bold text-slate-200 group-hover:text-cyan-300">
-                          {row.area_name}
+                          {row.node_name}
                         </span>
                       </div>
                       <span className="font-mono text-sm font-black text-white">
@@ -348,7 +350,7 @@ export function DashboardPage() {
           <div className="flex flex-col gap-4 border-b border-white/10 p-5 lg:flex-row lg:items-center lg:justify-between">
             <PanelTitle
               icon={MapPinned}
-              title={`${selectedArea?.area_name || "郑州市"}区域明细`}
+              title={`${selectedArea?.node_name || "郑州市"}区域明细`}
               description={`${visibleChildren.length} 条结果 · 点击区域名称继续下钻`}
             />
             <label className="flex h-10 min-w-64 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 text-slate-300">
@@ -377,11 +379,11 @@ export function DashboardPage() {
               <tbody>
                 {visibleChildren.map((row, index) => {
                   const hasChildren = (data?.rows || []).some(
-                    (item) => item.parent_id === row.area_id,
+                    (item) => item.parent_id === row.id,
                   );
                   return (
                     <tr
-                      key={row.area_id}
+                      key={row.id}
                       className="border-t border-white/[0.06] transition hover:bg-cyan-400/[0.04]"
                     >
                       <td className="px-5 py-4">
@@ -389,7 +391,7 @@ export function DashboardPage() {
                           className="flex items-center gap-3 text-left font-bold text-slate-100 hover:text-cyan-300"
                           onClick={() => {
                             if (hasChildren) {
-                              setSelectedAreaId(row.area_id);
+                              setSelectedNodeId(row.id);
                               setKeyword("");
                             }
                           }}
@@ -397,16 +399,16 @@ export function DashboardPage() {
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/5 text-xs text-slate-500">
                             {index + 1}
                           </span>
-                          {row.area_name}
+                          {row.node_name}
                         </button>
                       </td>
                       <td className="px-5 py-4">
                         <span className="rounded-md bg-white/5 px-2 py-1 text-xs font-bold text-slate-400">
-                          {LEVEL_LABELS[row.level_type]}
+                          {LEVEL_LABELS[row.node_type]}
                         </span>
                       </td>
                       <td className="px-5 py-4 font-mono text-xs text-slate-500">
-                        {row.area_code}
+                        {row.node_code}
                       </td>
                       <td className="px-5 py-4 text-right font-mono text-base font-black text-white">
                         {formatNumber(metricValue(row, indicatorCode))}
@@ -419,7 +421,7 @@ export function DashboardPage() {
                           <button
                             className="inline-flex items-center gap-1 text-xs font-bold text-cyan-400 hover:text-cyan-300"
                             onClick={() => {
-                              setSelectedAreaId(row.area_id);
+                              setSelectedNodeId(row.id);
                               setKeyword("");
                             }}
                           >
@@ -437,7 +439,7 @@ export function DashboardPage() {
             {!visibleChildren.length && (
               <EmptyState
                 text={
-                  selectedArea?.level_type === "CHANNEL"
+                  selectedArea?.node_type === "CHANNEL"
                     ? "当前已到渠道层级，请通过上方路径返回"
                     : "没有匹配的下级区域"
                 }

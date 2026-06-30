@@ -13,13 +13,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
 from infrastructure.dashboard_mysql import get_dashboard_engine
-from services.dashboard_custom_indicator_service import (
+from services.dashboard_custom_indicator_facade import (
     delete_custom_indicator,
     list_custom_indicators,
     update_indicator_settings,
     upsert_custom_indicator,
 )
-from services.dashboard_query_service import (
+from services.dashboard_query_facade import (
     get_dashboard_overview,
     get_dashboard_matrix_page,
     get_drill_down,
@@ -436,10 +436,10 @@ def dashboard_history_options(indicator_codes: str | None = Query(None)):
 @router.get("/history/current-with-changes")
 def dashboard_history_with_changes(
     as_of: datetime = Query(...),
-    level_type: str | None = Query(None),
+    node_type: str | None = Query(None),
     scope_mode: str = Query("default"),
     parent_id: int | None = Query(None, ge=1),
-    parent_level: str | None = Query(None),
+    parent_node_type: str | None = Query(None),
     branch_code: str | None = Query("AQ"),
     change_windows: str | None = Query(None),
     indicator_codes: str | None = Query(None),
@@ -455,10 +455,10 @@ def dashboard_history_with_changes(
             cache_key=(
                 "history-current-with-changes",
                 resolved_as_of.isoformat(),
-                level_type,
+                node_type,
                 scope_mode,
                 parent_id,
-                parent_level,
+                parent_node_type,
                 branch_code,
                 tuple(parsed_windows or ()),
                 tuple(parsed_codes or ()),
@@ -466,12 +466,12 @@ def dashboard_history_with_changes(
             loader=lambda: get_historical_with_changes(
                 engine,
                 as_of=resolved_as_of,
-                level_type=level_type,
+                node_type=node_type,
                 change_windows=parsed_windows,
                 indicator_codes=parsed_codes,
                 scope_mode=scope_mode,
                 parent_id=parent_id,
-                parent_level=parent_level,
+                parent_node_type=parent_node_type,
                 branch_code=branch_code,
             ),
         )
@@ -487,10 +487,10 @@ def dashboard_history_with_changes(
 @router.get("/history/matrix")
 def dashboard_history_matrix(
     as_of: datetime = Query(...),
-    level_type: str = Query(...),
+    node_type: str = Query(...),
     scope_mode: str = Query("default"),
     parent_id: int | None = Query(None, ge=1),
-    parent_level: str | None = Query(None),
+    parent_node_type: str | None = Query(None),
     branch_code: str | None = Query("AQ"),
     indicator_codes: str | None = Query(None),
     change_window: int = Query(60, ge=5, le=1440),
@@ -510,10 +510,10 @@ def dashboard_history_matrix(
             cache_key=(
                 "history-matrix",
                 resolved_as_of.isoformat(),
-                level_type,
+                node_type,
                 scope_mode,
                 parent_id,
-                parent_level,
+                parent_node_type,
                 branch_code,
                 tuple(parsed_codes or ()),
                 change_window,
@@ -526,10 +526,10 @@ def dashboard_history_matrix(
             loader=lambda: get_historical_matrix_page(
                 engine,
                 as_of=resolved_as_of,
-                level_type=level_type,
+                node_type=node_type,
                 scope_mode=scope_mode,
                 parent_id=parent_id,
-                parent_level=parent_level,
+                parent_node_type=parent_node_type,
                 branch_code=branch_code,
                 indicator_codes=parsed_codes,
                 change_window=change_window,
@@ -551,10 +551,10 @@ def dashboard_history_matrix(
 
 @router.get("/matrix")
 def dashboard_matrix(
-    level_type: str = Query(...),
+    node_type: str = Query(...),
     scope_mode: str = Query("default"),
     parent_id: int | None = Query(None, ge=1),
-    parent_level: str | None = Query(None),
+    parent_node_type: str | None = Query(None),
     branch_code: str | None = Query("AQ"),
     indicator_codes: str | None = Query(None),
     change_window: int = Query(60, ge=5, le=1440),
@@ -571,10 +571,10 @@ def dashboard_matrix(
             engine,
             (
                 "matrix",
-                level_type,
+                node_type,
                 scope_mode,
                 parent_id,
-                parent_level,
+                parent_node_type,
                 branch_code,
                 tuple(parsed_codes or ()),
                 change_window,
@@ -586,10 +586,10 @@ def dashboard_matrix(
             ),
             lambda: get_dashboard_matrix_page(
                 engine,
-                level_type=level_type,
+                node_type=node_type,
                 scope_mode=scope_mode,
                 parent_id=parent_id,
-                parent_level=parent_level,
+                parent_node_type=parent_node_type,
                 branch_code=branch_code,
                 indicator_codes=parsed_codes,
                 change_window=change_window,
@@ -659,7 +659,10 @@ def dashboard_overview(
 @router.get("/drill-down")
 def dashboard_drill_down(
     parent_id: int = Query(..., ge=1),
-    parent_level: str = Query(..., description="父级层级: CITY/BRANCH/GRID"),
+    parent_node_type: str = Query(
+        ...,
+        description="父节点类型: CITY/BRANCH/GRID/CHANNEL_MANAGER",
+    ),
     period_type: str = Query("DAY_ACC"),
     change_windows: str | None = Query(
         None,
@@ -681,7 +684,7 @@ def dashboard_drill_down(
             (
                 "drill-down",
                 parent_id,
-                parent_level,
+                parent_node_type,
                 period_type,
                 tuple(parsed_windows or ()),
                 tuple(parsed_codes or ()),
@@ -690,7 +693,7 @@ def dashboard_drill_down(
             lambda: get_drill_down(
                 engine,
                 parent_id=parent_id,
-                parent_level=parent_level,
+                parent_node_type=parent_node_type,
                 period_type=period_type,
                 change_windows=parsed_windows,
                 indicator_codes=parsed_codes,
@@ -706,7 +709,7 @@ def dashboard_drill_down(
 
 @router.get("/current")
 def current_dashboard(
-    level_type: str | None = Query(None),
+    node_type: str | None = Query(None),
     parent_id: int | None = Query(None, ge=1),
     indicator_codes: str | None = Query(None),
 ):
@@ -714,7 +717,7 @@ def current_dashboard(
     try:
         return get_current_wide_table(
             engine,
-            level_type=level_type,
+            node_type=node_type,
             parent_id=parent_id,
             indicator_codes=_parse_indicator_codes(indicator_codes),
         )
@@ -727,7 +730,7 @@ def current_dashboard(
 
 @router.get("/current-with-changes")
 def current_with_changes(
-    level_type: str | None = Query(None),
+    node_type: str | None = Query(None),
     parent_id: int | None = Query(None, ge=1),
     change_windows: str | None = Query(
         None,
@@ -743,14 +746,14 @@ def current_with_changes(
             engine,
             (
                 "current-with-changes",
-                level_type,
+                node_type,
                 parent_id,
                 tuple(parsed_windows or ()),
                 tuple(parsed_codes or ()),
             ),
             lambda: get_current_with_changes(
                 engine,
-                level_type=level_type,
+                node_type=node_type,
                 parent_id=parent_id,
                 change_windows=parsed_windows,
                 indicator_codes=parsed_codes,
@@ -766,7 +769,7 @@ def current_with_changes(
 @router.get("/acc")
 def acc_dashboard(
     period_type: str = Query("DAY_ACC"),
-    level_type: str | None = Query(None),
+    node_type: str | None = Query(None),
     parent_id: int | None = Query(None, ge=1),
     stat_date: str | None = Query(None),
     indicator_codes: str | None = Query(None),
@@ -785,7 +788,7 @@ def acc_dashboard(
             (
                 "acc",
                 normalized,
-                level_type,
+                node_type,
                 parent_id,
                 stat_date,
                 tuple(parsed_codes or ()),
@@ -793,7 +796,7 @@ def acc_dashboard(
             lambda: get_acc_wide_table(
                 engine,
                 period_type=normalized,
-                level_type=level_type,
+                node_type=node_type,
                 parent_id=parent_id,
                 stat_date=stat_date,
                 indicator_codes=parsed_codes,
