@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "autologin_config_path": "config/modules/autologin.json",
   "required_stage": "city_ops",
   "collection_lock_path": "runtime/locks/dashboard_collection.lock",
@@ -14,6 +15,7 @@
   "collection_retry_delay_seconds": 0.5,
   "collection_retry_strategy": "affected_grid",
   "relation_missing_disable_threshold": 2,
+  "database_transaction_retries": 3,
   "collection_report_config_path": "config/reports/家客和存量通报.json",
   "daily_report_config_path": "config/reports/爱家亲情网营业厅每日盯控.json",
   "daily_report_name": "日累计",
@@ -23,7 +25,7 @@
   "run_store_dir": "runtime/dashboard/collection_runs",
   "retention": {
     "snapshot_retention_days": 7,
-    "run_retention_days": 7,
+    "run_retention_days": 30,
     "acc_retention_days": 90,
     "active_run_timeout_minutes": 120
   }

@@ -13,11 +13,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from infrastructure.dashboard_v2_run_store import MySQLV2CollectionRunStore
 from services.dashboard_v2_hierarchy import (
     initialize_base_hierarchy_in_session,
     load_v2_collection_targets,
     validate_bootstrap_manifest,
 )
+from services.dashboard_v2_orchestrator import collect_validate_metric_rows_v2
 
 
 pytestmark = pytest.mark.mysql_integration
@@ -179,6 +181,138 @@ def test_v2_bootstrap_is_idempotent_and_loads_request_targets(v2_mysql_engine):
     ]
 
 
+def test_v2_stable_collection_and_manager_self_metric(v2_mysql_engine, tmp_path):
+    engine, _ = v2_mysql_engine
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO hierarchy_node
+                    (node_type, node_code, node_name, parent_id, level_no,
+                     request_enabled, metric_enabled)
+                SELECT 'CHANNEL_MANAGER', 'M1', '经理1', grid.id, 4, 1, 1
+                FROM hierarchy_node grid
+                WHERE grid.node_type='GRID' AND grid.node_code='G1'
+                """
+            )
+        )
+        manager_id = connection.scalar(
+            text(
+                "SELECT id FROM hierarchy_node "
+                "WHERE node_type='CHANNEL_MANAGER' AND node_code='M1'"
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO hierarchy_node
+                    (node_type, node_code, node_name, parent_id, level_no,
+                     request_enabled, metric_enabled)
+                VALUES ('CHANNEL', 'C1', '渠道1', :manager_id, 5, 0, 1)
+                """
+            ),
+            {"manager_id": manager_id},
+        )
+        channel_id = connection.scalar(
+            text(
+                "SELECT id FROM hierarchy_node "
+                "WHERE node_type='CHANNEL' AND node_code='C1'"
+            )
+        )
+        grid_id = connection.scalar(
+            text(
+                "SELECT id FROM hierarchy_node "
+                "WHERE node_type='GRID' AND node_code='G1'"
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO hierarchy_parent_history
+                    (child_node_id, parent_node_id, valid_from, change_type)
+                VALUES
+                    (:manager_id, :grid_id, NOW(3), 'CREATED'),
+                    (:channel_id, :manager_id, NOW(3), 'CREATED')
+                """
+            ),
+            {
+                "manager_id": manager_id,
+                "grid_id": grid_id,
+                "channel_id": channel_id,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO indicator
+                    (code, name, indicator_type, storage_mode, enabled,
+                     source_active, sort_order)
+                VALUES ('m', '指标', 'SOURCE', 'STORE', 1, 1, 1)
+                """
+            )
+        )
+
+    run_store = MySQLV2CollectionRunStore(engine)
+    run_store.create("v2-stable", "MANUAL", run_type="REALTIME")
+    targets = load_v2_collection_targets(engine)
+    result = collect_validate_metric_rows_v2(
+        engine=engine,
+        run_store=run_store,
+        batch_no="v2-stable",
+        targets=targets,
+        indicator_codes=["m"],
+        fetch_metrics=_stable_v2_fetch,
+        max_workers=4,
+        hard_limit=4,
+        anomaly_directory=tmp_path,
+        failure_directory=tmp_path,
+    )
+
+    assert result["structure_changed"] is False
+    assert result["validation"]["matched_node_count"] == 5
+    manager = next(
+        row
+        for row in result["validated_rows"]
+        if row["node_type"] == "CHANNEL_MANAGER"
+    )
+    assert manager["m"] == 4
+    assert manager["node_id"] == manager_id
+
+
+def test_v2_new_manager_uses_affected_grid_second_pass(v2_mysql_engine, tmp_path):
+    engine, _ = v2_mysql_engine
+    run_store = MySQLV2CollectionRunStore(engine)
+    run_store.create("v2-drift", "MANUAL", run_type="REALTIME")
+    targets = load_v2_collection_targets(engine)
+    requested: list[tuple[str, str]] = []
+
+    def fetch(target):
+        requested.append((target.target_type, target.target_code))
+        return _drift_v2_fetch(target)
+
+    result = collect_validate_metric_rows_v2(
+        engine=engine,
+        run_store=run_store,
+        batch_no="v2-drift",
+        targets=targets,
+        indicator_codes=["m"],
+        fetch_metrics=fetch,
+        max_workers=4,
+        hard_limit=4,
+        anomaly_directory=tmp_path,
+        failure_directory=tmp_path,
+        retry_strategy="affected_grid",
+    )
+
+    assert result["structure_changed"] is True
+    assert result["attempts"] == 2
+    assert result["validation"]["matched_node_count"] == 7
+    assert requested.count(("GRID", "G1")) == 2
+    assert requested.count(("CHANNEL_MANAGER", "M2")) == 1
+    assert ("CHANNEL_MANAGER", "M2") in result["candidate_graph"].areas
+    assert ("CHANNEL", "C2") in result["candidate_graph"].areas
+
+
 def test_v2_active_parent_constraint_is_enforced(v2_mysql_engine):
     engine, _ = v2_mysql_engine
     with engine.begin() as connection:
@@ -256,6 +390,43 @@ def test_v2_baseline_can_downgrade_and_upgrade(v2_mysql_engine):
     command.upgrade(config, "head")
     with engine.connect() as connection:
         assert set(inspect(connection).get_table_names()) == EXPECTED_MYSQL_TABLES
+
+
+def _payload(*rows):
+    return {"reCode": "0000", "result": {"tableData": list(rows)}}
+
+
+def _stable_v2_fetch(target):
+    if target.target_type == "CITY":
+        return _payload({"areaCode": "A", "areaName": "城市", "m": 1})
+    if target.target_type == "BRANCH":
+        return _payload({"areaCode": "B1", "areaName": "分局1", "m": 2})
+    if target.target_type == "GRID":
+        return _payload(
+            {"areaCode": "G1", "areaName": "网格1", "m": 3},
+            {"areaCode": "M1", "areaName": "经理1", "m": 4},
+        )
+    if target.target_code == "M1":
+        return _payload(
+            {"areaCode": "M1", "areaName": "经理1", "m": 4},
+            {"areaCode": "C1", "areaName": "渠道1", "m": 5},
+        )
+    raise AssertionError(f"unexpected target: {target}")
+
+
+def _drift_v2_fetch(target):
+    if target.target_type != "GRID" and target.target_code != "M2":
+        return _stable_v2_fetch(target)
+    if target.target_type == "GRID":
+        return _payload(
+            {"areaCode": "G1", "areaName": "网格1", "m": 3},
+            {"areaCode": "M1", "areaName": "经理1", "m": 4},
+            {"areaCode": "M2", "areaName": "经理2", "m": 6},
+        )
+    return _payload(
+        {"areaCode": "M2", "areaName": "经理2", "m": 6},
+        {"areaCode": "C2", "areaName": "渠道2", "m": 7},
+    )
 
 
 EXPECTED_MYSQL_TABLES = {

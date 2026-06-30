@@ -983,6 +983,8 @@ def _merge_subtree_retry_collection(
         parent_code = str(row.get("parent_request_code") or "").strip()
         if level_type == "GRID" and area_code in affected_grid_codes:
             return True
+        if level_type == "CHANNEL_MANAGER" and area_code in affected_manager_codes:
+            return True
         if level_type == "CHANNEL" and parent_code in affected_manager_codes:
             return True
         return False

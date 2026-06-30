@@ -281,6 +281,43 @@ def load_v2_collection_targets(engine: Engine) -> list[CollectionTarget]:
     ]
 
 
+def attach_v2_node_ids_in_session(
+    session: Session,
+    rows: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach committed V2 node ids after candidate hierarchy synchronization."""
+    nodes = {
+        (node.node_type, node.node_code): node.id
+        for node in session.scalars(
+            select(HierarchyNode).where(
+                HierarchyNode.enabled.is_(True),
+                HierarchyNode.metric_enabled.is_(True),
+            )
+        )
+    }
+    result: list[dict[str, Any]] = []
+    missing: list[tuple[str, str]] = []
+    for source in rows:
+        row = dict(source)
+        identity = (
+            str(row.get("node_type") or row.get("level_type") or "")
+            .strip()
+            .upper(),
+            str(row.get("node_code") or row.get("area_code") or "").strip(),
+        )
+        node_id = nodes.get(identity)
+        if node_id is None:
+            missing.append(identity)
+            continue
+        row["node_id"] = node_id
+        row["node_type"] = identity[0]
+        row["node_code"] = identity[1]
+        result.append(row)
+    if missing:
+        raise V2HierarchyError(f"结构同步后仍有指标行无法关联节点: {missing[:10]}")
+    return result
+
+
 def load_v2_structure_graph(session: Session) -> StructureGraph:
     """Expose enabled V2 nodes through the established drift graph contract."""
     records = session.scalars(
@@ -341,6 +378,9 @@ def build_v2_observed_graph(
         node = StructureNode(node_type=node_type, code=node_code, name=node_name)
         areas[(node_type, node_code)] = node
         targets[(node_type, node_code)] = node
+    for identity, node in targets.items():
+        if identity[0] == "CHANNEL_MANAGER":
+            areas.setdefault(identity, node)
     return StructureGraph(areas=areas, targets=targets, edges=set(graph.edges))
 
 

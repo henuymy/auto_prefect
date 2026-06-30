@@ -40,11 +40,11 @@ def dashboard_metric_flow(
         force_refresh=force_refresh,
     )
     logger.info(
-        "驾驶舱指标采集完成: mode=%s, batch_no=%s, stat_date=%s, areas=%s",
+        "驾驶舱指标采集完成: mode=%s, batch_no=%s, stat_date=%s, nodes=%s",
         normalized_mode,
         result.get("batch_no"),
         result.get("stat_date") or result.get("query_date"),
-        result.get("area_count"),
+        result.get("node_count", result.get("area_count")),
     )
     return result
 
