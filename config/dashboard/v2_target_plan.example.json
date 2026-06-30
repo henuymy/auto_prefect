@@ -1,0 +1,17 @@
+{
+  "plan_name": "正常时期日目标",
+  "scenario": "NORMAL",
+  "period_type": "DAY",
+  "effective_from": "2026-07-01",
+  "effective_to": null,
+  "priority": 0,
+  "supersedes_plan_id": null,
+  "values": [
+    {
+      "node_type": "CHANNEL_MANAGER",
+      "node_code": "经理编码&网格编码",
+      "indicator_code": "指标编码",
+      "target_value": 100
+    }
+  ]
+}

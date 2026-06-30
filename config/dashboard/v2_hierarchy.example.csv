@@ -1,0 +1,4 @@
+node_type,node_code,node_name,parent_node_code,sort_order
+CITY,A,示例城市,,1
+BRANCH,B01,示例分公司,A,10
+GRID,G0101,示例网格,B01,10

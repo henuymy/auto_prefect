@@ -1769,6 +1769,25 @@ export function DashboardCockpit() {
       setDrillStack(nextStack);
       return;
     }
+    if (nodeType === "CHANNEL_MANAGER") {
+      const parentGrid = data?.changesRows.find(
+        (item) => item.node_type === "GRID" && item.id === row.parentId,
+      );
+      const parentBranch = data?.changesRows.find(
+        (item) => (
+          item.node_type === "BRANCH" && item.id === parentGrid?.parent_id
+        ),
+      );
+      const ancestors = [parentBranch, parentGrid]
+        .filter((item): item is DashboardRowWithChanges => Boolean(item))
+        .map((item) => ({
+          nodeId: item.id,
+          nodeName: item.node_name,
+          nodeType: item.node_type,
+        }));
+      setDrillStack([...ancestors, nextEntry]);
+      return;
+    }
     setDrillStack((prev) => {
       const last = prev[prev.length - 1];
       if (

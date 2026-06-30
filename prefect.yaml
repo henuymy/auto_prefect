@@ -57,3 +57,14 @@ deployments:
     work_pool:
       name: default-agent-pool
       work_queue_name: default
+  - name: dashboard-v2-partition-maintenance
+    entrypoint: flows/dashboard_partition_maintenance_flow.py:dashboard_v2_partition_maintenance_flow
+    parameters:
+      config_path: config/dashboard/session.json
+    schedules:
+      - cron: "20 2 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: default-agent-pool
+      work_queue_name: default

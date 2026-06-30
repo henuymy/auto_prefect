@@ -112,6 +112,21 @@ def lock_is_stale(lock_path, stale_seconds):
     return time.time() - mtime > stale_seconds
 
 
+def _unlink_lock_file(lock_path: Path, *, retry_seconds: float = 2.0) -> None:
+    """Remove a lock file despite transient Windows handle retention."""
+    deadline = time.monotonic() + max(0.0, retry_seconds)
+    while True:
+        try:
+            lock_path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 @contextmanager
 def _cross_process_file_lock(
     lock_path,
@@ -143,7 +158,7 @@ def _cross_process_file_lock(
         except FileExistsError:
             if lock_is_stale(lock_path, stale_seconds):
                 try:
-                    lock_path.unlink()
+                    _unlink_lock_file(lock_path)
                     continue
                 except FileNotFoundError:
                     continue
@@ -156,10 +171,7 @@ def _cross_process_file_lock(
         yield {"lock_path": str(lock_path), "waited": waited}
     finally:
         if acquired:
-            try:
-                lock_path.unlink()
-            except FileNotFoundError:
-                pass
+            _unlink_lock_file(lock_path)
 
 
 @contextmanager

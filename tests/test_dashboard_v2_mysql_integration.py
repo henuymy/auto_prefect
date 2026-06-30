@@ -20,6 +20,8 @@ from services.dashboard_v2_hierarchy import (
     validate_bootstrap_manifest,
 )
 from services.dashboard_v2_orchestrator import collect_validate_metric_rows_v2
+from services.dashboard_v2_readiness import check_dashboard_v2_schema
+from services.dashboard_v2_retention_service import maintain_v2_snapshot_partitions
 
 
 pytestmark = pytest.mark.mysql_integration
@@ -378,6 +380,40 @@ def test_v2_active_parent_constraint_is_enforced(v2_mysql_engine):
                 ),
                 {"child_id": grid_2_id, "parent_id": branch_2_id},
             )
+
+
+def test_v2_partition_maintenance_creates_future_window_idempotently(
+    v2_mysql_engine,
+):
+    engine, _ = v2_mysql_engine
+    with Session(engine) as session:
+        first = maintain_v2_snapshot_partitions(
+            session,
+            now=datetime(2026, 6, 30, 12),
+            snapshot_retention_days=7,
+            partition_ahead_days=30,
+        )
+        session.commit()
+    with Session(engine) as session:
+        second = maintain_v2_snapshot_partitions(
+            session,
+            now=datetime(2026, 6, 30, 12),
+            snapshot_retention_days=7,
+            partition_ahead_days=30,
+        )
+        session.commit()
+        partitions = set(session.scalars(text("""
+            SELECT PARTITION_NAME
+            FROM information_schema.PARTITIONS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'metric_snapshot'
+              AND PARTITION_NAME IS NOT NULL
+        """)))
+
+    assert first["partition_create_count"] == 38
+    assert second["partition_create_count"] == 0
+    assert {"p20260623", "p20260730", "p_future"} <= partitions
+    assert check_dashboard_v2_schema()["ok"] is True
 
 
 def test_v2_baseline_can_downgrade_and_upgrade(v2_mysql_engine):

@@ -8,6 +8,8 @@
   "collection_lock_stale_seconds": 1800,
   "collection_database_lock_name": "auto_notify_dashboard_collection",
   "collection_database_lock_wait_seconds": 5,
+  "partition_database_lock_name": "auto_notify_dashboard_partition_maintenance",
+  "partition_database_lock_wait_seconds": 5,
   "collection_max_workers": 24,
   "collection_hard_max_workers": 32,
   "collection_timeout_seconds": 30,
@@ -27,6 +29,7 @@
     "snapshot_retention_days": 7,
     "run_retention_days": 30,
     "acc_retention_days": 90,
-    "active_run_timeout_minutes": 120
+    "active_run_timeout_minutes": 120,
+    "partition_ahead_days": 30
   }
 }

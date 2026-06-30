@@ -212,15 +212,63 @@ def check_dashboard_mysql(
                 text(
                     "SELECT 1 AS connection_ok, "
                     "DATABASE() AS database_name, "
-                    "VERSION() AS server_version"
+                    "VERSION() AS server_version, "
+                    "CURRENT_USER() AS authenticated_user, "
+                    "@@character_set_database AS database_charset, "
+                    "@@session.time_zone AS session_time_zone, "
+                    "TIMEDIFF(NOW(), UTC_TIMESTAMP()) AS utc_offset"
                 )
             ).mappings().one()
+        database_matches = row["database_name"] == settings.database
+        authenticated_user = str(
+            row.get("authenticated_user") or f"{settings.user}@unknown"
+        )
+        account_name = authenticated_user.split("@", 1)[0].lower()
+        non_root_account = settings.user.lower() != "root" and account_name != "root"
+        version_text = str(row["server_version"] or "")
+        try:
+            major_version = int(version_text.split(".", 1)[0])
+        except ValueError:
+            major_version = 0
+        supported_version = major_version >= 8 and "mariadb" not in version_text.lower()
+        database_charset = str(row.get("database_charset") or settings.charset)
+        charset_matches = database_charset.lower() == "utf8mb4"
+        utc_offset = str(row.get("utc_offset") or "08:00:00")
+        timezone_matches = utc_offset in {"8:00:00", "08:00:00"}
+        ok = all(
+            (
+                bool(row["connection_ok"]),
+                database_matches,
+                non_root_account,
+                supported_version,
+                charset_matches,
+                timezone_matches,
+            )
+        )
+        problems = []
+        if not database_matches:
+            problems.append("连接库名与配置不一致")
+        if not non_root_account:
+            problems.append("禁止使用 root 账号")
+        if not supported_version:
+            problems.append("需要 MySQL 8.0 以上")
+        if not charset_matches:
+            problems.append("数据库字符集必须为 utf8mb4")
+        if not timezone_matches:
+            problems.append("数据库会话时区不是东八区")
         return {
-            "ok": bool(row["connection_ok"]),
+            "ok": ok,
             "configured": True,
-            "message": "驾驶舱 MySQL 连接正常",
+            "message": (
+                "驾驶舱 MySQL 连接与环境校验正常"
+                if ok else "；".join(problems)
+            ),
             "database_name": row["database_name"],
             "server_version": row["server_version"],
+            "authenticated_user": authenticated_user,
+            "database_charset": database_charset,
+            "session_time_zone": str(row.get("session_time_zone") or ""),
+            "utc_offset": utc_offset,
             **settings.public_summary(),
         }
     except SQLAlchemyError as exc:

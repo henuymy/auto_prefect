@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import create_engine, text
 
 from services.dashboard_v2_query_service import (
+    get_acc_wide_table,
     get_dashboard_matrix_page,
     get_dashboard_overview,
     get_drill_down,
@@ -274,3 +275,25 @@ def test_v2_custom_indicator_can_be_saved_and_is_archived_instead_of_deleted():
         "archived": True,
     }
     assert listed["indicators"][0]["enabled"] is False
+
+
+def test_acc_uses_latest_stat_date_and_attaches_versioned_targets():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO metric_acc
+                (id, period_type, stat_date, node_id, indicator_id,
+                 collection_run_id, metric_value, collected_at)
+            VALUES
+                (1, 'DAY_ACC', '2026-06-29', 4, 1, 2, 18, '2026-06-30 08:00:00')
+        """))
+
+    result = get_acc_wide_table(
+        engine,
+        period_type="DAY_ACC",
+        node_type="CHANNEL_MANAGER",
+        indicator_codes=["channel_count"],
+    )
+
+    assert result["rows"][0]["metrics"]["channel_count"] == 18
+    assert result["rows"][0]["targets"]["channel_count"] == 30

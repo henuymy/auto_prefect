@@ -25,10 +25,10 @@ from models.dashboard_v2 import (
     MetricAccV2,
     MetricCurrentV2,
     MetricSnapshotV2,
-    MetricTargetValue,
     TargetPlan,
 )
 from services.dashboard_query_service import parse_change_window_minutes
+from services.dashboard_v2_target_service import load_v2_target_values
 
 
 NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
@@ -359,41 +359,14 @@ def _active_target_map(
 ) -> dict[tuple[int, int], Decimal]:
     if not node_ids or not indicator_ids:
         return {}
-    period = _target_period(period_type)
-    plans = list(
-        session.scalars(
-            select(TargetPlan)
-            .where(
-                TargetPlan.status == "ACTIVE",
-                TargetPlan.period_type == period,
-                TargetPlan.effective_from <= target_date,
-                or_(TargetPlan.effective_to.is_(None), TargetPlan.effective_to >= target_date),
-            )
-            .order_by(
-                (TargetPlan.scenario == "PK").desc(),
-                TargetPlan.priority.desc(),
-                TargetPlan.effective_from.desc(),
-                TargetPlan.version_no.desc(),
-                TargetPlan.id.desc(),
-            )
-        )
+    _, values = load_v2_target_values(
+        session,
+        business_date=target_date,
+        period_type=_target_period(period_type),
+        node_ids=node_ids,
+        indicator_ids=indicator_ids,
     )
-    if not plans:
-        return {}
-    scenario = "PK" if any(row.scenario == "PK" for row in plans) else "NORMAL"
-    selected = next(row for row in plans if row.scenario == scenario)
-    rows = session.execute(
-        select(
-            MetricTargetValue.node_id,
-            MetricTargetValue.indicator_id,
-            MetricTargetValue.target_value,
-        ).where(
-            MetricTargetValue.plan_id == selected.id,
-            MetricTargetValue.node_id.in_(node_ids),
-            MetricTargetValue.indicator_id.in_(indicator_ids),
-        )
-    ).all()
-    return {(row.node_id, row.indicator_id): row.target_value for row in rows}
+    return values
 
 
 def _wide_rows(
@@ -798,6 +771,55 @@ def get_historical_matrix_page(
     return _matrix_result(result, search=search, sort_indicator=sort_indicator, sort_mode=sort_mode, page=page, page_size=page_size)
 
 
+def _acc_rows_in_session(
+    session: Session,
+    *,
+    nodes: list[HierarchyNode],
+    indicators: list[IndicatorV2],
+    period_type: str,
+    target_day: date,
+) -> list[dict[str, Any]]:
+    components, physical = _components(session, indicators)
+    values = session.execute(
+        select(MetricAccV2).where(
+            MetricAccV2.period_type == period_type,
+            MetricAccV2.stat_date == target_day,
+            MetricAccV2.node_id.in_([row.id for row in nodes] or [-1]),
+            MetricAccV2.indicator_id.in_([row.id for row in physical] or [-1]),
+        )
+    ).scalars().all()
+    target_map = _active_target_map(
+        session,
+        node_ids=[row.id for row in nodes],
+        indicator_ids=[row.id for row in physical],
+        period_type=period_type,
+        target_date=target_day,
+    )
+    code_by_id = {row.id: row.code for row in physical}
+    rows: list[dict[str, Any]] = []
+    by_id: dict[int, dict[str, Any]] = {}
+    for node in nodes:
+        dto = _node_dto(node)
+        dto.update(
+            collection_run_id=None,
+            collected_at=None,
+            metrics={row.code: None for row in physical},
+            targets={
+                row.code: _number(target_map.get((node.id, row.id)))
+                for row in physical
+            },
+        )
+        rows.append(dto)
+        by_id[node.id] = dto
+    for value in values:
+        row = by_id[value.node_id]
+        row["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
+        row["collection_run_id"] = value.collection_run_id
+        row["collected_at"] = _iso(value.collected_at)
+    _apply_custom(rows, indicators, components)
+    return rows
+
+
 def get_acc_wide_table(
     engine: Engine, *, period_type: str = "DAY_ACC", node_type: str | None = None,
     parent_id: int | None = None, stat_date: str | None = None,
@@ -806,33 +828,25 @@ def get_acc_wide_table(
     normalized = str(period_type).strip().upper()
     if normalized not in {"DAY_ACC", "MONTH"}:
         raise ValueError(f"period_type 只支持 DAY_ACC/MONTH: {period_type!r}")
-    target_day = date.fromisoformat(stat_date) if stat_date else date.today()
     with Session(engine) as session:
+        target_day = (
+            date.fromisoformat(stat_date)
+            if stat_date
+            else session.scalar(
+                select(func.max(MetricAccV2.stat_date)).where(
+                    MetricAccV2.period_type == normalized
+                )
+            ) or date.today()
+        )
         indicators = _enabled_indicators(session, indicator_codes)
-        components, physical = _components(session, indicators)
         nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
-        values = session.execute(
-            select(MetricAccV2).where(
-                MetricAccV2.period_type == normalized,
-                MetricAccV2.stat_date == target_day,
-                MetricAccV2.node_id.in_([row.id for row in nodes] or [-1]),
-                MetricAccV2.indicator_id.in_([row.id for row in physical] or [-1]),
-            )
-        ).scalars().all()
-        code_by_id = {row.id: row.code for row in physical}
-        rows = []
-        by_id = {}
-        for node in nodes:
-            dto = _node_dto(node)
-            dto.update(collection_run_id=None, collected_at=None, metrics={row.code: None for row in physical})
-            rows.append(dto)
-            by_id[node.id] = dto
-        for value in values:
-            row = by_id[value.node_id]
-            row["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
-            row["collection_run_id"] = value.collection_run_id
-            row["collected_at"] = _iso(value.collected_at)
-        _apply_custom(rows, indicators, components)
+        rows = _acc_rows_in_session(
+            session,
+            nodes=nodes,
+            indicators=indicators,
+            period_type=normalized,
+            target_day=target_day,
+        )
         return {"indicators": [_indicator_dto(row) for row in indicators], "rows": rows, "row_count": len(rows)}
 
 
@@ -872,26 +886,19 @@ def get_dashboard_overview(
         )
         acc_rows: list[dict[str, Any]] = []
         if include_acc:
-            acc_values = session.execute(
-                select(MetricAccV2).where(
-                    MetricAccV2.period_type == str(period_type).strip().upper(),
-                    MetricAccV2.stat_date == date.today(),
-                    MetricAccV2.node_id.in_([row.id for row in nodes] or [-1]),
-                    MetricAccV2.indicator_id.in_([row.id for row in indicators] or [-1]),
+            normalized_period = str(period_type).strip().upper()
+            acc_date = session.scalar(
+                select(func.max(MetricAccV2.stat_date)).where(
+                    MetricAccV2.period_type == normalized_period
                 )
-            ).scalars().all()
-            acc_rows = [_node_dto(node) for node in nodes]
-            acc_by_id = {row["id"]: row for row in acc_rows}
-            code_by_id = {row.id: row.code for row in indicators}
-            for row in acc_rows:
-                row.update(collection_run_id=None, collected_at=None, metrics={code: None for code in code_by_id.values()})
-            for value in acc_values:
-                if value.node_id not in acc_by_id or value.indicator_id not in code_by_id:
-                    continue
-                target = acc_by_id[value.node_id]
-                target["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
-                target["collection_run_id"] = value.collection_run_id
-                target["collected_at"] = _iso(value.collected_at)
+            ) or date.today()
+            acc_rows = _acc_rows_in_session(
+                session,
+                nodes=nodes,
+                indicators=indicators,
+                period_type=normalized_period,
+                target_day=acc_date,
+            )
         return {
             "data_mode": "REALTIME",
             "latest_run": _run_dto(run),
