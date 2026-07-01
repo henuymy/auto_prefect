@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from infrastructure.dashboard_mysql import create_dashboard_engine
+from infrastructure.dashboard_mysql import DashboardMySQLSettings, create_dashboard_engine
 from models.dashboard_v2 import HierarchyNode, IndicatorV2, TargetPlan
 from services.dashboard_v2_target_service import (
     activate_v2_target_plan_in_session,
@@ -36,6 +36,7 @@ def import_target_plan(
     path: str | Path,
     *,
     activate: bool = False,
+    expected_database: str | None = None,
 ) -> dict[str, Any]:
     payload = _load_payload(path)
     scenario = str(payload.get("scenario") or "").strip().upper()
@@ -49,7 +50,13 @@ def import_target_plan(
         date.fromisoformat(str(payload["effective_to"]))
         if payload.get("effective_to") else None
     )
-    engine = create_dashboard_engine()
+    settings = DashboardMySQLSettings.from_env() if expected_database else None
+    if settings and settings.database != expected_database:
+        raise RuntimeError(
+            f"拒绝写入非目标库: configured={settings.database!r}, "
+            f"expected={expected_database!r}"
+        )
+    engine = create_dashboard_engine(settings) if settings else create_dashboard_engine()
     try:
         with Session(engine) as session, session.begin():
             rows = payload["values"]
@@ -136,8 +143,18 @@ def import_target_plan(
         engine.dispose()
 
 
-def activate_target_plan(plan_id: int) -> dict[str, Any]:
-    engine = create_dashboard_engine()
+def activate_target_plan(
+    plan_id: int,
+    *,
+    expected_database: str | None = None,
+) -> dict[str, Any]:
+    settings = DashboardMySQLSettings.from_env() if expected_database else None
+    if settings and settings.database != expected_database:
+        raise RuntimeError(
+            f"拒绝写入非目标库: configured={settings.database!r}, "
+            f"expected={expected_database!r}"
+        )
+    engine = create_dashboard_engine(settings) if settings else create_dashboard_engine()
     try:
         with Session(engine) as session, session.begin():
             plan = activate_v2_target_plan_in_session(
@@ -169,15 +186,23 @@ def main() -> int:
         type=int,
         help="激活数据库中已核对的 DRAFT，不重复导入 JSON",
     )
+    parser.add_argument("--expected-database", default="dashboard_v2")
     args = parser.parse_args()
     if args.activate_plan_id is not None:
         if args.json_file or args.activate:
             parser.error("--activate-plan-id 不能与 json_file/--activate 同时使用")
-        result = activate_target_plan(args.activate_plan_id)
+        result = activate_target_plan(
+            args.activate_plan_id,
+            expected_database=args.expected_database,
+        )
     else:
         if not args.json_file:
             parser.error("导入目标方案时必须提供 json_file")
-        result = import_target_plan(args.json_file, activate=args.activate)
+        result = import_target_plan(
+            args.json_file,
+            activate=args.activate,
+            expected_database=args.expected_database,
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

@@ -169,16 +169,42 @@ function Pause-DashboardDeployments {
     $script = @"
 import asyncio
 from prefect.client.orchestration import get_client
+from prefect.states import Cancelled
 
-TARGETS = {"dashboard-collection", "dashboard-daily", "dashboard-monthly", "dashboard-indicator-sync"}
+TARGETS = {
+    "dashboard-collection",
+    "dashboard-daily",
+    "dashboard-monthly",
+    "dashboard-indicator-sync",
+    "dashboard-v2-partition-maintenance",
+}
+ACTIVE = {"SCHEDULED", "PENDING", "RUNNING", "LATE", "AWAITINGRETRY", "RETRYING"}
 
 async def main():
     async with get_client() as client:
         deployments = await client.read_deployments()
-        for deployment in deployments:
-            if deployment.name in TARGETS and not getattr(deployment, "paused", False):
-                await client.set_deployment_paused_state(deployment.id, True)
+        target_deployments = {
+            deployment.id: deployment
+            for deployment in deployments
+            if deployment.name in TARGETS
+        }
+        for deployment in target_deployments.values():
+            if not getattr(deployment, "paused", False):
+                await client.pause_deployment(deployment.id)
                 print(f"paused:{deployment.name}")
+        # Pausing a deployment does not cancel runs that the scheduler created
+        # before the pause.  Clear those runs before a worker is started,
+        # otherwise stale V1 work may execute during V2 cutover preparation.
+        for run in await client.read_flow_runs(limit=1000):
+            deployment = target_deployments.get(run.deployment_id)
+            state_type = run.state.type.value if run.state else ""
+            if deployment and state_type in ACTIVE:
+                await client.set_flow_run_state(
+                    run.id,
+                    Cancelled(message="启动 Worker 前清理已暂停驾驶舱的遗留队列"),
+                    force=True,
+                )
+                print(f"cancelled:{deployment.name}:{run.id}:{state_type}")
 
 asyncio.run(main())
 "@

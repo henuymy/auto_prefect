@@ -97,6 +97,25 @@ python scripts\dashboard\run_collection.py --schema-version 2 --mode DAY_ACC
 python scripts\dashboard\run_collection.py --schema-version 2 --mode MONTH
 ```
 
+旧库配置只读导出和 V2 指标配置导入：
+
+```powershell
+python scripts\dashboard\export_v2_migration_bundle.py --effective-from 2026-07-01
+# 切换 DASHBOARD_MYSQL_DATABASE 到独立 V2 库后执行
+python scripts\dashboard\import_v2_indicator_config.py --expected-database dashboard_v2
+```
+
+迁移包只包含基础树、指标设置、自建公式和 NORMAL 目标，不包含 current、snapshot、
+acc 或 collection_run。PK 目标必须由业务方单独提供，不能从旧库推测。
+
+当前 `dashboard` 已存在 V1 数据时，先由管理员按
+`scripts/dashboard/create_v2_databases.sql.example` 创建隔离的 `dashboard_v2_ci` 和
+`dashboard_v2`，然后运行：
+
+```powershell
+pwsh -File scripts\dashboard\run_v2_mysql_tests.ps1
+```
+
 目标方案使用 JSON 导入为 DRAFT，人工核对后再激活：
 
 ```powershell

@@ -1,0 +1,19 @@
+-- 必须由数据库管理员执行；不要在此文件填写密码。
+-- 当前 dashboard 已是 V1 正式库时，严禁在该库执行 V2 基线。
+
+CREATE DATABASE IF NOT EXISTS dashboard_v2
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_0900_ai_ci;
+
+CREATE DATABASE IF NOT EXISTS dashboard_v2_ci
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_0900_ai_ci;
+
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, INDEX, ALTER
+  ON dashboard_v2.* TO 'dashboard_app'@'%';
+
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, INDEX, ALTER
+  ON dashboard_v2_ci.* TO 'dashboard_app'@'%';
+
+-- 不授予全局权限，不授予 GRANT OPTION。
+-- dashboard_v2_ci 仅用于集成测试，测试会删除其中全部表；不得放业务数据。
