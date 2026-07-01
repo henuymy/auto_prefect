@@ -1,0 +1,6 @@
+{
+  "root_password_rotated_at": "2026-07-01T00:00:00+08:00",
+  "backup_restore_verified_at": "2026-07-01T00:00:00+08:00",
+  "backup_restore_database": "dashboard_restore_verify",
+  "approved_by": "填写审批人，不要填写密码"
+}

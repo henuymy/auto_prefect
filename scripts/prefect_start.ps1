@@ -195,7 +195,7 @@ async def main():
         # Pausing a deployment does not cancel runs that the scheduler created
         # before the pause.  Clear those runs before a worker is started,
         # otherwise stale V1 work may execute during V2 cutover preparation.
-        for run in await client.read_flow_runs(limit=1000):
+        for run in await client.read_flow_runs(limit=200):
             deployment = target_deployments.get(run.deployment_id)
             state_type = run.state.type.value if run.state else ""
             if deployment and state_type in ACTIVE:
