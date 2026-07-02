@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from uuid import uuid4
 
-from scripts.dashboard.v2_cutover_audit import _approval_check, _bundle_check
+from prefect.client.schemas.objects import StateType
+
+from scripts.dashboard.v2_cutover_audit import (
+    ACTIVE_FLOW_STATE_TYPES,
+    _approval_check,
+    _bundle_check,
+    _read_target_flow_runs,
+)
 
 
 def test_cutover_audit_bundle_requires_pk_only_when_requested(tmp_path):
@@ -42,3 +51,30 @@ def test_cutover_audit_approval_contains_no_password_requirement(tmp_path):
 
     assert result["ok"] is True
     assert "password" not in result
+
+
+def test_cutover_audit_reads_all_target_active_runs_with_server_filter():
+    deployment_ids = {uuid4(), uuid4()}
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def read_flow_runs(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs["offset"] == 0:
+                return list(range(200))
+            if kwargs["offset"] == 200:
+                return ["last"]
+            raise AssertionError(f"unexpected offset: {kwargs['offset']}")
+
+    client = FakeClient()
+    rows = asyncio.run(_read_target_flow_runs(client, deployment_ids))
+
+    assert len(rows) == 201
+    assert [call["offset"] for call in client.calls] == [0, 200]
+    assert all(call["limit"] == 200 for call in client.calls)
+    flow_filter = client.calls[0]["flow_run_filter"]
+    assert set(flow_filter.deployment_id.any_) == deployment_ids
+    assert set(flow_filter.state.type.any_) == ACTIVE_FLOW_STATE_TYPES
+    assert StateType.PAUSED in ACTIVE_FLOW_STATE_TYPES

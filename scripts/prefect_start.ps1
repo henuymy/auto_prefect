@@ -246,12 +246,12 @@ async def main():
             for run in await read_target_runs(
                 client,
                 target_deployments,
-                {StateType.RUNNING, StateType.CANCELLING},
+                {StateType.RUNNING, StateType.CANCELLING, StateType.PAUSED},
             )
         ]
         if in_flight:
             raise RuntimeError(
-                "仍有驾驶舱批次 RUNNING/CANCELLING，拒绝启动 Worker，请等待完成: "
+                "仍有驾驶舱批次 RUNNING/CANCELLING/PAUSED，拒绝启动 Worker，请等待完成: "
                 + ", ".join(in_flight)
             )
 

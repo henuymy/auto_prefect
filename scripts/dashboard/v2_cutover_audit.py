@@ -20,6 +20,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from prefect.client.orchestration import get_client
+from prefect.client.schemas.filters import (
+    FlowRunFilter,
+    FlowRunFilterDeploymentId,
+    FlowRunFilterState,
+    FlowRunFilterStateType,
+)
+from prefect.client.schemas.objects import StateType
 
 from infrastructure.dashboard_mysql import (
     DashboardMySQLConfigError,
@@ -37,13 +44,12 @@ REQUIRED_DEPLOYMENTS = {
     "dashboard-indicator-sync",
     "dashboard-v2-partition-maintenance",
 }
-ACTIVE_FLOW_STATES = {
-    "SCHEDULED",
-    "PENDING",
-    "RUNNING",
-    "LATE",
-    "AWAITINGRETRY",
-    "RETRYING",
+ACTIVE_FLOW_STATE_TYPES = {
+    StateType.SCHEDULED,
+    StateType.PENDING,
+    StateType.RUNNING,
+    StateType.CANCELLING,
+    StateType.PAUSED,
 }
 
 
@@ -183,14 +189,14 @@ async def _prefect_state_check(api_url: str, *, require_worker: bool) -> dict[st
                 if name in REQUIRED_DEPLOYMENTS
             }
             active_runs = []
-            for run in await client.read_flow_runs(limit=200):
+            for run in await _read_target_flow_runs(client, target_ids):
                 state_type = run.state.type.value if run.state else ""
-                if run.deployment_id in target_ids and state_type in ACTIVE_FLOW_STATES:
-                    active_runs.append({
-                        "id": str(run.id),
-                        "state": state_type,
-                        "name": run.name,
-                    })
+                active_runs.append({
+                    "id": str(run.id),
+                    "state": state_type,
+                    "state_name": run.state.name if run.state else None,
+                    "name": run.name,
+                })
             online_workers = []
             for pool in await client.read_work_pools():
                 if pool.name != "default-agent-pool":
@@ -220,6 +226,30 @@ async def _prefect_state_check(api_url: str, *, require_worker: bool) -> dict[st
             os.environ.pop("PREFECT_API_URL", None)
         else:
             os.environ["PREFECT_API_URL"] = previous
+
+
+async def _read_target_flow_runs(client: Any, deployment_ids: set[Any]) -> list[Any]:
+    """Read every active target run without a global recent-run truncation."""
+    if not deployment_ids:
+        return []
+    flow_run_filter = FlowRunFilter(
+        deployment_id=FlowRunFilterDeploymentId(any_=list(deployment_ids)),
+        state=FlowRunFilterState(
+            type=FlowRunFilterStateType(any_=list(ACTIVE_FLOW_STATE_TYPES)),
+        ),
+    )
+    rows: list[Any] = []
+    offset = 0
+    while True:
+        page = await client.read_flow_runs(
+            flow_run_filter=flow_run_filter,
+            limit=200,
+            offset=offset,
+        )
+        rows.extend(page)
+        if len(page) < 200:
+            return rows
+        offset += len(page)
 
 
 async def audit(args: argparse.Namespace) -> dict[str, Any]:
