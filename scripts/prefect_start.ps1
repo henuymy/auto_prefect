@@ -101,6 +101,8 @@ Write-Host "LateRuns       : $($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)"
 Write-Host "Mode           : $Mode"
 Write-Host ""
 
+$PrefectHealthUrl = $ApiUrl.TrimEnd("/") + "/health"
+
 function Start-DetachedWindow {
     param(
         [string]$Title,
@@ -169,6 +171,13 @@ function Pause-DashboardDeployments {
     $script = @"
 import asyncio
 from prefect.client.orchestration import get_client
+from prefect.client.schemas.filters import (
+    FlowRunFilter,
+    FlowRunFilterDeploymentId,
+    FlowRunFilterState,
+    FlowRunFilterStateType,
+)
+from prefect.client.schemas.objects import StateType
 from prefect.states import Cancelled
 
 TARGETS = {
@@ -178,7 +187,28 @@ TARGETS = {
     "dashboard-indicator-sync",
     "dashboard-v2-partition-maintenance",
 }
-ACTIVE = {"SCHEDULED", "PENDING", "RUNNING", "LATE", "AWAITINGRETRY", "RETRYING"}
+
+async def read_target_runs(client, deployment_ids, state_types):
+    if not deployment_ids:
+        return []
+    flow_run_filter = FlowRunFilter(
+        deployment_id=FlowRunFilterDeploymentId(any_=list(deployment_ids)),
+        state=FlowRunFilterState(
+            type=FlowRunFilterStateType(any_=list(state_types)),
+        ),
+    )
+    rows = []
+    offset = 0
+    while True:
+        page = await client.read_flow_runs(
+            flow_run_filter=flow_run_filter,
+            limit=200,
+            offset=offset,
+        )
+        rows.extend(page)
+        if len(page) < 200:
+            return rows
+        offset += len(page)
 
 async def main():
     async with get_client() as client:
@@ -193,18 +223,37 @@ async def main():
                 await client.pause_deployment(deployment.id)
                 print(f"paused:{deployment.name}")
         # Pausing a deployment does not cancel runs that the scheduler created
-        # before the pause.  Clear those runs before a worker is started,
-        # otherwise stale V1 work may execute during V2 cutover preparation.
-        for run in await client.read_flow_runs(limit=200):
-            deployment = target_deployments.get(run.deployment_id)
+        # before the pause. Clear only work that has not started; a RUNNING
+        # collection may still own locks or a database transaction and must be
+        # allowed to finish before a replacement Worker starts.
+        queued = await read_target_runs(
+            client,
+            target_deployments,
+            {StateType.SCHEDULED, StateType.PENDING},
+        )
+        for run in queued:
+            deployment = target_deployments[run.deployment_id]
             state_type = run.state.type.value if run.state else ""
-            if deployment and state_type in ACTIVE:
-                await client.set_flow_run_state(
-                    run.id,
-                    Cancelled(message="启动 Worker 前清理已暂停驾驶舱的遗留队列"),
-                    force=True,
-                )
-                print(f"cancelled:{deployment.name}:{run.id}:{state_type}")
+            await client.set_flow_run_state(
+                run.id,
+                Cancelled(message="启动 Worker 前清理已暂停驾驶舱的遗留队列"),
+                force=True,
+            )
+            print(f"cancelled:{deployment.name}:{run.id}:{state_type}")
+
+        in_flight = [
+            f"{target_deployments[run.deployment_id].name}:{run.id}"
+            for run in await read_target_runs(
+                client,
+                target_deployments,
+                {StateType.RUNNING, StateType.CANCELLING},
+            )
+        ]
+        if in_flight:
+            raise RuntimeError(
+                "仍有驾驶舱批次 RUNNING/CANCELLING，拒绝启动 Worker，请等待完成: "
+                + ", ".join(in_flight)
+            )
 
 asyncio.run(main())
 "@
@@ -225,6 +274,11 @@ switch ($Mode) {
         }
     }
     "worker" {
+        $serverReady = Wait-ForPrefectServer -Url $PrefectHealthUrl
+        if (-not $serverReady) {
+            throw "Prefect Server was not ready within 90 seconds. Refusing to start Worker."
+        }
+        Pause-DashboardDeployments -PythonExe $PythonExe
         if ($Detached) {
             Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
             Write-Host "Started Prefect Worker in a new window."
@@ -234,7 +288,7 @@ switch ($Mode) {
     }
     "both" {
         Start-DetachedWindow -Title "Prefect Server" -Command $serverCommand
-        $serverReady = Wait-ForPrefectServer -Url "http://127.0.0.1:4200/api/health"
+        $serverReady = Wait-ForPrefectServer -Url $PrefectHealthUrl
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 90 seconds. Check the Prefect Server window logs."
         }
