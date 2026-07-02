@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "autologin_config_path": "config/modules/autologin.json",
   "required_stage": "city_ops",
   "collection_lock_path": "runtime/locks/dashboard_collection.lock",
