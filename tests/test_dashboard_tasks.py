@@ -9,6 +9,11 @@ def test_metric_task_dispatches_monthly_mode(monkeypatch):
     calls = []
     monkeypatch.setattr(
         dashboard_tasks,
+        "load_dashboard_config",
+        lambda path: ({"schema_version": 1}, path),
+    )
+    monkeypatch.setattr(
+        dashboard_tasks,
         "get_run_logger",
         lambda: object(),
     )
@@ -30,7 +35,12 @@ def test_metric_task_dispatches_monthly_mode(monkeypatch):
     assert calls[0]["force_refresh"] is True
 
 
-def test_metric_task_rejects_unknown_mode():
+def test_metric_task_rejects_unknown_mode(monkeypatch):
+    monkeypatch.setattr(
+        dashboard_tasks,
+        "load_dashboard_config",
+        lambda path: ({"schema_version": 1}, path),
+    )
     with pytest.raises(ValueError, match="mode 只支持"):
         dashboard_tasks.run_dashboard_metric_task.fn(
             mode="UNKNOWN",

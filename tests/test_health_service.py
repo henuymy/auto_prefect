@@ -8,6 +8,11 @@ from backend.services import health_service
 
 def test_readiness_status_requires_all_dependencies(monkeypatch):
     monkeypatch.setattr(
+        health_service,
+        "load_dashboard_config",
+        lambda: ({"schema_version": 1}, "config/dashboard/session.json"),
+    )
+    monkeypatch.setattr(
         health_service, "check_dashboard_mysql", lambda: {"ok": True}
     )
     monkeypatch.setattr(
