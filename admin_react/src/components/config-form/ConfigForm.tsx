@@ -12,6 +12,7 @@ import { ResponseParserPanel } from "@/components/config-form/ResponseParserPane
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tabs } from "@/components/ui/tabs";
 import { generateStarterTemplate, listTemplates, templateDownloadUrl, uploadTemplate } from "@/lib/api";
+import { collectQuickDateFields, DATE_PRESETS, formatCustomDate, updateQuickDateField, type QuickDateField } from "@/lib/quickDate";
 import { cn, parseJsonSafe, prettyJson } from "@/lib/utils";
 import type { CompareSource, DownloadItem, ExcelColumn, ReportConfig, SendItem } from "@/types/config";
 
@@ -571,6 +572,7 @@ function PlaceholderGuide() {
 
 function HttpDownloadCard({ item, index, onChange, onDelete, deleteDisabled }: { item: DownloadItem; index: number; onChange: (item: DownloadItem) => void; onDelete: () => void; deleteDisabled?: boolean }) {
   const [open, setOpen] = useState(index === 0);
+  const [dateOpen, setDateOpen] = useState(false);
   const [headersText, setHeadersText] = useState(prettyJson(item.headers || {}));
   const [dataText, setDataText] = useState(prettyJson(item.data || {}));
   const [authText, setAuthText] = useState(prettyJson(getAuthMapping(item)));
@@ -578,6 +580,7 @@ function HttpDownloadCard({ item, index, onChange, onDelete, deleteDisabled }: {
   const dataError = dataText.trim() ? parseJsonSafe(dataText).ok ? "" : "请求体 JSON 格式错误" : "";
   const authError = authText.trim() ? parseJsonSafe(authText).ok ? "" : "动态认证 JSON 格式错误" : "";
   const hasJsonError = Boolean(headersError || dataError || authError);
+  const quickDateFields = collectQuickDateFields(item);
 
   useEffect(() => {
     setHeadersText(prettyJson(item.headers || {}));
@@ -643,8 +646,19 @@ function HttpDownloadCard({ item, index, onChange, onDelete, deleteDisabled }: {
           <h3 className="mt-2 text-base font-black">{item.name || "未命名抓取项"}</h3>
           <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.url || "尚未填写 URL"}</p>
         </button>
-        <Button variant="ghost" size="icon" onClick={onDelete} disabled={deleteDisabled}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {quickDateFields.length > 0 && (
+            <Button variant={dateOpen ? "default" : "outline"} size="sm" onClick={() => setDateOpen((value) => !value)} title="快速修改请求日期">
+              <CalendarClock className="h-4 w-4" />
+              日期 {quickDateFields.length}
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" onClick={onDelete} disabled={deleteDisabled}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+        </div>
       </div>
+      {dateOpen && quickDateFields.length > 0 && (
+        <QuickDateEditor item={item} fields={quickDateFields} onChange={onChange} />
+      )}
       {!open && (
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
           <Badge variant="outline">{item.method || "method 未填"}</Badge>
@@ -676,6 +690,55 @@ function HttpDownloadCard({ item, index, onChange, onDelete, deleteDisabled }: {
       <ResponseModeConfig item={item} onChange={onChange} />
         </>
       )}
+    </div>
+  );
+}
+
+function QuickDateEditor({ item, fields, onChange }: { item: DownloadItem; fields: QuickDateField[]; onChange: (item: DownloadItem) => void }) {
+  const applyAll = (day: "today" | "yesterday") => {
+    let next = item;
+    fields.forEach((field) => {
+      const compact = /_yyyymmdd\}/i.test(field.value) || /^\d{8}$/.test(field.value);
+      next = updateQuickDateField(next, field, compact ? `\${${day}_yyyymmdd}` : `\${${day}}`);
+    });
+    onChange(next);
+  };
+
+  return (
+    <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-950/25">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-sky-950 dark:text-sky-100">快速修改日期</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">自动识别 URL、请求体、请求头和 Raw Body 中的日期字段。</p>
+        </div>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => applyAll("today")}>全部今天</Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => applyAll("yesterday")}>全部昨天</Button>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {fields.map((field) => (
+          <div key={field.id} className="grid gap-2 rounded-lg border border-sky-100 bg-background/85 p-2.5 lg:grid-cols-[minmax(0,1fr)_220px_170px] lg:items-center dark:border-sky-500/20">
+            <div className="min-w-0">
+              <div className="truncate text-xs font-semibold" title={field.label}>{field.label}</div>
+              <code className="mt-1 block truncate text-[11px] text-muted-foreground" title={field.value}>{field.value}</code>
+            </div>
+            <Select
+              aria-label={`${field.label} 日期预设`}
+              value={DATE_PRESETS.some((preset) => preset.value === field.value) ? field.value : ""}
+              onChange={(event) => event.target.value && onChange(updateQuickDateField(item, field, event.target.value))}
+            >
+              <option value="">选择动态日期…</option>
+              {DATE_PRESETS.map((preset) => <option key={preset.value} value={preset.value}>{preset.label}</option>)}
+            </Select>
+            <Input
+              type="date"
+              aria-label={`${field.label} 自定义日期`}
+              onChange={(event) => event.target.value && onChange(updateQuickDateField(item, field, formatCustomDate(event.target.value, field.value)))}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

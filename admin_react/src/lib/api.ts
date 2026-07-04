@@ -215,6 +215,7 @@ export async function publishConfig(config: ReportConfig) {
     crons?: string[];
     timezone?: string;
     scheduleStatus?: "enabled" | "disabled" | "none";
+    publishMode?: "schedule-state-only";
   }>(`/api/configs/${encodeURIComponent(config.id)}/publish`, {
     method: "POST",
     body: JSON.stringify(normalizeReportConfig(config)),

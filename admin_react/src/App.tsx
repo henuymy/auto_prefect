@@ -440,7 +440,7 @@ export default function App() {
         toast.error("发布前请先修复校验错误", { id: toastId, description: `发现 ${nextIssues.length} 个问题`, duration: 3600 });
         return;
       }
-      toast.loading("正在发布到调度", { id: toastId, description: "创建 Prefect deployment 并启用调度..." });
+      toast.loading("正在发布到调度", { id: toastId, description: "正在同步 Prefect deployment 和调度状态..." });
       const result = await publishConfig(config);
       const nextConfigs = await listConfigs();
       setConfigs(nextConfigs);
@@ -457,7 +457,11 @@ export default function App() {
         : result.scheduleStatus === "disabled"
           ? "部署已创建，定时调度已停用"
           : "部署已创建，未配置 Cron";
-      toast.success("已发布到调度", { id: toastId, description: scheduleText, duration: 4200 });
+      toast.success(result.publishMode === "schedule-state-only" ? "调度状态已快速更新" : "已发布到调度", {
+        id: toastId,
+        description: scheduleText,
+        duration: 4200,
+      });
     } catch (error) {
       setLogs(await listRunLogs());
       setLogsOpen(true);

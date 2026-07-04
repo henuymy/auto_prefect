@@ -28,41 +28,44 @@ def _patch_publish(monkeypatch, tmp_path):
     return commands
 
 
-def test_publish_without_cron_does_not_change_schedule(monkeypatch, tmp_path):
+def test_publish_without_cron_removes_existing_schedules(monkeypatch, tmp_path):
     commands = _patch_publish(monkeypatch, tmp_path)
 
-    result = prefect_runner.publish_config({"name": "日报", "enabled": False, "deployment": {"cron": "", "timezone": "Asia/Shanghai"}})
+    result = prefect_runner.publish_config({"name": "日报", "enabled": False, "deployment": {"crons": [], "timezone": "Asia/Shanghai"}})
 
-    assert len(commands) == 1
+    assert len(commands) == 3
     assert "--cron" not in commands[0]
+    assert commands[1][3:6] == ["deployment", "schedule", "ls"]
+    assert commands[2][3:6] == ["deployment", "schedule", "delete"]
+    assert commands[2][-2:] == ["schedule-1", "--accept-yes"]
     assert result["scheduleStatus"] == "none"
 
 
 def test_publish_with_enabled_schedule_resumes(monkeypatch, tmp_path):
     commands = _patch_publish(monkeypatch, tmp_path)
 
-    result = prefect_runner.publish_config({"name": "日报", "enabled": True, "deployment": {"cron": "0 9 * * *", "timezone": "Asia/Shanghai"}})
+    result = prefect_runner.publish_config({"name": "日报", "enabled": True, "deployment": {"crons": ["0 9 * * *"], "timezone": "Asia/Shanghai"}})
 
-    assert len(commands) == 3
-    assert commands[0][commands[0].index("--cron") + 1] == "0 9 * * *"
-    assert commands[1][3:7] == ["deployment", "schedule", "ls"]
-    assert commands[1][-3:] == ["auto-notify-flow/notify-日报", "-o", "json"]
-    assert commands[2][3:6] == ["deployment", "schedule", "resume"]
-    assert commands[2][-2:] == ["auto-notify-flow/notify-日报", "schedule-1"]
+    assert len(commands) == 4
+    assert commands[1][commands[1].index("--cron") + 1] == "0 9 * * *"
+    assert commands[2][3:6] == ["deployment", "schedule", "ls"]
+    assert commands[2][-3:] == ["auto-notify-flow/notify-日报", "-o", "json"]
+    assert commands[3][3:6] == ["deployment", "schedule", "resume"]
+    assert commands[3][-2:] == ["auto-notify-flow/notify-日报", "schedule-1"]
     assert result["scheduleStatus"] == "enabled"
 
 
 def test_publish_with_disabled_schedule_pauses(monkeypatch, tmp_path):
     commands = _patch_publish(monkeypatch, tmp_path)
 
-    result = prefect_runner.publish_config({"name": "日报", "enabled": False, "deployment": {"cron": "0 9 * * *", "timezone": "Asia/Shanghai"}})
+    result = prefect_runner.publish_config({"name": "日报", "enabled": False, "deployment": {"crons": ["0 9 * * *"], "timezone": "Asia/Shanghai"}})
 
-    assert len(commands) == 3
-    assert commands[0][commands[0].index("--cron") + 1] == "0 9 * * *"
-    assert commands[1][3:7] == ["deployment", "schedule", "ls"]
-    assert commands[1][-3:] == ["auto-notify-flow/notify-日报", "-o", "json"]
-    assert commands[2][3:6] == ["deployment", "schedule", "pause"]
-    assert commands[2][-2:] == ["auto-notify-flow/notify-日报", "schedule-1"]
+    assert len(commands) == 4
+    assert commands[1][commands[1].index("--cron") + 1] == "0 9 * * *"
+    assert commands[2][3:6] == ["deployment", "schedule", "ls"]
+    assert commands[2][-3:] == ["auto-notify-flow/notify-日报", "-o", "json"]
+    assert commands[3][3:6] == ["deployment", "schedule", "pause"]
+    assert commands[3][-2:] == ["auto-notify-flow/notify-日报", "schedule-1"]
     assert result["scheduleStatus"] == "disabled"
 
 
@@ -84,10 +87,124 @@ def test_publish_treats_already_active_schedule_as_success(monkeypatch, tmp_path
 
     monkeypatch.setattr(prefect_runner.subprocess, "run", fake_run)
 
-    result = prefect_runner.publish_config({"name": "日报", "enabled": True, "deployment": {"cron": "0 9 * * *", "timezone": "Asia/Shanghai"}})
+    result = prefect_runner.publish_config({"name": "日报", "enabled": True, "deployment": {"crons": ["0 9 * * *"], "timezone": "Asia/Shanghai"}})
 
-    assert len(commands) == 3
+    assert len(commands) == 4
     assert result["scheduleStatus"] == "enabled"
+
+
+def test_publish_pauses_every_schedule_for_multiple_crons(monkeypatch, tmp_path):
+    commands = []
+    monkeypatch.setattr(prefect_runner, "PROJECT_ROOT", tmp_path)
+    task_path = tmp_path / "config" / "tasks" / "task.json"
+    task_path.parent.mkdir(parents=True, exist_ok=True)
+    task_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(prefect_runner, "write_task_config", lambda *args, **kwargs: task_path)
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if command[3:6] == ["deployment", "schedule", "ls"]:
+            return _Completed(stdout='[{"id":"schedule-1"},{"id":"schedule-2"}]')
+        return _Completed()
+
+    monkeypatch.setattr(prefect_runner.subprocess, "run", fake_run)
+
+    result = prefect_runner.publish_config(
+        {
+            "name": "日报",
+            "enabled": False,
+            "deployment": {"crons": ["0 9 * * *", "0 18 * * *"], "timezone": "Asia/Shanghai"},
+        }
+    )
+
+    pause_commands = [command for command in commands if command[3:6] == ["deployment", "schedule", "pause"]]
+    assert [command[-1] for command in pause_commands] == ["schedule-1", "schedule-2"]
+    assert result["scheduleStatus"] == "disabled"
+
+
+def test_can_fast_toggle_schedule_ignores_only_state_and_metadata():
+    previous = {
+        "name": "日报",
+        "enabled": True,
+        "deployment": {"crons": ["0 9 * * *"], "timezone": "Asia/Shanghai"},
+        "updatedAt": "old",
+        "source": "published",
+    }
+    current = {
+        **previous,
+        "enabled": False,
+        "updatedAt": "new",
+        "has_draft": False,
+    }
+
+    assert prefect_runner.can_fast_toggle_schedule(previous, current)
+    current["deployment"] = {"crons": ["0 10 * * *"], "timezone": "Asia/Shanghai"}
+    assert not prefect_runner.can_fast_toggle_schedule(previous, current)
+
+
+def test_fast_toggle_schedule_patches_existing_matching_schedules(monkeypatch):
+    calls = []
+    schedules = [
+        {
+            "id": "schedule-1",
+            "schedule": {"cron": "0 9 * * *", "timezone": "Asia/Shanghai"},
+            "active": True,
+        },
+        {
+            "id": "schedule-2",
+            "schedule": {"cron": "0 18 * * *", "timezone": "Asia/Shanghai"},
+            "active": True,
+        },
+    ]
+
+    def fake_request(method, path, payload=None):
+        calls.append((method, path, payload))
+        if "/name/" in path:
+            return {"id": "deployment-1"}
+        if method == "GET":
+            return schedules
+        return None
+
+    monkeypatch.setattr(prefect_runner, "_prefect_api_request", fake_request)
+
+    result = prefect_runner.fast_toggle_schedule(
+        {
+            "name": "日报",
+            "enabled": False,
+            "deployment": {"crons": ["0 9 * * *", "0 18 * * *"], "timezone": "Asia/Shanghai"},
+        }
+    )
+
+    patch_calls = [call for call in calls if call[0] == "PATCH"]
+    assert [call[1].rsplit("/", 1)[-1] for call in patch_calls] == ["schedule-1", "schedule-2"]
+    assert all(call[2] == {"active": False} for call in patch_calls)
+    assert result["scheduleStatus"] == "disabled"
+    assert result["publishMode"] == "schedule-state-only"
+
+
+def test_fast_toggle_schedule_falls_back_when_crons_do_not_match(monkeypatch):
+    def fake_request(method, path, payload=None):
+        if "/name/" in path:
+            return {"id": "deployment-1"}
+        return [
+            {
+                "id": "schedule-1",
+                "schedule": {"cron": "0 10 * * *", "timezone": "Asia/Shanghai"},
+                "active": True,
+            }
+        ]
+
+    monkeypatch.setattr(prefect_runner, "_prefect_api_request", fake_request)
+
+    result = prefect_runner.fast_toggle_schedule(
+        {
+            "name": "日报",
+            "enabled": False,
+            "deployment": {"crons": ["0 9 * * *"], "timezone": "Asia/Shanghai"},
+        }
+    )
+
+    assert result is None
 
 
 def test_validate_config_requires_compare_engine_and_workers():

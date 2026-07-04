@@ -181,9 +181,17 @@ def publish_config(config_id: str, config: dict):
     if issues:
         append_log("failed", "发布到调度失败", f"配置校验失败，发现 {len(issues)} 个问题")
         raise HTTPException(status_code=400, detail={"issues": issues})
+    try:
+        previous = config_store.get_config(config_id, source="published")
+    except FileNotFoundError:
+        previous = None
     saved = config_store.save_config(config_id, config)
     try:
-        result = prefect_runner.publish_config(saved)
+        result = None
+        if previous and prefect_runner.can_fast_toggle_schedule(previous, saved):
+            result = prefect_runner.fast_toggle_schedule(saved)
+        if result is None:
+            result = prefect_runner.publish_config(saved)
         append_log("success", "发布到调度", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
         return result
     except RuntimeError as exc:

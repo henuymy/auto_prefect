@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +67,98 @@ def _schedule_action_already_done(schedule_action: str, output: str) -> bool:
 def _deployment_crons(deployment: dict[str, Any]) -> list[str]:
     raw_crons = deployment.get("crons") if isinstance(deployment.get("crons"), list) else []
     return [str(item or "").strip() for item in raw_crons if str(item or "").strip()]
+
+
+def can_fast_toggle_schedule(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    """Return whether publishing only needs to reconcile the schedule active state."""
+    ignored_keys = {"enabled", "updatedAt", "source", "has_draft", "lastRun"}
+
+    def publish_content(config: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in config.items() if key not in ignored_keys}
+
+    return publish_content(previous) == publish_content(current)
+
+
+def _prefect_api_request(method: str, path: str, payload: Any | None = None) -> Any:
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{get_prefect_api_url().rstrip('/')}/{path.lstrip('/')}",
+        data=body,
+        method=method,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        response_body = response.read().decode("utf-8", errors="replace")
+    return json.loads(response_body) if response_body else None
+
+
+def fast_toggle_schedule(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Toggle existing matching schedules via the Prefect API, without redeploying."""
+    deployment = config.get("deployment") or {}
+    crons = _deployment_crons(deployment)
+    if not crons:
+        return None
+
+    report_name = _safe_name(config.get("name") or config.get("id") or "未命名配置")
+    deployment_name = f"notify-{report_name}"
+    deployment_path = "/".join(
+        urllib.parse.quote(part, safe="") for part in ["deployments", "name", FLOW_NAME, deployment_name]
+    )
+    try:
+        deployment_response = _prefect_api_request("GET", deployment_path)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise RuntimeError(f"Prefect deployment 查询失败: HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Prefect deployment 查询失败: {exc}") from exc
+
+    deployment_id = (deployment_response or {}).get("id")
+    if not deployment_id:
+        return None
+    try:
+        schedules = _prefect_api_request("GET", f"deployments/{deployment_id}/schedules") or []
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Prefect 调度列表读取失败: {exc}") from exc
+
+    timezone = deployment.get("timezone") or "Asia/Shanghai"
+    expected_schedules = sorted((cron, timezone) for cron in crons)
+    actual_schedules = sorted(
+        (str((item.get("schedule") or {}).get("cron") or ""), str((item.get("schedule") or {}).get("timezone") or "UTC"))
+        for item in schedules
+    )
+    if actual_schedules != expected_schedules or any(not item.get("id") for item in schedules):
+        return None
+
+    enabled = config.get("enabled", True) is not False
+    changed_count = 0
+    try:
+        for item in schedules:
+            if bool(item.get("active", True)) == enabled:
+                continue
+            _prefect_api_request(
+                "PATCH",
+                f"deployments/{deployment_id}/schedules/{item['id']}",
+                {"active": enabled},
+            )
+            changed_count += 1
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        action_label = "启用" if enabled else "停用"
+        raise RuntimeError(f"Prefect 调度{action_label}失败: {exc}") from exc
+
+    schedule_status = "enabled" if enabled else "disabled"
+    action_label = "启用" if enabled else "停用"
+    return {
+        "deploymentId": deployment_id,
+        "status": "success",
+        "message": f"已快速{action_label} Prefect 调度: {config.get('name', '')}",
+        "taskConfigPath": "",
+        "crons": crons,
+        "timezone": timezone,
+        "scheduleStatus": schedule_status,
+        "publishMode": "schedule-state-only",
+        "output": f"快速切换完成：{len(schedules)} 条调度，实际更新 {changed_count} 条；未重新部署。",
+    }
 
 
 def build_task_config(
@@ -461,19 +554,66 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
             if schedule_completed.returncode != 0:
                 raise RuntimeError("\n".join(part for part in [output, *schedule_outputs, "Prefect 调度创建失败"] if part))
 
-        if not schedule_enabled:
-            pause_command = [
+        schedule_action = "resume" if schedule_enabled else "pause"
+        schedule_list_command = [
+            sys.executable,
+            "-m",
+            "prefect",
+            "deployment",
+            "schedule",
+            "ls",
+            deployment_full_name,
+            "-o",
+            "json",
+        ]
+        schedule_list_completed = subprocess.run(
+            schedule_list_command,
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+        )
+        schedule_list_output = "\n".join(
+            part for part in [schedule_list_completed.stdout, schedule_list_completed.stderr] if part
+        )
+        schedule_outputs.append(schedule_list_output)
+        if schedule_list_completed.returncode != 0:
+            raise RuntimeError(
+                "\n".join(part for part in [output, *schedule_outputs, "Prefect 调度列表读取失败"] if part)
+            )
+        try:
+            schedules = json.loads(schedule_list_completed.stdout or "[]")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "\n".join(part for part in [output, *schedule_outputs, "Prefect 调度列表解析失败"] if part)
+            ) from exc
+        schedule_ids = [item.get("id") for item in schedules if item.get("id")]
+        if not schedule_ids:
+            action_label = "启用" if schedule_enabled else "停用"
+            raise RuntimeError(
+                "\n".join(
+                    part
+                    for part in [output, *schedule_outputs, f"Prefect 调度{action_label}失败: 未找到 schedule ID"]
+                    if part
+                )
+            )
+
+        for schedule_id in schedule_ids:
+            schedule_command = [
                 sys.executable,
                 "-m",
                 "prefect",
                 "deployment",
                 "schedule",
-                "pause",
+                schedule_action,
                 deployment_full_name,
-                "--all",
+                schedule_id,
             ]
-            pause_completed = subprocess.run(
-                pause_command,
+            schedule_completed = subprocess.run(
+                schedule_command,
                 cwd=PROJECT_ROOT,
                 env=env,
                 text=True,
@@ -482,10 +622,19 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
                 errors="replace",
                 timeout=180,
             )
-            pause_output = "\n".join(part for part in [pause_completed.stdout, pause_completed.stderr] if part)
-            schedule_outputs.append(pause_output)
-            if pause_completed.returncode != 0 and not _schedule_action_already_done("pause", pause_output):
-                raise RuntimeError("\n".join(part for part in [output, *schedule_outputs, "Prefect 调度停用失败"] if part))
+            schedule_item_output = "\n".join(
+                part for part in [schedule_completed.stdout, schedule_completed.stderr] if part
+            )
+            schedule_outputs.append(schedule_item_output)
+            if schedule_completed.returncode != 0 and not _schedule_action_already_done(
+                schedule_action, schedule_item_output
+            ):
+                action_label = "启用" if schedule_enabled else "停用"
+                raise RuntimeError(
+                    "\n".join(
+                        part for part in [output, *schedule_outputs, f"Prefect 调度{action_label}失败"] if part
+                    )
+                )
         schedule_output = "\n".join(part for part in schedule_outputs if part)
         schedule_status = "enabled" if schedule_enabled else "disabled"
         output = "\n".join(part for part in [output, schedule_output] if part)
