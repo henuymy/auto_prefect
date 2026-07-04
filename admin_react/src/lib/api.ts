@@ -83,7 +83,11 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
     send: {
       webhook_url: config.send?.webhook_url || "",
       workbook_name: config.send?.workbook_name || config.name || "",
-      items: config.send?.items || [],
+      items: (config.send?.items || []).map((item) => (
+        item.type === "image"
+          ? { ...item, capture: item.capture || { mode: "used_range" }, text: undefined }
+          : { ...item, text: item.text?.mode ? item.text : { mode: "used_range" }, capture: undefined }
+      )),
     },
     template_update: {
       engine: config.template_update?.engine || "hybrid",

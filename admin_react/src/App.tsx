@@ -272,6 +272,61 @@ export default function App() {
     toast.success("已新建通报配置", { description: "填写完成后点击“保存配置”写入 config/reports。" });
   }
 
+  function suggestedCopyName(sourceName: string) {
+    const existingNames = new Set(configs.flatMap((item) => [item.id, item.name]));
+    const baseName = `${sourceName}-副本`;
+    if (!existingNames.has(baseName)) return baseName;
+    let index = 2;
+    while (existingNames.has(`${baseName}-${index}`)) index += 1;
+    return `${baseName}-${index}`;
+  }
+
+  async function copyCurrentConfig() {
+    if (!config) return;
+    if (isTemporaryConfigId(config.id)) {
+      toast.info("请先保存当前配置", { description: "保存后即可复制为新的独立配置。" });
+      return;
+    }
+    const newName = window.prompt("请输入副本配置名称", suggestedCopyName(config.name))?.trim();
+    if (!newName) return;
+    if (configs.some((item) => item.id === newName || item.name === newName)) {
+      toast.error("配置名称已存在", { description: "请换一个名称后重试。" });
+      return;
+    }
+
+    const snapshot = structuredClone(config);
+    const copy: ReportConfig = {
+      ...snapshot,
+      id: uid("cfg"),
+      name: newName,
+      enabled: false,
+      source: undefined,
+      has_draft: false,
+      updatedAt: undefined,
+      lastRun: "disabled",
+      send: {
+        ...snapshot.send,
+        workbook_name: snapshot.send.workbook_name === snapshot.name ? newName : snapshot.send.workbook_name,
+      },
+    };
+
+    try {
+      const created = await createConfig(copy);
+      const nextConfigs = await listConfigs();
+      setConfigs(nextConfigs);
+      setSelectedId(created.id);
+      setConfig(created);
+      setIssues(validateReportConfig(created));
+      setLogs(await listRunLogs());
+      toast.success("配置复制成功", {
+        description: `已创建 ${created.name}，定时调度默认关闭；模板继续引用 ${created.template_path}`,
+        duration: 4200,
+      });
+    } catch (error) {
+      toast.error("复制配置失败", { description: toastDescription(error), duration: 3000 });
+    }
+  }
+
   function updateConfigFromForm(next: ReportConfig) {
     if (config) {
       setJsonFocusPath(findFirstDiffPath(config, next));
@@ -601,6 +656,8 @@ export default function App() {
           onDarkToggle={() => setDark((value) => !value)}
           onSaveDraft={saveDraft}
           onSaveConfig={saveConfig}
+          onCopyConfig={copyCurrentConfig}
+          canCopy={!isTemporaryConfigId(config.id)}
           onValidate={validate}
           onTestRun={testRun}
           testing={testing}

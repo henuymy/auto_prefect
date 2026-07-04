@@ -380,6 +380,16 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
     send = config.get("send") or {}
     if not send.get("items"):
         issues.append({"path": "/send/items", "message": "至少需要一个发送项"})
+    for item_index, item in enumerate(send.get("items") or []):
+        item_type = item.get("type")
+        range_config = item.get("capture") if item_type == "image" else item.get("text")
+        range_config = range_config or {}
+        if range_config.get("mode") == "explicit_range" and not str(range_config.get("range") or "").strip():
+            config_key = "capture" if item_type == "image" else "text"
+            issues.append({
+                "path": f"/send/items/{item_index}/{config_key}/range",
+                "message": "自定义范围不能为空，例如 A1:H20",
+            })
     return issues
 
 

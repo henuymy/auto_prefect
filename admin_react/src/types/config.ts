@@ -72,8 +72,15 @@ export interface CompareSource {
 export interface SendItem {
   type: "image" | "text";
   sheet: string;
+  capture?: {
+    mode?: "used_range" | "explicit_range" | "current_region";
+    range?: string;
+    start_cell?: string;
+  };
   text?: {
-    mode?: "used_range" | "none";
+    mode?: "used_range" | "explicit_range" | "current_region";
+    range?: string;
+    start_cell?: string;
   };
 }
 

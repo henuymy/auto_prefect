@@ -36,9 +36,13 @@ def get_config(config_id: str, source: str = Query("published", pattern="^(publi
 
 @router.post("")
 def create_config(config: dict):
-    saved = config_store.create_config(config)
-    append_log("success", "新建配置", f"已创建 {saved.get('name', '')}")
-    return saved
+    try:
+        saved = config_store.create_config(config)
+        append_log("success", "新建配置", f"已创建 {saved.get('name', '')}")
+        return saved
+    except FileExistsError as exc:
+        append_log("failed", "新建配置失败", str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.put("/{config_id}")

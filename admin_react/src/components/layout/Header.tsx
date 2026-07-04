@@ -1,4 +1,4 @@
-import { CheckCircle2, CloudUpload, FileCheck2, Loader2, Moon, Play, Save, ShieldCheck, Sun, Trash2, Zap } from "lucide-react";
+import { CheckCircle2, CloudUpload, CopyPlus, FileCheck2, Loader2, Moon, Play, Save, ShieldCheck, Sun, Trash2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function Header({
@@ -6,6 +6,8 @@ export function Header({
   onDarkToggle,
   onSaveDraft,
   onSaveConfig,
+  onCopyConfig,
+  canCopy,
   onValidate,
   onTestRun,
   testing,
@@ -20,6 +22,8 @@ export function Header({
   onDarkToggle: () => void;
   onSaveDraft: () => void;
   onSaveConfig: () => void;
+  onCopyConfig: () => void;
+  canCopy: boolean;
   onValidate: () => void;
   onTestRun: () => void;
   testing: boolean;
@@ -42,6 +46,9 @@ export function Header({
         </Button>
         <Button variant="outline" onClick={onSaveDraft}><Save className="h-4 w-4" />保存草稿</Button>
         <Button variant="outline" onClick={onSaveConfig}><FileCheck2 className="h-4 w-4" />保存配置</Button>
+        <Button variant="outline" onClick={onCopyConfig} disabled={!canCopy} title={canCopy ? "复制当前配置并另存为新配置" : "请先保存当前配置再复制"}>
+          <CopyPlus className="h-4 w-4" />复制配置
+        </Button>
         <Button variant="outline" onClick={onValidate}><ShieldCheck className="h-4 w-4" />校验配置</Button>
         <Button variant="secondary" onClick={onTestRun} disabled={testing || realTesting}>
           {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from backend.services import config_store
 
 
@@ -74,6 +76,24 @@ def test_save_config_removes_same_name_draft(monkeypatch, tmp_path):
     assert saved["has_draft"] is False
     assert (config_store.REPORTS_DIR / "同名.json").exists()
     assert not (config_store.DRAFTS_DIR / "同名.json").exists()
+
+
+def test_create_config_rejects_duplicate_name(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+    _write(config_store.REPORTS_DIR / "日报.json", "日报")
+
+    with pytest.raises(FileExistsError, match="配置已存在: 日报"):
+        config_store.create_config({"name": "日报", "template_path": "templates/a.xlsx"})
+
+
+def test_create_config_saves_new_name(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+
+    saved = config_store.create_config({"name": "日报-副本", "template_path": "templates/a.xlsx", "enabled": False})
+
+    assert saved["id"] == "日报-副本"
+    assert saved["enabled"] is False
+    assert (config_store.REPORTS_DIR / "日报-副本.json").exists()
 
 
 def test_normalize_config_fills_compare_defaults():

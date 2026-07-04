@@ -235,3 +235,23 @@ def test_validate_config_requires_compare_engine_and_workers():
     paths = {issue["path"] for issue in issues}
     assert "/compare_sources/0/engine" in paths
     assert "/compare_sources/0/max_workers" in paths
+
+
+def test_validate_config_requires_explicit_send_ranges():
+    config = {
+        "name": "日报",
+        "template_path": "templates/missing.xlsx",
+        "downloads": [],
+        "compare_sources": [],
+        "send": {
+            "items": [
+                {"type": "image", "sheet": "图片", "capture": {"mode": "explicit_range", "range": ""}},
+                {"type": "text", "sheet": "文字", "text": {"mode": "explicit_range"}},
+            ]
+        },
+    }
+
+    paths = {issue["path"] for issue in prefect_runner.validate_config(config)}
+
+    assert "/send/items/0/capture/range" in paths
+    assert "/send/items/1/text/range" in paths

@@ -1107,6 +1107,10 @@ function updateMapping(config: ReportConfig, onChange: (config: ReportConfig) =>
 function SendTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
   const send = config.send;
   const updateItem = (index: number, item: SendItem) => onChange({ ...config, send: { ...send, items: updateAt(send.items, index, item) } });
+  const itemRangeConfig = (item: SendItem) => item.type === "image" ? item.capture : item.text;
+  const updateRangeConfig = (index: number, item: SendItem, next: NonNullable<SendItem["capture"]>) => {
+    updateItem(index, item.type === "image" ? { ...item, capture: next } : { ...item, text: next });
+  };
   return (
     <Card>
       <CardHeader>
@@ -1119,15 +1123,41 @@ function SendTab({ config, onChange }: { config: ReportConfig; onChange: (config
           <Field label="企业微信 Webhook"><DraftInput value={send.webhook_url} onCommit={(value) => onChange({ ...config, send: { ...send, webhook_url: value } })} /></Field>
         </div>
         <div className="space-y-3">
-          {send.items.map((item, index) => (
-            <div key={index} className="grid gap-3 rounded-xl border border-border bg-muted/20 p-3 sm:grid-cols-[minmax(120px,160px)_1fr] lg:grid-cols-[160px_1fr_180px_auto]">
-              <Select value={item.type} onChange={(event) => updateItem(index, { ...item, type: event.target.value as SendItem["type"] })}><option value="image">image</option><option value="text">text</option></Select>
-              <DraftInput placeholder="sheet" value={item.sheet} onCommit={(value) => updateItem(index, { ...item, sheet: value })} />
-              <Select value={item.text?.mode || "none"} onChange={(event) => updateItem(index, { ...item, text: { mode: event.target.value as "used_range" | "none" } })}><option value="none">none</option><option value="used_range">used_range</option></Select>
-              <Button variant="ghost" size="icon" onClick={() => onChange({ ...config, send: { ...send, items: send.items.filter((_, itemIndex) => itemIndex !== index) } })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-            </div>
-          ))}
-          <Button variant="outline" onClick={() => onChange({ ...config, send: { ...send, items: [...send.items, { type: "image", sheet: "" }] } })}><Plus className="h-4 w-4" />添加发送项</Button>
+          {send.items.map((item, index) => {
+            const rangeConfig = itemRangeConfig(item) || { mode: "used_range" as const };
+            const mode = rangeConfig.mode || "used_range";
+            return (
+              <div key={index} className="grid gap-3 rounded-xl border border-border bg-muted/20 p-3 md:grid-cols-2 xl:grid-cols-[140px_minmax(180px,1fr)_180px_minmax(180px,1fr)_auto] xl:items-center">
+                <Select
+                  value={item.type}
+                  onChange={(event) => {
+                    const type = event.target.value as SendItem["type"];
+                    updateItem(index, type === "image"
+                      ? { ...item, type, capture: item.capture || { mode: "used_range" }, text: undefined }
+                      : { ...item, type, text: item.text || { mode: "used_range" }, capture: undefined });
+                  }}
+                ><option value="image">图片</option><option value="text">文字</option></Select>
+                <DraftInput placeholder="Sheet 名称" value={item.sheet} onCommit={(value) => updateItem(index, { ...item, sheet: value })} />
+                <Select
+                  value={mode}
+                  onChange={(event) => updateRangeConfig(index, item, { ...rangeConfig, mode: event.target.value as NonNullable<typeof rangeConfig.mode> })}
+                >
+                  <option value="used_range">有效区域</option>
+                  <option value="explicit_range">自定义范围</option>
+                  <option value="current_region">当前连续区域</option>
+                </Select>
+                {mode === "explicit_range" ? (
+                  <DraftInput placeholder="例如 A1:H20" value={rangeConfig.range || ""} onCommit={(value) => updateRangeConfig(index, item, { ...rangeConfig, range: value })} />
+                ) : mode === "current_region" ? (
+                  <DraftInput placeholder="起始单元格，例如 A1" value={rangeConfig.start_cell || "A1"} onCommit={(value) => updateRangeConfig(index, item, { ...rangeConfig, start_cell: value || "A1" })} />
+                ) : (
+                  <div className="flex h-10 items-center rounded-lg border border-dashed border-border px-3 text-xs text-muted-foreground">自动裁剪非空单元格</div>
+                )}
+                <Button className="md:col-span-2 xl:col-span-1" variant="ghost" size="icon" onClick={() => onChange({ ...config, send: { ...send, items: send.items.filter((_, itemIndex) => itemIndex !== index) } })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+              </div>
+            );
+          })}
+          <Button variant="outline" onClick={() => onChange({ ...config, send: { ...send, items: [...send.items, { type: "image", sheet: "", capture: { mode: "used_range" } }] } })}><Plus className="h-4 w-4" />添加发送项</Button>
         </div>
       </CardContent>
     </Card>

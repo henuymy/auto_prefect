@@ -165,12 +165,23 @@ export const reportConfigJsonSchema = {
             properties: {
               type: { enum: ["image", "text"] },
               sheet: { type: "string", minLength: 1 },
+              capture: {
+                type: "object",
+                properties: {
+                  mode: { enum: ["used_range", "explicit_range", "current_region"] },
+                  range: { type: "string" },
+                  start_cell: { type: "string" },
+                },
+                additionalProperties: true,
+              },
               text: {
                 type: "object",
                 properties: {
-                  mode: { enum: ["used_range", "none"] },
+                  mode: { enum: ["used_range", "explicit_range", "current_region"] },
+                  range: { type: "string" },
+                  start_cell: { type: "string" },
                 },
-                additionalProperties: false,
+                additionalProperties: true,
               },
             },
             additionalProperties: false,

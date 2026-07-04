@@ -264,7 +264,10 @@ def save_draft(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
 
 
 def create_config(config: dict[str, Any]) -> dict[str, Any]:
-    return save_config(_safe_name(config.get("name") or "新建通报配置"), config)
+    name = _safe_name(config.get("name") or "新建通报配置")
+    if (REPORTS_DIR / f"{name}.json").exists():
+        raise FileExistsError(f"配置已存在: {name}")
+    return save_config(name, config)
 
 
 def delete_config(config_id: str, source: str = "published") -> list[str]:
