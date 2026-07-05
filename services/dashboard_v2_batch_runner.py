@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable, Iterator
 
 from sqlalchemy import select
@@ -113,7 +114,9 @@ def dashboard_v2_batch(
         ),
         lock_label="驾驶舱 V2 完整采集锁",
     ) as local_lock:
+        engine_started = perf_counter()
         engine = create_dashboard_engine()
+        engine_seconds = perf_counter() - engine_started
         run_store = MySQLV2CollectionRunStore(engine)
         record_created = False
         try:
@@ -129,11 +132,20 @@ def dashboard_v2_batch(
                 dashboard_config,
                 resolved_config_path.parent,
             )
+            session_started = perf_counter()
             session_result = prepare_session(
                 login_config,
                 base_dir=resolve_project_path("."),
                 force_refresh=force_refresh,
                 event_logger=event_logger,
+            )
+            session_seconds = perf_counter() - session_started
+            logger.info(
+                "驾驶舱 V2 批次前置耗时 batch_no=%s session=%.3fs "
+                "session_status=%s",
+                batch_no,
+                session_seconds,
+                session_result.get("status"),
             )
             if session_result.get("status") == "invalid":
                 raise RuntimeError(
@@ -169,8 +181,24 @@ def dashboard_v2_batch(
                 )
                 if recovered:
                     logger.warning("V2 已自动收口超时批次 count=%s", recovered)
+                targets_started = perf_counter()
                 targets = load_v2_collection_targets(engine)
+                targets_seconds = perf_counter() - targets_started
+                indicators_started = perf_counter()
                 indicator_plan = load_v2_metric_indicator_plan(engine)
+                indicators_seconds = perf_counter() - indicators_started
+                logger.info(
+                    "驾驶舱 V2 批次预加载耗时 batch_no=%s engine=%.3fs "
+                    "targets=%.3fs indicators=%.3fs target_count=%s "
+                    "request_indicator_count=%s store_indicator_count=%s",
+                    batch_no,
+                    engine_seconds,
+                    targets_seconds,
+                    indicators_seconds,
+                    len(targets),
+                    len(indicator_plan.get("request_codes", [])),
+                    len(indicator_plan.get("store_codes", [])),
+                )
                 if not targets:
                     raise RuntimeError("V2 没有启用的请求节点")
                 if not indicator_plan["request_codes"]:

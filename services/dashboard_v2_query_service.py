@@ -856,18 +856,34 @@ def get_dashboard_overview(
     indicator_codes: list[str] | None = None, include_acc: bool = True,
 ) -> dict[str, Any]:
     with Session(engine) as session:
-        branch_stmt = select(HierarchyNode).where(
-            HierarchyNode.node_type == "BRANCH", HierarchyNode.enabled.is_(True)
+        branches = _nodes(session, node_type="BRANCH")
+        branch = next(
+            (
+                row for row in branches
+                if branch_id is not None and row.id == branch_id
+            ),
+            None,
         )
-        if branch_id:
-            branch_stmt = branch_stmt.where(HierarchyNode.id == branch_id)
-        elif branch_code:
-            branch_stmt = branch_stmt.where(HierarchyNode.node_code == branch_code)
-        branch = session.scalar(branch_stmt.order_by(HierarchyNode.sort_order, HierarchyNode.id).limit(1))
+        if branch is None and branch_code:
+            branch = next(
+                (row for row in branches if row.node_code == branch_code),
+                None,
+            )
+        if branch is None:
+            branch = next(
+                (
+                    row for row in branches
+                    if "中原" in row.node_name or row.node_code == "AQ"
+                ),
+                branches[0] if branches else None,
+            )
         indicators = _enabled_indicators(session, indicator_codes)
-        nodes = (
-            _descendant_nodes(session, branch.id, include_root=True)
-            if branch else []
+        # Preserve the pre-V2 cockpit scope: the BRANCH board compares every
+        # branch, while lower-level boards are limited to the selected branch.
+        # Using only the selected branch's subtree makes the top board collapse
+        # to one row after the database migration.
+        nodes = branches + (
+            _descendant_nodes(session, branch.id) if branch else []
         )
         rows = _wide_rows(
             session,

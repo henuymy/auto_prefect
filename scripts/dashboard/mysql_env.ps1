@@ -7,11 +7,25 @@ $DashboardMySqlLocalEnvPath = if ($env:DASHBOARD_MYSQL_ENV_FILE) {
         Join-Path $RepoRoot $configuredPath
     }
 } else {
-    Join-Path $PSScriptRoot "mysql_env.local.ps1"
+    $sessionConfigPath = Join-Path $RepoRoot "config\dashboard\session.json"
+    if (-not (Test-Path -LiteralPath $sessionConfigPath)) {
+        throw "驾驶舱配置不存在，无法自动选择 MySQL profile: $sessionConfigPath"
+    }
+    try {
+        $schemaVersion = [int]((Get-Content -LiteralPath $sessionConfigPath -Raw | ConvertFrom-Json).schema_version)
+    } catch {
+        throw "读取驾驶舱 schema_version 失败: $sessionConfigPath"
+    }
+    $profileName = switch ($schemaVersion) {
+        1 { "mysql_env.v1.local.ps1" }
+        2 { "mysql_env.v2.local.ps1" }
+        default { throw "驾驶舱 schema_version 只支持 1/2，当前值: $schemaVersion" }
+    }
+    Join-Path $PSScriptRoot $profileName
 }
 
 if (Test-Path -LiteralPath $DashboardMySqlLocalEnvPath) {
     . $DashboardMySqlLocalEnvPath
-} elseif ($env:DASHBOARD_MYSQL_ENV_FILE) {
-    throw "DASHBOARD_MYSQL_ENV_FILE 指向的文件不存在: $DashboardMySqlLocalEnvPath"
+} else {
+    throw "驾驶舱 MySQL profile 不存在: $DashboardMySqlLocalEnvPath"
 }

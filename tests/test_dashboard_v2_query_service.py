@@ -206,6 +206,44 @@ def test_overview_returns_v2_tree_with_manager_and_without_legacy_fields():
     assert not ({"area_id", "area_code", "area_name", "level_type"} & manager.keys())
 
 
+def test_overview_keeps_all_branches_and_scopes_lower_levels_to_selected_branch():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO hierarchy_node
+                (id, node_type, node_code, node_name, parent_id, level_no, sort_order)
+            VALUES
+                (6, 'BRANCH', 'ZY', '郑东新区', 1, 2, 2),
+                (7, 'GRID', 'ZY701', '郑东网格', 6, 3, 1)
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_current
+                (id, node_id, indicator_id, collection_run_id, metric_value,
+                 stat_date, collected_at)
+            VALUES
+                (6, 6, 1, 2, 80, '2026-06-30', '2026-06-30 10:10:00'),
+                (7, 7, 1, 2, 40, '2026-06-30', '2026-06-30 10:10:00')
+        """))
+
+    result = get_dashboard_overview(
+        engine,
+        branch_code="AQ",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+    )
+
+    assert [
+        row["node_code"]
+        for row in result["rows"]
+        if row["node_type"] == "BRANCH"
+    ] == ["AQ", "ZY"]
+    assert [
+        row["node_code"]
+        for row in result["rows"]
+        if row["node_type"] == "GRID"
+    ] == ["AQ701"]
+
+
 def test_drill_down_follows_grid_manager_channel_levels():
     engine = _engine()
 

@@ -126,6 +126,19 @@ def collect_validate_metric_rows_v2(
                 "retry_strategy": strategy,
             }
         )
+        logger.info(
+            "驾驶舱 V2 第%s轮采集验证完成 batch_no=%s collect=%.3fs "
+            "requests=%s rows=%s expected_nodes=%s structure_drift=%s "
+            "recoverable_errors=%s",
+            attempt_no,
+            batch_no,
+            collect_seconds,
+            collection.get("request_count", 0),
+            collection.get("row_count", len(collection.get("rows", []))),
+            len(current_graph.areas),
+            structure_changed,
+            len(collection.get("recoverable_errors") or []),
+        )
 
         if not structure_changed and not collection.get("recoverable_errors"):
             validated = validate_v2_metric_coverage(
@@ -139,6 +152,14 @@ def collect_validate_metric_rows_v2(
                 phase="AREA_VALIDATED",
                 node_count=len(validated),
                 row_count=len(validated),
+            )
+            logger.info(
+                "驾驶舱 V2 验证通过 batch_no=%s matched=%s expected=%s "
+                "attempt=%s",
+                batch_no,
+                len(validated),
+                len(current_graph.areas),
+                attempt_no,
             )
             return _orchestration_result(
                 collection=collection,
@@ -207,6 +228,14 @@ def collect_validate_metric_rows_v2(
         phase="AREA_VALIDATED",
         node_count=len(validated),
         row_count=len(validated),
+    )
+    logger.info(
+        "驾驶舱 V2 候选结构验证通过 batch_no=%s matched=%s expected=%s "
+        "attempt=2 changed=%s",
+        batch_no,
+        len(validated),
+        len(final_observed.areas),
+        final_diff.changed,
     )
     return _orchestration_result(
         collection=final_collection,

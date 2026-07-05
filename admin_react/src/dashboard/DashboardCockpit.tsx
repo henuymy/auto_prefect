@@ -4215,16 +4215,15 @@ function LevelPanel({
       <div
         ref={dataTableRef}
         className="data-table"
-        style={{ padding: "10px 10px 0", ...dataTableStyle }}
+        style={{ padding: "6px 6px 0", ...dataTableStyle }}
         onScroll={useVirtualRows ? (event) => {
           setTableScrollTop(event.currentTarget.scrollTop);
           setTableViewportHeight(event.currentTarget.clientHeight);
         } : undefined}
       >
         <div className="table-row table-head">
-          <span>排名</span><span>名称</span>
-          <span>完成</span>
-          <span>目标</span>
+          <span>序</span><span>名称</span>
+          <span className="completion-head">完成/目标/进度</span>
           {changeWindows.map((minutes) => (
             <span key={minutes}>{minutes}分钟</span>
           ))}
@@ -4276,7 +4275,6 @@ function LoadingRows() {
     <div className="loading-rows" aria-label="正在加载数据">
       {Array.from({ length: 8 }).map((_, index) => (
         <div className="loading-row" key={index}>
-          <span />
           <span />
           <span />
           <span />
@@ -4366,12 +4364,13 @@ const DataRow = memo(function DataRow({
     >
       <span className="rank">{String(rank).padStart(2, "0")}</span>
       <span className="name" title={item.name}>{item.name}</span>
-      <span className="done-cell">
-        <strong>{formatNumber(item.done)}</strong>
+      <span className="completion-cell">
+        <strong>
+          {formatNumber(item.done)}
+          <i>/</i>
+          {item.target == null ? "--" : formatNumber(item.target)}
+        </strong>
         <em className={matrixProgressTone(pct(item))}>{fmtProgress(pct(item))}</em>
-      </span>
-      <span className="target-cell">
-        {item.target == null ? "--" : formatNumber(item.target)}
       </span>
       {changeWindows.map((minutes) => (
         <ChangeCell key={minutes} change={item.changes[minutes] ?? { value: null, rate: null }} />
@@ -4397,7 +4396,7 @@ function ChangeCell({ change }: { change: Change }) {
   return (
     <span className={`change ${cls}`}>
       {v != null ? signed(v) : "--"}
-      {" / "}
+      {"/"}
       {r != null ? signedPct(r * 100) : "--"}
     </span>
   );

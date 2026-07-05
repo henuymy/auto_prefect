@@ -165,11 +165,12 @@ $serverArgs = if ($UseSqliteDebug) { "server start --no-services --workers 1" } 
 $serverCommand = (Get-EnvBootstrap) + "`n& '$PythonExe' -m prefect $serverArgs"
 $workerCommand = (Get-EnvBootstrap) + "`n& '$PythonExe' -m prefect worker start --pool '$WorkPool' --type process"
 
-function Pause-DashboardDeployments {
+function Prepare-DashboardWorkerStart {
     param([string]$PythonExe)
 
     $script = @"
 import asyncio
+from datetime import datetime, timezone
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.filters import (
     FlowRunFilter,
@@ -218,49 +219,71 @@ async def main():
             for deployment in deployments
             if deployment.name in TARGETS
         }
-        for deployment in target_deployments.values():
-            if not getattr(deployment, "paused", False):
-                await client.pause_deployment(deployment.id)
-                print(f"paused:{deployment.name}")
-        # Pausing a deployment does not cancel runs that the scheduler created
-        # before the pause. Clear only work that has not started; a RUNNING
-        # collection may still own locks or a database transaction and must be
-        # allowed to finish before a replacement Worker starts.
-        queued = await read_target_runs(
-            client,
-            target_deployments,
-            {StateType.SCHEDULED, StateType.PENDING},
-        )
-        for run in queued:
-            deployment = target_deployments[run.deployment_id]
-            state_type = run.state.type.value if run.state else ""
-            await client.set_flow_run_state(
-                run.id,
-                Cancelled(message="启动 Worker 前清理已暂停驾驶舱的遗留队列"),
-                force=True,
-            )
-            print(f"cancelled:{deployment.name}:{run.id}:{state_type}")
+        paused_by_startup = []
+        try:
+            for deployment in target_deployments.values():
+                if not getattr(deployment, "paused", False):
+                    await client.pause_deployment(deployment.id)
+                    paused_by_startup.append(deployment)
+                    print(f"temporarily-paused:{deployment.name}")
 
-        in_flight = [
-            f"{target_deployments[run.deployment_id].name}:{run.id}"
-            for run in await read_target_runs(
+            # Pausing a deployment does not cancel runs that the scheduler
+            # created before the pause. Clear only work that has not started;
+            # a RUNNING collection may still own locks or a database
+            # transaction and must finish before a replacement Worker starts.
+            queued = await read_target_runs(
                 client,
                 target_deployments,
-                {StateType.RUNNING, StateType.CANCELLING, StateType.PAUSED},
+                {StateType.SCHEDULED, StateType.PENDING},
             )
-        ]
-        if in_flight:
-            raise RuntimeError(
-                "仍有驾驶舱批次 RUNNING/CANCELLING/PAUSED，拒绝启动 Worker，请等待完成: "
-                + ", ".join(in_flight)
-            )
+            now = datetime.now(timezone.utc)
+            for run in queued:
+                deployment = target_deployments[run.deployment_id]
+                state_type = run.state.type.value if run.state else ""
+                expected_start = getattr(run, "expected_start_time", None)
+                if (
+                    state_type == StateType.SCHEDULED.value
+                    and expected_start is not None
+                    and expected_start > now
+                ):
+                    print(
+                        f"preserved-future:{deployment.name}:"
+                        f"{run.id}:{expected_start.isoformat()}"
+                    )
+                    continue
+                await client.set_flow_run_state(
+                    run.id,
+                    Cancelled(message="启动 Worker 前清理已暂停驾驶舱的遗留队列"),
+                    force=True,
+                )
+                print(f"cancelled:{deployment.name}:{run.id}:{state_type}")
+
+            in_flight = [
+                f"{target_deployments[run.deployment_id].name}:{run.id}"
+                for run in await read_target_runs(
+                    client,
+                    target_deployments,
+                    {StateType.RUNNING, StateType.CANCELLING, StateType.PAUSED},
+                )
+            ]
+            if in_flight:
+                raise RuntimeError(
+                    "仍有驾驶舱批次 RUNNING/CANCELLING/PAUSED，拒绝启动 Worker，请等待完成: "
+                    + ", ".join(in_flight)
+                )
+        finally:
+            # Restore only deployments that this startup invocation paused.
+            # Deployments already paused by an operator must remain paused.
+            for deployment in paused_by_startup:
+                await client.resume_deployment(deployment.id)
+                print(f"resumed:{deployment.name}")
 
 asyncio.run(main())
 "@
 
     & $PythonExe -c $script
     if ($LASTEXITCODE -ne 0) {
-        throw "暂停 dashboard deployments 失败"
+        throw "启动 Worker 前的 dashboard 安全检查失败"
     }
 }
 
@@ -278,7 +301,7 @@ switch ($Mode) {
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 90 seconds. Refusing to start Worker."
         }
-        Pause-DashboardDeployments -PythonExe $PythonExe
+        Prepare-DashboardWorkerStart -PythonExe $PythonExe
         if ($Detached) {
             Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
             Write-Host "Started Prefect Worker in a new window."
@@ -292,7 +315,7 @@ switch ($Mode) {
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 90 seconds. Check the Prefect Server window logs."
         }
-        Pause-DashboardDeployments -PythonExe $PythonExe
+        Prepare-DashboardWorkerStart -PythonExe $PythonExe
         Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
         Write-Host "Started Server + Worker in two new windows."
         Write-Host "Open UI: http://127.0.0.1:4200"

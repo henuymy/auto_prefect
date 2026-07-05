@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import date
 from types import SimpleNamespace
 
@@ -85,3 +86,62 @@ def test_v2_transaction_retry_count_is_bounded():
             max_attempts=6,
             logger=SimpleNamespace(warning=lambda *args: None),
         )
+
+
+def test_v2_pipeline_restores_detailed_prefect_stage_logs(monkeypatch):
+    messages: list[str] = []
+
+    class Logger:
+        def info(self, message, *args):
+            messages.append(message % args)
+
+        def warning(self, message, *args):
+            messages.append(message % args)
+
+    orchestrated = {
+        "collection": {"request_count": 13, "row_count": 42},
+        "validated_rows": [{"node_id": 1}],
+        "validation": {"matched_node_count": 42},
+        "attempts": 1,
+        "attempt_timings": [{"attempt": 1, "collect_seconds": 0.2}],
+        "structure_changed": False,
+        "structure_change_summary": {"changed": False},
+    }
+    batch = SimpleNamespace(
+        config={},
+        indicator_plan={"request_codes": ["metric"], "store_codes": ["metric"]},
+        stage={},
+        lock_result={"acquired": True},
+        collect_validate=lambda *args, **kwargs: orchestrated,
+    )
+
+    @contextmanager
+    def fake_batch(**kwargs):
+        yield batch
+
+    monkeypatch.setattr(pipeline, "dashboard_v2_batch", fake_batch)
+    monkeypatch.setattr(pipeline, "create_simple_fetcher", lambda **kwargs: object())
+    monkeypatch.setattr(
+        pipeline,
+        "_write_v2_transaction_with_retry",
+        lambda **kwargs: {
+            "batch_no": "dashboard-v2-test",
+            "status": "SUCCESS",
+            "phase": "COMPLETED",
+            "transaction_attempt": 1,
+            "current_upsert_count": 42,
+            "snapshot_insert_count": 9,
+            "write_stats": {"chunk_size": 1000},
+        },
+    )
+
+    result = pipeline.execute_dashboard_v2_pipeline(
+        batch_no="dashboard-v2-test",
+        stat_date=date(2026, 7, 5),
+        event_logger=Logger(),
+    )
+
+    assert result["row_count"] == 42
+    assert result["timing"]["attempts"] == 1
+    assert any("V2" in message and "total=" in message for message in messages)
+    assert any("V2" in message and "stats=" in message for message in messages)

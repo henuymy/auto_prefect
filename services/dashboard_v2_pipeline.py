@@ -8,6 +8,7 @@ import time
 from calendar import monthrange
 from datetime import date, timedelta
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy import select
@@ -45,6 +46,7 @@ def execute_dashboard_v2_pipeline(
     period_type: str = "REALTIME",
 ) -> dict[str, Any]:
     """Collect, validate, and atomically write one V2 batch."""
+    pipeline_started = perf_counter()
     normalized_period = str(period_type or "").strip().upper()
     if normalized_period not in {"REALTIME", "DAY_ACC", "MONTH"}:
         raise ValueError("period_type 只支持 REALTIME/DAY_ACC/MONTH")
@@ -68,6 +70,7 @@ def execute_dashboard_v2_pipeline(
     ) as batch:
         config = batch.config
         plan = batch.indicator_plan
+        fetcher_started = perf_counter()
         fetch_metrics = create_simple_fetcher(
             stage=batch.stage,
             indicator_codes=plan["request_codes"],
@@ -79,6 +82,8 @@ def execute_dashboard_v2_pipeline(
                 config.get("collection_retry_delay_seconds", 0.5) or 0
             ),
         )
+        fetcher_setup_seconds = perf_counter() - fetcher_started
+        orchestrate_started = perf_counter()
         orchestrated = batch.collect_validate(
             fetch_metrics,
             max_workers=int(config.get("collection_max_workers", 24) or 24),
@@ -88,6 +93,8 @@ def execute_dashboard_v2_pipeline(
                 or "affected_grid"
             ),
         )
+        orchestrate_seconds = perf_counter() - orchestrate_started
+        write_started = perf_counter()
         write_result = _write_v2_transaction_with_retry(
             batch=batch,
             orchestrated=orchestrated,
@@ -96,12 +103,52 @@ def execute_dashboard_v2_pipeline(
             max_attempts=int(config.get("database_transaction_retries", 3) or 3),
             logger=logger,
         )
+        write_seconds = perf_counter() - write_started
+        total_seconds = perf_counter() - pipeline_started
+        timing = {
+            "fetcher_setup_seconds": round(fetcher_setup_seconds, 3),
+            "orchestrate_seconds": round(orchestrate_seconds, 3),
+            "write_seconds": round(write_seconds, 3),
+            "total_seconds": round(total_seconds, 3),
+            "attempts": orchestrated["attempts"],
+            "attempt_timings": orchestrated["attempt_timings"],
+        }
+        logger.info(
+            "驾驶舱 V2 批次总耗时 batch_no=%s period=%s total=%.3fs "
+            "fetcher=%.3fs orchestrate=%.3fs write=%.3fs attempts=%s",
+            batch_no,
+            normalized_period,
+            total_seconds,
+            fetcher_setup_seconds,
+            orchestrate_seconds,
+            write_seconds,
+            orchestrated["attempts"],
+        )
+        logger.info(
+            "驾驶舱 V2 批量写入统计 batch_no=%s current=%s snapshot=%s "
+            "acc=%s transaction_attempt=%s stats=%s",
+            batch_no,
+            write_result.get("current_upsert_count", 0),
+            write_result.get("snapshot_insert_count", 0),
+            write_result.get("acc_upsert_count", 0),
+            write_result.get("transaction_attempt", 1),
+            write_result.get("write_stats", {}),
+        )
+        if orchestrated["structure_changed"]:
+            logger.info(
+                "驾驶舱 V2 结构变化摘要 batch_no=%s summary=%s",
+                batch_no,
+                orchestrated["structure_change_summary"],
+            )
         return {
             **write_result,
             "trigger_type": trigger_type.upper(),
             "period_type": normalized_period,
             "query_date": query_date.isoformat(),
             "request_count": orchestrated["collection"]["request_count"],
+            "row_count": orchestrated["collection"].get(
+                "row_count", len(orchestrated.get("validated_rows", []))
+            ),
             "node_count": orchestrated["validation"]["matched_node_count"],
             "attempts": orchestrated["attempts"],
             "attempt_timings": orchestrated["attempt_timings"],
@@ -109,6 +156,7 @@ def execute_dashboard_v2_pipeline(
             "structure_change_summary": orchestrated[
                 "structure_change_summary"
             ],
+            "timing": timing,
             "lock": batch.lock_result,
         }
 
