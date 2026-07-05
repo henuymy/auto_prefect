@@ -847,7 +847,10 @@ body::-webkit-scrollbar-button,
   z-index: 45;
   top: calc(100% + 5px);
   right: 0;
-  left: 0;
+  left: auto;
+  width: max-content;
+  min-width: 142px;
+  max-width: min(180px, calc(100vw - 24px));
   overflow: hidden;
   padding: 5px;
   border: 1px solid rgba(148, 163, 184, 0.22);
@@ -867,6 +870,7 @@ body::-webkit-scrollbar-button,
   cursor: pointer;
   font-size: 13px;
   text-align: left;
+  white-space: nowrap;
 }
 
 .single-sort-popover button:hover,
@@ -1190,6 +1194,23 @@ body::-webkit-scrollbar-button,
 
 .clickable-row:hover {
   background: rgba(30, 41, 59, 0.42);
+}
+
+.clickable-row:focus-visible {
+  outline: 1px solid rgba(96, 165, 250, 0.72);
+  outline-offset: -1px;
+}
+
+.clickable-row.selected-row {
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.11), rgba(56, 189, 248, 0.025) 72%);
+}
+
+.clickable-row.selected-row:hover {
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.15), rgba(56, 189, 248, 0.045) 72%);
+}
+
+.clickable-row.selected-row .name {
+  color: #d9f2ff;
 }
 
 .multi-metric-view {

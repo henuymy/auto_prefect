@@ -219,6 +219,84 @@ def _nodes(
     return [row for row in result if parents.get(row.id, row.parent_id) == parent_id]
 
 
+def _drill_context_nodes(
+    session: Session,
+    *,
+    parent_id: int,
+    parent_node_type: str,
+    as_of: datetime | None = None,
+) -> list[HierarchyNode]:
+    """Return ancestor comparisons and the complete descendant drill scope."""
+    parent_type = _normalized_node_type(parent_node_type)
+    all_nodes = _nodes(session, as_of=as_of)
+    node_by_id = {row.id: row for row in all_nodes}
+    historical_parents = _historical_parent_map(session, as_of) if as_of else {}
+
+    def effective_parent(node: HierarchyNode) -> int | None:
+        return historical_parents.get(node.id, node.parent_id)
+
+    parent = node_by_id.get(parent_id)
+    if parent is None or parent.node_type != parent_type:
+        return []
+
+    branch_id: int | None = None
+    grid_id: int | None = None
+    manager_id: int | None = None
+    city_id: int | None = parent.id if parent_type == "CITY" else None
+    if parent_type == "BRANCH":
+        branch_id = parent.id
+        city_id = effective_parent(parent)
+    elif parent_type == "GRID":
+        branch_id = effective_parent(parent)
+        grid_id = parent.id
+        branch = node_by_id.get(branch_id) if branch_id is not None else None
+        city_id = effective_parent(branch) if branch is not None else None
+    elif parent_type == "CHANNEL_MANAGER":
+        grid_id = effective_parent(parent)
+        grid = node_by_id.get(grid_id) if grid_id is not None else None
+        branch_id = effective_parent(grid) if grid is not None else None
+        branch = node_by_id.get(branch_id) if branch_id is not None else None
+        city_id = effective_parent(branch) if branch is not None else None
+        manager_id = parent.id
+
+    branch_ids = {
+        row.id for row in all_nodes
+        if row.node_type == "BRANCH" and effective_parent(row) == city_id
+    }
+    grid_ids = {
+        row.id for row in all_nodes
+        if row.node_type == "GRID" and branch_id is not None
+        and effective_parent(row) == branch_id
+    }
+    manager_parent_ids = (
+        grid_ids if parent_type == "BRANCH"
+        else {grid_id} if grid_id is not None
+        else set()
+    )
+    manager_ids = {
+        row.id for row in all_nodes
+        if row.node_type == "CHANNEL_MANAGER"
+        and effective_parent(row) in manager_parent_ids
+    }
+    channel_parent_ids = (
+        {manager_id}
+        if parent_type == "CHANNEL_MANAGER" and manager_id is not None
+        else manager_ids
+    )
+    return [
+        row for row in all_nodes
+        if (
+            (row.node_type == "BRANCH" and row.id in branch_ids)
+            or (row.node_type == "GRID" and row.id in grid_ids)
+            or (row.node_type == "CHANNEL_MANAGER" and row.id in manager_ids)
+            or (
+                row.node_type == "CHANNEL"
+                and effective_parent(row) in channel_parent_ids
+            )
+        )
+    ]
+
+
 def _node_dto(node: HierarchyNode, *, parent_id: int | None = None) -> dict[str, Any]:
     return {
         "id": node.id,
@@ -604,7 +682,6 @@ def get_historical_with_changes(
     parent_node_type: str | None = None,
     branch_code: str | None = "AQ",
 ) -> dict[str, Any]:
-    del parent_node_type
     windows = change_windows or [5, 15, 30, 60]
     with Session(engine) as session:
         run = _latest_run(session, as_of=as_of)
@@ -616,6 +693,13 @@ def get_historical_with_changes(
                 scope_mode=scope_mode,
                 parent_id=parent_id,
                 branch_code=branch_code,
+                as_of=as_of,
+            )
+        elif parent_id is not None and parent_node_type:
+            nodes = _drill_context_nodes(
+                session,
+                parent_id=parent_id,
+                parent_node_type=parent_node_type,
                 as_of=as_of,
             )
         elif parent_id is not None:
@@ -997,17 +1081,60 @@ def get_drill_down(
                 "acc_rows": acc_rows,
                 "acc_row_count": len(acc_rows),
             }
-    result = get_current_with_changes(
-        engine, node_type=child_type, parent_id=parent_id,
-        change_windows=change_windows, indicator_codes=indicator_codes,
-    )
-    acc = get_acc_wide_table(
-        engine, period_type=period_type, node_type=child_type, parent_id=parent_id,
-        indicator_codes=indicator_codes,
-    ) if include_acc else {"rows": []}
-    result["tree_mode"] = "full"
-    result.update(acc_rows=acc["rows"], acc_row_count=len(acc["rows"]))
-    return result
+
+    # Keep ancestor comparison panels populated and refresh every descendant
+    # panel within the clicked scope. For example, clicking a BRANCH keeps its
+    # sibling branches visible while loading all GRID / CHANNEL_MANAGER /
+    # CHANNEL rows below that branch.
+    with Session(engine) as session:
+        context_nodes = _drill_context_nodes(
+            session,
+            parent_id=parent_id,
+            parent_node_type=parent_type,
+        )
+
+        indicators = _enabled_indicators(session, indicator_codes)
+        rows = _wide_rows(
+            session,
+            nodes=context_nodes,
+            indicators=indicators,
+            period_type=period_type,
+            include_targets=True,
+        )
+        run = _latest_run(session)
+        anchor = run.started_at if run else datetime.now()
+        _append_changes(
+            session,
+            rows=rows,
+            indicators=indicators,
+            anchor=anchor,
+            windows=change_windows or [5, 15, 30, 60],
+        )
+        acc_rows: list[dict[str, Any]] = []
+        if include_acc:
+            normalized_period = str(period_type).strip().upper()
+            acc_date = session.scalar(
+                select(func.max(MetricAccV2.stat_date)).where(
+                    MetricAccV2.period_type == normalized_period
+                )
+            ) or date.today()
+            acc_rows = _acc_rows_in_session(
+                session,
+                nodes=context_nodes,
+                indicators=indicators,
+                period_type=normalized_period,
+                target_day=acc_date,
+            )
+        return {
+            "data_mode": "REALTIME",
+            "tree_mode": "full",
+            "latest_run": _run_dto(run),
+            "indicators": [_indicator_dto(row) for row in indicators],
+            "rows": rows,
+            "row_count": len(rows),
+            "acc_rows": acc_rows,
+            "acc_row_count": len(acc_rows),
+        }
 
 
 __all__ = [

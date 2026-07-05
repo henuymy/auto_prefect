@@ -262,8 +262,101 @@ def test_drill_down_follows_grid_manager_channel_levels():
         include_acc=False,
     )
 
-    assert [row["node_type"] for row in managers["rows"]] == ["CHANNEL_MANAGER"]
-    assert [row["node_type"] for row in channels["rows"]] == ["CHANNEL"]
+    assert [row["node_type"] for row in managers["rows"]] == [
+        "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL",
+    ]
+    assert [row["node_type"] for row in channels["rows"]] == [
+        "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL",
+    ]
+
+
+def test_full_drill_down_keeps_v1_ancestor_comparison_context():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO hierarchy_node
+                (id, node_type, node_code, node_name, parent_id, level_no, sort_order)
+            VALUES
+                (6, 'BRANCH', 'ZY', '郑东新区', 1, 2, 2),
+                (7, 'GRID', 'AQ702', '航海网格', 2, 3, 2),
+                (8, 'CHANNEL_MANAGER', 'M002&AQ701', '李经理', 3, 4, 2),
+                (9, 'CHANNEL', 'C002', '其他经理渠道', 8, 5, 2),
+                (10, 'CITY', 'B', '开封市', NULL, 1, 2),
+                (11, 'BRANCH', 'BQ', '开封分公司', 10, 2, 1)
+        """))
+
+    branch = get_drill_down(
+        engine,
+        parent_id=2,
+        parent_node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+    )
+    grid = get_drill_down(
+        engine,
+        parent_id=3,
+        parent_node_type="GRID",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+    )
+    manager = get_drill_down(
+        engine,
+        parent_id=4,
+        parent_node_type="CHANNEL_MANAGER",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+    )
+
+    assert [row["node_code"] for row in branch["rows"]] == [
+        "AQ", "ZY", "AQ701", "AQ702", "M001&AQ701", "M002&AQ701", "C001", "C002",
+    ]
+    assert [row["node_code"] for row in grid["rows"]] == [
+        "AQ", "ZY", "AQ701", "AQ702", "M001&AQ701", "M002&AQ701", "C001", "C002",
+    ]
+    assert [row["node_code"] for row in manager["rows"]] == [
+        "AQ", "ZY", "AQ701", "AQ702", "M001&AQ701", "M002&AQ701", "C001",
+    ]
+
+
+def test_historical_drill_down_matches_realtime_descendant_scope():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO hierarchy_node
+                (id, node_type, node_code, node_name, parent_id, level_no, sort_order)
+            VALUES
+                (6, 'BRANCH', 'ZY', '郑东新区', 1, 2, 2),
+                (7, 'GRID', 'AQ702', '航海网格', 2, 3, 2),
+                (8, 'CHANNEL_MANAGER', 'M002&AQ701', '李经理', 3, 4, 2),
+                (9, 'CHANNEL', 'C002', '其他经理渠道', 8, 5, 2),
+                (10, 'CITY', 'B', '开封市', NULL, 1, 2),
+                (11, 'BRANCH', 'BQ', '开封分公司', 10, 2, 1)
+        """))
+
+    common = {
+        "engine": engine,
+        "as_of": datetime(2026, 6, 30, 10, 5),
+        "indicator_codes": ["channel_count"],
+    }
+    branch = get_historical_with_changes(
+        **common, parent_id=2, parent_node_type="BRANCH",
+    )
+    grid = get_historical_with_changes(
+        **common, parent_id=3, parent_node_type="GRID",
+    )
+    manager = get_historical_with_changes(
+        **common, parent_id=4, parent_node_type="CHANNEL_MANAGER",
+    )
+
+    assert [row["node_code"] for row in branch["rows"]] == [
+        "AQ", "ZY", "AQ701", "AQ702", "M001&AQ701", "M002&AQ701", "C001", "C002",
+    ]
+    assert [row["node_code"] for row in grid["rows"]] == [
+        "AQ", "ZY", "AQ701", "AQ702", "M001&AQ701", "M002&AQ701", "C001", "C002",
+    ]
+    assert [row["node_code"] for row in manager["rows"]] == [
+        "AQ", "ZY", "AQ701", "AQ702", "M001&AQ701", "M002&AQ701", "C001",
+    ]
 
 
 def test_grid_drill_down_can_flatten_channels_for_legacy_interaction():

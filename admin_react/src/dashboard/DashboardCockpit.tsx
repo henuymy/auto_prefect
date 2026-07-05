@@ -1042,6 +1042,21 @@ export function DashboardCockpit() {
     () => normalizeDrillStack(drillStack),
     [drillStack],
   );
+  const selectedNodeIds = useMemo(() => {
+    const selected: Partial<Record<LevelKey, number>> = {};
+    for (const item of normalizedDrillStack) {
+      if (LEVEL_CONFIG.some((level) => level.key === item.nodeType)) {
+        selected[item.nodeType as LevelKey] = item.nodeId;
+      }
+    }
+    if (selected.BRANCH == null && scopeMode === "default") {
+      const defaultBranch = data?.changesRows.find(
+        (row) => row.node_type === "BRANCH" && isDefaultBranch(row),
+      );
+      if (defaultBranch) selected.BRANCH = defaultBranch.id;
+    }
+    return selected;
+  }, [data?.changesRows, normalizedDrillStack, scopeMode]);
   const drillTarget = normalizedDrillStack.length > 0
     ? normalizedDrillStack[normalizedDrillStack.length - 1]
     : null;
@@ -2030,7 +2045,7 @@ export function DashboardCockpit() {
       {mode === "single" ? (
       <>
       <main className="board-grid" style={{ marginBottom: 14 }}>
-        <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -14 }}>
+        <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -6 }}>
           <div className="section-title-copy">
             <strong>{dataTimeMode === "history" ? "历史时刻" : "当日实时"}</strong>
             <span>
@@ -2049,6 +2064,7 @@ export function DashboardCockpit() {
             onSortChange={(k) => setDaySorts((prev) => ({ ...prev, [level.key]: k as SortKey }))}
             changeWindows={changeWindows}
             onDrill={handleDrill}
+            selectedNodeId={selectedNodeIds[level.key]}
             levelAllActive={scopeMode === "all" || Boolean(dayLevelAllMode[level.key])}
             levelAllPending={
               Boolean(backgroundLoadingLevels[level.key]) || (
@@ -2079,7 +2095,7 @@ export function DashboardCockpit() {
 
       {SHOW_MONTH_ACCUMULATION && monthLevels.length > 0 && (
         <main className="board-grid">
-          <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -14 }}>
+          <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -6 }}>
             <strong>当月累计</strong><span>前一日期累计 + 当日实时</span>
           </div>
           {monthLevels.map((level) => (
@@ -2090,6 +2106,7 @@ export function DashboardCockpit() {
               onSortChange={(k) => setMonthSorts((prev) => ({ ...prev, [level.key]: k as SortKey }))}
               changeWindows={changeWindows}
               onDrill={handleDrill}
+              selectedNodeId={selectedNodeIds[level.key]}
               levelAllActive={Boolean(monthLevelAllMode[level.key])}
               levelAllPending={
                 loading &&
@@ -4089,6 +4106,7 @@ function LevelPanel({
   onSortChange,
   changeWindows,
   onDrill,
+  selectedNodeId,
   levelAllActive,
   levelAllPending,
   staleIndicatorData,
@@ -4105,6 +4123,7 @@ function LevelPanel({
   onSortChange: (k: SortKey) => void;
   changeWindows: number[];
   onDrill: (row: BoardRow, nodeType: string) => void;
+  selectedNodeId?: number;
   levelAllActive?: boolean;
   levelAllPending?: boolean;
   staleIndicatorData?: boolean;
@@ -4280,6 +4299,7 @@ function LevelPanel({
             changeWindows={changeWindows}
             nodeType={level.key}
             onDrill={onDrill}
+            selected={r.nodeId === selectedNodeId}
           />
         ))}
         {!hideStaleRows && !showLoadingPlaceholder && virtualRows.bottomHeight > 0 && (
@@ -4386,18 +4406,33 @@ const DataRow = memo(function DataRow({
   changeWindows,
   nodeType,
   onDrill,
+  selected,
 }: {
   rank: number;
   item: BoardRow;
   changeWindows: number[];
   nodeType: LevelKey;
   onDrill: (row: BoardRow, nodeType: string) => void;
+  selected?: boolean;
 }) {
   const clickable = nodeType !== "CHANNEL";
+  const activate = () => onDrill(item, nodeType);
   return (
     <div
-      className={clickable ? "table-row clickable-row" : "table-row"}
-      onClick={clickable ? () => onDrill(item, nodeType) : undefined}
+      className={clickable
+        ? `table-row clickable-row${selected ? " selected-row" : ""}`
+        : "table-row"}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-current={selected ? "true" : undefined}
+      aria-label={clickable ? `${item.name}${selected ? "，当前选中" : "，点击下探"}` : undefined}
+      onClick={clickable ? activate : undefined}
+      onKeyDown={clickable ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          activate();
+        }
+      } : undefined}
     >
       <span className="rank">{String(rank).padStart(2, "0")}</span>
       <span className="name" title={item.name}>{item.name}</span>
