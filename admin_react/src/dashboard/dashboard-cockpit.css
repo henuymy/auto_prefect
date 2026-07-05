@@ -1,4 +1,4 @@
-html,
+﻿html,
 body,
 #root {
   width: 100%;
@@ -171,7 +171,7 @@ body::-webkit-scrollbar-button,
 }
 
 .history-time-input span {
-  font-size: 11px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
@@ -374,7 +374,7 @@ body::-webkit-scrollbar-button,
   appearance: none;
   background: transparent;
   color: #f8fbff;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 800;
 }
 
@@ -618,10 +618,10 @@ body::-webkit-scrollbar-button,
 
 .loading-row {
   display: grid;
-  grid-template-columns: 18px minmax(22px, 0.55fr) minmax(94px, 1.4fr) repeat(3, minmax(46px, 0.72fr));
+  grid-template-columns: 24px minmax(52px, 1.1fr) minmax(80px, 1.35fr) repeat(3, minmax(46px, 0.7fr));
   align-items: center;
   min-height: 34px;
-  column-gap: 3px;
+  column-gap: 6px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.055);
 }
 
@@ -676,7 +676,7 @@ body::-webkit-scrollbar-button,
 .panel-head {
   justify-content: space-between;
   height: 50px;
-  padding: 0 8px;
+  padding: 0 10px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
@@ -684,7 +684,7 @@ body::-webkit-scrollbar-button,
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 5px;
+  gap: 8px;
 }
 
 .panel-actions {
@@ -752,13 +752,13 @@ body::-webkit-scrollbar-button,
 
 .panel-index {
   color: #b8c2d2;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 950;
 }
 
 .panel-title {
   overflow: hidden;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 900;
   color: #f8fafc;
   text-overflow: ellipsis;
@@ -978,10 +978,10 @@ body::-webkit-scrollbar-button,
 
 .table-row {
   display: grid;
-  grid-template-columns: 18px minmax(22px, 0.55fr) minmax(94px, 1.4fr) repeat(3, minmax(46px, 0.72fr));
+  grid-template-columns: 24px minmax(52px, 1.1fr) minmax(80px, 1.35fr) repeat(3, minmax(46px, 0.7fr));
   align-items: center;
   min-height: 34px;
-  column-gap: 3px;
+  column-gap: 6px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.075);
   font-size: 12px;
 }
@@ -1002,7 +1002,7 @@ body::-webkit-scrollbar-button,
   overflow: hidden;
   color: #eef4fb;
   font-weight: 800;
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1011,8 +1011,8 @@ body::-webkit-scrollbar-button,
   display: grid;
   grid-template-columns: auto auto;
   align-items: baseline;
-  column-gap: 4px;
-  justify-content: end;
+  column-gap: 5px;
+  justify-content: center;
   width: 100%;
 }
 
@@ -1022,7 +1022,7 @@ body::-webkit-scrollbar-button,
   color: #94a3b8;
   font-size: 10px;
   line-height: 1.1;
-  text-align: right;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3029,7 +3029,7 @@ body::-webkit-scrollbar-button,
   }
 
   .table-row {
-    grid-template-columns: 34px minmax(112px, 1fr) 92px repeat(3, 78px);
+    grid-template-columns: 36px minmax(120px, 1fr) 100px repeat(3, 82px);
     min-width: 560px;
   }
 
