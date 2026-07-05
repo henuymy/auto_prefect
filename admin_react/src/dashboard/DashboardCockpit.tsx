@@ -1383,6 +1383,12 @@ export function DashboardCockpit() {
         ? latestRun?.started_at || latestRun?.finished_at
         : latestRun?.finished_at;
       const levelOverrides: Partial<Record<LevelKey, LevelOverrideData>> = {};
+      const cleanManagerRows = <T extends DashboardRow>(rows: T[]): T[] =>
+        rows.map((r) => {
+          if (r.node_type !== "CHANNEL_MANAGER") return r;
+          const name = r.node_name.split("&")[0].trim();
+          return { ...r, node_name: name };
+        });
       const makeData = (): FetchedData => ({
         online: Boolean(latestRun),
         latestRun,
@@ -1391,8 +1397,8 @@ export function DashboardCockpit() {
           : nowText(),
         indicators: changesData.indicators,
         indicatorCatalog: catalog.indicators,
-        changesRows: changesData.rows,
-        accRows,
+        changesRows: cleanManagerRows(changesData.rows),
+        accRows: cleanManagerRows(accRows),
         levelOverrides: { ...levelOverrides },
         coverage: responseCoverage,
         historyMeta: responseHistoryMeta,
@@ -1460,8 +1466,8 @@ export function DashboardCockpit() {
                     .catch(() => [])
                 : [];
               levelOverrides[level] = {
-                changesRows: overrideChanges.rows,
-                accRows: overrideAccRows,
+                changesRows: cleanManagerRows(overrideChanges.rows),
+                accRows: cleanManagerRows(overrideAccRows),
                 coverage: overrideChanges.coverage,
               };
               if (progressiveAllLevels && seq === fetchSeqRef.current) {
@@ -4114,6 +4120,35 @@ function LevelPanel({
   const [tableScrollTop, setTableScrollTop] = useState(0);
   const [tableViewportHeight, setTableViewportHeight] = useState(600);
   const dataTableRef = useRef<HTMLDivElement>(null);
+  const [colGrid, setColGrid] = useState<string | null>(null);
+  const colGridRef = useRef<string | null>(null);
+  colGridRef.current = colGrid;
+  const handleColResize = useCallback((colIdx: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    const tableEl = dataTableRef.current;
+    if (!tableEl) return;
+    const headRow = tableEl.querySelector(".table-head") as HTMLElement | null;
+    if (!headRow) return;
+    const cells = Array.from(headRow.children) as HTMLElement[];
+    const startWidths = cells.map((cell) => cell.offsetWidth);
+    const startX = e.clientX;
+    const columnGap = 6;
+    const MIN_COL = 28;
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX;
+      const next = Math.max(MIN_COL, startWidths[colIdx] + delta);
+      const px = cells.map((_, i) => (i === colIdx ? next : startWidths[i]) + "px");
+      const grid = px.join(" ");
+      colGridRef.current = grid;
+      setColGrid(grid);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
   const rows = useMemo(
     () => sortRows(level.dayRows, sortKey, sortDirection),
     [level.dayRows, sortDirection, sortKey],
@@ -4215,18 +4250,20 @@ function LevelPanel({
       <div
         ref={dataTableRef}
         className="data-table"
-        style={{ padding: "6px 6px 0", ...dataTableStyle }}
+        style={{ padding: "6px 6px 0", ...dataTableStyle, ...(colGrid ? { "--col-grid": colGrid } : {}) } as React.CSSProperties}
         onScroll={useVirtualRows ? (event) => {
           setTableScrollTop(event.currentTarget.scrollTop);
           setTableViewportHeight(event.currentTarget.clientHeight);
         } : undefined}
       >
         <div className="table-row table-head">
-          <span>序</span><span>名称</span>
-          <span className="completion-head">完成/目标/进度</span>
-          {changeWindows.map((minutes) => (
-            <span key={minutes}>{minutes}分钟</span>
+          <span className="col-resize-wrap">序<i className="col-resize-handle" onMouseDown={(e) => handleColResize(0, e)} /></span>
+          <span className="col-resize-wrap">名称<i className="col-resize-handle" onMouseDown={(e) => handleColResize(1, e)} /></span>
+          <span className="col-resize-wrap completion-head">完成/目标/进度<i className="col-resize-handle" onMouseDown={(e) => handleColResize(2, e)} /></span>
+          {changeWindows.slice(0, -1).map((minutes, ci) => (
+            <span key={minutes} className="col-resize-wrap">{minutes}分钟<i className="col-resize-handle" onMouseDown={(e) => handleColResize(3 + ci, e)} /></span>
           ))}
+          {changeWindows.length > 0 && <span>{changeWindows[changeWindows.length - 1]}分钟</span>}
         </div>
         {!hideStaleRows && !showLoadingPlaceholder && virtualRows.topHeight > 0 && (
           <div
