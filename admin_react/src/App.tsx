@@ -13,7 +13,7 @@ import { TemplateDrawer } from "@/components/templates/TemplateDrawer";
 import { VersionDrawer } from "@/components/versions/VersionDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { createConfig, deleteConfig, deleteRuntime, getConfig, getSystemStatus, listConfigVersions, listConfigs, listRunLogs, listRuntime, previewRuntimeCleanup, publishConfig, realTestRunConfig, restoreConfigVersion, runRuntimeCleanup, saveDraftConfig, testRunConfig, updateConfig, validateConfig } from "@/lib/api";
+import { createConfig, deleteConfig, deleteDeployment, deleteRuntime, getConfig, getSystemStatus, listConfigVersions, listConfigs, listRunLogs, listRuntime, previewRuntimeCleanup, publishConfig, realTestRunConfig, restoreConfigVersion, runRuntimeCleanup, saveDraftConfig, testRunConfig, updateConfig, validateConfig } from "@/lib/api";
 import type { ConfigSource } from "@/lib/api";
 import { uid } from "@/lib/utils";
 import { validateReportConfig } from "@/schemas/reportConfigSchema";
@@ -143,6 +143,7 @@ export default function App() {
   const [jsonFocusPath, setJsonFocusPath] = useState<JsonPath>([]);
   const [activeConfigTab, setActiveConfigTab] = useState<ConfigFormTab>("base");
   const [publishing, setPublishing] = useState(false);
+  const [deletingDeployment, setDeletingDeployment] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testStep, setTestStep] = useState(0);
   const [realTesting, setRealTesting] = useState(false);
@@ -526,6 +527,31 @@ export default function App() {
     }
   }
 
+  async function removeDeployment() {
+    if (!config || isTemporaryConfigId(config.id)) return;
+    const deploymentName = `auto-notify-flow/notify-${config.name}`;
+    if (!window.confirm(`确定删除 Deployment「${deploymentName}」吗？\n\n该操作只删除 Prefect 部署，不会删除当前配置文件。`)) return;
+
+    const toastId = toast.loading("正在删除 Deployment", { description: deploymentName });
+    setDeletingDeployment(true);
+    try {
+      const result = await deleteDeployment(config);
+      setLogs(await listRunLogs());
+      setLogsOpen(true);
+      if (result.deleted) {
+        toast.success("Deployment 已删除", { id: toastId, description: result.deploymentName });
+      } else {
+        toast.info("Deployment 不存在", { id: toastId, description: result.deploymentName });
+      }
+    } catch (error) {
+      setLogs(await listRunLogs());
+      setLogsOpen(true);
+      toast.error("删除 Deployment 失败", { id: toastId, description: toastDescription(error), duration: 5200 });
+    } finally {
+      setDeletingDeployment(false);
+    }
+  }
+
   async function openRuntime(path = runtimePath) {
     setRuntimeLoading(true);
     try {
@@ -667,6 +693,9 @@ export default function App() {
           canDelete={!isTemporaryConfigId(config.id)}
           onPublish={publish}
           publishing={publishing}
+          onDeleteDeployment={removeDeployment}
+          deletingDeployment={deletingDeployment}
+          canDeleteDeployment={!isTemporaryConfigId(config.id)}
         />
         {testing && (
           <div className="border-b border-sky-200 bg-sky-50/90 px-3 py-3 text-xs text-sky-900 dark:border-sky-500/30 dark:bg-sky-950/35 dark:text-sky-100 lg:px-5">

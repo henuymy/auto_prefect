@@ -92,6 +92,53 @@ def _prefect_api_request(method: str, path: str, payload: Any | None = None) -> 
     return json.loads(response_body) if response_body else None
 
 
+def delete_deployment(config: dict[str, Any]) -> dict[str, Any]:
+    """Delete the Prefect deployment matching the current report name."""
+    report_name = _safe_name(config.get("name") or config.get("id") or "未命名配置")
+    deployment_name = f"notify-{report_name}"
+    deployment_path = "/".join(
+        urllib.parse.quote(part, safe="") for part in ["deployments", "name", FLOW_NAME, deployment_name]
+    )
+    try:
+        deployment_response = _prefect_api_request("GET", deployment_path)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return {
+                "deleted": False,
+                "deploymentId": "",
+                "deploymentName": f"{FLOW_NAME}/{deployment_name}",
+                "message": f"未找到 Prefect Deployment: {FLOW_NAME}/{deployment_name}",
+            }
+        raise RuntimeError(f"Prefect deployment 查询失败: HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Prefect deployment 查询失败: {exc}") from exc
+
+    deployment_id = (deployment_response or {}).get("id")
+    if not deployment_id:
+        raise RuntimeError(f"Prefect deployment 查询结果缺少 ID: {FLOW_NAME}/{deployment_name}")
+
+    try:
+        _prefect_api_request("DELETE", f"deployments/{urllib.parse.quote(str(deployment_id), safe='')}")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return {
+                "deleted": False,
+                "deploymentId": str(deployment_id),
+                "deploymentName": f"{FLOW_NAME}/{deployment_name}",
+                "message": f"Prefect Deployment 已不存在: {FLOW_NAME}/{deployment_name}",
+            }
+        raise RuntimeError(f"Prefect deployment 删除失败: HTTP {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Prefect deployment 删除失败: {exc}") from exc
+
+    return {
+        "deleted": True,
+        "deploymentId": str(deployment_id),
+        "deploymentName": f"{FLOW_NAME}/{deployment_name}",
+        "message": f"已删除 Prefect Deployment: {FLOW_NAME}/{deployment_name}",
+    }
+
+
 def fast_toggle_schedule(config: dict[str, Any]) -> dict[str, Any] | None:
     """Toggle existing matching schedules via the Prefect API, without redeploying."""
     deployment = config.get("deployment") or {}

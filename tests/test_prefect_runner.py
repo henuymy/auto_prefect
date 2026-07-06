@@ -207,6 +207,39 @@ def test_fast_toggle_schedule_falls_back_when_crons_do_not_match(monkeypatch):
     assert result is None
 
 
+def test_delete_deployment_resolves_name_then_deletes_by_id(monkeypatch):
+    calls = []
+
+    def fake_request(method, path, payload=None):
+        calls.append((method, path, payload))
+        if method == "GET":
+            return {"id": "deployment-1"}
+        return None
+
+    monkeypatch.setattr(prefect_runner, "_prefect_api_request", fake_request)
+
+    result = prefect_runner.delete_deployment({"name": "每日日报"})
+
+    assert calls == [
+        ("GET", "deployments/name/auto-notify-flow/notify-%E6%AF%8F%E6%97%A5%E6%97%A5%E6%8A%A5", None),
+        ("DELETE", "deployments/deployment-1", None),
+    ]
+    assert result["deleted"] is True
+    assert result["deploymentId"] == "deployment-1"
+
+
+def test_delete_deployment_treats_missing_deployment_as_idempotent(monkeypatch):
+    def fake_request(method, path, payload=None):
+        raise prefect_runner.urllib.error.HTTPError(path, 404, "not found", {}, None)
+
+    monkeypatch.setattr(prefect_runner, "_prefect_api_request", fake_request)
+
+    result = prefect_runner.delete_deployment({"name": "日报"})
+
+    assert result["deleted"] is False
+    assert result["deploymentId"] == ""
+
+
 def test_validate_config_requires_compare_engine_and_workers():
     issues = prefect_runner.validate_config(
         {

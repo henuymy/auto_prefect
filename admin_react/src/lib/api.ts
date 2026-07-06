@@ -228,6 +228,20 @@ export async function publishConfig(config: ReportConfig) {
   return { ...result, log };
 }
 
+export async function deleteDeployment(config: ReportConfig) {
+  const result = await request<{
+    deleted: boolean;
+    deploymentId: string;
+    deploymentName: string;
+    message: string;
+  }>(`/api/configs/${encodeURIComponent(config.id)}/deployment`, {
+    method: "DELETE",
+    body: JSON.stringify(normalizeReportConfig(config)),
+  });
+  const log = pushLog("success", "删除 Deployment", result.message, result.deploymentId);
+  return { ...result, log };
+}
+
 export async function listRunLogs() {
   try {
     const backendLogs = await request<RunLog[]>("/api/run-logs");

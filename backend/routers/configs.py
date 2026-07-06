@@ -202,3 +202,20 @@ def publish_config(config_id: str, config: dict):
         message, details = _split_error_detail(str(exc), "发布到调度失败")
         append_log("failed", "发布到调度失败", message, details)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.delete("/{config_id}/deployment")
+def delete_deployment(config_id: str, config: dict):
+    try:
+        result = prefect_runner.delete_deployment(config)
+        append_log(
+            "success",
+            "删除 Deployment",
+            result.get("message", ""),
+            result.get("deploymentId", ""),
+        )
+        return result
+    except RuntimeError as exc:
+        message, details = _split_error_detail(str(exc), "删除 Deployment 失败")
+        append_log("failed", "删除 Deployment 失败", message, details)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
