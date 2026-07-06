@@ -8,10 +8,13 @@ from services import dashboard_v2_query_service
 
 from services.dashboard_v2_query_service import (
     get_acc_wide_table,
+    get_current_with_changes,
     get_dashboard_matrix_page,
     get_dashboard_overview,
     get_drill_down,
     get_historical_with_changes,
+    get_history_options,
+    get_history_range,
 )
 from services.dashboard_v2_custom_indicator_service import (
     delete_custom_indicator,
@@ -208,6 +211,54 @@ def test_overview_returns_v2_tree_with_manager_and_without_legacy_fields():
     assert not ({"area_id", "area_code", "area_name", "level_type"} & manager.keys())
 
 
+def test_change_window_matches_v1_finished_anchor_and_nearby_snapshot():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            UPDATE collection_run
+            SET started_at = '2026-06-30 10:05:00',
+                finished_at = '2026-06-30 10:09:00'
+            WHERE id = 1
+        """))
+        connection.execute(text("""
+            UPDATE collection_run
+            SET finished_at = '2026-06-30 10:14:00'
+            WHERE id = 2
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_snapshot
+                (id, collected_at, collection_run_id, node_id, indicator_id, metric_value)
+            VALUES (6, '2026-06-30 10:09:00', 1, 2, 1, 95)
+        """))
+
+    result = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+    )
+
+    change = result["rows"][0]["changes"]["channel_count"]["change_5min"]
+    assert change == {"value": 5, "rate": 5 / 95}
+
+
+def test_history_availability_matches_frontend_minute_contract():
+    engine = _engine()
+
+    assert get_history_range(engine) == {
+        "earliest_at": "2026-06-30T10:00:00.000",
+        "latest_at": "2026-06-30T10:10:00.000",
+    }
+    assert get_history_options(engine, indicator_codes=["channel_count"]) == {
+        "dates": [{"date": "2026-06-30", "times": ["10:10", "10:00"]}],
+        "date_count": 1,
+    }
+    assert get_history_options(engine, indicator_codes=["missing"]) == {
+        "dates": [],
+        "date_count": 0,
+    }
+
+
 def test_overview_keeps_all_branches_and_scopes_lower_levels_to_selected_branch():
     engine = _engine()
     with engine.begin() as connection:
@@ -389,6 +440,35 @@ def test_sparse_history_carries_channel_value_forward_without_using_current():
 
     assert result["rows"][0]["metrics"]["channel_count"] == 10
     assert result["rows"][0]["collected_at"] == "2026-06-30T10:00:00.000"
+
+
+def test_historical_time_uses_v1_completed_batch_and_started_anchor():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO metric_snapshot
+                (id, collected_at, collection_run_id, node_id, indicator_id, metric_value)
+            VALUES
+                (6, '2026-06-30 10:05:00', 1, 2, 1, 95),
+                (7, '2026-06-30 10:10:00', 2, 2, 1, 100),
+                (8, '2026-06-30 10:12:00', 2, 2, 1, 110)
+        """))
+
+    result = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 30, 10, 14, 30),
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+    )
+
+    row = result["rows"][0]
+    assert row["metrics"]["channel_count"] == 100
+    assert row["changes"]["channel_count"]["change_5min"] == {
+        "value": 5,
+        "rate": 5 / 95,
+    }
+    assert result["history_meta"]["fallback_seconds"] == 240
 
 
 def test_default_matrix_scope_keeps_manager_under_selected_branch():

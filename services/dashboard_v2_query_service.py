@@ -14,7 +14,7 @@ from hashlib import sha256
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Engine, func, or_, select
+from sqlalchemy import Engine, bindparam, func, or_, select, text
 from sqlalchemy.orm import Session, aliased
 
 from models.dashboard_v2 import (
@@ -28,7 +28,11 @@ from models.dashboard_v2 import (
     MetricSnapshotV2,
     TargetPlan,
 )
-from services.dashboard_query_service import parse_change_window_minutes
+from services.dashboard_query_service import (
+    CHANGE_WINDOW_TOLERANCE_MINUTES,
+    SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS,
+    parse_change_window_minutes,
+)
 from services.dashboard_v2_target_service import load_v2_target_values
 
 
@@ -162,6 +166,25 @@ def _latest_run(session: Session, *, as_of: datetime | None = None) -> Collectio
         stmt = stmt.where(CollectionRunV2.started_at <= as_of)
     return session.scalar(
         stmt.order_by(CollectionRunV2.started_at.desc(), CollectionRunV2.id.desc()).limit(1)
+    )
+
+
+def _historical_run(session: Session, as_of: datetime) -> CollectionRunV2 | None:
+    """Resolve the completed historical batch using the V1 rules."""
+    batch_time = func.coalesce(CollectionRunV2.started_at, CollectionRunV2.finished_at)
+    return session.scalar(
+        select(CollectionRunV2)
+        .where(
+            CollectionRunV2.run_type == "REALTIME",
+            CollectionRunV2.status == "SUCCESS",
+            CollectionRunV2.finished_at.is_not(None),
+            batch_time <= as_of,
+            select(MetricSnapshotV2.id)
+            .where(MetricSnapshotV2.collected_at <= CollectionRunV2.finished_at)
+            .exists(),
+        )
+        .order_by(batch_time.desc(), CollectionRunV2.id.desc())
+        .limit(1)
     )
 
 
@@ -519,11 +542,11 @@ def _append_changes(
         return
     components, physical = _components(session, indicators)
     for minutes in windows:
-        historical = _value_rows_at(
+        historical = _change_value_rows_at(
             session,
             node_ids=[row["id"] for row in rows],
             indicator_ids=[row.id for row in physical],
-            as_of=anchor - timedelta(minutes=minutes),
+            cutoff=anchor - timedelta(minutes=minutes),
         )
         values: dict[int, dict[str, Any]] = defaultdict(dict)
         code_by_id = {row.id: row.code for row in physical}
@@ -540,8 +563,107 @@ def _append_changes(
                 current = row["metrics"].get(indicator.code)
                 old = previous.get(indicator.code)
                 value = None if current is None or old is None else current - old
-                rate = None if value is None or old in (None, 0) else value / abs(old)
+                rate = None if value is None or old in (None, 0) else value / old
                 changes.setdefault(indicator.code, {})[key] = {"value": value, "rate": rate}
+
+
+def _change_value_rows_at(
+    session: Session,
+    *,
+    node_ids: list[int],
+    indicator_ids: list[int],
+    cutoff: datetime,
+) -> list[Any]:
+    """Match V1 change-window baseline selection.
+
+    Prefer the closest snapshot within the configured +/- tolerance around the
+    nominal cutoff.  If no nearby snapshot exists, carry the latest earlier
+    value forward from the sparse-snapshot lookback range.
+    """
+    if not node_ids or not indicator_ids:
+        return []
+
+    tolerance = timedelta(minutes=CHANGE_WINDOW_TOLERANCE_MINUTES)
+    near_lower = cutoff - tolerance
+    upper_bound = cutoff + tolerance
+    dialect_name = session.get_bind().dialect.name
+    if dialect_name in {"mysql", "mariadb"}:
+        distance_expr = "ABS(TIMESTAMPDIFF(MICROSECOND, collected_at, :cutoff))"
+    else:
+        distance_expr = (
+            "ABS((julianday(collected_at) - julianday(:cutoff)) * 86400000000.0)"
+        )
+
+    query = text(f"""
+        SELECT node_id, indicator_id, metric_value, collection_run_id, collected_at
+        FROM (
+            SELECT
+                node_id,
+                indicator_id,
+                metric_value,
+                collection_run_id,
+                collected_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY node_id, indicator_id
+                    ORDER BY
+                        CASE WHEN collected_at >= :near_lower THEN 0 ELSE 1 END,
+                        CASE WHEN collected_at >= :near_lower
+                            THEN {distance_expr} ELSE 0 END,
+                        collected_at DESC,
+                        id DESC
+                ) AS rn
+            FROM metric_snapshot
+            WHERE node_id IN :node_ids
+              AND indicator_id IN :indicator_ids
+              AND collected_at >= :baseline_start
+              AND collected_at <= :upper_bound
+        ) ranked
+        WHERE rn = 1
+    """).bindparams(
+        bindparam("node_ids", expanding=True),
+        bindparam("indicator_ids", expanding=True),
+    )
+    return session.execute(
+        query,
+        {
+            "node_ids": tuple(node_ids),
+            "indicator_ids": tuple(indicator_ids),
+            "baseline_start": cutoff
+            - timedelta(days=SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS),
+            "near_lower": near_lower,
+            "upper_bound": upper_bound,
+            "cutoff": cutoff,
+        },
+    ).all()
+
+
+def _change_anchor_time(run: CollectionRunV2 | None) -> datetime:
+    """Use the same stable completed-run anchor as V1."""
+    if run is not None and run.finished_at is not None:
+        return run.finished_at
+    return datetime.now()
+
+
+def _history_meta(run: CollectionRunV2 | None, selected_time: datetime) -> dict[str, Any]:
+    """Expose historical fallback metadata with V1 minute-level semantics."""
+    batch_time = (run.started_at or run.finished_at) if run is not None else None
+    duration_seconds = None
+    if run is not None and run.finished_at is not None:
+        duration_seconds = max(0.0, (run.finished_at - run.started_at).total_seconds())
+    selected_minute = selected_time.replace(second=0, microsecond=0)
+    batch_minute = batch_time.replace(second=0, microsecond=0) if batch_time else None
+    fallback_seconds = (
+        max(0.0, (selected_minute - batch_minute).total_seconds())
+        if batch_minute is not None
+        else None
+    )
+    return {
+        "batch_started_at": _iso(run.started_at) if run else None,
+        "batch_finished_at": _iso(run.finished_at) if run else None,
+        "duration_seconds": duration_seconds,
+        "fallback_seconds": fallback_seconds,
+        "is_fallback": bool(fallback_seconds and fallback_seconds > 0),
+    }
 
 
 def get_indicator_catalog(
@@ -583,10 +705,20 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
 
 def get_history_range(engine: Engine) -> dict[str, Any]:
     with Session(engine) as session:
+        first_snapshot_at = session.scalar(
+            select(func.min(MetricSnapshotV2.collected_at))
+        )
+        if first_snapshot_at is None:
+            return {"earliest_at": None, "latest_at": None}
+        batch_time = func.coalesce(
+            CollectionRunV2.started_at, CollectionRunV2.finished_at
+        )
         earliest, latest = session.execute(
-            select(func.min(CollectionRunV2.started_at), func.max(CollectionRunV2.started_at)).where(
+            select(func.min(batch_time), func.max(batch_time)).where(
                 CollectionRunV2.run_type == "REALTIME",
                 CollectionRunV2.status == "SUCCESS",
+                batch_time.is_not(None),
+                CollectionRunV2.finished_at >= first_snapshot_at,
             )
         ).one()
         return {"earliest_at": _iso(earliest), "latest_at": _iso(latest)}
@@ -595,27 +727,50 @@ def get_history_range(engine: Engine) -> dict[str, Any]:
 def get_history_options(
     engine: Engine, *, indicator_codes: list[str] | None = None
 ) -> dict[str, Any]:
-    del indicator_codes
     with Session(engine) as session:
-        values = list(session.scalars(
-            select(CollectionRunV2.started_at).where(
+        snapshot_range_query = select(func.min(MetricSnapshotV2.collected_at))
+        if indicator_codes:
+            indicator_ids = list(
+                session.scalars(
+                    select(IndicatorV2.id).where(IndicatorV2.code.in_(indicator_codes))
+                )
+            )
+            snapshot_range_query = snapshot_range_query.where(
+                MetricSnapshotV2.indicator_id.in_(indicator_ids or {-1})
+            )
+        first_snapshot_at = session.scalar(snapshot_range_query)
+        if first_snapshot_at is None:
+            return {"dates": [], "date_count": 0}
+
+        batch_time = func.coalesce(
+            CollectionRunV2.started_at, CollectionRunV2.finished_at
+        )
+        runs = session.execute(
+            select(CollectionRunV2.id, batch_time.label("batch_time")).where(
                 CollectionRunV2.run_type == "REALTIME",
                 CollectionRunV2.status == "SUCCESS",
-            ).order_by(CollectionRunV2.started_at)
-        ))
-    grouped: dict[str, list[str]] = defaultdict(list)
-    for value in values:
-        day = value.date().isoformat()
-        clock = value.time().isoformat(timespec="seconds")
-        if clock not in grouped[day]:
-            grouped[day].append(clock)
-    dates = [{"date": day, "times": times} for day, times in grouped.items()]
+                batch_time.is_not(None),
+                CollectionRunV2.finished_at >= first_snapshot_at,
+            ).order_by(batch_time.desc(), CollectionRunV2.id.desc())
+        ).all()
+
+    minutes_by_date: dict[str, set[str]] = defaultdict(set)
+    for run in runs:
+        if run.batch_time is None:
+            continue
+        minutes_by_date[run.batch_time.date().isoformat()].add(
+            run.batch_time.strftime("%H:%M")
+        )
+    dates = [
+        {"date": day, "times": sorted(times, reverse=True)}
+        for day, times in sorted(minutes_by_date.items(), reverse=True)
+    ]
     return {"dates": dates, "date_count": len(dates)}
 
 
 def get_historical_run_id(engine: Engine, as_of: datetime) -> int | None:
     with Session(engine) as session:
-        run = _latest_run(session, as_of=as_of)
+        run = _historical_run(session, as_of)
         return run.id if run else None
 
 
@@ -665,7 +820,7 @@ def get_current_with_changes(
             include_targets=True,
         )
         run = _latest_run(session)
-        anchor = run.started_at if run else datetime.now()
+        anchor = _change_anchor_time(run)
         _append_changes(session, rows=rows, indicators=indicators, anchor=anchor, windows=windows)
         return {
             "data_mode": "REALTIME",
@@ -690,7 +845,17 @@ def get_historical_with_changes(
 ) -> dict[str, Any]:
     windows = change_windows or [5, 15, 30, 60]
     with Session(engine) as session:
-        run = _latest_run(session, as_of=as_of)
+        run = _historical_run(session, as_of)
+        value_cutoff = (
+            run.finished_at or run.started_at or as_of
+            if run is not None
+            else as_of
+        )
+        change_anchor = (
+            run.started_at or run.finished_at or as_of
+            if run is not None
+            else as_of
+        )
         indicators = _enabled_indicators(session, indicator_codes)
         if node_type:
             nodes = _scoped_nodes(
@@ -699,28 +864,34 @@ def get_historical_with_changes(
                 scope_mode=scope_mode,
                 parent_id=parent_id,
                 branch_code=branch_code,
-                as_of=as_of,
+                as_of=value_cutoff,
             )
         elif parent_id is not None and parent_node_type:
             nodes = _drill_context_nodes(
                 session,
                 parent_id=parent_id,
                 parent_node_type=parent_node_type,
-                as_of=as_of,
+                as_of=value_cutoff,
             )
         elif parent_id is not None:
-            nodes = _nodes(session, parent_id=parent_id, as_of=as_of)
+            nodes = _nodes(session, parent_id=parent_id, as_of=value_cutoff)
         else:
-            nodes = _nodes(session, as_of=as_of)
+            nodes = _nodes(session, as_of=value_cutoff)
         rows = _wide_rows(
             session,
             nodes=nodes,
             indicators=indicators,
-            as_of=as_of,
+            as_of=value_cutoff,
             period_type="DAY_ACC",
             include_targets=True,
         )
-        _append_changes(session, rows=rows, indicators=indicators, anchor=as_of, windows=windows)
+        _append_changes(
+            session,
+            rows=rows,
+            indicators=indicators,
+            anchor=change_anchor,
+            windows=windows,
+        )
         return {
             "data_mode": "HISTORY",
             "selected_time": _iso(as_of),
@@ -729,18 +900,7 @@ def get_historical_with_changes(
             "rows": rows,
             "row_count": len(rows),
             "coverage": _coverage(nodes, rows, indicators),
-            "history_meta": {
-                "batch_started_at": _iso(run.started_at) if run else None,
-                "batch_finished_at": _iso(run.finished_at) if run else None,
-                "duration_seconds": (
-                    (run.finished_at - run.started_at).total_seconds()
-                    if run and run.finished_at else None
-                ),
-                "fallback_seconds": (
-                    (as_of - run.started_at).total_seconds() if run else None
-                ),
-                "is_fallback": bool(run and run.started_at != as_of),
-            },
+            "history_meta": _history_meta(run, as_of),
         }
 
 
@@ -827,7 +987,7 @@ def get_dashboard_matrix_page(
             include_targets=True,
         )
         run = _latest_run(session)
-        anchor = run.started_at if run else datetime.now()
+        anchor = _change_anchor_time(run)
         _append_changes(
             session,
             rows=rows,
@@ -1004,7 +1164,7 @@ def get_dashboard_overview(
             session,
             rows=rows,
             indicators=indicators,
-            anchor=run.started_at if run else datetime.now(),
+            anchor=_change_anchor_time(run),
             windows=change_windows or [5, 15, 30, 60],
         )
         acc_rows: list[dict[str, Any]] = []
@@ -1076,7 +1236,7 @@ def get_drill_down(
                 session,
                 rows=rows,
                 indicators=indicators,
-                anchor=run.started_at if run else datetime.now(),
+                anchor=_change_anchor_time(run),
                 windows=change_windows or [5, 15, 30, 60],
             )
             acc_rows = []
@@ -1125,7 +1285,7 @@ def get_drill_down(
             include_targets=True,
         )
         run = _latest_run(session)
-        anchor = run.started_at if run else datetime.now()
+        anchor = _change_anchor_time(run)
         _append_changes(
             session,
             rows=rows,

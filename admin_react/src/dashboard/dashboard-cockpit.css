@@ -806,7 +806,7 @@ body::-webkit-scrollbar-button,
 
 .single-sort-picker {
   display: flex;
-  width: 104px;
+  width: 168px;
   height: 32px;
   align-items: center;
   gap: 4px;
@@ -841,7 +841,7 @@ body::-webkit-scrollbar-button,
   min-width: 0;
   overflow: hidden;
   color: #f8fbff;
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
