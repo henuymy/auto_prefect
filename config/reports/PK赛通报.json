@@ -2,7 +2,7 @@
   "id": "PK赛通报",
   "name": "PK赛通报",
   "template_path": "templates/PK赛进度.xlsx",
-  "enabled": true,
+  "enabled": false,
   "description": "",
   "downloads": [
     {
@@ -320,7 +320,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-06-20 16:47:46",
+  "updatedAt": "2026-07-04 20:32:21",
   "source": "published",
   "has_draft": false
 }

@@ -495,7 +495,7 @@ export default function App() {
         toast.error("发布前请先修复校验错误", { id: toastId, description: `发现 ${nextIssues.length} 个问题`, duration: 3600 });
         return;
       }
-      toast.loading("正在发布到调度", { id: toastId, description: "正在同步 Prefect deployment 和调度状态..." });
+      toast.loading("正在发布到调度", { id: toastId, description: "同名更新原调度；改名会新建调度。" });
       const result = await publishConfig(config);
       const nextConfigs = await listConfigs();
       setConfigs(nextConfigs);

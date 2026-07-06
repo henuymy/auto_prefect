@@ -58,7 +58,7 @@ export function Header({
           {realTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
           {realTesting ? "试跑中" : "真实试跑"}
         </Button>
-        <Button onClick={onPublish} disabled={publishing}>
+        <Button onClick={onPublish} disabled={publishing} title="同名更新原调度；改名会新建调度">
           {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
           {publishing ? "发布中" : "发布到调度"}
         </Button>

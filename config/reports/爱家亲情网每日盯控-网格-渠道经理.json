@@ -1,27 +1,27 @@
 {
-  "name": "爱家亲情网营业厅每日盯控",
-  "template_path": "templates/爱家亲情网营业厅每日盯控表.xlsx",
+  "name": "爱家亲情网每日盯控-网格-渠道经理",
+  "template_path": "templates/爱家亲情网每日盯控表.xlsx",
   "send": {
     "webhook_url": "",
-    "workbook_name": "爱家亲情网营业厅每日盯控",
+    "workbook_name": "爱家亲情网每日盯控-副本",
     "items": [
       {
         "type": "image",
-        "sheet": "营业厅通报",
+        "sheet": "通报",
         "capture": {
           "mode": "used_range"
         }
       },
       {
         "type": "text",
-        "sheet": "营业厅通报文字",
+        "sheet": "通报文字",
         "text": {
           "mode": "used_range"
         }
       },
       {
         "type": "image",
-        "sheet": "营业厅人员通报",
+        "sheet": "渠道经理通报",
         "capture": {
           "mode": "used_range"
         }
@@ -36,7 +36,7 @@
   },
   "downloads": [
     {
-      "name": "实时",
+      "name": "区公司实时数据",
       "stage": "city_ops",
       "auth_preset": "自定义",
       "method": "POST",
@@ -62,7 +62,7 @@
       },
       "excel": {
         "data_path": "result.tableData",
-        "sheet_name": "地市作战实时明细",
+        "sheet_name": "区公司实时数据",
         "columns": [
           {
             "field": "__level_name",
@@ -116,7 +116,7 @@
       }
     },
     {
-      "name": "日累计",
+      "name": "区公司累计数据",
       "stage": "city_ops",
       "auth_preset": "自定义",
       "method": "POST",
@@ -143,7 +143,7 @@
       },
       "excel": {
         "data_path": "result.tableData",
-        "sheet_name": "地市作战日累计明细",
+        "sheet_name": "区公司累计数据",
         "columns": [
           {
             "field": "__level_name",
@@ -199,12 +199,12 @@
   ],
   "compare_sources": [
     {
-      "download_name": "实时",
+      "download_name": "区公司实时数据",
       "sheet_mappings": [
         {
-          "name": "实时",
-          "new_sheet_name": "地市作战实时明细",
-          "template_sheet_name": "营业厅实时销量",
+          "name": "区公司实时数据",
+          "new_sheet_name": "区公司实时数据",
+          "template_sheet_name": "区公司实时数据",
           "header_row": 1,
           "ignore_columns": [],
           "key_columns": []
@@ -214,12 +214,12 @@
       "engine": "openpyxl"
     },
     {
-      "download_name": "日累计",
+      "download_name": "区公司累计数据",
       "sheet_mappings": [
         {
-          "name": "日累计",
-          "new_sheet_name": "地市作战日累计明细",
-          "template_sheet_name": "营业厅累计销量",
+          "name": "区公司累计数据",
+          "new_sheet_name": "区公司累计数据",
+          "template_sheet_name": "区公司累计数据",
           "header_row": 1,
           "ignore_columns": [],
           "key_columns": []
@@ -229,7 +229,7 @@
       "engine": "openpyxl"
     }
   ],
-  "id": "爱家亲情网营业厅每日盯控",
+  "id": "爱家亲情网每日盯控-网格-渠道经理",
   "enabled": true,
   "description": "",
   "wait_for_change": {
@@ -244,7 +244,8 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-07-04 22:18:42",
-  "source": "published",
-  "has_draft": false
+  "has_draft": false,
+  "lastRun": "disabled",
+  "updatedAt": "2026-07-06 15:41:34",
+  "source": "published"
 }

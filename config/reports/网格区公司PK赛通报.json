@@ -2,7 +2,7 @@
   "id": "网格区公司PK赛通报",
   "name": "网格区公司PK赛通报",
   "template_path": "templates/网格-6月PK赛网格通报模版.xlsx",
-  "enabled": true,
+  "enabled": false,
   "description": "",
   "downloads": [
     {
@@ -106,6 +106,14 @@
           "header_row": 3,
           "ignore_columns": [],
           "key_columns": []
+        },
+        {
+          "name": "222",
+          "new_sheet_name": "郑州移动PK赛通报-整体",
+          "template_sheet_name": "郑州移动PK赛通报-整体",
+          "header_row": 3,
+          "ignore_columns": [],
+          "key_columns": []
         }
       ]
     },
@@ -145,7 +153,7 @@
       },
       {
         "type": "image",
-        "sheet": "通报2",
+        "sheet": "整体通报",
         "text": {
           "mode": "none"
         }
@@ -166,12 +174,12 @@
   "deployment": {
     "enabled": true,
     "crons": [
-      "25 9-19 * * *"
+      "23 9-19 * * *"
     ],
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-06-21 18:43:25",
+  "updatedAt": "2026-07-04 20:15:07",
   "source": "published",
   "has_draft": false
 }
