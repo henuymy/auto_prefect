@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import SQLAlchemyError
 
 from infrastructure import dashboard_mysql
 
@@ -150,6 +151,9 @@ def test_dashboard_mysql_lock_acquires_and_releases_named_lock():
             calls.append((str(statement), params))
             return next(self.results)
 
+        def exec_driver_sql(self, statement):
+            calls.append((statement, None))
+
     class FakeEngine:
         dialect = type("Dialect", (), {"name": "mysql"})()
 
@@ -157,13 +161,15 @@ def test_dashboard_mysql_lock_acquires_and_releases_named_lock():
             return FakeConnection()
 
     with dashboard_mysql.dashboard_mysql_lock(
-        FakeEngine(), lock_name="dashboard-test", wait_seconds=3
+        FakeEngine(), lock_name="dashboard-test", wait_seconds=3,
+        heartbeat_seconds=0, idle_timeout_seconds=300,
     ) as lock:
         assert lock == {"name": "dashboard-test", "backend": "mysql"}
 
-    assert "GET_LOCK" in calls[0][0]
-    assert calls[0][1]["wait_seconds"] == 3
-    assert "RELEASE_LOCK" in calls[1][0]
+    assert "wait_timeout = 300" in calls[0][0]
+    assert "GET_LOCK" in calls[1][0]
+    assert calls[1][1]["wait_seconds"] == 3
+    assert "RELEASE_LOCK" in calls[2][0]
 
 
 def test_dashboard_mysql_lock_times_out_without_entering_body():
@@ -177,6 +183,9 @@ def test_dashboard_mysql_lock_times_out_without_entering_body():
         def scalar(self, _statement, _params):
             return 0
 
+        def exec_driver_sql(self, _statement):
+            return None
+
     class FakeEngine:
         dialect = type("Dialect", (), {"name": "mysql"})()
 
@@ -185,4 +194,46 @@ def test_dashboard_mysql_lock_times_out_without_entering_body():
 
     with pytest.raises(TimeoutError, match="MySQL 驾驶舱采集锁"):
         with dashboard_mysql.dashboard_mysql_lock(FakeEngine()):
+            raise AssertionError("lock body must not run")
+
+
+def test_dashboard_mysql_lock_release_error_does_not_fail_completed_body():
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def scalar(self, statement, _params):
+            if "GET_LOCK" in str(statement):
+                return 1
+            raise SQLAlchemyError("connection lost")
+
+        def exec_driver_sql(self, _statement):
+            return None
+
+    class FakeEngine:
+        dialect = type("Dialect", (), {"name": "mysql"})()
+
+        def connect(self):
+            return FakeConnection()
+
+    entered = False
+    with dashboard_mysql.dashboard_mysql_lock(
+        FakeEngine(), heartbeat_seconds=0
+    ):
+        entered = True
+
+    assert entered is True
+
+
+def test_dashboard_mysql_lock_rejects_heartbeat_not_below_idle_timeout():
+    class FakeEngine:
+        dialect = type("Dialect", (), {"name": "mysql"})()
+
+    with pytest.raises(ValueError, match="心跳间隔"):
+        with dashboard_mysql.dashboard_mysql_lock(
+            FakeEngine(), heartbeat_seconds=60, idle_timeout_seconds=60
+        ):
             raise AssertionError("lock body must not run")

@@ -9,6 +9,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
+from threading import Event, Thread
 from typing import Mapping
 
 from sqlalchemy import URL, create_engine, text
@@ -150,17 +151,37 @@ def dashboard_mysql_lock(
     *,
     lock_name: str = "auto_notify_dashboard_collection",
     wait_seconds: int = 5,
+    heartbeat_seconds: int = 30,
+    idle_timeout_seconds: int = 300,
 ):
-    """Hold a server-wide MySQL named lock on one dedicated connection."""
+    """Hold a server-wide MySQL named lock on one leased connection.
+
+    The heartbeat prevents network or database idle-timeout layers from
+    silently abandoning a live lock connection.  If the process disappears,
+    the session-level idle timeout makes MySQL close the orphaned connection
+    and release its named lock automatically.
+    """
     normalized_name = str(lock_name or "").strip()
     if not normalized_name or len(normalized_name) > 64:
         raise ValueError("MySQL 锁名称长度必须为 1-64 个字符")
     wait_seconds = max(0, int(wait_seconds))
+    heartbeat_seconds = max(0, int(heartbeat_seconds))
+    idle_timeout_seconds = max(0, int(idle_timeout_seconds))
+    if (
+        heartbeat_seconds > 0
+        and idle_timeout_seconds > 0
+        and heartbeat_seconds >= idle_timeout_seconds
+    ):
+        raise ValueError("MySQL 锁心跳间隔必须小于空闲断开时间")
     if engine.dialect.name not in {"mysql", "mariadb"}:
         yield {"name": normalized_name, "backend": engine.dialect.name}
         return
 
     with engine.connect() as connection:
+        if idle_timeout_seconds > 0:
+            connection.exec_driver_sql(
+                f"SET SESSION wait_timeout = {idle_timeout_seconds}"
+            )
         acquired = connection.scalar(
             text("SELECT GET_LOCK(:lock_name, :wait_seconds)"),
             {"lock_name": normalized_name, "wait_seconds": wait_seconds},
@@ -169,15 +190,52 @@ def dashboard_mysql_lock(
             raise TimeoutError(
                 f"等待 MySQL 驾驶舱采集锁超时: {normalized_name}"
             )
+        heartbeat_stop = Event()
+        heartbeat_thread: Thread | None = None
+        if heartbeat_seconds > 0:
+            def keep_lock_connection_alive() -> None:
+                while not heartbeat_stop.wait(heartbeat_seconds):
+                    try:
+                        connection.exec_driver_sql("SELECT 1")
+                    except SQLAlchemyError as exc:
+                        logger.warning(
+                            "MySQL 驾驶舱采集锁心跳失败: %s (%s)",
+                            normalized_name,
+                            type(exc).__name__,
+                        )
+                        return
+
+            heartbeat_thread = Thread(
+                target=keep_lock_connection_alive,
+                name=f"mysql-lock-heartbeat-{normalized_name}",
+                daemon=True,
+            )
+            heartbeat_thread.start()
         try:
             yield {"name": normalized_name, "backend": engine.dialect.name}
         finally:
-            released = connection.scalar(
-                text("SELECT RELEASE_LOCK(:lock_name)"),
-                {"lock_name": normalized_name},
-            )
-            if released != 1:
-                logger.warning("MySQL 驾驶舱采集锁释放结果异常: %s", normalized_name)
+            heartbeat_stop.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=max(1, heartbeat_seconds + 1))
+            try:
+                released = connection.scalar(
+                    text("SELECT RELEASE_LOCK(:lock_name)"),
+                    {"lock_name": normalized_name},
+                )
+                if released != 1:
+                    logger.warning(
+                        "MySQL 驾驶舱采集锁释放结果异常: %s", normalized_name
+                    )
+            except SQLAlchemyError as exc:
+                # A dead dedicated connection is already subject to the
+                # session idle timeout.  Do not turn completed business work
+                # into a failed batch merely because release acknowledgement
+                # was lost.
+                logger.warning(
+                    "MySQL 驾驶舱采集锁释放失败，等待服务端自动清理: %s (%s)",
+                    normalized_name,
+                    type(exc).__name__,
+                )
 
 
 @lru_cache(maxsize=1)

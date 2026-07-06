@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
+
+from services import dashboard_query_service
 
 from services.dashboard_custom_indicator_service import (
     compose_store_metric_rows,
@@ -1600,8 +1602,22 @@ def test_current_with_changes_handles_no_snapshots():
     engine.dispose()
 
 
-def test_acc_wide_table_returns_day_acc_data():
+def test_acc_wide_table_returns_latest_data_through_yesterday(monkeypatch):
     engine = create_test_engine()
+    monkeypatch.setattr(
+        dashboard_query_service,
+        "_yesterday_shanghai",
+        lambda: date(2026, 6, 11),
+    )
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO metric_acc
+                (id, period_type, stat_date, area_id, indicator_id,
+                 collection_run_id, metric_value, collected_at)
+            VALUES
+                (9, 'DAY_ACC', '2026-06-12', 2, 1, 2,
+                 999, '2026-06-12 08:00:00')
+        """))
 
     result = get_acc_wide_table(engine, period_type="DAY_ACC")
 
@@ -1610,6 +1626,9 @@ def test_acc_wide_table_returns_day_acc_data():
     assert result["rows"][0]["area_code"] == "AQ"
     assert result["rows"][0]["metrics"]["sgs_ajvwdz"] == 80
     assert result["rows"][0]["targets"]["sgs_ajvwdz"] == 100
+    assert result["through_date"] == "2026-06-11"
+    assert result["stat_date"] == "2026-06-10"
+    assert result["is_fallback"] is True
     engine.dispose()
 
 
@@ -1665,6 +1684,9 @@ def test_acc_wide_table_respects_stat_date():
 
     assert result["row_count"] == 1
     assert result["rows"][0]["metrics"]["sgs_ajvwdz"] == 80
+    assert result["through_date"] == "2026-06-10"
+    assert result["stat_date"] == "2026-06-10"
+    assert result["is_fallback"] is False
     engine.dispose()
 
 

@@ -39,7 +39,7 @@ from services.dashboard_v2_readiness import check_dashboard_v2_schema
 
 REQUIRED_DEPLOYMENTS = {
     "dashboard-collection",
-    "dashboard-daily",
+    "dashboard-daily-acc",
     "dashboard-monthly",
     "dashboard-indicator-sync",
     "dashboard-v2-partition-maintenance",

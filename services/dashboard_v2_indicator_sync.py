@@ -92,6 +92,14 @@ def execute_dashboard_v2_indicator_sync(
                 wait_seconds=int(
                     config.get("collection_database_lock_wait_seconds", 5) or 5
                 ),
+                heartbeat_seconds=int(
+                    config.get("collection_database_lock_heartbeat_seconds", 30)
+                    or 0
+                ),
+                idle_timeout_seconds=int(
+                    config.get("collection_database_lock_idle_timeout_seconds", 300)
+                    or 0
+                ),
             ) as database_lock:
                 payload = fetch_user_diy_indicators(
                     stage,

@@ -158,6 +158,9 @@ export type DashboardAccResponse = {
   indicators: DashboardIndicator[];
   rows: DashboardRow[];
   row_count: number;
+  through_date: string;
+  stat_date: string | null;
+  is_fallback: boolean;
 };
 
 export type DashboardOverviewResponse = {

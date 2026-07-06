@@ -8,6 +8,8 @@
   "collection_lock_stale_seconds": 1800,
   "collection_database_lock_name": "auto_notify_dashboard_collection",
   "collection_database_lock_wait_seconds": 5,
+  "collection_database_lock_heartbeat_seconds": 30,
+  "collection_database_lock_idle_timeout_seconds": 300,
   "partition_database_lock_name": "auto_notify_dashboard_partition_maintenance",
   "partition_database_lock_wait_seconds": 5,
   "collection_max_workers": 24,

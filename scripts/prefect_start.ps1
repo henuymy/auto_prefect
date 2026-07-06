@@ -183,7 +183,7 @@ from prefect.states import Cancelled
 
 TARGETS = {
     "dashboard-collection",
-    "dashboard-daily",
+    "dashboard-daily-acc",
     "dashboard-monthly",
     "dashboard-indicator-sync",
     "dashboard-v2-partition-maintenance",

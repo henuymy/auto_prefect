@@ -23,7 +23,8 @@ deployments:
     work_pool:
       name: default-agent-pool
       work_queue_name: default
-  - name: dashboard-daily
+  - name: dashboard-daily-acc
+    description: 日累计
     entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
     parameters:
       mode: DAY_ACC

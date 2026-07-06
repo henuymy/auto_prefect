@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import create_engine, text
+
+from services import dashboard_v2_query_service
 
 from services.dashboard_v2_query_service import (
     get_acc_wide_table,
@@ -423,15 +425,21 @@ def test_v2_custom_indicator_can_be_saved_and_is_archived_instead_of_deleted():
     assert listed["indicators"][0]["enabled"] is False
 
 
-def test_acc_uses_latest_stat_date_and_attaches_versioned_targets():
+def test_acc_uses_latest_stat_date_through_yesterday_and_attaches_targets(monkeypatch):
     engine = _engine()
+    monkeypatch.setattr(
+        dashboard_v2_query_service,
+        "_yesterday_shanghai",
+        lambda: date(2026, 6, 30),
+    )
     with engine.begin() as connection:
         connection.execute(text("""
             INSERT INTO metric_acc
                 (id, period_type, stat_date, node_id, indicator_id,
                  collection_run_id, metric_value, collected_at)
             VALUES
-                (1, 'DAY_ACC', '2026-06-29', 4, 1, 2, 18, '2026-06-30 08:00:00')
+                (1, 'DAY_ACC', '2026-06-29', 4, 1, 2, 18, '2026-06-30 08:00:00'),
+                (2, 'DAY_ACC', '2026-07-01', 4, 1, 2, 99, '2026-07-01 08:00:00')
         """))
 
     result = get_acc_wide_table(
@@ -443,3 +451,22 @@ def test_acc_uses_latest_stat_date_and_attaches_versioned_targets():
 
     assert result["rows"][0]["metrics"]["channel_count"] == 18
     assert result["rows"][0]["targets"]["channel_count"] == 30
+    assert result["through_date"] == "2026-06-30"
+    assert result["stat_date"] == "2026-06-29"
+    assert result["is_fallback"] is True
+
+
+def test_acc_returns_empty_rows_when_no_data_exists_before_yesterday(monkeypatch):
+    engine = _engine()
+    monkeypatch.setattr(
+        dashboard_v2_query_service,
+        "_yesterday_shanghai",
+        lambda: date(2025, 12, 31),
+    )
+
+    result = get_acc_wide_table(engine, period_type="DAY_ACC")
+
+    assert result["rows"] == []
+    assert result["row_count"] == 0
+    assert result["stat_date"] is None
+    assert result["is_fallback"] is False

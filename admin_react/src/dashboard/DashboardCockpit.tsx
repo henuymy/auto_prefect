@@ -94,7 +94,7 @@ type LevelOverrideData = {
 
 type ScopeMode = "default" | "all";
 type CockpitMode = "single" | "multi";
-type DataTimeMode = "realtime" | "history";
+type DataTimeMode = "realtime" | "cumulative" | "history";
 type StorageMode = "STORE" | "COMPONENT";
 type SourceMetricOption = {
   code: string;
@@ -176,6 +176,11 @@ type FetchedData = {
   levelOverrides: Partial<Record<LevelKey, LevelOverrideData>>;
   coverage?: DashboardHistoryCoverage;
   historyMeta?: DashboardHistoryMeta;
+  cumulativeMeta?: {
+    throughDate: string;
+    statDate: string | null;
+    isFallback: boolean;
+  };
 };
 
 type DashboardCacheEntry = {
@@ -204,6 +209,7 @@ function historyMinuteQueryTime(value: string) {
 
 function makeDashboardCacheKey({
   mode,
+  dataTimeMode,
   scopeMode,
   parentId,
   parentNodeType,
@@ -214,6 +220,7 @@ function makeDashboardCacheKey({
   asOf,
 }: {
   mode: CockpitMode;
+  dataTimeMode: DataTimeMode;
   scopeMode: ScopeMode;
   parentId?: number | null;
   parentNodeType?: string | null;
@@ -225,6 +232,7 @@ function makeDashboardCacheKey({
 }) {
   return JSON.stringify({
     mode,
+    dataTimeMode,
     scopeMode,
     parentId: parentId ?? null,
     parentNodeType: parentNodeType ?? null,
@@ -1077,8 +1085,10 @@ export function DashboardCockpit() {
   const matrixDrillLevel = drillTarget?.nodeType
     ?? (scopeMode === "default" ? "BRANCH" : undefined);
   const requestedChangeWindows = useMemo(
-    () => mode === "multi" ? [multiMetricWindow] : changeWindows,
-    [changeWindows, mode, multiMetricWindow],
+    () => dataTimeMode === "cumulative"
+      ? []
+      : mode === "multi" ? [multiMetricWindow] : changeWindows,
+    [changeWindows, dataTimeMode, mode, multiMetricWindow],
   );
   const parentChangeWindows = useMemo(
     () => mode === "multi" ? [] : requestedChangeWindows,
@@ -1094,6 +1104,7 @@ export function DashboardCockpit() {
   );
   const queryCacheKey = makeDashboardCacheKey({
     mode,
+    dataTimeMode,
     scopeMode,
     parentId: drillTarget?.nodeId ?? null,
     parentNodeType: drillTarget?.nodeType ?? null,
@@ -1142,6 +1153,9 @@ export function DashboardCockpit() {
         : undefined;
     const nextCacheKey = makeDashboardCacheKey({
       mode: nextMode,
+      dataTimeMode: nextMode === "multi" && dataTimeMode === "cumulative"
+        ? "realtime"
+        : dataTimeMode,
       scopeMode: nextScopeState.scopeMode,
       parentId: nextDrillTarget?.nodeId ?? null,
       parentNodeType: nextDrillTarget?.nodeType ?? null,
@@ -1178,6 +1192,9 @@ export function DashboardCockpit() {
     setDrillStack(nextDrillStack);
     setDayLevelAllMode(nextScopeState.dayLevelAllMode);
     setMonthLevelAllMode(nextScopeState.monthLevelAllMode);
+    if (nextMode === "multi" && dataTimeMode === "cumulative") {
+      setDataTimeMode("realtime");
+    }
     setMode(nextMode);
   }, [
     changeWindows,
@@ -1263,9 +1280,33 @@ export function DashboardCockpit() {
       const parentId = drillTarget?.nodeId;
       const parentNodeType = drillTarget?.nodeType;
       const historyActive = dataTimeMode === "history" && Boolean(historyAsOf);
+      const cumulativeActive = dataTimeMode === "cumulative";
       const catalogPromise = getDashboardIndicators(historyActive, !historyActive)
         .catch(() => ({ indicators: [] }));
-      const [changesData, accRows] = historyActive
+      const [changesData, accRows] = cumulativeActive
+        ? await getAccDashboard(
+            "DAY_ACC",
+            undefined,
+            undefined,
+            undefined,
+            requestedIndicatorCodes,
+          ).then((acc) => {
+            const allRows = acc.rows.map((row) => ({
+              ...row,
+              changes: {},
+            })) as DashboardRowWithChanges[];
+            const scopedRows = scopeHistoricalRowsForDrill(allRows, drillTarget);
+            return [{
+              latest_run: null,
+              indicators: acc.indicators,
+              rows: scopedRows,
+              row_count: scopedRows.length,
+              through_date: acc.through_date,
+              stat_date: acc.stat_date,
+              is_fallback: acc.is_fallback,
+            }, [] as DashboardRow[]] as const;
+          })
+        : historyActive
         ? await getDashboardHistoryWithChanges(
             historyAsOf,
             mode === "multi" ? "BRANCH" : undefined,
@@ -1362,7 +1403,7 @@ export function DashboardCockpit() {
               .then((changes) => [changes, [] as DashboardRow[]] as const);
 
       const progressiveAllLevels = (
-        !historyActive
+        dataTimeMode === "realtime"
         &&
         mode === "single"
         && parentId == null
@@ -1384,6 +1425,15 @@ export function DashboardCockpit() {
         "history_meta" in changesData
         && changesData.history_meta
       ) ? changesData.history_meta as DashboardHistoryMeta : undefined;
+      const cumulativeMeta = cumulativeActive && "through_date" in changesData
+        ? {
+            throughDate: String(changesData.through_date),
+            statDate: typeof changesData.stat_date === "string"
+              ? changesData.stat_date
+              : null,
+            isFallback: Boolean(changesData.is_fallback),
+          }
+        : undefined;
       const rawLatestRun = changesData.latest_run ?? null;
       const latestRun = rawLatestRun
         ? {
@@ -1405,9 +1455,11 @@ export function DashboardCockpit() {
           return { ...r, node_name: name };
         });
       const makeData = (): FetchedData => ({
-        online: Boolean(latestRun),
+        online: cumulativeActive ? changesData.rows.length > 0 : Boolean(latestRun),
         latestRun,
-        updatedAt: displayedRunTime
+        updatedAt: cumulativeActive
+          ? cumulativeMeta?.statDate || "暂无累计"
+          : displayedRunTime
           ? new Date(displayedRunTime).toLocaleString("zh-CN", { hour12: false })
           : nowText(),
         indicators: changesData.indicators,
@@ -1417,6 +1469,7 @@ export function DashboardCockpit() {
         levelOverrides: { ...levelOverrides },
         coverage: responseCoverage,
         historyMeta: responseHistoryMeta,
+        cumulativeMeta,
       });
       const cacheData = (nextData: FetchedData) => {
         queryCacheRef.current.set(queryCacheKey, {
@@ -1445,12 +1498,14 @@ export function DashboardCockpit() {
         setBackgroundLoadingLevels({});
       }
 
-      const overrideLevels = (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[])
-        .filter((level) => (
-          progressiveAllLevels
-          || dayLevelAllMode[level]
-          || monthLevelAllMode[level]
-        ));
+      const overrideLevels = cumulativeActive
+        ? []
+        : (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[])
+            .filter((level) => (
+              progressiveAllLevels
+              || dayLevelAllMode[level]
+              || monthLevelAllMode[level]
+            ));
       await Promise.all(
         overrideLevels
           .map(async (level) => {
@@ -1469,7 +1524,7 @@ export function DashboardCockpit() {
                     requestedChangeWindows,
                     requestedIndicatorCodes,
                   );
-              const overrideAccRows = !historyActive && SHOW_MONTH_ACCUMULATION
+              const overrideAccRows = dataTimeMode === "realtime" && SHOW_MONTH_ACCUMULATION
                 ? await getAccDashboard(
                     "DAY_ACC",
                     undefined,
@@ -1539,7 +1594,15 @@ export function DashboardCockpit() {
         });
       }
       setData((prev) =>
-        prev ? { ...prev, online: false, updatedAt: nowText() } : null,
+        prev
+          ? {
+              ...prev,
+              online: false,
+              updatedAt: dataTimeMode === "cumulative"
+                ? prev.cumulativeMeta?.statDate || "暂无累计"
+                : nowText(),
+            }
+          : null,
       );
     } finally {
       if (seq === fetchSeqRef.current) setLoading(false);
@@ -1584,6 +1647,7 @@ export function DashboardCockpit() {
     }
     if (dataTimeMode === "history" && !historyAsOf) return;
     void fetchData(false);
+    if (dataTimeMode === "cumulative") return;
     const timer = window.setInterval(() => {
       void getDashboardLatestRun()
         .then((result) => {
@@ -1703,7 +1767,7 @@ export function DashboardCockpit() {
       normalizedDrillStack.length === 0 && scopeMode === "default",
       (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[]).filter((level) => dayLevelAllMode[level]),
       (["GRID", "CHANNEL_MANAGER", "CHANNEL"] as LevelKey[]).filter((level) => monthLevelAllMode[level]),
-      changeWindows,
+      dataTimeMode === "cumulative" ? [] : changeWindows,
     );
   }, [
     data,
@@ -1712,6 +1776,7 @@ export function DashboardCockpit() {
     normalizedDrillStack.length,
     scopeMode,
     changeWindows,
+    dataTimeMode,
     dayLevelAllMode.GRID,
     dayLevelAllMode.CHANNEL_MANAGER,
     dayLevelAllMode.CHANNEL,
@@ -1721,9 +1786,10 @@ export function DashboardCockpit() {
   ]);
 
   useEffect(() => {
-    setDaySorts((prev) => normalizeSorts(prev, changeWindows));
+    const activeWindows = dataTimeMode === "cumulative" ? [] : changeWindows;
+    setDaySorts((prev) => normalizeSorts(prev, activeWindows));
     setMonthSorts((prev) => normalizeSorts(prev, changeWindows));
-  }, [changeWindows]);
+  }, [changeWindows, dataTimeMode]);
 
   /* measure branch panel height */
   useEffect(() => {
@@ -1979,10 +2045,10 @@ export function DashboardCockpit() {
         activeCode={activeCode}
         indicators={selectableIndicators}
         onIndicatorChange={handleIndicatorChange}
-        changeWindows={changeWindows}
+        changeWindows={dataTimeMode === "cumulative" ? [] : changeWindows}
         onChangeWindow={updateChangeWindow}
         online={data?.online ?? false}
-        updatedAt={data?.updatedAt ?? nowText()}
+        updatedAt={data?.updatedAt ?? (dataTimeMode === "cumulative" ? "暂无累计" : nowText())}
         loading={loading}
         onRefresh={() => void fetchData(true)}
         onOpenCustomManager={() => setCustomManagerOpen(true)}
@@ -2004,10 +2070,14 @@ export function DashboardCockpit() {
           ? data?.latestRun?.started_at || data?.latestRun?.finished_at
           : null}
         historyMeta={dataTimeMode === "history" ? data?.historyMeta : undefined}
+        cumulativeMeta={dataTimeMode === "cumulative" ? data?.cumulativeMeta : undefined}
         loading={loading}
         onModeChange={(nextMode) => {
           if (nextMode === dataTimeMode) return;
           setLoading(true);
+          if (nextMode === "cumulative" || dataTimeMode === "cumulative") {
+            setData(null);
+          }
           setDataTimeMode(nextMode);
           if (nextMode === "history") {
             void loadHistoryAvailability();
@@ -2047,11 +2117,17 @@ export function DashboardCockpit() {
       <main className="board-grid" style={{ marginBottom: 14 }}>
         <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -6 }}>
           <div className="section-title-copy">
-            <strong>{dataTimeMode === "history" ? "历史时刻" : "当日实时"}</strong>
+            <strong>{dataTimeMode === "history"
+              ? "历史时刻"
+              : dataTimeMode === "cumulative" ? "累计" : "当日实时"}</strong>
             <span>
               {dataTimeMode === "history"
                 ? "数据固定于所选时间之前最近的成功批次"
-                : "展示每30秒刷新，数据按采集批次更新"}
+                : dataTimeMode === "cumulative"
+                  ? data?.cumulativeMeta?.statDate
+                    ? `累计截止 ${data.cumulativeMeta.statDate}${data.cumulativeMeta.isFallback ? "（已回退最近可用日期）" : ""}`
+                    : `截至 ${data?.cumulativeMeta?.throughDate || "昨天"} 暂无累计数据`
+                  : "展示每30秒刷新，数据按采集批次更新"}
             </span>
             <RequestSourceBadge source={singleRequestSource} />
           </div>
@@ -2062,7 +2138,7 @@ export function DashboardCockpit() {
             level={level}
             sortKey={daySorts[level.key]}
             onSortChange={(k) => setDaySorts((prev) => ({ ...prev, [level.key]: k as SortKey }))}
-            changeWindows={changeWindows}
+            changeWindows={dataTimeMode === "cumulative" ? [] : changeWindows}
             onDrill={handleDrill}
             selectedNodeId={selectedNodeIds[level.key]}
             levelAllActive={scopeMode === "all" || Boolean(dayLevelAllMode[level.key])}
@@ -2124,12 +2200,14 @@ export function DashboardCockpit() {
         </main>
       )}
 
-      <Footer
-        batchNo={data?.latestRun?.batch_no}
-        online={data?.online ?? false}
-        hasData={Boolean(data?.latestRun?.finished_at)}
-        nextCollect={nextCollect}
-      />
+      {dataTimeMode !== "cumulative" && (
+        <Footer
+          batchNo={data?.latestRun?.batch_no}
+          online={data?.online ?? false}
+          hasData={Boolean(data?.latestRun?.finished_at)}
+          nextCollect={nextCollect}
+        />
+      )}
       </>
       ) : (
         <MultiMetricMatrix
@@ -2238,7 +2316,7 @@ function Header({
           options={indOptions.length ? indOptions : undefined}
           onChange={onIndicatorChange}
         />}
-        {mode === "single" && <WindowSelector
+        {mode === "single" && dataTimeMode !== "cumulative" && <WindowSelector
           windows={changeWindows}
           onChange={onChangeWindow}
         />}
@@ -2248,10 +2326,14 @@ function Header({
         <span>
           {dataTimeMode === "history"
             ? online ? "历史快照" : "该时刻无数据"
-            : online ? "实时采集中" : "等待数据"}
+            : dataTimeMode === "cumulative"
+              ? online ? "累计数据" : "暂无累计"
+              : online ? "实时采集中" : "等待数据"}
         </span>
         <span className="divider" />
-        <span>{dataTimeMode === "history" ? "批次时间" : "更新时间"}</span>
+        <span>{dataTimeMode === "history"
+          ? "批次时间"
+          : dataTimeMode === "cumulative" ? "累计日期" : "更新时间"}</span>
         <strong>{updatedAt}</strong>
         <ProgressColorConfig
           colors={progressColors}
@@ -2279,6 +2361,7 @@ function HistoryTimeBar({
   max,
   actualTime,
   historyMeta,
+  cumulativeMeta,
   loading,
   onModeChange,
   onChange,
@@ -2291,6 +2374,7 @@ function HistoryTimeBar({
   max: string;
   actualTime?: string | null;
   historyMeta?: DashboardHistoryMeta;
+  cumulativeMeta?: FetchedData["cumulativeMeta"];
   loading: boolean;
   onModeChange: (mode: DataTimeMode) => void;
   onChange: (value: string) => void;
@@ -2312,13 +2396,20 @@ function HistoryTimeBar({
         </button>
         <button
           type="button"
+          className={mode === "cumulative" ? "active cumulative" : ""}
+          onClick={() => onModeChange("cumulative")}
+        >
+          累计
+        </button>
+        <button
+          type="button"
           className={mode === "history" ? "active" : ""}
           onClick={() => onModeChange("history")}
         >
           历史时刻
         </button>
       </div>
-      <div className={mode === "history" ? "history-time-input active" : "history-time-input"}>
+      {mode !== "cumulative" && <div className={mode === "history" ? "history-time-input active" : "history-time-input"}>
         <CalendarClock size={15} />
         <span>查询时间</span>
         <select
@@ -2347,8 +2438,8 @@ function HistoryTimeBar({
             <option key={time} value={time}>{time}</option>
           ))}
         </select>
-      </div>
-      <button
+      </div>}
+      {mode !== "cumulative" && <button
         type="button"
         className="history-query-button"
         disabled={mode !== "history" || loading || !value}
@@ -2356,7 +2447,25 @@ function HistoryTimeBar({
       >
         <Search size={14} />
         查询
-      </button>
+      </button>}
+      {mode === "cumulative" && (
+        <div className="history-time-result cumulative-result">
+          {loading ? (
+            <><RefreshCw size={14} className="spin" />正在查询累计...</>
+          ) : cumulativeMeta?.statDate ? (
+            <>
+              累计截止 <strong>{cumulativeMeta.statDate}</strong>
+              {cumulativeMeta.isFallback && (
+                <span className="history-fallback">
+                  昨日缺数，已回退最近可用日期
+                </span>
+              )}
+            </>
+          ) : (
+            <span>截至 {cumulativeMeta?.throughDate || "昨天"} 暂无累计数据</span>
+          )}
+        </div>
+      )}
       {mode === "history" && (
         <div className="history-time-result">
           {loading ? (
@@ -2384,9 +2493,9 @@ function HistoryTimeBar({
           目标：当前配置
         </span>
       )}
-      <span className="history-range-note">
+      {mode !== "cumulative" && <span className="history-range-note">
         可查询范围 {min ? min.slice(0, 19).replace("T", " ") : "--"} 至 {max ? max.slice(0, 19).replace("T", " ") : "--"}
-      </span>
+      </span>}
     </section>
   );
 }
@@ -4224,6 +4333,10 @@ function LevelPanel({
     setTableScrollTop(0);
   }, [levelAllActive, sortDirection, sortKey]);
 
+  useEffect(() => {
+    setColGrid(null);
+  }, [changeWindows.length]);
+
   return (
     <section className="level-panel" ref={branchPanelRef} style={panelStyle}>
       <div className="panel-head">
@@ -4268,7 +4381,7 @@ function LevelPanel({
 
       <div
         ref={dataTableRef}
-        className="data-table"
+        className={changeWindows.length ? "data-table" : "data-table compact-table"}
         style={{ padding: "6px 6px 0", ...dataTableStyle, ...(colGrid ? { "--col-grid": colGrid } : {}) } as React.CSSProperties}
         onScroll={useVirtualRows ? (event) => {
           setTableScrollTop(event.currentTarget.scrollTop);
@@ -4309,7 +4422,7 @@ function LevelPanel({
             aria-hidden="true"
           />
         )}
-        {showLoadingPlaceholder && <LoadingRows />}
+        {showLoadingPlaceholder && <LoadingRows compact={!changeWindows.length} />}
         {((rows.length === 0 || hideStaleRows) && !showLoadingPlaceholder) && (
           <EmptyRow message="暂无数据" />
         )}
@@ -4318,23 +4431,27 @@ function LevelPanel({
       <div className="section-total">
         <span>合计</span><strong>{hideStaleRows ? "--" : formatNumber(totalDone)}</strong>
         <span>平均进度</span><strong>{hideStaleRows ? "--" : fmtProgress(avgPct)}</strong>
-        <span>{lastWindow}分钟</span>
-        <strong className={lastChange >= 0 ? "up" : "down"}>
-          {hideStaleRows ? "--" : signed(lastChange)}
-        </strong>
+        {changeWindows.length > 0 && (
+          <>
+            <span>{lastWindow}分钟</span>
+            <strong className={lastChange >= 0 ? "up" : "down"}>
+              {hideStaleRows ? "--" : signed(lastChange)}
+            </strong>
+          </>
+        )}
       </div>
     </section>
   );
 }
 
-function LoadingRows() {
+function LoadingRows({ compact = false }: { compact?: boolean }) {
   return (
     <div className="loading-rows" aria-label="正在加载数据">
       {Array.from({ length: 8 }).map((_, index) => (
         <div className="loading-row" key={index}>
-          <span />
-          <span />
-          <span />
+          {!compact && <span />}
+          {!compact && <span />}
+          {!compact && <span />}
           <span />
           <span />
           <span />

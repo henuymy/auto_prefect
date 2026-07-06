@@ -164,6 +164,16 @@ def dashboard_batch(
                     dashboard_config.get("collection_database_lock_wait_seconds", 5)
                     or 5
                 ),
+                heartbeat_seconds=int(
+                    dashboard_config.get(
+                        "collection_database_lock_heartbeat_seconds", 30
+                    ) or 0
+                ),
+                idle_timeout_seconds=int(
+                    dashboard_config.get(
+                        "collection_database_lock_idle_timeout_seconds", 300
+                    ) or 0
+                ),
             ) as database_lock_result:
                 with Session(engine) as recovery_session:
                     recovered_runs = recover_stale_collection_runs(

@@ -153,6 +153,15 @@ body::-webkit-scrollbar-button,
   background: rgba(59, 130, 246, 0.2);
 }
 
+.history-mode-switch button.active.cumulative {
+  color: #ffedd5;
+  background: rgba(249, 115, 22, 0.24);
+}
+
+.cumulative-result {
+  color: #fed7aa;
+}
+
 .history-time-input {
   display: inline-flex;
   align-items: center;
@@ -1015,6 +1024,11 @@ body::-webkit-scrollbar-button,
   column-gap: 6px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.075);
   font-size: 12px;
+}
+
+.compact-table .table-row,
+.compact-table .loading-row {
+  grid-template-columns: 32px minmax(90px, 1.4fr) minmax(130px, 1fr);
 }
 
 .table-head {

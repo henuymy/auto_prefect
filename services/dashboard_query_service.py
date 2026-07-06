@@ -12,10 +12,11 @@ two DB round-trips instead of seven.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Engine, and_, bindparam, case, func, inspect, or_, select, text
 from sqlalchemy.orm import Session
@@ -26,6 +27,13 @@ from models.dashboard_custom_indicator import CustomIndicatorComponent
 from models.dashboard_indicator import Indicator
 from models.dashboard_metric import MetricAcc, MetricCurrent, MetricSnapshot
 from models.dashboard_metric_target import MetricTarget
+
+
+_SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _yesterday_shanghai() -> date:
+    return datetime.now(_SHANGHAI_TZ).date() - timedelta(days=1)
 
 
 def _number(value: Decimal | int | float | None) -> float | int | None:
@@ -1652,6 +1660,11 @@ def get_acc_wide_table(
             normalized_period,
         )
 
+        requested_through_date = (
+            date.fromisoformat(stat_date) if stat_date else _yesterday_shanghai()
+        )
+        selected_stat_date: date | None = None
+
         if area_ids and physical_indicators:
             acc_query = select(
                 MetricAcc.area_id,
@@ -1665,12 +1678,7 @@ def get_acc_wide_table(
             )
 
             if stat_date:
-                from datetime import date as date_type
-
-                acc_query = acc_query.where(
-                    MetricAcc.stat_date
-                    == date_type.fromisoformat(stat_date)
-                )
+                selected_stat_date = requested_through_date
             else:
                 latest_date_row = session.execute(
                     select(MetricAcc.stat_date)
@@ -1680,16 +1688,21 @@ def get_acc_wide_table(
                             indicator_to_id.values()
                         ),
                         MetricAcc.period_type == normalized_period,
+                        MetricAcc.stat_date <= requested_through_date,
                     )
                     .order_by(MetricAcc.stat_date.desc())
                     .limit(1)
                 ).first()
                 if latest_date_row:
-                    acc_query = acc_query.where(
-                        MetricAcc.stat_date == latest_date_row[0]
-                    )
+                    selected_stat_date = latest_date_row[0]
 
-            acc_rows = session.execute(acc_query).all()
+            acc_rows = (
+                session.execute(
+                    acc_query.where(MetricAcc.stat_date == selected_stat_date)
+                ).all()
+                if selected_stat_date is not None
+                else []
+            )
 
             code_by_id = {v: k for k, v in indicator_to_id.items()}
             for acc_row in acc_rows:
@@ -1738,6 +1751,12 @@ def get_acc_wide_table(
         ],
         "rows": rows,
         "row_count": len(rows),
+        "through_date": requested_through_date.isoformat(),
+        "stat_date": selected_stat_date.isoformat() if selected_stat_date else None,
+        "is_fallback": bool(
+            selected_stat_date is not None
+            and selected_stat_date < requested_through_date
+        ),
     }
 
 

@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Engine, func, or_, select
 from sqlalchemy.orm import Session, aliased
@@ -32,6 +33,11 @@ from services.dashboard_v2_target_service import load_v2_target_values
 
 
 NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
+_SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _yesterday_shanghai() -> date:
+    return datetime.now(_SHANGHAI_TZ).date() - timedelta(days=1)
 
 
 def _number(value: Decimal | int | float | None) -> float | int | None:
@@ -913,25 +919,42 @@ def get_acc_wide_table(
     if normalized not in {"DAY_ACC", "MONTH"}:
         raise ValueError(f"period_type 只支持 DAY_ACC/MONTH: {period_type!r}")
     with Session(engine) as session:
+        through_date = date.fromisoformat(stat_date) if stat_date else _yesterday_shanghai()
         target_day = (
-            date.fromisoformat(stat_date)
+            through_date
             if stat_date
             else session.scalar(
                 select(func.max(MetricAccV2.stat_date)).where(
-                    MetricAccV2.period_type == normalized
+                    MetricAccV2.period_type == normalized,
+                    MetricAccV2.stat_date <= through_date,
                 )
-            ) or date.today()
+            )
         )
         indicators = _enabled_indicators(session, indicator_codes)
         nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
-        rows = _acc_rows_in_session(
-            session,
-            nodes=nodes,
-            indicators=indicators,
-            period_type=normalized,
-            target_day=target_day,
+        rows = (
+            _acc_rows_in_session(
+                session,
+                nodes=nodes,
+                indicators=indicators,
+                period_type=normalized,
+                target_day=target_day,
+            )
+            if target_day is not None
+            else []
         )
-        return {"indicators": [_indicator_dto(row) for row in indicators], "rows": rows, "row_count": len(rows)}
+        rows = [
+            row for row in rows
+            if any(value is not None for value in row["metrics"].values())
+        ]
+        return {
+            "indicators": [_indicator_dto(row) for row in indicators],
+            "rows": rows,
+            "row_count": len(rows),
+            "through_date": through_date.isoformat(),
+            "stat_date": target_day.isoformat() if target_day else None,
+            "is_fallback": bool(target_day is not None and target_day < through_date),
+        }
 
 
 def get_dashboard_overview(
