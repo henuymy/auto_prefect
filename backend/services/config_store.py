@@ -12,6 +12,7 @@ REPORTS_DIR = PROJECT_ROOT / "config" / "reports"
 TASKS_DIR = PROJECT_ROOT / "config" / "tasks"
 DRAFTS_DIR = PROJECT_ROOT / "runtime" / "drafts"
 VERSIONS_DIR = PROJECT_ROOT / "runtime" / "config_versions"
+CONFIG_ORDER_PATH = PROJECT_ROOT / "config" / "report_order.json"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -30,6 +31,47 @@ def _safe_name(value: str) -> str:
 
 def _mtime_text(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _read_config_order() -> list[str]:
+    if not CONFIG_ORDER_PATH.exists():
+        return []
+    try:
+        payload = _read_json(CONFIG_ORDER_PATH)
+        raw_ids = payload.get("ids") if isinstance(payload, dict) else []
+        return [str(item) for item in raw_ids if str(item).strip()] if isinstance(raw_ids, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def save_config_order(config_ids: list[str]) -> list[str]:
+    available_ids = {
+        path.stem
+        for directory in (REPORTS_DIR, DRAFTS_DIR)
+        for path in directory.glob("*.json")
+        if not path.name.endswith((".task.json", ".report.json"))
+    }
+    ordered_ids: list[str] = []
+    for item in config_ids:
+        config_id = str(item).strip()
+        if config_id in available_ids and config_id not in ordered_ids:
+            ordered_ids.append(config_id)
+    _write_json(CONFIG_ORDER_PATH, {"ids": ordered_ids})
+    return ordered_ids
+
+
+def _replace_config_order_id(old_id: str, new_id: str | None) -> None:
+    if not CONFIG_ORDER_PATH.exists():
+        return
+    current = _read_config_order()
+    next_ids: list[str] = []
+    for item in current:
+        candidate = new_id if item == old_id else item
+        if candidate and candidate not in next_ids:
+            next_ids.append(candidate)
+    if new_id and new_id not in next_ids:
+        next_ids.append(new_id)
+    _write_json(CONFIG_ORDER_PATH, {"ids": next_ids})
 
 
 def normalize_config(data: dict[str, Any], config_id: str | None = None, updated_at: str | None = None) -> dict[str, Any]:
@@ -159,12 +201,15 @@ def list_configs() -> list[dict[str, Any]]:
         sort_time = max(path.stat().st_mtime, draft_paths[name].stat().st_mtime if name in draft_paths else path.stat().st_mtime)
         entries.append((path, sort_time))
     entries.extend((path, path.stat().st_mtime) for name, path in draft_paths.items() if name not in report_paths)
+    order_index = {config_id: index for index, config_id in enumerate(_read_config_order())}
     paths = [
         path
         for path, _sort_time in sorted(
             entries,
-            key=lambda item: item[1],
-            reverse=True,
+            key=lambda item: (
+                0 if item[0].stem in order_index else 1,
+                order_index.get(item[0].stem, 0) if item[0].stem in order_index else -item[1],
+            ),
         )
     ]
     for path in paths:
@@ -211,6 +256,7 @@ def save_config(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
         old_draft_path = DRAFTS_DIR / f"{_safe_name(config_id)}.json"
         if old_draft_path.exists() and old_draft_path != draft_path:
             old_draft_path.unlink()
+    _replace_config_order_id(_safe_name(config_id), name)
     saved = normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
     saved["source"] = "published"
     saved["has_draft"] = False
@@ -257,6 +303,7 @@ def save_draft(config_id: str, config: dict[str, Any]) -> dict[str, Any]:
         old_path = DRAFTS_DIR / f"{_safe_name(config_id)}.json"
         if old_path.exists() and old_path != path:
             old_path.unlink()
+    _replace_config_order_id(_safe_name(config_id), name)
     saved = normalize_config(_read_json(path), config_id=path.stem, updated_at=_mtime_text(path))
     saved["source"] = "draft"
     saved["has_draft"] = True
@@ -278,6 +325,8 @@ def delete_config(config_id: str, source: str = "published") -> list[str]:
         if not draft_path.exists():
             raise FileNotFoundError(f"草稿不存在: {config_id}")
         draft_path.unlink()
+        if not report_path.exists():
+            _replace_config_order_id(name, None)
         return [str(draft_path.relative_to(PROJECT_ROOT))]
     if not report_path.exists():
         raise FileNotFoundError(f"配置不存在: {config_id}")
@@ -294,4 +343,5 @@ def delete_config(config_id: str, source: str = "published") -> list[str]:
         if path.exists() and path.is_file():
             path.unlink()
             deleted.append(str(path.relative_to(PROJECT_ROOT)))
+    _replace_config_order_id(name, None)
     return deleted

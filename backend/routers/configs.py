@@ -26,6 +26,16 @@ def list_configs():
     return config_store.list_configs()
 
 
+@router.put("/order")
+def save_config_order(payload: dict):
+    config_ids = payload.get("ids")
+    if not isinstance(config_ids, list):
+        raise HTTPException(status_code=400, detail="ids 必须是配置 ID 数组")
+    saved_ids = config_store.save_config_order(config_ids)
+    append_log("success", "调整配置顺序", f"已保存 {len(saved_ids)} 项配置的显示顺序")
+    return {"ids": saved_ids}
+
+
 @router.get("/{config_id}")
 def get_config(config_id: str, source: str = Query("published", pattern="^(published|draft)$")):
     try:

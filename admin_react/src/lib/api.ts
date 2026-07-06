@@ -153,6 +153,13 @@ export async function listConfigs() {
   return configs.map(normalizeReportConfig);
 }
 
+export async function updateConfigOrder(ids: string[]) {
+  return request<{ ids: string[] }>("/api/configs/order", {
+    method: "PUT",
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export async function getConfig(id: string, source: ConfigSource = "published") {
   return normalizeReportConfig(await request<ReportConfig>(`/api/configs/${encodeURIComponent(id)}?source=${source}`));
 }

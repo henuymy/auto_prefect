@@ -13,7 +13,7 @@ import { TemplateDrawer } from "@/components/templates/TemplateDrawer";
 import { VersionDrawer } from "@/components/versions/VersionDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { createConfig, deleteConfig, deleteDeployment, deleteRuntime, getConfig, getSystemStatus, listConfigVersions, listConfigs, listRunLogs, listRuntime, previewRuntimeCleanup, publishConfig, realTestRunConfig, restoreConfigVersion, runRuntimeCleanup, saveDraftConfig, testRunConfig, updateConfig, validateConfig } from "@/lib/api";
+import { createConfig, deleteConfig, deleteDeployment, deleteRuntime, getConfig, getSystemStatus, listConfigVersions, listConfigs, listRunLogs, listRuntime, previewRuntimeCleanup, publishConfig, realTestRunConfig, restoreConfigVersion, runRuntimeCleanup, saveDraftConfig, testRunConfig, updateConfig, updateConfigOrder, validateConfig } from "@/lib/api";
 import type { ConfigSource } from "@/lib/api";
 import { uid } from "@/lib/utils";
 import { validateReportConfig } from "@/schemas/reportConfigSchema";
@@ -144,6 +144,7 @@ export default function App() {
   const [activeConfigTab, setActiveConfigTab] = useState<ConfigFormTab>("base");
   const [publishing, setPublishing] = useState(false);
   const [deletingDeployment, setDeletingDeployment] = useState(false);
+  const [reorderingConfigs, setReorderingConfigs] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testStep, setTestStep] = useState(0);
   const [realTesting, setRealTesting] = useState(false);
@@ -271,6 +272,39 @@ export default function App() {
     setConfig(next);
     setIssues(validateReportConfig(next));
     toast.success("已新建通报配置", { description: "填写完成后点击“保存配置”写入 config/reports。" });
+  }
+
+  async function moveConfig(id: string, direction: -1 | 1) {
+    const index = configs.findIndex((item) => item.id === id);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= configs.length) return;
+
+    const next = [...configs];
+    [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+    await reorderConfigs(next.map((item) => item.id));
+  }
+
+  async function reorderConfigs(ids: string[]) {
+    if (reorderingConfigs) return;
+    const previous = configs;
+    const configsById = new Map(configs.map((item) => [item.id, item]));
+    const next = ids.map((id) => configsById.get(id)).filter((item): item is ReportConfig => Boolean(item));
+    for (const item of configs) {
+      if (!ids.includes(item.id)) next.push(item);
+    }
+    if (next.length !== configs.length) return;
+
+    setConfigs(next);
+    setReorderingConfigs(true);
+    try {
+      await updateConfigOrder(next.map((item) => item.id));
+      toast.success("配置顺序已保存", { id: "config-order", duration: 1200 });
+    } catch (error) {
+      setConfigs(previous);
+      toast.error("配置顺序保存失败", { id: "config-order", description: toastDescription(error), duration: 3000 });
+    } finally {
+      setReorderingConfigs(false);
+    }
   }
 
   function suggestedCopyName(sourceName: string) {
@@ -675,6 +709,9 @@ export default function App() {
         onTabChange={setActiveConfigTab}
         onSelect={selectConfig}
         onCreate={createLocalConfig}
+        onMove={moveConfig}
+        onReorder={reorderConfigs}
+        reordering={reorderingConfigs}
       />
       <main className="flex min-w-0 flex-1 flex-col">
         <Header
