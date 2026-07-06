@@ -30,6 +30,9 @@ def get_dashboard_schema_version(
 def _adapt_kwargs(version: int, kwargs: dict[str, Any]) -> dict[str, Any]:
     adapted = dict(kwargs)
     if version == 1:
+        value_mode = str(adapted.pop("value_mode", "REALTIME")).strip().upper()
+        if value_mode != "REALTIME":
+            raise ValueError("实时累计模式仅支持 Dashboard V2")
         adapted.pop("tree_mode", None)
         if "node_type" in adapted:
             adapted["level_type"] = adapted.pop("node_type")

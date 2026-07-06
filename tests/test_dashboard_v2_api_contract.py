@@ -19,3 +19,14 @@ def test_v2_node_query_parameters_replace_legacy_area_vocabulary():
     for parameters in (matrix, history, drill):
         assert "level_type" not in parameters
         assert "parent_level" not in parameters
+
+
+def test_realtime_acc_value_mode_is_exposed_on_all_realtime_queries():
+    for path in (
+        "/api/dashboard/current",
+        "/api/dashboard/current-with-changes",
+        "/api/dashboard/matrix",
+        "/api/dashboard/overview",
+        "/api/dashboard/drill-down",
+    ):
+        assert "value_mode" in _parameter_names(path)

@@ -22,8 +22,11 @@ def test_matrix_route_uses_cache_and_invalidates_on_data_version(monkeypatch):
         lambda engine: {"latest_run": None, "data_version": version["value"]},
     )
 
+    received_modes = []
+
     def load_matrix(engine, **kwargs):
         calls["count"] += 1
+        received_modes.append(kwargs["value_mode"])
         return {"rows": [], "total": 0, "page": 1, "page_size": 100}
 
     monkeypatch.setattr(dashboard, "get_dashboard_matrix_page", load_matrix)
@@ -41,6 +44,7 @@ def test_matrix_route_uses_cache_and_invalidates_on_data_version(monkeypatch):
         "sort_mode": "doneDesc",
         "page": 1,
         "page_size": 100,
+        "value_mode": "REALTIME",
     }
     dashboard.dashboard_matrix(**params)
     dashboard.dashboard_matrix(**params)
@@ -49,6 +53,10 @@ def test_matrix_route_uses_cache_and_invalidates_on_data_version(monkeypatch):
     version["value"] = "v2"
     dashboard.dashboard_matrix(**params)
     assert calls["count"] == 2
+
+    dashboard.dashboard_matrix(**{**params, "value_mode": "REALTIME_ACC"})
+    assert calls["count"] == 3
+    assert received_modes == ["REALTIME", "REALTIME", "REALTIME_ACC"]
 
 
 def test_parse_indicator_codes_deduplicates_and_limits():

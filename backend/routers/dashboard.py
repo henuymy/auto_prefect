@@ -563,6 +563,7 @@ def dashboard_matrix(
     sort_mode: str = Query("doneDesc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=200),
+    value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -583,6 +584,7 @@ def dashboard_matrix(
                 sort_mode,
                 page,
                 page_size,
+                value_mode,
             ),
             lambda: get_dashboard_matrix_page(
                 engine,
@@ -598,6 +600,7 @@ def dashboard_matrix(
                 sort_mode=sort_mode,
                 page=page,
                 page_size=page_size,
+                value_mode=value_mode,
             ),
         )
     except ValueError as exc:
@@ -623,6 +626,7 @@ def dashboard_overview(
         description="逗号分隔的指标编码；不传则查询全部启用指标",
     ),
     include_acc: bool = Query(True),
+    value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -638,6 +642,7 @@ def dashboard_overview(
                 tuple(parsed_windows or ()),
                 tuple(parsed_codes or ()),
                 include_acc,
+                value_mode,
             ),
             lambda: get_dashboard_overview(
                 engine,
@@ -647,8 +652,11 @@ def dashboard_overview(
                 change_windows=parsed_windows,
                 indicator_codes=parsed_codes,
                 include_acc=include_acc,
+                value_mode=value_mode,
             ),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=503,
@@ -674,6 +682,7 @@ def dashboard_drill_down(
     ),
     include_acc: bool = Query(True),
     tree_mode: str = Query("full", pattern="^(full|flat)$"),
+    value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
 ):
     """Lightweight drill-down: only returns children of the given parent."""
     engine = get_dashboard_engine()
@@ -691,6 +700,7 @@ def dashboard_drill_down(
                 tuple(parsed_codes or ()),
                 include_acc,
                 tree_mode,
+                value_mode,
             ),
             lambda: get_drill_down(
                 engine,
@@ -701,6 +711,7 @@ def dashboard_drill_down(
                 indicator_codes=parsed_codes,
                 include_acc=include_acc,
                 tree_mode=tree_mode,
+                value_mode=value_mode,
             ),
         )
     except ValueError as exc:
@@ -717,6 +728,7 @@ def current_dashboard(
     node_type: str | None = Query(None),
     parent_id: int | None = Query(None, ge=1),
     indicator_codes: str | None = Query(None),
+    value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -725,7 +737,10 @@ def current_dashboard(
             node_type=node_type,
             parent_id=parent_id,
             indicator_codes=_parse_indicator_codes(indicator_codes),
+            value_mode=value_mode,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=503,
@@ -742,6 +757,7 @@ def current_with_changes(
         description="逗号分隔的变化窗口分钟数，最多 4 个，例如 5,15,30,60",
     ),
     indicator_codes: str | None = Query(None),
+    value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -755,6 +771,7 @@ def current_with_changes(
                 parent_id,
                 tuple(parsed_windows or ()),
                 tuple(parsed_codes or ()),
+                value_mode,
             ),
             lambda: get_current_with_changes(
                 engine,
@@ -762,8 +779,11 @@ def current_with_changes(
                 parent_id=parent_id,
                 change_windows=parsed_windows,
                 indicator_codes=parsed_codes,
+                value_mode=value_mode,
             ),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=503,

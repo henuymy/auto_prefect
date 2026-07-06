@@ -66,6 +66,17 @@ export type ChangeEntry = {
   rate: number | null;
 };
 
+export type DashboardValueMode = "REALTIME" | "REALTIME_ACC";
+
+export type DashboardAccumulationMeta = {
+  through_date: string;
+  stat_date: string | null;
+  is_fallback: boolean;
+  baseline_zero: boolean;
+  baseline_missing: boolean;
+  target_period: "MONTH";
+};
+
 export type DashboardRow = {
   id: number;
   node_code: string;
@@ -87,6 +98,8 @@ export type DashboardRowWithChanges = DashboardRow & {
 };
 
 export type DashboardCurrentResponse = {
+  data_mode?: DashboardValueMode;
+  accumulation_meta?: DashboardAccumulationMeta;
   latest_run: {
     id: number;
     batch_no: string;
@@ -100,7 +113,8 @@ export type DashboardCurrentResponse = {
 };
 
 export type DashboardChangesResponse = {
-  data_mode?: "REALTIME" | "HISTORY";
+  data_mode?: DashboardValueMode | "HISTORY";
+  accumulation_meta?: DashboardAccumulationMeta;
   selected_time?: string | null;
   data_version?: string;
   config_version?: string;
@@ -164,6 +178,8 @@ export type DashboardAccResponse = {
 };
 
 export type DashboardOverviewResponse = {
+  data_mode?: DashboardValueMode;
+  accumulation_meta?: DashboardAccumulationMeta;
   latest_run: {
     id: number;
     batch_no: string;

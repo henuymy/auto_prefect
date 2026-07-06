@@ -15,6 +15,7 @@ from services.dashboard_v2_query_service import (
     get_historical_with_changes,
     get_history_options,
     get_history_range,
+    get_latest_dashboard_run,
 )
 from services.dashboard_v2_custom_indicator_service import (
     delete_custom_indicator,
@@ -550,3 +551,212 @@ def test_acc_returns_empty_rows_when_no_data_exists_before_yesterday(monkeypatch
     assert result["row_count"] == 0
     assert result["stat_date"] is None
     assert result["is_fallback"] is False
+
+
+def _insert_month_target_and_acc(
+    engine, *, acc_date: str = "2026-06-29", acc_value: int = 80
+):
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO target_plan
+                (id, plan_name, scenario, period_type, effective_from, status)
+            VALUES (2, '月目标', 'NORMAL', 'MONTH', '2026-01-01', 'ACTIVE')
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (3, 2, 2, 1, 200)
+        """))
+        connection.execute(
+            text("""
+                INSERT INTO metric_acc
+                    (id, period_type, stat_date, node_id, indicator_id,
+                     collection_run_id, metric_value, collected_at)
+                VALUES
+                    (1, 'DAY_ACC', :acc_date, 2, 1, 1, :acc_value,
+                     '2026-06-30 08:00:00')
+            """),
+            {"acc_date": acc_date, "acc_value": acc_value},
+        )
+
+
+def test_realtime_acc_adds_same_month_baseline_and_uses_month_target():
+    engine = _engine()
+    _insert_month_target_and_acc(engine)
+
+    result = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+
+    row = result["rows"][0]
+    assert result["data_mode"] == "REALTIME_ACC"
+    assert row["metrics"]["channel_count"] == 180
+    assert row["targets"]["channel_count"] == 200
+    assert row["changes"]["channel_count"]["change_5min"] == {
+        "value": 10,
+        "rate": 10 / 170,
+    }
+    assert result["accumulation_meta"] == {
+        "through_date": "2026-06-29",
+        "stat_date": "2026-06-29",
+        "is_fallback": False,
+        "baseline_zero": False,
+        "baseline_missing": False,
+        "target_period": "MONTH",
+    }
+
+
+def test_realtime_acc_falls_back_only_within_current_month():
+    engine = _engine()
+    _insert_month_target_and_acc(engine, acc_date="2026-06-28", acc_value=70)
+
+    fallback = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+    assert fallback["rows"][0]["metrics"]["channel_count"] == 170
+    assert fallback["accumulation_meta"]["is_fallback"] is True
+    assert fallback["accumulation_meta"]["stat_date"] == "2026-06-28"
+
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE collection_run SET stat_date='2026-07-02' WHERE id=2"))
+    missing = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+    assert missing["rows"][0]["metrics"]["channel_count"] is None
+    assert missing["accumulation_meta"]["baseline_missing"] is True
+    assert missing["accumulation_meta"]["stat_date"] is None
+
+
+def test_realtime_acc_uses_zero_baseline_on_first_day_of_month():
+    engine = _engine()
+    _insert_month_target_and_acc(engine)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE collection_run SET stat_date='2026-07-01' WHERE id=2"))
+
+    result = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+
+    assert result["rows"][0]["metrics"]["channel_count"] == 100
+    assert result["accumulation_meta"]["baseline_zero"] is True
+    assert result["accumulation_meta"]["baseline_missing"] is False
+
+
+def test_realtime_acc_applies_linear_custom_indicator_to_values_and_targets():
+    engine = _engine()
+    upsert_custom_indicator(
+        engine,
+        code="double_count",
+        name="双倍渠道数",
+        components=[{"source_code": "channel_count", "coefficient": 2}],
+    )
+    _insert_month_target_and_acc(engine)
+
+    result = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["double_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+
+    row = result["rows"][0]
+    assert row["metrics"]["double_count"] == 360
+    assert row["targets"]["double_count"] == 400
+    assert row["changes"]["double_count"]["change_5min"] == {
+        "value": 20,
+        "rate": 20 / 340,
+    }
+
+
+def test_realtime_acc_matrix_sorts_combined_values_and_month_progress():
+    engine = _engine()
+    _insert_month_target_and_acc(engine)
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO hierarchy_node
+                (id, node_type, node_code, node_name, parent_id, level_no, sort_order)
+            VALUES (6, 'BRANCH', 'ZY', '郑东新区', 1, 2, 2)
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_current
+                (id, node_id, indicator_id, collection_run_id, metric_value,
+                 stat_date, collected_at)
+            VALUES (6, 6, 1, 2, 90, '2026-06-30', '2026-06-30 10:10:00')
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_snapshot
+                (id, collected_at, collection_run_id, node_id, indicator_id, metric_value)
+            VALUES (6, '2026-06-30 10:00:00', 1, 6, 1, 80)
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_acc
+                (id, period_type, stat_date, node_id, indicator_id,
+                 collection_run_id, metric_value, collected_at)
+            VALUES
+                (2, 'DAY_ACC', '2026-06-29', 6, 1, 1, 200,
+                 '2026-06-30 08:00:00')
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (4, 2, 6, 1, 1000)
+        """))
+
+    by_done = get_dashboard_matrix_page(
+        engine,
+        node_type="BRANCH",
+        scope_mode="all",
+        indicator_codes=["channel_count"],
+        change_window=5,
+        sort_indicator="channel_count",
+        sort_mode="doneDesc",
+        value_mode="REALTIME_ACC",
+    )
+    by_progress = get_dashboard_matrix_page(
+        engine,
+        node_type="BRANCH",
+        scope_mode="all",
+        indicator_codes=["channel_count"],
+        change_window=5,
+        sort_indicator="channel_count",
+        sort_mode="progressDesc",
+        value_mode="REALTIME_ACC",
+    )
+
+    assert [row["node_code"] for row in by_done["rows"]] == ["ZY", "AQ"]
+    assert [row["node_code"] for row in by_progress["rows"]] == ["AQ", "ZY"]
+
+
+def test_realtime_cache_version_changes_when_accumulation_baseline_arrives():
+    engine = _engine()
+    before = get_latest_dashboard_run(engine)["data_version"]
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO metric_acc
+                (id, period_type, stat_date, node_id, indicator_id,
+                 collection_run_id, metric_value, collected_at)
+            VALUES
+                (1, 'DAY_ACC', '2026-06-29', 2, 1, 1, 80,
+                 '2026-06-30 08:00:00')
+        """))
+    after = get_latest_dashboard_run(engine)["data_version"]
+
+    assert before != after
+    assert "2026-06-29" in after

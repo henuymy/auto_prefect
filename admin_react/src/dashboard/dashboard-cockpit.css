@@ -812,6 +812,11 @@ body::-webkit-scrollbar-button,
   gap: 4px;
 }
 
+.history-mode-switch button.active.realtime-acc {
+  color: #d1fae5;
+  background: rgba(16, 185, 129, 0.24);
+}
+
 .single-sort-field {
   position: relative;
   min-width: 0;

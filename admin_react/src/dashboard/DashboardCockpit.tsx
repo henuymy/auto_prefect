@@ -48,6 +48,8 @@ import type {
   DashboardHistoryMeta,
   DashboardHistoryOptionsResponse,
   DashboardMatrixResponse,
+  DashboardAccumulationMeta,
+  DashboardValueMode,
   IndicatorChanges,
 } from "@/types/dashboard";
 
@@ -94,7 +96,7 @@ type LevelOverrideData = {
 
 type ScopeMode = "default" | "all";
 type CockpitMode = "single" | "multi";
-type DataTimeMode = "realtime" | "cumulative" | "history";
+type DataTimeMode = "realtime" | "realtime_acc" | "cumulative" | "history";
 type StorageMode = "STORE" | "COMPONENT";
 type SourceMetricOption = {
   code: string;
@@ -176,6 +178,7 @@ type FetchedData = {
   levelOverrides: Partial<Record<LevelKey, LevelOverrideData>>;
   coverage?: DashboardHistoryCoverage;
   historyMeta?: DashboardHistoryMeta;
+  accumulationMeta?: DashboardAccumulationMeta;
   cumulativeMeta?: {
     throughDate: string;
     statDate: string | null;
@@ -1281,6 +1284,9 @@ export function DashboardCockpit() {
       const parentNodeType = drillTarget?.nodeType;
       const historyActive = dataTimeMode === "history" && Boolean(historyAsOf);
       const cumulativeActive = dataTimeMode === "cumulative";
+      const valueMode: DashboardValueMode = dataTimeMode === "realtime_acc"
+        ? "REALTIME_ACC"
+        : "REALTIME";
       const catalogPromise = getDashboardIndicators(historyActive, !historyActive)
         .catch(() => ({ indicators: [] }));
       const [changesData, accRows] = cumulativeActive
@@ -1330,16 +1336,18 @@ export function DashboardCockpit() {
             "BRANCH",
             undefined,
             requestedIndicatorCodes,
+            valueMode,
           ).then((changes) => [changes, [] as DashboardRow[]] as const)
         : parentId == null
         ? scopeMode === "all"
-          ? SHOW_MONTH_ACCUMULATION
+          ? SHOW_MONTH_ACCUMULATION && valueMode === "REALTIME"
             ? await Promise.all([
                 getDashboardWithChanges(
                   "BRANCH",
                   undefined,
                   requestedChangeWindows,
                   requestedIndicatorCodes,
+                  valueMode,
                 ),
                 getAccDashboard(
                   "DAY_ACC",
@@ -1354,6 +1362,7 @@ export function DashboardCockpit() {
                 undefined,
                 requestedChangeWindows,
                 requestedIndicatorCodes,
+                valueMode,
               ).then((changes) => [changes, [] as DashboardRow[]] as const)
           : await getDashboardOverview(
               undefined,
@@ -1362,6 +1371,7 @@ export function DashboardCockpit() {
               requestedChangeWindows,
               requestedIndicatorCodes,
               SHOW_MONTH_ACCUMULATION,
+              valueMode,
             ).then((overview) => [
               overview,
               overview.acc_rows,
@@ -1374,17 +1384,20 @@ export function DashboardCockpit() {
               requestedChangeWindows,
               requestedIndicatorCodes,
               SHOW_MONTH_ACCUMULATION,
+              "full",
+              valueMode,
             ).then((drill) => [
               drill,
               drill.acc_rows,
             ] as const)
-        : SHOW_MONTH_ACCUMULATION
+        : SHOW_MONTH_ACCUMULATION && valueMode === "REALTIME"
           ? await Promise.all([
               getDashboardWithChanges(
                 undefined,
                 parentId,
                 requestedChangeWindows,
                 requestedIndicatorCodes,
+                valueMode,
               ),
               getAccDashboard(
                 "DAY_ACC",
@@ -1399,11 +1412,12 @@ export function DashboardCockpit() {
               parentId,
               requestedChangeWindows,
               requestedIndicatorCodes,
+              valueMode,
             )
               .then((changes) => [changes, [] as DashboardRow[]] as const);
 
       const progressiveAllLevels = (
-        dataTimeMode === "realtime"
+        (dataTimeMode === "realtime" || dataTimeMode === "realtime_acc")
         &&
         mode === "single"
         && parentId == null
@@ -1425,6 +1439,10 @@ export function DashboardCockpit() {
         "history_meta" in changesData
         && changesData.history_meta
       ) ? changesData.history_meta as DashboardHistoryMeta : undefined;
+      const responseAccumulationMeta = (
+        "accumulation_meta" in changesData
+        && changesData.accumulation_meta
+      ) ? changesData.accumulation_meta as DashboardAccumulationMeta : undefined;
       const cumulativeMeta = cumulativeActive && "through_date" in changesData
         ? {
             throughDate: String(changesData.through_date),
@@ -1455,7 +1473,11 @@ export function DashboardCockpit() {
           return { ...r, node_name: name };
         });
       const makeData = (): FetchedData => ({
-        online: cumulativeActive ? changesData.rows.length > 0 : Boolean(latestRun),
+        online: cumulativeActive
+          ? changesData.rows.length > 0
+          : dataTimeMode === "realtime_acc"
+            ? Boolean(latestRun) && !responseAccumulationMeta?.baseline_missing
+            : Boolean(latestRun),
         latestRun,
         updatedAt: cumulativeActive
           ? cumulativeMeta?.statDate || "暂无累计"
@@ -1469,6 +1491,7 @@ export function DashboardCockpit() {
         levelOverrides: { ...levelOverrides },
         coverage: responseCoverage,
         historyMeta: responseHistoryMeta,
+        accumulationMeta: responseAccumulationMeta,
         cumulativeMeta,
       });
       const cacheData = (nextData: FetchedData) => {
@@ -1523,6 +1546,7 @@ export function DashboardCockpit() {
                     undefined,
                     requestedChangeWindows,
                     requestedIndicatorCodes,
+                    valueMode,
                   );
               const overrideAccRows = dataTimeMode === "realtime" && SHOW_MONTH_ACCUMULATION
                 ? await getAccDashboard(
@@ -2070,6 +2094,7 @@ export function DashboardCockpit() {
           ? data?.latestRun?.started_at || data?.latestRun?.finished_at
           : null}
         historyMeta={dataTimeMode === "history" ? data?.historyMeta : undefined}
+        accumulationMeta={dataTimeMode === "realtime_acc" ? data?.accumulationMeta : undefined}
         cumulativeMeta={dataTimeMode === "cumulative" ? data?.cumulativeMeta : undefined}
         loading={loading}
         onModeChange={(nextMode) => {
@@ -2119,7 +2144,9 @@ export function DashboardCockpit() {
           <div className="section-title-copy">
             <strong>{dataTimeMode === "history"
               ? "历史时刻"
-              : dataTimeMode === "cumulative" ? "累计" : "当日实时"}</strong>
+              : dataTimeMode === "cumulative"
+                ? "累计"
+                : dataTimeMode === "realtime_acc" ? "实时累计" : "当日实时"}</strong>
             <span>
               {dataTimeMode === "history"
                 ? "数据固定于所选时间之前最近的成功批次"
@@ -2127,6 +2154,12 @@ export function DashboardCockpit() {
                   ? data?.cumulativeMeta?.statDate
                     ? `累计截止 ${data.cumulativeMeta.statDate}${data.cumulativeMeta.isFallback ? "（已回退最近可用日期）" : ""}`
                     : `截至 ${data?.cumulativeMeta?.throughDate || "昨天"} 暂无累计数据`
+                  : dataTimeMode === "realtime_acc"
+                    ? data?.accumulationMeta?.baseline_missing
+                      ? "本月暂无累计基线，暂不计算实时累计"
+                      : data?.accumulationMeta?.baseline_zero
+                        ? "本月首日：零基线 + 当日实时，进度按月目标"
+                        : `累计截止 ${data?.accumulationMeta?.stat_date || "--"} + 当日实时，进度按月目标${data?.accumulationMeta?.is_fallback ? "（累计已回退）" : ""}`
                   : "展示每30秒刷新，数据按采集批次更新"}
             </span>
             <RequestSourceBadge source={singleRequestSource} />
@@ -2225,6 +2258,7 @@ export function DashboardCockpit() {
           drillLevel={matrixDrillLevel}
           onDrill={handleDrill}
           asOf={dataTimeMode === "history" ? historyAsOf : undefined}
+          valueMode={dataTimeMode === "realtime_acc" ? "REALTIME_ACC" : "REALTIME"}
         />
       )}
     </div>
@@ -2328,6 +2362,8 @@ function Header({
             ? online ? "历史快照" : "该时刻无数据"
             : dataTimeMode === "cumulative"
               ? online ? "累计数据" : "暂无累计"
+              : dataTimeMode === "realtime_acc"
+                ? online ? "实时累计" : "累计基线缺失"
               : online ? "实时采集中" : "等待数据"}
         </span>
         <span className="divider" />
@@ -2361,6 +2397,7 @@ function HistoryTimeBar({
   max,
   actualTime,
   historyMeta,
+  accumulationMeta,
   cumulativeMeta,
   loading,
   onModeChange,
@@ -2374,6 +2411,7 @@ function HistoryTimeBar({
   max: string;
   actualTime?: string | null;
   historyMeta?: DashboardHistoryMeta;
+  accumulationMeta?: DashboardAccumulationMeta;
   cumulativeMeta?: FetchedData["cumulativeMeta"];
   loading: boolean;
   onModeChange: (mode: DataTimeMode) => void;
@@ -2393,6 +2431,13 @@ function HistoryTimeBar({
           onClick={() => onModeChange("realtime")}
         >
           实时
+        </button>
+        <button
+          type="button"
+          className={mode === "realtime_acc" ? "active realtime-acc" : ""}
+          onClick={() => onModeChange("realtime_acc")}
+        >
+          实时累计
         </button>
         <button
           type="button"
@@ -2463,6 +2508,28 @@ function HistoryTimeBar({
             </>
           ) : (
             <span>截至 {cumulativeMeta?.throughDate || "昨天"} 暂无累计数据</span>
+          )}
+        </div>
+      )}
+      {mode === "realtime_acc" && (
+        <div className="history-time-result cumulative-result">
+          {loading ? (
+            <><RefreshCw size={14} className="spin" />正在计算实时累计...</>
+          ) : accumulationMeta?.baseline_missing ? (
+            <span className="history-fallback">本月暂无可用累计基线</span>
+          ) : accumulationMeta?.baseline_zero ? (
+            <span>本月首日，累计基线为0</span>
+          ) : accumulationMeta?.stat_date ? (
+            <>
+              累计截止 <strong>{accumulationMeta.stat_date}</strong>
+              {accumulationMeta.is_fallback && (
+                <span className="history-fallback">
+                  已回退至 {accumulationMeta.stat_date}
+                </span>
+              )}
+            </>
+          ) : (
+            <span>暂无实时累计数据</span>
           )}
         </div>
       )}
@@ -3226,6 +3293,7 @@ function MultiMetricMatrix({
   drillLevel,
   onDrill,
   asOf,
+  valueMode,
 }: {
   catalog: DashboardCatalogIndicator[];
   availableIndicators: DashboardIndicator[];
@@ -3241,6 +3309,7 @@ function MultiMetricMatrix({
   drillLevel?: string;
   onDrill: (row: BoardRow, nodeType: string) => void;
   asOf?: string;
+  valueMode: DashboardValueMode;
 }) {
   const orderedCatalog = useMemo(() => {
     const byCode = new Map(
@@ -3328,7 +3397,7 @@ function MultiMetricMatrix({
 
   useEffect(() => {
     setMatrixPage(1);
-  }, [level, parentId, parentNodeType, scopeMode, selectedCodes, sortIndicator, sortMode, windowMinutes]);
+  }, [level, parentId, parentNodeType, scopeMode, selectedCodes, sortIndicator, sortMode, valueMode, windowMinutes]);
 
   useEffect(() => {
     if (level === "CHANNEL" && sortMode.startsWith("overall")) {
@@ -3356,6 +3425,7 @@ function MultiMetricMatrix({
       sortMode: sortMode.startsWith("overall") ? "doneDesc" : sortMode,
       page: matrixPage,
       pageSize: MATRIX_PAGE_SIZE,
+      valueMode,
     };
     const matrixCacheKey = JSON.stringify({
       ...matrixParams,
@@ -3448,6 +3518,7 @@ function MultiMetricMatrix({
     sortMode,
     windowMinutes,
     asOf,
+    valueMode,
     cacheStore,
   ]);
 
@@ -3500,7 +3571,7 @@ function MultiMetricMatrix({
     setMatrixViewportHeight(container.clientHeight || 600);
     container.scrollTop = 0;
     setMatrixScrollTop(0);
-  }, [level, matrixPage, search, selectedCodes, sortIndicator, sortMode]);
+  }, [level, matrixPage, search, selectedCodes, sortIndicator, sortMode, valueMode]);
 
   const updateOverallRule = (code: string, patch: Partial<OverallRule>) => {
     const indicator = selectedIndicators.find((item) => item.code === code)

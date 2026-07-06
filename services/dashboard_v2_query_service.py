@@ -37,11 +37,19 @@ from services.dashboard_v2_target_service import load_v2_target_values
 
 
 NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
+VALUE_MODES = {"REALTIME", "REALTIME_ACC"}
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _yesterday_shanghai() -> date:
     return datetime.now(_SHANGHAI_TZ).date() - timedelta(days=1)
+
+
+def _normalize_value_mode(value: str | None) -> str:
+    normalized = str(value or "REALTIME").strip().upper()
+    if normalized not in VALUE_MODES:
+        raise ValueError(f"value_mode 只支持 REALTIME/REALTIME_ACC: {value!r}")
+    return normalized
 
 
 def _number(value: Decimal | int | float | None) -> float | int | None:
@@ -666,6 +674,139 @@ def _history_meta(run: CollectionRunV2 | None, selected_time: datetime) -> dict[
     }
 
 
+def _realtime_business_date(run: CollectionRunV2 | None) -> date:
+    if run is not None and run.stat_date is not None:
+        return run.stat_date
+    return datetime.now(_SHANGHAI_TZ).date()
+
+
+def _realtime_accumulation_meta(
+    session: Session,
+    *,
+    business_date: date,
+) -> dict[str, Any]:
+    through_date = business_date - timedelta(days=1)
+    month_start = business_date.replace(day=1)
+    baseline_zero = business_date.day == 1
+    stat_date = None
+    if not baseline_zero:
+        stat_date = session.scalar(
+            select(func.max(MetricAccV2.stat_date)).where(
+                MetricAccV2.period_type == "DAY_ACC",
+                MetricAccV2.stat_date >= month_start,
+                MetricAccV2.stat_date <= through_date,
+            )
+        )
+    return {
+        "through_date": through_date.isoformat(),
+        "stat_date": stat_date.isoformat() if stat_date else None,
+        "is_fallback": bool(stat_date is not None and stat_date < through_date),
+        "baseline_zero": baseline_zero,
+        "baseline_missing": bool(not baseline_zero and stat_date is None),
+        "target_period": "MONTH",
+    }
+
+
+def _apply_realtime_accumulation(
+    session: Session,
+    *,
+    rows: list[dict[str, Any]],
+    nodes: list[HierarchyNode],
+    indicators: list[IndicatorV2],
+    run: CollectionRunV2 | None,
+) -> dict[str, Any]:
+    """Replace realtime metrics with current-month accumulated values."""
+    business_date = _realtime_business_date(run)
+    meta = _realtime_accumulation_meta(session, business_date=business_date)
+    components, physical = _components(session, indicators)
+    node_ids = [node.id for node in nodes]
+    physical_ids = [indicator.id for indicator in physical]
+
+    target_map = _active_target_map(
+        session,
+        node_ids=node_ids,
+        indicator_ids=physical_ids,
+        period_type="MONTH",
+        target_date=business_date,
+    )
+    target_by_node: dict[int, dict[str, Any]] = {}
+    for node_id in node_ids:
+        values = {
+            indicator.code: _number(target_map.get((node_id, indicator.id)))
+            for indicator in physical
+        }
+        for code, parts in components.items():
+            if values.get(code) is None:
+                values[code] = _weighted_sum(values, parts)
+        target_by_node[node_id] = values
+
+    acc_by_node: dict[int, dict[str, Any]] = {}
+    if meta["stat_date"]:
+        acc_rows = _acc_rows_in_session(
+            session,
+            nodes=nodes,
+            indicators=indicators,
+            period_type="DAY_ACC",
+            target_day=date.fromisoformat(meta["stat_date"]),
+        )
+        acc_by_node = {row["id"]: row["metrics"] for row in acc_rows}
+
+    response_codes = [indicator.code for indicator in indicators]
+    for row in rows:
+        current_metrics = row.get("metrics") or {}
+        acc_metrics = acc_by_node.get(row["id"], {})
+        totals: dict[str, Any] = {}
+        for code in response_codes:
+            current = current_metrics.get(code)
+            baseline = 0 if meta["baseline_zero"] else acc_metrics.get(code)
+            total = (
+                None
+                if meta["baseline_missing"] or current is None or baseline is None
+                else current + baseline
+            )
+            totals[code] = total
+
+            changes = (row.get("changes") or {}).get(code, {})
+            for payload in changes.values():
+                delta = payload.get("value")
+                if total is None or delta is None:
+                    payload["value"] = None
+                    payload["rate"] = None
+                    continue
+                previous_total = total - delta
+                payload["rate"] = (
+                    None if previous_total == 0 else delta / previous_total
+                )
+
+        row["metrics"] = totals
+        row["targets"] = {
+            code: target_by_node.get(row["id"], {}).get(code)
+            for code in response_codes
+        }
+    return meta
+
+
+def _apply_value_mode(
+    session: Session,
+    *,
+    value_mode: str,
+    rows: list[dict[str, Any]],
+    nodes: list[HierarchyNode],
+    indicators: list[IndicatorV2],
+    run: CollectionRunV2 | None,
+) -> dict[str, Any] | None:
+    normalized = _normalize_value_mode(value_mode)
+    if normalized == "REALTIME":
+        return None
+    return _apply_realtime_accumulation(
+        session,
+        rows=rows,
+        nodes=nodes,
+        indicators=indicators,
+        run=run,
+    )
+
+
 def get_indicator_catalog(
     engine: Engine, *, include_archived: bool = False, enabled_only: bool = False
 ) -> dict[str, Any]:
@@ -689,6 +830,21 @@ def get_indicator_catalog(
 def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
     with Session(engine) as session:
         run = _latest_run(session)
+        acc_meta = _realtime_accumulation_meta(
+            session,
+            business_date=_realtime_business_date(run),
+        )
+        acc_state = (None, None)
+        if acc_meta["stat_date"]:
+            acc_state = session.execute(
+                select(
+                    func.max(MetricAccV2.collection_run_id),
+                    func.max(MetricAccV2.collected_at),
+                ).where(
+                    MetricAccV2.period_type == "DAY_ACC",
+                    MetricAccV2.stat_date == date.fromisoformat(acc_meta["stat_date"]),
+                )
+            ).one()
         indicator_state = session.execute(
             select(func.count(IndicatorV2.id), func.max(IndicatorV2.updated_at))
         ).one()
@@ -696,9 +852,19 @@ def get_latest_dashboard_run(engine: Engine) -> dict[str, Any]:
             select(func.count(TargetPlan.id), func.max(TargetPlan.updated_at))
         ).one()
         config_version = sha256(repr((*indicator_state, *target_state)).encode()).hexdigest()[:16]
+        acc_label = acc_meta["stat_date"] or (
+            "zero" if acc_meta["baseline_zero"] else "missing"
+        )
         return {
             "latest_run": _run_dto(run, full=False),
-            "data_version": f"{run.id}:{_iso(run.finished_at)}" if run else "0",
+            "data_version": ":".join(
+                [
+                    f"{run.id}:{_iso(run.finished_at)}" if run else "0",
+                    str(acc_label),
+                    str(acc_state[0] or 0),
+                    str(_iso(acc_state[1]) or ""),
+                ]
+            ),
             "config_version": config_version,
         }
 
@@ -780,7 +946,9 @@ def get_current_wide_table(
     node_type: str | None = None,
     parent_id: int | None = None,
     indicator_codes: list[str] | None = None,
+    value_mode: str = "REALTIME",
 ) -> dict[str, Any]:
+    normalized_mode = _normalize_value_mode(value_mode)
     with Session(engine) as session:
         indicators = _enabled_indicators(session, indicator_codes)
         nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
@@ -792,12 +960,24 @@ def get_current_wide_table(
             include_targets=True,
         )
         run = _latest_run(session)
-        return {
+        accumulation_meta = _apply_value_mode(
+            session,
+            value_mode=normalized_mode,
+            rows=rows,
+            nodes=nodes,
+            indicators=indicators,
+            run=run,
+        )
+        result = {
+            "data_mode": normalized_mode,
             "latest_run": _run_dto(run),
             "indicators": [_indicator_dto(row) for row in indicators],
             "rows": rows,
             "row_count": len(rows),
         }
+        if accumulation_meta is not None:
+            result["accumulation_meta"] = accumulation_meta
+        return result
 
 
 def get_current_with_changes(
@@ -807,7 +987,9 @@ def get_current_with_changes(
     parent_id: int | None = None,
     change_windows: list[int] | None = None,
     indicator_codes: list[str] | None = None,
+    value_mode: str = "REALTIME",
 ) -> dict[str, Any]:
+    normalized_mode = _normalize_value_mode(value_mode)
     windows = change_windows or [5, 15, 30, 60]
     with Session(engine) as session:
         indicators = _enabled_indicators(session, indicator_codes)
@@ -822,13 +1004,24 @@ def get_current_with_changes(
         run = _latest_run(session)
         anchor = _change_anchor_time(run)
         _append_changes(session, rows=rows, indicators=indicators, anchor=anchor, windows=windows)
-        return {
-            "data_mode": "REALTIME",
+        accumulation_meta = _apply_value_mode(
+            session,
+            value_mode=normalized_mode,
+            rows=rows,
+            nodes=nodes,
+            indicators=indicators,
+            run=run,
+        )
+        result = {
+            "data_mode": normalized_mode,
             "latest_run": _run_dto(run),
             "indicators": [_indicator_dto(row) for row in indicators],
             "rows": rows,
             "row_count": len(rows),
         }
+        if accumulation_meta is not None:
+            result["accumulation_meta"] = accumulation_meta
+        return result
 
 
 def get_historical_with_changes(
@@ -934,12 +1127,20 @@ def _sort_rows(
     if not sort_indicator:
         return rows
     reverse = str(sort_mode).lower().endswith("desc")
+    normalized_mode = str(sort_mode).strip().lower()
     def key(row: dict[str, Any]) -> tuple[bool, float]:
         value = row["metrics"].get(sort_indicator)
-        if str(sort_mode).lower().startswith("rate"):
+        if normalized_mode.startswith(("progress", "rate")):
             target = (row.get("targets") or {}).get(sort_indicator)
             value = None if value is None or target in (None, 0) else value / target
-        return (value is not None, float(value or 0))
+        elif normalized_mode.startswith(("changevalue", "changerate")):
+            windows = (row.get("changes") or {}).get(sort_indicator, {})
+            payload = next(iter(windows.values()), {})
+            value = payload.get(
+                "rate" if normalized_mode.startswith("changerate") else "value"
+            )
+        present = value is not None
+        return (present if reverse else not present, float(value or 0))
     return sorted(rows, key=key, reverse=reverse)
 
 
@@ -967,7 +1168,9 @@ def get_dashboard_matrix_page(
     change_window: int = 60, search: str | None = None,
     sort_indicator: str | None = None, sort_mode: str = "doneDesc",
     page: int = 1, page_size: int = 100,
+    value_mode: str = "REALTIME",
 ) -> dict[str, Any]:
+    normalized_mode = _normalize_value_mode(value_mode)
     del parent_node_type
     with Session(engine) as session:
         normalized = _normalized_node_type(node_type) or "BRANCH"
@@ -995,13 +1198,23 @@ def get_dashboard_matrix_page(
             anchor=anchor,
             windows=[change_window],
         )
+        accumulation_meta = _apply_value_mode(
+            session,
+            value_mode=normalized_mode,
+            rows=rows,
+            nodes=nodes,
+            indicators=indicators,
+            run=run,
+        )
         result = {
-            "data_mode": "REALTIME",
+            "data_mode": normalized_mode,
             "latest_run": _run_dto(run),
             "indicators": [_indicator_dto(row) for row in indicators],
             "rows": rows,
             "row_count": len(rows),
         }
+        if accumulation_meta is not None:
+            result["accumulation_meta"] = accumulation_meta
     return _matrix_result(result, search=search, sort_indicator=sort_indicator, sort_mode=sort_mode, page=page, page_size=page_size)
 
 
@@ -1121,7 +1334,9 @@ def get_dashboard_overview(
     engine: Engine, *, branch_id: int | None = None, branch_code: str | None = None,
     period_type: str = "DAY_ACC", change_windows: list[int] | None = None,
     indicator_codes: list[str] | None = None, include_acc: bool = True,
+    value_mode: str = "REALTIME",
 ) -> dict[str, Any]:
+    normalized_mode = _normalize_value_mode(value_mode)
     with Session(engine) as session:
         branches = _nodes(session, node_type="BRANCH")
         branch = next(
@@ -1167,8 +1382,16 @@ def get_dashboard_overview(
             anchor=_change_anchor_time(run),
             windows=change_windows or [5, 15, 30, 60],
         )
+        accumulation_meta = _apply_value_mode(
+            session,
+            value_mode=normalized_mode,
+            rows=rows,
+            nodes=nodes,
+            indicators=indicators,
+            run=run,
+        )
         acc_rows: list[dict[str, Any]] = []
-        if include_acc:
+        if include_acc and normalized_mode == "REALTIME":
             normalized_period = str(period_type).strip().upper()
             acc_date = session.scalar(
                 select(func.max(MetricAccV2.stat_date)).where(
@@ -1182,8 +1405,8 @@ def get_dashboard_overview(
                 period_type=normalized_period,
                 target_day=acc_date,
             )
-        return {
-            "data_mode": "REALTIME",
+        result = {
+            "data_mode": normalized_mode,
             "latest_run": _run_dto(run),
             "selected_branch": _node_dto(branch) if branch else None,
             "indicators": [_indicator_dto(row) for row in indicators],
@@ -1192,6 +1415,9 @@ def get_dashboard_overview(
             "acc_rows": acc_rows,
             "acc_row_count": len(acc_rows),
         }
+        if accumulation_meta is not None:
+            result["accumulation_meta"] = accumulation_meta
+        return result
 
 
 def get_drill_down(
@@ -1199,7 +1425,9 @@ def get_drill_down(
     period_type: str = "DAY_ACC", change_windows: list[int] | None = None,
     indicator_codes: list[str] | None = None, include_acc: bool = True,
     tree_mode: str = "full",
+    value_mode: str = "REALTIME",
 ) -> dict[str, Any]:
+    normalized_mode = _normalize_value_mode(value_mode)
     parent_type = _normalized_node_type(parent_node_type)
     normalized_tree_mode = str(tree_mode or "").strip().lower()
     if normalized_tree_mode not in {"full", "flat"}:
@@ -1239,8 +1467,16 @@ def get_drill_down(
                 anchor=_change_anchor_time(run),
                 windows=change_windows or [5, 15, 30, 60],
             )
+            accumulation_meta = _apply_value_mode(
+                session,
+                value_mode=normalized_mode,
+                rows=rows,
+                nodes=nodes,
+                indicators=indicators,
+                run=run,
+            )
             acc_rows = []
-            if include_acc:
+            if include_acc and normalized_mode == "REALTIME":
                 normalized_period = str(period_type).strip().upper()
                 acc_date = session.scalar(
                     select(func.max(MetricAccV2.stat_date)).where(
@@ -1254,8 +1490,8 @@ def get_drill_down(
                     period_type=normalized_period,
                     target_day=acc_date,
                 )
-            return {
-                "data_mode": "REALTIME",
+            result = {
+                "data_mode": normalized_mode,
                 "tree_mode": "flat",
                 "latest_run": _run_dto(run),
                 "indicators": [_indicator_dto(row) for row in indicators],
@@ -1264,6 +1500,9 @@ def get_drill_down(
                 "acc_rows": acc_rows,
                 "acc_row_count": len(acc_rows),
             }
+            if accumulation_meta is not None:
+                result["accumulation_meta"] = accumulation_meta
+            return result
 
     # Keep ancestor comparison panels populated and refresh every descendant
     # panel within the clicked scope. For example, clicking a BRANCH keeps its
@@ -1293,8 +1532,16 @@ def get_drill_down(
             anchor=anchor,
             windows=change_windows or [5, 15, 30, 60],
         )
+        accumulation_meta = _apply_value_mode(
+            session,
+            value_mode=normalized_mode,
+            rows=rows,
+            nodes=context_nodes,
+            indicators=indicators,
+            run=run,
+        )
         acc_rows: list[dict[str, Any]] = []
-        if include_acc:
+        if include_acc and normalized_mode == "REALTIME":
             normalized_period = str(period_type).strip().upper()
             acc_date = session.scalar(
                 select(func.max(MetricAccV2.stat_date)).where(
@@ -1308,8 +1555,8 @@ def get_drill_down(
                 period_type=normalized_period,
                 target_day=acc_date,
             )
-        return {
-            "data_mode": "REALTIME",
+        result = {
+            "data_mode": normalized_mode,
             "tree_mode": "full",
             "latest_run": _run_dto(run),
             "indicators": [_indicator_dto(row) for row in indicators],
@@ -1318,6 +1565,9 @@ def get_drill_down(
             "acc_rows": acc_rows,
             "acc_row_count": len(acc_rows),
         }
+        if accumulation_meta is not None:
+            result["accumulation_meta"] = accumulation_meta
+        return result
 
 
 __all__ = [
