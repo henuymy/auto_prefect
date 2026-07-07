@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardValueMode, SaveCustomIndicatorPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
+import type { CreateTargetPlanPayload, DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetValuesResponse, DashboardValueMode, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -162,6 +162,91 @@ export async function updateDashboardIndicatorSettings(
       body: JSON.stringify(payload),
     },
   );
+}
+
+export async function getDashboardTargetPlans(status?: string) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  const query = params.toString();
+  return request<DashboardTargetPlanResponse>(
+    `/api/dashboard/target-plans${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function createDashboardTargetPlan(payload: CreateTargetPlanPayload) {
+  return request<DashboardTargetPlan>("/api/dashboard/target-plans", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function activateDashboardTargetPlan(planId: number) {
+  return request<DashboardTargetPlan>(
+    `/api/dashboard/target-plans/${planId}/activate`,
+    { method: "POST" },
+  );
+}
+
+export async function getDashboardTargetValues(params: {
+  planId: number;
+  nodeType?: string;
+  indicatorCode?: string;
+  search?: string;
+  limit?: number;
+}) {
+  const query = new URLSearchParams({
+    plan_id: String(params.planId),
+    limit: String(params.limit ?? 500),
+  });
+  if (params.nodeType) query.set("node_type", params.nodeType);
+  if (params.indicatorCode) query.set("indicator_code", params.indicatorCode);
+  if (params.search) query.set("search", params.search);
+  return request<DashboardTargetValuesResponse>(
+    `/api/dashboard/target-values?${query.toString()}`,
+  );
+}
+
+export async function saveDashboardTargetValues(
+  planId: number,
+  payload: SaveTargetValuesPayload,
+) {
+  return request<SaveTargetValuesResponse>(
+    `/api/dashboard/target-plans/${planId}/values`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function dashboardTargetTemplateUrl() {
+  return `${API_BASE}/api/dashboard/target-template`;
+}
+
+export async function importDashboardTargetTemplate(planId: number, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(
+    `${API_BASE}/api/dashboard/target-template/import?plan_id=${encodeURIComponent(String(planId))}`,
+    {
+      method: "POST",
+      body: formData,
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    try {
+      const payload = JSON.parse(text);
+      const detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail || payload);
+      throw new Error(detail || `导入失败: ${response.status}`);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(text || `导入失败: ${response.status}`);
+      }
+      throw error;
+    }
+  }
+  return response.json() as Promise<ImportTargetTemplateResponse>;
 }
 
 export async function getDashboardLatestRun() {

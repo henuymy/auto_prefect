@@ -10,18 +10,24 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  Download,
+  FileUp,
   Plus,
   Palette,
   GripVertical,
   Search,
   RefreshCw,
+  Save,
   Settings,
   Signal,
   Trash2,
   X,
 } from "lucide-react";
 import {
+  activateDashboardTargetPlan,
+  createDashboardTargetPlan,
   deleteDashboardCustomIndicator,
+  dashboardTargetTemplateUrl,
   getDashboardOverview,
   getDashboardDrillDown,
   getDashboardCustomIndicators,
@@ -33,12 +39,17 @@ import {
   getDashboardLatestRun,
   getDashboardMatrix,
   getDashboardWithChanges,
+  getDashboardTargetPlans,
+  getDashboardTargetValues,
   getCurrentDashboard,
   getAccDashboard,
+  importDashboardTargetTemplate,
   saveDashboardCustomIndicator,
+  saveDashboardTargetValues,
   updateDashboardIndicatorSettings,
 } from "@/lib/api";
 import type {
+  CreateTargetPlanPayload,
   DashboardCustomIndicator,
   DashboardCatalogIndicator,
   DashboardRow,
@@ -49,6 +60,10 @@ import type {
   DashboardHistoryOptionsResponse,
   DashboardMatrixResponse,
   DashboardAccumulationMeta,
+  DashboardTargetPeriod,
+  DashboardTargetPlan,
+  DashboardTargetScenario,
+  DashboardTargetValueRow,
   DashboardValueMode,
   IndicatorChanges,
 } from "@/types/dashboard";
@@ -1027,6 +1042,7 @@ export function DashboardCockpit() {
   >({});
   const [levelAllPopup, setLevelAllPopup] = useState<LevelAllPopup>(null);
   const [customManagerOpen, setCustomManagerOpen] = useState(false);
+  const [targetManagerOpen, setTargetManagerOpen] = useState(false);
   const scopePopupTargetRef = useRef<ScopePopupTarget | null>(null);
   const fetchSeqRef = useRef(0);
   const queryCacheRef = useRef<Map<string, DashboardCacheEntry>>(new Map());
@@ -2076,6 +2092,7 @@ export function DashboardCockpit() {
         loading={loading}
         onRefresh={() => void fetchData(true)}
         onOpenCustomManager={() => setCustomManagerOpen(true)}
+        onOpenTargetManager={() => setTargetManagerOpen(true)}
         progressColors={progressColors}
         onProgressColorChange={(key, value) => setProgressColors((current) => ({
           ...current,
@@ -2121,6 +2138,13 @@ export function DashboardCockpit() {
       {customManagerOpen && (
         <CustomIndicatorManager
           onClose={() => setCustomManagerOpen(false)}
+          onSaved={() => void fetchData(true)}
+        />
+      )}
+
+      {targetManagerOpen && (
+        <TargetValueManager
+          onClose={() => setTargetManagerOpen(false)}
           onSaved={() => void fetchData(true)}
         />
       )}
@@ -2285,6 +2309,7 @@ function Header({
   updatedAt,
   loading,
   onRefresh,
+  onOpenTargetManager,
   onOpenCustomManager,
   progressColors,
   onProgressColorChange,
@@ -2306,6 +2331,7 @@ function Header({
   updatedAt: string;
   loading: boolean;
   onRefresh: () => void;
+  onOpenTargetManager: () => void;
   onOpenCustomManager: () => void;
   progressColors: MatrixProgressColors;
   onProgressColorChange: (key: keyof MatrixProgressColors, value: string) => void;
@@ -2380,6 +2406,10 @@ function Header({
         <button className="refresh-button" onClick={onRefresh}>
           <RefreshCw size={15} className={loading ? "spin" : ""} />
           {dataTimeMode === "history" ? "重新查询" : "刷新"}
+        </button>
+        <button className="refresh-button" onClick={onOpenTargetManager}>
+          <Settings size={15} />
+          目标值设置
         </button>
         <button className="refresh-button" onClick={onOpenCustomManager}>
           <Settings size={15} />
@@ -2578,6 +2608,482 @@ type CustomIndicatorDraft = {
     source_storage_mode: StorageMode;
   }>;
 };
+
+type TargetPlanDraft = {
+  plan_name: string;
+  scenario: DashboardTargetScenario;
+  period_type: DashboardTargetPeriod;
+  effective_from: string;
+  priority: string;
+};
+
+type TargetFilter = {
+  nodeType: "" | DashboardRow["node_type"];
+  indicatorCode: string;
+  search: string;
+};
+
+const TARGET_NODE_TYPES: Array<"" | DashboardRow["node_type"]> = [
+  "",
+  "CITY",
+  "BRANCH",
+  "GRID",
+  "CHANNEL_MANAGER",
+  "CHANNEL",
+];
+
+function targetPlanLabel(plan: DashboardTargetPlan) {
+  const period = plan.period_type === "MONTH" ? "月目标" : "日目标";
+  return `${period} v${plan.version_no}`;
+}
+
+function targetScenarioText(scenario: DashboardTargetScenario) {
+  return scenario === "PK" ? "PK赛" : "日常";
+}
+
+function emptyTargetPlanDraft(): TargetPlanDraft {
+  return {
+    plan_name: "驾驶舱目标值",
+    scenario: "NORMAL",
+    period_type: "DAY",
+    effective_from: new Date().toISOString().slice(0, 10),
+    priority: "0",
+  };
+}
+
+function TargetValueManager({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [plans, setPlans] = useState<DashboardTargetPlan[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
+  const [rows, setRows] = useState<DashboardTargetValueRow[]>([]);
+  const [catalog, setCatalog] = useState<DashboardCatalogIndicator[]>([]);
+  const [draft, setDraft] = useState<TargetPlanDraft>(() => emptyTargetPlanDraft());
+  const [filter, setFilter] = useState<TargetFilter>({
+    nodeType: "BRANCH",
+    indicatorCode: "",
+    search: "",
+  });
+  const [planScenarioFilter, setPlanScenarioFilter] = useState<
+    "ALL" | DashboardTargetScenario
+  >("ALL");
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || null;
+  const editable = selectedPlan?.status === "DRAFT";
+  const storeIndicators = useMemo(
+    () => catalog.filter((indicator) => indicator.enabled && indicator.storage_mode === "STORE"),
+    [catalog],
+  );
+  const visiblePlans = useMemo(
+    () => plans.filter((plan) =>
+      planScenarioFilter === "ALL" || plan.scenario === planScenarioFilter,
+    ),
+    [planScenarioFilter, plans],
+  );
+
+  const loadPlans = useCallback(async () => {
+    const result = await getDashboardTargetPlans();
+    setPlans(result.plans);
+    setSelectedPlanId((current) => {
+      if (current && result.plans.some((plan) => plan.id === current)) return current;
+      return result.plans.find((plan) => plan.status === "DRAFT")?.id
+        ?? result.plans.find((plan) => plan.status === "ACTIVE")?.id
+        ?? result.plans[0]?.id
+        ?? null;
+    });
+  }, []);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const [plansResult, catalogResult] = await Promise.all([
+        getDashboardTargetPlans(),
+        getDashboardIndicators(false, true),
+      ]);
+      setPlans(plansResult.plans);
+      setCatalog(catalogResult.indicators);
+      setFilter((current) => ({
+        ...current,
+        indicatorCode: current.indicatorCode || catalogResult.indicators[0]?.code || "",
+      }));
+      setSelectedPlanId((current) => {
+        if (current && plansResult.plans.some((plan) => plan.id === current)) return current;
+        return plansResult.plans.find((plan) => plan.status === "DRAFT")?.id
+          ?? plansResult.plans.find((plan) => plan.status === "ACTIVE")?.id
+          ?? plansResult.plans[0]?.id
+          ?? null;
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const loadValues = useCallback(async () => {
+    if (!selectedPlanId) {
+      setRows([]);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await getDashboardTargetValues({
+        planId: selectedPlanId,
+        nodeType: filter.nodeType || undefined,
+        indicatorCode: filter.indicatorCode || undefined,
+        search: filter.search || undefined,
+        limit: 1000,
+      });
+      setRows(result.rows);
+      setEdits({});
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [filter.indicatorCode, filter.nodeType, filter.search, selectedPlanId]);
+
+  useEffect(() => {
+    void loadValues();
+  }, [loadValues]);
+
+  const createPlan = async () => {
+    const priority = Number(draft.priority || 0);
+    if (!draft.plan_name.trim() || !draft.effective_from || !Number.isFinite(priority)) {
+      setMessage("请填写方案名称、生效日期和有效优先级");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const created = await createDashboardTargetPlan({
+        plan_name: draft.plan_name.trim(),
+        scenario: draft.scenario,
+        period_type: draft.period_type,
+        effective_from: draft.effective_from,
+        priority,
+      } satisfies CreateTargetPlanPayload);
+      await loadPlans();
+      setSelectedPlanId(created.id);
+      setMessage("已创建目标值草稿");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveValues = async () => {
+    if (!selectedPlanId || !editable) return;
+    const values = rows
+      .map((row) => {
+        const key = `${row.node_id}:${row.indicator_id}`;
+        const value = edits[key] ?? (row.target_value == null ? "" : String(row.target_value));
+        return { row, value: value.trim() };
+      })
+      .filter((item) => item.value !== "")
+      .map((item) => ({
+        node_id: item.row.node_id,
+        indicator_id: item.row.indicator_id,
+        target_value: item.value,
+      }));
+    if (!values.length) {
+      setMessage("当前筛选结果没有可保存的目标值");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await saveDashboardTargetValues(selectedPlanId, { values });
+      await Promise.all([loadPlans(), loadValues()]);
+      onSaved();
+      setMessage(`已保存 ${result.saved} 条目标值`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const activate = async () => {
+    if (!selectedPlanId || !selectedPlan) return;
+    if (!window.confirm(`确定激活「${selectedPlan.plan_name}」吗？完成率会按新目标值计算。`)) {
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      await activateDashboardTargetPlan(selectedPlanId);
+      await loadPlans();
+      onSaved();
+      setMessage("目标方案已激活，驾驶舱数据已刷新");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importFile = async (file: File | null) => {
+    if (!file || !selectedPlanId || !editable) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await importDashboardTargetTemplate(selectedPlanId, file);
+      await Promise.all([loadPlans(), loadValues()]);
+      onSaved();
+      setMessage(`已导入 ${result.imported} 条目标值`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="custom-metric-backdrop" role="dialog" aria-modal="true">
+      <section className="custom-metric-modal target-manager-modal">
+        <header className="custom-metric-head">
+          <div>
+            <strong>目标值设置</strong>
+            <span>维护目标方案草稿，确认后激活用于完成率计算</span>
+          </div>
+          <button type="button" onClick={onClose}>关闭</button>
+        </header>
+        <div className="custom-metric-body target-manager-body">
+          <aside className="custom-metric-list target-plan-list">
+            <button type="button" onClick={() => setDraft(emptyTargetPlanDraft())}>
+              <Plus size={15} />
+              新建草稿
+            </button>
+            <div className="target-plan-create">
+              <label>
+                <span>新草稿名称</span>
+                <input
+                  value={draft.plan_name}
+                  onChange={(event) => setDraft((current) => ({ ...current, plan_name: event.target.value }))}
+                  placeholder="方案名称"
+                />
+              </label>
+              <div>
+                <label>
+                  <span>场景</span>
+                  <select
+                    value={draft.scenario}
+                    onChange={(event) => setDraft((current) => ({
+                      ...current,
+                      scenario: event.target.value as DashboardTargetScenario,
+                    }))}
+                  >
+                    <option value="NORMAL">日常</option>
+                    <option value="PK">PK赛</option>
+                  </select>
+                </label>
+                <label>
+                  <span>目标周期</span>
+                  <select
+                    value={draft.period_type}
+                    onChange={(event) => setDraft((current) => ({
+                      ...current,
+                      period_type: event.target.value as DashboardTargetPeriod,
+                    }))}
+                  >
+                    <option value="DAY">日目标</option>
+                    <option value="MONTH">月目标</option>
+                  </select>
+                </label>
+              </div>
+              <div>
+                <label>
+                  <span>生效日期</span>
+                  <input
+                    type="date"
+                    value={draft.effective_from}
+                    onChange={(event) => setDraft((current) => ({ ...current, effective_from: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>优先级</span>
+                  <input
+                    value={draft.priority}
+                    onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value }))}
+                    inputMode="numeric"
+                    placeholder="优先级"
+                  />
+                </label>
+              </div>
+              <button type="button" disabled={busy} onClick={() => void createPlan()}>
+                创建草稿
+              </button>
+            </div>
+            <div className="target-plan-list-title">已有目标方案</div>
+            <div className="target-scenario-tabs" aria-label="目标方案场景筛选">
+              {[
+                ["ALL", "全部"],
+                ["NORMAL", "日常"],
+                ["PK", "PK赛"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={planScenarioFilter === value ? "active" : ""}
+                  onClick={() => setPlanScenarioFilter(value as "ALL" | DashboardTargetScenario)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="target-plan-items">
+              {visiblePlans.map((plan) => (
+                <button
+                  key={plan.id}
+                  type="button"
+                  className={plan.id === selectedPlanId ? "active" : ""}
+                  onClick={() => setSelectedPlanId(plan.id)}
+                >
+                  <span className={plan.scenario === "PK" ? "target-scenario-badge pk" : "target-scenario-badge"}>
+                    {targetScenarioText(plan.scenario)}
+                  </span>
+                  <strong>{plan.plan_name}</strong>
+                  <span>{targetPlanLabel(plan)} · {plan.status} · {plan.value_count ?? 0} 条</span>
+                </button>
+              ))}
+              {!visiblePlans.length && <div className="source-manager-empty">暂无目标方案</div>}
+            </div>
+          </aside>
+          <main className="custom-metric-form target-value-form">
+            <div className="target-manager-toolbar">
+              <select
+                value={filter.nodeType}
+                onChange={(event) => setFilter((current) => ({
+                  ...current,
+                  nodeType: event.target.value as TargetFilter["nodeType"],
+                }))}
+              >
+                {TARGET_NODE_TYPES.map((type) => (
+                  <option key={type || "ALL"} value={type}>
+                    {type ? levelLabel(type) : "全部层级"}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filter.indicatorCode}
+                onChange={(event) => setFilter((current) => ({
+                  ...current,
+                  indicatorCode: event.target.value,
+                }))}
+              >
+                <option value="">全部指标</option>
+                {storeIndicators.map((indicator) => (
+                  <option key={indicator.code} value={indicator.code}>
+                    {indicator.name}
+                  </option>
+                ))}
+              </select>
+              <label className="source-manager-search">
+                <Search size={15} />
+                <input
+                  value={filter.search}
+                  onChange={(event) => setFilter((current) => ({
+                    ...current,
+                    search: event.target.value,
+                  }))}
+                  placeholder="搜索区域名称或编码"
+                />
+              </label>
+              <button type="button" onClick={() => window.open(dashboardTargetTemplateUrl(), "_blank")}>
+                <Download size={15} />
+                下载模板
+              </button>
+              <label className={editable ? "target-import-button" : "target-import-button disabled"}>
+                <FileUp size={15} />
+                导入
+                <input
+                  type="file"
+                  accept=".xlsx"
+                  disabled={!editable || busy}
+                  onChange={(event) => {
+                    void importFile(event.target.files?.[0] ?? null);
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            {selectedPlan && (
+              <div className="target-plan-summary">
+                <span className={selectedPlan.scenario === "PK" ? "target-scenario-badge pk" : "target-scenario-badge"}>
+                  {targetScenarioText(selectedPlan.scenario)}
+                </span>
+                <strong>{selectedPlan.plan_name}</strong>
+                <span>{targetPlanLabel(selectedPlan)} · {selectedPlan.status} · 生效 {selectedPlan.effective_from}</span>
+              </div>
+            )}
+            <div className="target-value-table">
+              <div className="target-value-head">
+                <span>区域</span>
+                <span>指标</span>
+                <span>目标值</span>
+              </div>
+              {rows.map((row) => {
+                const key = `${row.node_id}:${row.indicator_id}`;
+                return (
+                  <div className="target-value-row" key={key}>
+                    <div>
+                      <strong>{row.node_name}</strong>
+                      <span>{row.node_code} · {levelLabel(row.node_type)}</span>
+                    </div>
+                    <div>
+                      <strong>{row.indicator_name}</strong>
+                      <span>{row.indicator_code}</span>
+                    </div>
+                    <input
+                      value={edits[key] ?? (row.target_value == null ? "" : String(row.target_value))}
+                      disabled={!editable || busy}
+                      inputMode="decimal"
+                      onChange={(event) => setEdits((current) => ({
+                        ...current,
+                        [key]: event.target.value,
+                      }))}
+                      placeholder="--"
+                    />
+                  </div>
+                );
+              })}
+              {!rows.length && (
+                <div className="source-manager-empty">
+                  {selectedPlanId ? "当前筛选没有目标值行" : "请先创建或选择目标方案"}
+                </div>
+              )}
+            </div>
+            {message && <div className="custom-metric-message">{message}</div>}
+            <div className="custom-metric-actions">
+              <button type="button" disabled={busy || !editable} onClick={() => void saveValues()}>
+                <Save size={14} />
+                保存草稿
+              </button>
+              <button type="button" className="primary" disabled={busy || !editable} onClick={() => void activate()}>
+                激活方案
+              </button>
+            </div>
+          </main>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 function emptyCustomDraft(): CustomIndicatorDraft {
   return {
@@ -2867,7 +3373,7 @@ function CustomIndicatorManager({
               </div>
             )}
           </aside>
-          <main className="custom-metric-form">
+          <main className={managerTab === "source" ? "custom-metric-form source-manager-form" : "custom-metric-form"}>
             {managerTab === "source" ? (
               <>
                 <div className="source-manager-toolbar">

@@ -49,6 +49,81 @@ export type UpdateIndicatorSettingsPayload = {
   storage_mode?: "STORE" | "COMPONENT";
 };
 
+export type DashboardTargetScenario = "NORMAL" | "PK";
+export type DashboardTargetPeriod = "DAY" | "MONTH";
+export type DashboardTargetPlanStatus = "DRAFT" | "ACTIVE" | "RETIRED";
+
+export type DashboardTargetPlan = {
+  id: number;
+  plan_name: string;
+  scenario: DashboardTargetScenario;
+  period_type: DashboardTargetPeriod;
+  effective_from: string;
+  effective_to: string | null;
+  priority: number;
+  version_no: number;
+  status: DashboardTargetPlanStatus;
+  supersedes_plan_id: number | null;
+  activated_at: string | null;
+  retired_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  value_count: number | null;
+};
+
+export type DashboardTargetPlanResponse = {
+  plans: DashboardTargetPlan[];
+};
+
+export type CreateTargetPlanPayload = {
+  plan_name: string;
+  scenario: DashboardTargetScenario;
+  period_type: DashboardTargetPeriod;
+  effective_from: string;
+  priority: number;
+};
+
+export type DashboardTargetValueRow = {
+  node_id: number;
+  node_type: DashboardRow["node_type"];
+  node_code: string;
+  node_name: string;
+  indicator_id: number;
+  indicator_code: string;
+  indicator_name: string;
+  target_value: number | null;
+};
+
+export type DashboardTargetValuesResponse = {
+  plan: DashboardTargetPlan;
+  rows: DashboardTargetValueRow[];
+  row_count: number;
+  node_count: number;
+  indicator_count: number;
+};
+
+export type SaveTargetValuesPayload = {
+  values: Array<{
+    node_id: number;
+    indicator_id: number;
+    target_value: number | string;
+  }>;
+};
+
+export type SaveTargetValuesResponse = {
+  plan_id: number;
+  saved: number;
+  created: number;
+  updated: number;
+};
+
+export type ImportTargetTemplateResponse = {
+  plan: DashboardTargetPlan;
+  imported: number;
+  created: number;
+  updated: number;
+};
+
 export type DashboardLatestRunResponse = {
   latest_run: {
     id: number;

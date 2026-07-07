@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from datetime import datetime
+from datetime import date, datetime
 import json
+from io import BytesIO
 from threading import Event, Lock
 from time import monotonic
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -35,6 +37,16 @@ from services.dashboard_v2_query_service import (
     get_latest_dashboard_run,
     parse_change_window_minutes,
 )
+from services.dashboard_v2_target_admin_service import (
+    activate_target_plan,
+    build_target_template,
+    create_target_plan,
+    get_target_values,
+    import_target_template,
+    list_target_plans,
+    save_target_values,
+)
+from services.dashboard_v2_target_service import TargetPlanError
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -86,6 +98,24 @@ class CustomIndicatorPayload(BaseModel):
 class IndicatorSettingsPayload(BaseModel):
     enabled: bool | None = None
     storage_mode: str | None = Field(None, pattern="^(STORE|COMPONENT)$")
+
+
+class TargetPlanPayload(BaseModel):
+    plan_name: str = Field(..., min_length=1, max_length=200)
+    scenario: str = Field(..., pattern="^(NORMAL|PK|normal|pk)$")
+    period_type: str = Field(..., pattern="^(DAY|MONTH|day|month)$")
+    effective_from: date
+    priority: int = 0
+
+
+class TargetValuePayload(BaseModel):
+    node_id: int = Field(..., ge=1)
+    indicator_id: int = Field(..., ge=1)
+    target_value: float | str
+
+
+class TargetValueSavePayload(BaseModel):
+    values: list[TargetValuePayload]
 
 
 def _parse_change_windows(value: str | None) -> list[int] | None:
@@ -364,6 +394,143 @@ def update_dashboard_indicator(code: str, payload: IndicatorSettingsPayload):
         raise HTTPException(
             status_code=503,
             detail=f"指标设置保存失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/target-plans")
+def dashboard_target_plans(status: str | None = Query(None)):
+    engine = get_dashboard_engine()
+    try:
+        return list_target_plans(engine, status=status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标方案查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.post("/target-plans")
+def create_dashboard_target_plan(payload: TargetPlanPayload):
+    engine = get_dashboard_engine()
+    try:
+        result = create_target_plan(
+            engine,
+            plan_name=payload.plan_name,
+            scenario=payload.scenario,
+            period_type=payload.period_type,
+            effective_from=payload.effective_from,
+            priority=payload.priority,
+        )
+        _invalidate_version_state()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标方案创建失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.post("/target-plans/{plan_id}/activate")
+def activate_dashboard_target_plan(plan_id: int):
+    engine = get_dashboard_engine()
+    try:
+        result = activate_target_plan(engine, plan_id)
+        _invalidate_version_state()
+        with _dashboard_cache_lock:
+            _dashboard_cache.clear()
+            _dashboard_cache_failures.clear()
+        return result
+    except TargetPlanError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标方案激活失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/target-values")
+def dashboard_target_values(
+    plan_id: int = Query(..., ge=1),
+    node_type: str | None = Query(None),
+    indicator_code: str | None = Query(None),
+    search: str | None = Query(None, max_length=100),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    engine = get_dashboard_engine()
+    try:
+        return get_target_values(
+            engine,
+            plan_id=plan_id,
+            node_type=node_type,
+            indicator_code=indicator_code,
+            search=search,
+            limit=limit,
+        )
+    except (ValueError, TargetPlanError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标值查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.put("/target-plans/{plan_id}/values")
+def save_dashboard_target_values(plan_id: int, payload: TargetValueSavePayload):
+    engine = get_dashboard_engine()
+    try:
+        return save_target_values(
+            engine,
+            plan_id=plan_id,
+            values=[value.model_dump() for value in payload.values],
+        )
+    except (ValueError, TargetPlanError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标值保存失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/target-template")
+def dashboard_target_template():
+    engine = get_dashboard_engine()
+    try:
+        content = build_target_template(engine)
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标值模板生成失败: {type(exc).__name__}",
+        ) from exc
+    filename = "dashboard-v2-target-template.xlsx"
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/target-template/import")
+async def import_dashboard_target_template(
+    plan_id: int = Query(..., ge=1),
+    file: UploadFile = File(...),
+):
+    content = await file.read()
+    engine = get_dashboard_engine()
+    try:
+        return import_target_template(engine, plan_id=plan_id, content=content)
+    except (ValueError, TargetPlanError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标值导入失败: {type(exc).__name__}",
         ) from exc
 
 
