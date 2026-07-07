@@ -3,12 +3,14 @@ body,
 #root {
   width: 100%;
   max-width: 100%;
+  height: 100%;
   min-height: 100%;
   color-scheme: dark;
 }
 
 body {
   margin: 0;
+  overflow: hidden;
   overflow-x: hidden;
   background: #0b0f16;
   scrollbar-color: rgba(88, 107, 132, 0.82) #0b1119;
@@ -75,9 +77,12 @@ body::-webkit-scrollbar-button,
 
 .cockpit-shell {
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   max-width: 100%;
-  min-height: 100vh;
-  overflow-x: clip;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   padding: 14px;
   color: #edf1f7;
   background:
@@ -90,6 +95,26 @@ body::-webkit-scrollbar-button,
     "Noto Sans CJK SC",
     system-ui,
     sans-serif;
+}
+
+.cockpit-header,
+.history-time-bar,
+.cockpit-footer {
+  flex: 0 0 auto;
+}
+
+.cockpit-content {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  flex-direction: column;
+  margin-top: 10px;
+}
+
+.cockpit-content.single {
+  gap: 10px;
 }
 
 .cockpit-header,
@@ -587,18 +612,27 @@ body::-webkit-scrollbar-button,
 .board-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(300px, 1fr));
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   margin-top: 10px;
   padding-bottom: 3px;
   align-items: stretch;
   scrollbar-width: thin;
 }
 
+.cockpit-content > .board-grid:first-child {
+  margin-top: 0;
+}
+
 .level-panel {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   border-radius: 14px;
 }
@@ -1233,9 +1267,13 @@ body::-webkit-scrollbar-button,
 }
 
 .multi-metric-view {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
   min-width: 0;
   max-width: 100%;
-  margin-top: 14px;
+  overflow: hidden;
+  flex-direction: column;
 }
 
 .matrix-toolbar {
@@ -2625,10 +2663,14 @@ body::-webkit-scrollbar-button,
 }
 
 .matrix-panel {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
   min-width: 0;
   max-width: 100%;
   margin-top: 8px;
+  flex-direction: column;
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 10px;
   background: rgba(12, 18, 27, 0.68);
@@ -2683,10 +2725,11 @@ body::-webkit-scrollbar-button,
 }
 
 .matrix-scroll {
+  flex: 1 1 auto;
   width: 100%;
   max-width: 100%;
-  max-height: calc(100vh - 230px);
-  min-height: 480px;
+  max-height: none;
+  min-height: 0;
   overflow: auto;
   scrollbar-color: rgba(94, 112, 136, 0.7) rgba(8, 13, 21, 0.45);
   scrollbar-width: thin;
@@ -3039,8 +3082,26 @@ body::-webkit-scrollbar-button,
 }
 
 @media (max-width: 760px) {
+  body {
+    overflow-y: auto;
+  }
+
   .cockpit-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
     padding: 8px;
+  }
+
+  .cockpit-content {
+    flex: none;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .board-grid {
+    flex: none;
+    overflow-y: visible;
   }
 
   .cockpit-header,

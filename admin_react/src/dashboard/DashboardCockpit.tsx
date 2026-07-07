@@ -2135,9 +2135,10 @@ export function DashboardCockpit() {
         </div>
       )}
 
-      {mode === "single" ? (
-      <>
-      <main className="board-grid" style={{ marginBottom: 14 }}>
+      <div className={`cockpit-content ${mode === "single" ? "single" : "multi"}`}>
+        {mode === "single" ? (
+        <>
+        <main className="board-grid">
         <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -6 }}>
           <div className="section-title-copy">
             <strong>{dataTimeMode === "history"
@@ -2231,32 +2232,34 @@ export function DashboardCockpit() {
         </main>
       )}
 
-      {dataTimeMode !== "cumulative" && (
+        </>
+        ) : (
+          <MultiMetricMatrix
+            catalog={data?.indicatorCatalog || []}
+            availableIndicators={data?.indicators || []}
+            selectedCodes={multiSelectedCodes}
+            onSelectedCodesChange={setMultiSelectedCodes}
+            windowMinutes={multiMetricWindow}
+            onWindowChange={setMultiMetricWindow}
+            scopeMode={scopeMode}
+            parentId={drillTarget?.nodeId}
+            parentNodeType={drillTarget?.nodeType}
+            refreshKey={dataRevision}
+            cacheStore={matrixCacheStoreRef.current}
+            drillLevel={matrixDrillLevel}
+            onDrill={handleDrill}
+            asOf={dataTimeMode === "history" ? historyAsOf : undefined}
+            valueMode={dataTimeMode === "realtime_acc" ? "REALTIME_ACC" : "REALTIME"}
+          />
+        )}
+      </div>
+
+      {mode === "single" && dataTimeMode !== "cumulative" && (
         <Footer
           batchNo={data?.latestRun?.batch_no}
           online={data?.online ?? false}
           hasData={Boolean(data?.latestRun?.finished_at)}
           nextCollect={nextCollect}
-        />
-      )}
-      </>
-      ) : (
-        <MultiMetricMatrix
-          catalog={data?.indicatorCatalog || []}
-          availableIndicators={data?.indicators || []}
-          selectedCodes={multiSelectedCodes}
-          onSelectedCodesChange={setMultiSelectedCodes}
-          windowMinutes={multiMetricWindow}
-          onWindowChange={setMultiMetricWindow}
-          scopeMode={scopeMode}
-          parentId={drillTarget?.nodeId}
-          parentNodeType={drillTarget?.nodeType}
-          refreshKey={dataRevision}
-          cacheStore={matrixCacheStoreRef.current}
-          drillLevel={matrixDrillLevel}
-          onDrill={handleDrill}
-          asOf={dataTimeMode === "history" ? historyAsOf : undefined}
-          valueMode={dataTimeMode === "realtime_acc" ? "REALTIME_ACC" : "REALTIME"}
         />
       )}
     </div>
