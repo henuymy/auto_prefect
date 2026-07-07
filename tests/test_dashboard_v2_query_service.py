@@ -243,6 +243,64 @@ def test_change_window_matches_v1_finished_anchor_and_nearby_snapshot():
     assert change == {"value": 5, "rate": 5 / 95}
 
 
+def test_change_window_does_not_use_previous_business_date_baseline():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            UPDATE collection_run
+            SET stat_date = '2026-06-30',
+                started_at = '2026-06-30 23:55:00',
+                finished_at = '2026-06-30 23:55:00'
+            WHERE id = 1
+        """))
+        connection.execute(text("""
+            UPDATE collection_run
+            SET stat_date = '2026-07-01',
+                started_at = '2026-07-01 00:02:00',
+                finished_at = '2026-07-01 00:02:00'
+            WHERE id = 2
+        """))
+        connection.execute(text("""
+            UPDATE metric_current
+            SET stat_date = '2026-07-01', collected_at = '2026-07-01 00:02:00'
+            WHERE collection_run_id = 2
+        """))
+        connection.execute(text("""
+            UPDATE metric_snapshot
+            SET collected_at = '2026-06-30 23:55:00', metric_value = 150
+            WHERE id = 1
+        """))
+
+    without_today_baseline = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+    )
+    assert without_today_baseline["rows"][0]["changes"]["channel_count"]["change_5min"] == {
+        "value": None,
+        "rate": None,
+    }
+
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO metric_snapshot
+                (id, collected_at, collection_run_id, node_id, indicator_id, metric_value)
+            VALUES (6, '2026-07-01 00:00:00', 2, 2, 1, 95)
+        """))
+
+    with_today_baseline = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+    )
+    assert with_today_baseline["rows"][0]["changes"]["channel_count"]["change_5min"] == {
+        "value": 5,
+        "rate": 5 / 95,
+    }
+
+
 def test_history_availability_matches_frontend_minute_contract():
     engine = _engine()
 
@@ -610,6 +668,67 @@ def test_realtime_acc_adds_same_month_baseline_and_uses_month_target():
     }
 
 
+def test_realtime_acc_loads_only_month_target(monkeypatch):
+    engine = _engine()
+    _insert_month_target_and_acc(engine)
+    loaded_periods: list[str] = []
+    original = dashboard_v2_query_service._active_target_map
+
+    def tracking_target_map(session, **kwargs):
+        loaded_periods.append(kwargs["period_type"])
+        return original(session, **kwargs)
+
+    monkeypatch.setattr(
+        dashboard_v2_query_service,
+        "_active_target_map",
+        tracking_target_map,
+    )
+
+    get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+
+    assert loaded_periods == ["MONTH"]
+
+
+def test_realtime_acc_ignores_stale_current_value_from_previous_day():
+    engine = _engine()
+    _insert_month_target_and_acc(engine)
+    with engine.begin() as connection:
+        connection.execute(text("""
+            UPDATE metric_current
+            SET stat_date = '2026-06-29'
+            WHERE node_id = 2 AND indicator_id = 1
+        """))
+
+    accumulated = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+    realtime = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME",
+    )
+
+    accumulated_row = accumulated["rows"][0]
+    assert accumulated_row["metrics"]["channel_count"] is None
+    assert accumulated_row["changes"]["channel_count"]["change_5min"] == {
+        "value": None,
+        "rate": None,
+    }
+    assert realtime["rows"][0]["metrics"]["channel_count"] == 100
+
+
 def test_realtime_acc_falls_back_only_within_current_month():
     engine = _engine()
     _insert_month_target_and_acc(engine, acc_date="2026-06-28", acc_value=70)
@@ -644,6 +763,11 @@ def test_realtime_acc_uses_zero_baseline_on_first_day_of_month():
     _insert_month_target_and_acc(engine)
     with engine.begin() as connection:
         connection.execute(text("UPDATE collection_run SET stat_date='2026-07-01' WHERE id=2"))
+        connection.execute(text("""
+            UPDATE metric_current
+            SET stat_date = '2026-07-01'
+            WHERE collection_run_id = 2
+        """))
 
     result = get_current_with_changes(
         engine,

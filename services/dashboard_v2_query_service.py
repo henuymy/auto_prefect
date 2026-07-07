@@ -409,22 +409,24 @@ def _value_rows_at(
     node_ids: list[int],
     indicator_ids: list[int],
     as_of: datetime | None,
+    current_stat_date: date | None = None,
 ) -> list[Any]:
     if not node_ids or not indicator_ids:
         return []
     if as_of is None:
-        return session.execute(
-            select(
-                MetricCurrentV2.node_id,
-                MetricCurrentV2.indicator_id,
-                MetricCurrentV2.metric_value,
-                MetricCurrentV2.collection_run_id,
-                MetricCurrentV2.collected_at,
-            ).where(
-                MetricCurrentV2.node_id.in_(node_ids),
-                MetricCurrentV2.indicator_id.in_(indicator_ids),
-            )
-        ).all()
+        stmt = select(
+            MetricCurrentV2.node_id,
+            MetricCurrentV2.indicator_id,
+            MetricCurrentV2.metric_value,
+            MetricCurrentV2.collection_run_id,
+            MetricCurrentV2.collected_at,
+        ).where(
+            MetricCurrentV2.node_id.in_(node_ids),
+            MetricCurrentV2.indicator_id.in_(indicator_ids),
+        )
+        if current_stat_date is not None:
+            stmt = stmt.where(MetricCurrentV2.stat_date == current_stat_date)
+        return session.execute(stmt).all()
     ranked = (
         select(
             MetricSnapshotV2.node_id.label("node_id"),
@@ -492,6 +494,7 @@ def _wide_rows(
     as_of: datetime | None = None,
     period_type: str | None = None,
     include_targets: bool = False,
+    current_stat_date: date | None = None,
 ) -> list[dict[str, Any]]:
     components, physical = _components(session, indicators)
     values = _value_rows_at(
@@ -499,6 +502,7 @@ def _wide_rows(
         node_ids=[row.id for row in nodes],
         indicator_ids=[row.id for row in physical],
         as_of=as_of,
+        current_stat_date=current_stat_date,
     )
     code_by_id = {row.id: row.code for row in physical}
     parent_map = _historical_parent_map(session, as_of) if as_of else {}
@@ -544,6 +548,7 @@ def _append_changes(
     rows: list[dict[str, Any]],
     indicators: list[IndicatorV2],
     anchor: datetime,
+    stat_date: date,
     windows: list[int],
 ) -> None:
     if not rows or not indicators:
@@ -555,6 +560,7 @@ def _append_changes(
             node_ids=[row["id"] for row in rows],
             indicator_ids=[row.id for row in physical],
             cutoff=anchor - timedelta(minutes=minutes),
+            stat_date=stat_date,
         )
         values: dict[int, dict[str, Any]] = defaultdict(dict)
         code_by_id = {row.id: row.code for row in physical}
@@ -581,6 +587,7 @@ def _change_value_rows_at(
     node_ids: list[int],
     indicator_ids: list[int],
     cutoff: datetime,
+    stat_date: date,
 ) -> list[Any]:
     """Match V1 change-window baseline selection.
 
@@ -596,35 +603,37 @@ def _change_value_rows_at(
     upper_bound = cutoff + tolerance
     dialect_name = session.get_bind().dialect.name
     if dialect_name in {"mysql", "mariadb"}:
-        distance_expr = "ABS(TIMESTAMPDIFF(MICROSECOND, collected_at, :cutoff))"
+        distance_expr = "ABS(TIMESTAMPDIFF(MICROSECOND, ms.collected_at, :cutoff))"
     else:
         distance_expr = (
-            "ABS((julianday(collected_at) - julianday(:cutoff)) * 86400000000.0)"
+            "ABS((julianday(ms.collected_at) - julianday(:cutoff)) * 86400000000.0)"
         )
 
     query = text(f"""
         SELECT node_id, indicator_id, metric_value, collection_run_id, collected_at
         FROM (
             SELECT
-                node_id,
-                indicator_id,
-                metric_value,
-                collection_run_id,
-                collected_at,
+                ms.node_id,
+                ms.indicator_id,
+                ms.metric_value,
+                ms.collection_run_id,
+                ms.collected_at,
                 ROW_NUMBER() OVER (
-                    PARTITION BY node_id, indicator_id
+                    PARTITION BY ms.node_id, ms.indicator_id
                     ORDER BY
-                        CASE WHEN collected_at >= :near_lower THEN 0 ELSE 1 END,
-                        CASE WHEN collected_at >= :near_lower
+                        CASE WHEN ms.collected_at >= :near_lower THEN 0 ELSE 1 END,
+                        CASE WHEN ms.collected_at >= :near_lower
                             THEN {distance_expr} ELSE 0 END,
-                        collected_at DESC,
-                        id DESC
+                        ms.collected_at DESC,
+                        ms.id DESC
                 ) AS rn
-            FROM metric_snapshot
-            WHERE node_id IN :node_ids
-              AND indicator_id IN :indicator_ids
-              AND collected_at >= :baseline_start
-              AND collected_at <= :upper_bound
+            FROM metric_snapshot AS ms
+            INNER JOIN collection_run AS cr ON cr.id = ms.collection_run_id
+            WHERE ms.node_id IN :node_ids
+              AND ms.indicator_id IN :indicator_ids
+              AND cr.stat_date = :stat_date
+              AND ms.collected_at >= :baseline_start
+              AND ms.collected_at <= :upper_bound
         ) ranked
         WHERE rn = 1
     """).bindparams(
@@ -636,6 +645,7 @@ def _change_value_rows_at(
         {
             "node_ids": tuple(node_ids),
             "indicator_ids": tuple(indicator_ids),
+            "stat_date": stat_date,
             "baseline_start": cutoff
             - timedelta(days=SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS),
             "near_lower": near_lower,
@@ -650,6 +660,11 @@ def _change_anchor_time(run: CollectionRunV2 | None) -> datetime:
     if run is not None and run.finished_at is not None:
         return run.finished_at
     return datetime.now()
+
+
+def _change_stat_date(run: CollectionRunV2 | None, anchor: datetime) -> date:
+    """Keep change-window baselines within the anchor's business date."""
+    return run.stat_date if run is not None and run.stat_date is not None else anchor.date()
 
 
 def _history_meta(run: CollectionRunV2 | None, selected_time: datetime) -> dict[str, Any]:
@@ -742,14 +757,19 @@ def _apply_realtime_accumulation(
 
     acc_by_node: dict[int, dict[str, Any]] = {}
     if meta["stat_date"]:
-        acc_rows = _acc_rows_in_session(
+        acc_rows = _acc_metrics_in_session(
             session,
             nodes=nodes,
             indicators=indicators,
             period_type="DAY_ACC",
             target_day=date.fromisoformat(meta["stat_date"]),
+            components=components,
+            physical=physical,
         )
-        acc_by_node = {row["id"]: row["metrics"] for row in acc_rows}
+        acc_by_node = {
+            node_id: row["metrics"]
+            for node_id, row in acc_rows.items()
+        }
 
     response_codes = [indicator.code for indicator in indicators]
     for row in rows:
@@ -950,6 +970,7 @@ def get_current_wide_table(
 ) -> dict[str, Any]:
     normalized_mode = _normalize_value_mode(value_mode)
     with Session(engine) as session:
+        run = _latest_run(session)
         indicators = _enabled_indicators(session, indicator_codes)
         nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
         rows = _wide_rows(
@@ -957,9 +978,13 @@ def get_current_wide_table(
             nodes=nodes,
             indicators=indicators,
             period_type="DAY_ACC",
-            include_targets=True,
+            include_targets=normalized_mode != "REALTIME_ACC",
+            current_stat_date=(
+                _realtime_business_date(run)
+                if normalized_mode == "REALTIME_ACC"
+                else None
+            ),
         )
-        run = _latest_run(session)
         accumulation_meta = _apply_value_mode(
             session,
             value_mode=normalized_mode,
@@ -992,6 +1017,7 @@ def get_current_with_changes(
     normalized_mode = _normalize_value_mode(value_mode)
     windows = change_windows or [5, 15, 30, 60]
     with Session(engine) as session:
+        run = _latest_run(session)
         indicators = _enabled_indicators(session, indicator_codes)
         nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
         rows = _wide_rows(
@@ -999,11 +1025,22 @@ def get_current_with_changes(
             nodes=nodes,
             indicators=indicators,
             period_type="DAY_ACC",
-            include_targets=True,
+            include_targets=normalized_mode != "REALTIME_ACC",
+            current_stat_date=(
+                _realtime_business_date(run)
+                if normalized_mode == "REALTIME_ACC"
+                else None
+            ),
         )
-        run = _latest_run(session)
         anchor = _change_anchor_time(run)
-        _append_changes(session, rows=rows, indicators=indicators, anchor=anchor, windows=windows)
+        _append_changes(
+            session,
+            rows=rows,
+            indicators=indicators,
+            anchor=anchor,
+            stat_date=_change_stat_date(run, anchor),
+            windows=windows,
+        )
         accumulation_meta = _apply_value_mode(
             session,
             value_mode=normalized_mode,
@@ -1083,6 +1120,7 @@ def get_historical_with_changes(
             rows=rows,
             indicators=indicators,
             anchor=change_anchor,
+            stat_date=_change_stat_date(run, change_anchor),
             windows=windows,
         )
         return {
@@ -1173,6 +1211,7 @@ def get_dashboard_matrix_page(
     normalized_mode = _normalize_value_mode(value_mode)
     del parent_node_type
     with Session(engine) as session:
+        run = _latest_run(session)
         normalized = _normalized_node_type(node_type) or "BRANCH"
         indicators = _enabled_indicators(session, indicator_codes)
         nodes = _scoped_nodes(
@@ -1187,15 +1226,20 @@ def get_dashboard_matrix_page(
             nodes=nodes,
             indicators=indicators,
             period_type="DAY_ACC",
-            include_targets=True,
+            include_targets=normalized_mode != "REALTIME_ACC",
+            current_stat_date=(
+                _realtime_business_date(run)
+                if normalized_mode == "REALTIME_ACC"
+                else None
+            ),
         )
-        run = _latest_run(session)
         anchor = _change_anchor_time(run)
         _append_changes(
             session,
             rows=rows,
             indicators=indicators,
             anchor=anchor,
+            stat_date=_change_stat_date(run, anchor),
             windows=[change_window],
         )
         accumulation_meta = _apply_value_mode(
@@ -1234,6 +1278,44 @@ def get_historical_matrix_page(
     return _matrix_result(result, search=search, sort_indicator=sort_indicator, sort_mode=sort_mode, page=page, page_size=page_size)
 
 
+def _acc_metrics_in_session(
+    session: Session,
+    *,
+    nodes: list[HierarchyNode],
+    indicators: list[IndicatorV2],
+    period_type: str,
+    target_day: date,
+    components: dict[str, list[tuple[str, Decimal]]] | None = None,
+    physical: list[IndicatorV2] | None = None,
+) -> dict[int, dict[str, Any]]:
+    if components is None or physical is None:
+        components, physical = _components(session, indicators)
+    values = session.execute(
+        select(MetricAccV2).where(
+            MetricAccV2.period_type == period_type,
+            MetricAccV2.stat_date == target_day,
+            MetricAccV2.node_id.in_([row.id for row in nodes] or [-1]),
+            MetricAccV2.indicator_id.in_([row.id for row in physical] or [-1]),
+        )
+    ).scalars().all()
+    code_by_id = {row.id: row.code for row in physical}
+    by_id = {
+        node.id: {
+            "collection_run_id": None,
+            "collected_at": None,
+            "metrics": {row.code: None for row in physical},
+        }
+        for node in nodes
+    }
+    for value in values:
+        row = by_id[value.node_id]
+        row["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
+        row["collection_run_id"] = value.collection_run_id
+        row["collected_at"] = _iso(value.collected_at)
+    _apply_custom(list(by_id.values()), indicators, components)
+    return by_id
+
+
 def _acc_rows_in_session(
     session: Session,
     *,
@@ -1243,14 +1325,15 @@ def _acc_rows_in_session(
     target_day: date,
 ) -> list[dict[str, Any]]:
     components, physical = _components(session, indicators)
-    values = session.execute(
-        select(MetricAccV2).where(
-            MetricAccV2.period_type == period_type,
-            MetricAccV2.stat_date == target_day,
-            MetricAccV2.node_id.in_([row.id for row in nodes] or [-1]),
-            MetricAccV2.indicator_id.in_([row.id for row in physical] or [-1]),
-        )
-    ).scalars().all()
+    metrics_by_id = _acc_metrics_in_session(
+        session,
+        nodes=nodes,
+        indicators=indicators,
+        period_type=period_type,
+        target_day=target_day,
+        components=components,
+        physical=physical,
+    )
     target_map = _active_target_map(
         session,
         node_ids=[row.id for row in nodes],
@@ -1258,27 +1341,20 @@ def _acc_rows_in_session(
         period_type=period_type,
         target_date=target_day,
     )
-    code_by_id = {row.id: row.code for row in physical}
     rows: list[dict[str, Any]] = []
-    by_id: dict[int, dict[str, Any]] = {}
     for node in nodes:
         dto = _node_dto(node)
+        metric_row = metrics_by_id[node.id]
         dto.update(
-            collection_run_id=None,
-            collected_at=None,
-            metrics={row.code: None for row in physical},
+            collection_run_id=metric_row["collection_run_id"],
+            collected_at=metric_row["collected_at"],
+            metrics=metric_row["metrics"],
             targets={
                 row.code: _number(target_map.get((node.id, row.id)))
                 for row in physical
             },
         )
         rows.append(dto)
-        by_id[node.id] = dto
-    for value in values:
-        row = by_id[value.node_id]
-        row["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
-        row["collection_run_id"] = value.collection_run_id
-        row["collected_at"] = _iso(value.collected_at)
     _apply_custom(rows, indicators, components)
     return rows
 
@@ -1338,6 +1414,7 @@ def get_dashboard_overview(
 ) -> dict[str, Any]:
     normalized_mode = _normalize_value_mode(value_mode)
     with Session(engine) as session:
+        run = _latest_run(session)
         branches = _nodes(session, node_type="BRANCH")
         branch = next(
             (
@@ -1372,14 +1449,20 @@ def get_dashboard_overview(
             nodes=nodes,
             indicators=indicators,
             period_type=period_type,
-            include_targets=True,
+            include_targets=normalized_mode != "REALTIME_ACC",
+            current_stat_date=(
+                _realtime_business_date(run)
+                if normalized_mode == "REALTIME_ACC"
+                else None
+            ),
         )
-        run = _latest_run(session)
+        anchor = _change_anchor_time(run)
         _append_changes(
             session,
             rows=rows,
             indicators=indicators,
-            anchor=_change_anchor_time(run),
+            anchor=anchor,
+            stat_date=_change_stat_date(run, anchor),
             windows=change_windows or [5, 15, 30, 60],
         )
         accumulation_meta = _apply_value_mode(
@@ -1441,6 +1524,7 @@ def get_drill_down(
         raise ValueError(f"{parent_node_type!r} 没有可下钻层级")
     if parent_type == "GRID" and normalized_tree_mode == "flat":
         with Session(engine) as session:
+            run = _latest_run(session)
             managers = _nodes(
                 session,
                 node_type="CHANNEL_MANAGER",
@@ -1457,14 +1541,20 @@ def get_drill_down(
                 nodes=nodes,
                 indicators=indicators,
                 period_type=period_type,
-                include_targets=True,
+                include_targets=normalized_mode != "REALTIME_ACC",
+                current_stat_date=(
+                    _realtime_business_date(run)
+                    if normalized_mode == "REALTIME_ACC"
+                    else None
+                ),
             )
-            run = _latest_run(session)
+            anchor = _change_anchor_time(run)
             _append_changes(
                 session,
                 rows=rows,
                 indicators=indicators,
-                anchor=_change_anchor_time(run),
+                anchor=anchor,
+                stat_date=_change_stat_date(run, anchor),
                 windows=change_windows or [5, 15, 30, 60],
             )
             accumulation_meta = _apply_value_mode(
@@ -1509,6 +1599,7 @@ def get_drill_down(
     # sibling branches visible while loading all GRID / CHANNEL_MANAGER /
     # CHANNEL rows below that branch.
     with Session(engine) as session:
+        run = _latest_run(session)
         context_nodes = _drill_context_nodes(
             session,
             parent_id=parent_id,
@@ -1521,15 +1612,20 @@ def get_drill_down(
             nodes=context_nodes,
             indicators=indicators,
             period_type=period_type,
-            include_targets=True,
+            include_targets=normalized_mode != "REALTIME_ACC",
+            current_stat_date=(
+                _realtime_business_date(run)
+                if normalized_mode == "REALTIME_ACC"
+                else None
+            ),
         )
-        run = _latest_run(session)
         anchor = _change_anchor_time(run)
         _append_changes(
             session,
             rows=rows,
             indicators=indicators,
             anchor=anchor,
+            stat_date=_change_stat_date(run, anchor),
             windows=change_windows or [5, 15, 30, 60],
         )
         accumulation_meta = _apply_value_mode(

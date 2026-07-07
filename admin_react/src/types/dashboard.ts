@@ -50,7 +50,6 @@ export type UpdateIndicatorSettingsPayload = {
 };
 
 export type DashboardLatestRunResponse = {
-  schema_version: 1 | 2;
   latest_run: {
     id: number;
     batch_no: string;

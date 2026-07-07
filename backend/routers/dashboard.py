@@ -13,13 +13,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
 from infrastructure.dashboard_mysql import get_dashboard_engine
-from services.dashboard_custom_indicator_facade import (
+from services.dashboard_v2_custom_indicator_service import (
     delete_custom_indicator,
     list_custom_indicators,
     update_indicator_settings,
     upsert_custom_indicator,
 )
-from services.dashboard_query_facade import (
+from services.dashboard_v2_query_service import (
     get_dashboard_overview,
     get_dashboard_matrix_page,
     get_drill_down,

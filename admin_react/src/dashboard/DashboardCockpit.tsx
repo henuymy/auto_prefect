@@ -2100,9 +2100,7 @@ export function DashboardCockpit() {
         onModeChange={(nextMode) => {
           if (nextMode === dataTimeMode) return;
           setLoading(true);
-          if (nextMode === "cumulative" || dataTimeMode === "cumulative") {
-            setData(null);
-          }
+          setData(null);
           setDataTimeMode(nextMode);
           if (nextMode === "history") {
             void loadHistoryAvailability();
