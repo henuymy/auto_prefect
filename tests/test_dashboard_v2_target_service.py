@@ -8,6 +8,7 @@ from services.dashboard_v2_target_service import (
     AmbiguousTargetPlanError,
     TargetPlanCandidate,
     choose_target_plan_candidate,
+    normalize_target_scenario,
 )
 
 
@@ -62,3 +63,10 @@ def test_target_plan_rejects_unresolved_tie():
 
 def test_target_plan_returns_none_for_no_candidate():
     assert choose_target_plan_candidate([]) is None
+
+
+def test_target_scenario_normalization_rejects_unknown_value():
+    assert normalize_target_scenario("pk") == "PK"
+    assert normalize_target_scenario(" NORMAL ") == "NORMAL"
+    with pytest.raises(ValueError, match="NORMAL/PK"):
+        normalize_target_scenario("OTHER")

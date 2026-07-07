@@ -55,44 +55,50 @@ def choose_target_plan_candidate(
     return winner
 
 
+def normalize_target_scenario(scenario: str = "NORMAL") -> str:
+    normalized = str(scenario or "").strip().upper()
+    if normalized not in {"NORMAL", "PK"}:
+        raise ValueError("target_scenario 只支持 NORMAL/PK")
+    return normalized
+
+
 def resolve_v2_target_plan(
     session: Session,
     *,
     business_date: date,
     period_type: str,
+    scenario: str = "NORMAL",
 ) -> TargetPlan | None:
-    """Resolve PK first, falling back to NORMAL only when no PK plan exists."""
+    """Resolve the active target plan for an explicit business scenario."""
     normalized_period = str(period_type or "").strip().upper()
     if normalized_period not in {"DAY", "MONTH"}:
         raise ValueError("period_type 只支持 DAY/MONTH")
-    for scenario in ("PK", "NORMAL"):
-        plans = list(
-            session.scalars(
-                select(TargetPlan).where(
-                    TargetPlan.scenario == scenario,
-                    TargetPlan.period_type == normalized_period,
-                    TargetPlan.status.in_(["ACTIVE", "RETIRED"]),
-                    TargetPlan.effective_from <= business_date,
-                    or_(
-                        TargetPlan.effective_to.is_(None),
-                        TargetPlan.effective_to >= business_date,
-                    ),
-                )
+    normalized_scenario = normalize_target_scenario(scenario)
+    plans = list(
+        session.scalars(
+            select(TargetPlan).where(
+                TargetPlan.scenario == normalized_scenario,
+                TargetPlan.period_type == normalized_period,
+                TargetPlan.status.in_(["ACTIVE", "RETIRED"]),
+                TargetPlan.effective_from <= business_date,
+                or_(
+                    TargetPlan.effective_to.is_(None),
+                    TargetPlan.effective_to >= business_date,
+                ),
             )
         )
-        winner = choose_target_plan_candidate(
-            TargetPlanCandidate(
-                id=plan.id,
-                scenario=plan.scenario,
-                period_type=plan.period_type,
-                effective_from=plan.effective_from,
-                priority=plan.priority,
-            )
-            for plan in plans
+    )
+    winner = choose_target_plan_candidate(
+        TargetPlanCandidate(
+            id=plan.id,
+            scenario=plan.scenario,
+            period_type=plan.period_type,
+            effective_from=plan.effective_from,
+            priority=plan.priority,
         )
-        if winner is not None:
-            return next(plan for plan in plans if plan.id == winner.id)
-    return None
+        for plan in plans
+    )
+    return next((plan for plan in plans if winner is not None and plan.id == winner.id), None)
 
 
 def load_v2_target_values(
@@ -100,6 +106,7 @@ def load_v2_target_values(
     *,
     business_date: date,
     period_type: str,
+    scenario: str = "NORMAL",
     node_ids: Iterable[int] | None = None,
     indicator_ids: Iterable[int] | None = None,
 ) -> tuple[TargetPlan | None, dict[tuple[int, int], Decimal]]:
@@ -108,6 +115,7 @@ def load_v2_target_values(
         session,
         business_date=business_date,
         period_type=period_type,
+        scenario=scenario,
     )
     if plan is None:
         return None, {}

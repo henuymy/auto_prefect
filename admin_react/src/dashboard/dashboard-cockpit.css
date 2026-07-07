@@ -369,6 +369,35 @@ body::-webkit-scrollbar-button,
   color: #e6eefb;
 }
 
+.target-scenario-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  height: 40px;
+  border: 1px solid rgba(89, 130, 190, 0.35);
+  border-radius: 10px;
+  padding: 3px;
+  background: rgba(8, 13, 22, 0.74);
+}
+
+.target-scenario-switch button {
+  min-width: 64px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 12px;
+  color: #93a4ba;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.target-scenario-switch button.active {
+  color: #eef5ff;
+  background: rgba(37, 99, 235, 0.72);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.22);
+}
+
 .toolbar {
   gap: 14px;
 }

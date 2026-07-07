@@ -23,10 +23,12 @@ def test_matrix_route_uses_cache_and_invalidates_on_data_version(monkeypatch):
     )
 
     received_modes = []
+    received_scenarios = []
 
     def load_matrix(engine, **kwargs):
         calls["count"] += 1
         received_modes.append(kwargs["value_mode"])
+        received_scenarios.append(kwargs["target_scenario"])
         return {"rows": [], "total": 0, "page": 1, "page_size": 100}
 
     monkeypatch.setattr(dashboard, "get_dashboard_matrix_page", load_matrix)
@@ -45,6 +47,7 @@ def test_matrix_route_uses_cache_and_invalidates_on_data_version(monkeypatch):
         "page": 1,
         "page_size": 100,
         "value_mode": "REALTIME",
+        "target_scenario": "NORMAL",
     }
     dashboard.dashboard_matrix(**params)
     dashboard.dashboard_matrix(**params)
@@ -57,6 +60,11 @@ def test_matrix_route_uses_cache_and_invalidates_on_data_version(monkeypatch):
     dashboard.dashboard_matrix(**{**params, "value_mode": "REALTIME_ACC"})
     assert calls["count"] == 3
     assert received_modes == ["REALTIME", "REALTIME", "REALTIME_ACC"]
+    assert received_scenarios == ["NORMAL", "NORMAL", "NORMAL"]
+
+    dashboard.dashboard_matrix(**{**params, "target_scenario": "PK"})
+    assert calls["count"] == 4
+    assert received_scenarios[-1] == "PK"
 
 
 def test_parse_indicator_codes_deduplicates_and_limits():

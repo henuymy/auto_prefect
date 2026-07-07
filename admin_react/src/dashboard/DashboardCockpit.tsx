@@ -233,6 +233,7 @@ function makeDashboardCacheKey({
   parentNodeType,
   changeWindows,
   indicatorCodes,
+  targetScenario,
   dayLevelAllMode,
   monthLevelAllMode,
   asOf,
@@ -244,6 +245,7 @@ function makeDashboardCacheKey({
   parentNodeType?: string | null;
   changeWindows: number[];
   indicatorCodes?: string[] | null;
+  targetScenario: DashboardTargetScenario;
   dayLevelAllMode: Partial<Record<LevelKey, boolean>>;
   monthLevelAllMode: Partial<Record<LevelKey, boolean>>;
   asOf?: string | null;
@@ -256,6 +258,7 @@ function makeDashboardCacheKey({
     parentNodeType: parentNodeType ?? null,
     changeWindows,
     indicatorCodes: indicatorCodes ?? null,
+    targetScenario,
     dayLevelAll: {
       grid: Boolean(dayLevelAllMode.GRID),
       manager: Boolean(dayLevelAllMode.CHANNEL_MANAGER),
@@ -999,6 +1002,7 @@ export function DashboardCockpit() {
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<CockpitMode>("single");
   const [dataTimeMode, setDataTimeMode] = useState<DataTimeMode>("realtime");
+  const [targetScenario, setTargetScenario] = useState<DashboardTargetScenario>("NORMAL");
   const [historyAsOf, setHistoryAsOf] = useState("");
   const [historyInput, setHistoryInput] = useState("");
   const [historyRange, setHistoryRange] = useState<{ earliest: string; latest: string }>({
@@ -1129,6 +1133,7 @@ export function DashboardCockpit() {
     parentNodeType: drillTarget?.nodeType ?? null,
     changeWindows: parentChangeWindows,
     indicatorCodes: requestedIndicatorCodes ?? null,
+    targetScenario,
     dayLevelAllMode,
     monthLevelAllMode,
     asOf: dataTimeMode === "history" ? historyAsOf : null,
@@ -1180,6 +1185,7 @@ export function DashboardCockpit() {
       parentNodeType: nextDrillTarget?.nodeType ?? null,
       changeWindows: nextChangeWindows,
       indicatorCodes: nextIndicatorCodes ?? null,
+      targetScenario,
       dayLevelAllMode: nextScopeState.dayLevelAllMode,
       monthLevelAllMode: nextScopeState.monthLevelAllMode,
       asOf: dataTimeMode === "history" ? historyAsOf : null,
@@ -1227,6 +1233,7 @@ export function DashboardCockpit() {
     scopeMode,
     dataTimeMode,
     historyAsOf,
+    targetScenario,
   ]);
 
   useEffect(() => {
@@ -1312,6 +1319,7 @@ export function DashboardCockpit() {
             undefined,
             undefined,
             requestedIndicatorCodes,
+            targetScenario,
           ).then((acc) => {
             const allRows = acc.rows.map((row) => ({
               ...row,
@@ -1337,6 +1345,7 @@ export function DashboardCockpit() {
             scopeMode,
             parentId,
             parentNodeType,
+            targetScenario,
           ).then((history) => [
             mode === "single"
               ? {
@@ -1353,6 +1362,7 @@ export function DashboardCockpit() {
             undefined,
             requestedIndicatorCodes,
             valueMode,
+            targetScenario,
           ).then((changes) => [changes, [] as DashboardRow[]] as const)
         : parentId == null
         ? scopeMode === "all"
@@ -1364,6 +1374,7 @@ export function DashboardCockpit() {
                   requestedChangeWindows,
                   requestedIndicatorCodes,
                   valueMode,
+                  targetScenario,
                 ),
                 getAccDashboard(
                   "DAY_ACC",
@@ -1371,6 +1382,7 @@ export function DashboardCockpit() {
                   "BRANCH",
                   undefined,
                   requestedIndicatorCodes,
+                  targetScenario,
                 ),
               ]).then(([changes, acc]) => [changes, acc.rows] as const)
             : await getDashboardWithChanges(
@@ -1379,6 +1391,7 @@ export function DashboardCockpit() {
                 requestedChangeWindows,
                 requestedIndicatorCodes,
                 valueMode,
+                targetScenario,
               ).then((changes) => [changes, [] as DashboardRow[]] as const)
           : await getDashboardOverview(
               undefined,
@@ -1388,6 +1401,7 @@ export function DashboardCockpit() {
               requestedIndicatorCodes,
               SHOW_MONTH_ACCUMULATION,
               valueMode,
+              targetScenario,
             ).then((overview) => [
               overview,
               overview.acc_rows,
@@ -1402,6 +1416,7 @@ export function DashboardCockpit() {
               SHOW_MONTH_ACCUMULATION,
               "full",
               valueMode,
+              targetScenario,
             ).then((drill) => [
               drill,
               drill.acc_rows,
@@ -1414,6 +1429,7 @@ export function DashboardCockpit() {
                 requestedChangeWindows,
                 requestedIndicatorCodes,
                 valueMode,
+                targetScenario,
               ),
               getAccDashboard(
                 "DAY_ACC",
@@ -1421,6 +1437,7 @@ export function DashboardCockpit() {
                 undefined,
                 parentId,
                 requestedIndicatorCodes,
+                targetScenario,
               ),
             ]).then(([changes, acc]) => [changes, acc.rows] as const)
           : await getDashboardWithChanges(
@@ -1429,6 +1446,7 @@ export function DashboardCockpit() {
               requestedChangeWindows,
               requestedIndicatorCodes,
               valueMode,
+              targetScenario,
             )
               .then((changes) => [changes, [] as DashboardRow[]] as const);
 
@@ -1556,6 +1574,9 @@ export function DashboardCockpit() {
                     requestedChangeWindows,
                     requestedIndicatorCodes,
                     "all",
+                    undefined,
+                    undefined,
+                    targetScenario,
                   )
                 : await getDashboardWithChanges(
                     level,
@@ -1563,6 +1584,7 @@ export function DashboardCockpit() {
                     requestedChangeWindows,
                     requestedIndicatorCodes,
                     valueMode,
+                    targetScenario,
                   );
               const overrideAccRows = dataTimeMode === "realtime" && SHOW_MONTH_ACCUMULATION
                 ? await getAccDashboard(
@@ -1571,6 +1593,7 @@ export function DashboardCockpit() {
                     level,
                     undefined,
                     requestedIndicatorCodes,
+                    targetScenario,
                   )
                     .then((accData) => accData.rows)
                     .catch(() => [])
@@ -1667,6 +1690,7 @@ export function DashboardCockpit() {
     monthLevelAllMode.CHANNEL,
     dataTimeMode,
     historyAsOf,
+    targetScenario,
   ]);
 
   useEffect(() => {
@@ -2056,6 +2080,13 @@ export function DashboardCockpit() {
         mode={mode}
         onModeChange={handleModeChange}
         dataTimeMode={dataTimeMode}
+        targetScenario={targetScenario}
+        onTargetScenarioChange={(nextScenario) => {
+          if (nextScenario === targetScenario) return;
+          setLoading(true);
+          setData(null);
+          setTargetScenario(nextScenario);
+        }}
         drillName={orgScopeName}
         scopeValue={
           defaultBranchDrillActive
@@ -2274,6 +2305,7 @@ export function DashboardCockpit() {
             onDrill={handleDrill}
             asOf={dataTimeMode === "history" ? historyAsOf : undefined}
             valueMode={dataTimeMode === "realtime_acc" ? "REALTIME_ACC" : "REALTIME"}
+            targetScenario={targetScenario}
           />
         )}
       </div>
@@ -2296,6 +2328,8 @@ function Header({
   mode,
   onModeChange,
   dataTimeMode,
+  targetScenario,
+  onTargetScenarioChange,
   drillName,
   scopeValue,
   scopeOptions,
@@ -2318,6 +2352,8 @@ function Header({
   mode: CockpitMode;
   onModeChange: (mode: CockpitMode) => void;
   dataTimeMode: DataTimeMode;
+  targetScenario: DashboardTargetScenario;
+  onTargetScenarioChange: (scenario: DashboardTargetScenario) => void;
   drillName: string;
   scopeValue: string;
   scopeOptions: { label: string; value: string }[];
@@ -2364,6 +2400,21 @@ function Header({
         </div>
       </div>
       <div className={mode === "single" ? "toolbar" : "toolbar toolbar-muted"}>
+        <div className="target-scenario-switch" aria-label="目标口径">
+          {([
+            ["NORMAL", "日常"],
+            ["PK", "PK赛"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={targetScenario === value ? "active" : ""}
+              onClick={() => onTargetScenarioChange(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <Selector
           label="组织范围"
           value={scopeValue}
@@ -3801,6 +3852,7 @@ function MultiMetricMatrix({
   onDrill,
   asOf,
   valueMode,
+  targetScenario,
 }: {
   catalog: DashboardCatalogIndicator[];
   availableIndicators: DashboardIndicator[];
@@ -3817,6 +3869,7 @@ function MultiMetricMatrix({
   onDrill: (row: BoardRow, nodeType: string) => void;
   asOf?: string;
   valueMode: DashboardValueMode;
+  targetScenario: DashboardTargetScenario;
 }) {
   const orderedCatalog = useMemo(() => {
     const byCode = new Map(
@@ -3933,6 +3986,7 @@ function MultiMetricMatrix({
       page: matrixPage,
       pageSize: MATRIX_PAGE_SIZE,
       valueMode,
+      targetScenario,
     };
     const matrixCacheKey = JSON.stringify({
       ...matrixParams,
@@ -4026,6 +4080,7 @@ function MultiMetricMatrix({
     windowMinutes,
     asOf,
     valueMode,
+    targetScenario,
     cacheStore,
   ]);
 

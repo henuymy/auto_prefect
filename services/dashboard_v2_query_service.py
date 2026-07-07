@@ -33,7 +33,7 @@ from services.dashboard_query_service import (
     SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS,
     parse_change_window_minutes,
 )
-from services.dashboard_v2_target_service import load_v2_target_values
+from services.dashboard_v2_target_service import load_v2_target_values, normalize_target_scenario
 
 
 NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
@@ -473,6 +473,7 @@ def _active_target_map(
     indicator_ids: list[int],
     period_type: str,
     target_date: date,
+    target_scenario: str = "NORMAL",
 ) -> dict[tuple[int, int], Decimal]:
     if not node_ids or not indicator_ids:
         return {}
@@ -480,6 +481,7 @@ def _active_target_map(
         session,
         business_date=target_date,
         period_type=_target_period(period_type),
+        scenario=target_scenario,
         node_ids=node_ids,
         indicator_ids=indicator_ids,
     )
@@ -495,6 +497,7 @@ def _wide_rows(
     period_type: str | None = None,
     include_targets: bool = False,
     current_stat_date: date | None = None,
+    target_scenario: str = "NORMAL",
 ) -> list[dict[str, Any]]:
     components, physical = _components(session, indicators)
     values = _value_rows_at(
@@ -532,6 +535,7 @@ def _wide_rows(
             indicator_ids=[row.id for row in physical],
             period_type=period_type,
             target_date=(as_of.date() if as_of else date.today()),
+            target_scenario=target_scenario,
         )
         for node_id, row in by_id.items():
             row["targets"] = {
@@ -729,6 +733,7 @@ def _apply_realtime_accumulation(
     nodes: list[HierarchyNode],
     indicators: list[IndicatorV2],
     run: CollectionRunV2 | None,
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     """Replace realtime metrics with current-month accumulated values."""
     business_date = _realtime_business_date(run)
@@ -743,6 +748,7 @@ def _apply_realtime_accumulation(
         indicator_ids=physical_ids,
         period_type="MONTH",
         target_date=business_date,
+        target_scenario=target_scenario,
     )
     target_by_node: dict[int, dict[str, Any]] = {}
     for node_id in node_ids:
@@ -814,6 +820,7 @@ def _apply_value_mode(
     nodes: list[HierarchyNode],
     indicators: list[IndicatorV2],
     run: CollectionRunV2 | None,
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any] | None:
     normalized = _normalize_value_mode(value_mode)
     if normalized == "REALTIME":
@@ -824,6 +831,7 @@ def _apply_value_mode(
         nodes=nodes,
         indicators=indicators,
         run=run,
+        target_scenario=target_scenario,
     )
 
 
@@ -967,8 +975,10 @@ def get_current_wide_table(
     parent_id: int | None = None,
     indicator_codes: list[str] | None = None,
     value_mode: str = "REALTIME",
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     normalized_mode = _normalize_value_mode(value_mode)
+    normalized_target_scenario = normalize_target_scenario(target_scenario)
     with Session(engine) as session:
         run = _latest_run(session)
         indicators = _enabled_indicators(session, indicator_codes)
@@ -984,6 +994,7 @@ def get_current_wide_table(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_scenario=normalized_target_scenario,
         )
         accumulation_meta = _apply_value_mode(
             session,
@@ -992,6 +1003,7 @@ def get_current_wide_table(
             nodes=nodes,
             indicators=indicators,
             run=run,
+            target_scenario=normalized_target_scenario,
         )
         result = {
             "data_mode": normalized_mode,
@@ -1013,8 +1025,10 @@ def get_current_with_changes(
     change_windows: list[int] | None = None,
     indicator_codes: list[str] | None = None,
     value_mode: str = "REALTIME",
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     normalized_mode = _normalize_value_mode(value_mode)
+    normalized_target_scenario = normalize_target_scenario(target_scenario)
     windows = change_windows or [5, 15, 30, 60]
     with Session(engine) as session:
         run = _latest_run(session)
@@ -1031,6 +1045,7 @@ def get_current_with_changes(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_scenario=normalized_target_scenario,
         )
         anchor = _change_anchor_time(run)
         _append_changes(
@@ -1048,6 +1063,7 @@ def get_current_with_changes(
             nodes=nodes,
             indicators=indicators,
             run=run,
+            target_scenario=normalized_target_scenario,
         )
         result = {
             "data_mode": normalized_mode,
@@ -1072,8 +1088,10 @@ def get_historical_with_changes(
     parent_id: int | None = None,
     parent_node_type: str | None = None,
     branch_code: str | None = "AQ",
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     windows = change_windows or [5, 15, 30, 60]
+    normalized_target_scenario = normalize_target_scenario(target_scenario)
     with Session(engine) as session:
         run = _historical_run(session, as_of)
         value_cutoff = (
@@ -1114,6 +1132,7 @@ def get_historical_with_changes(
             as_of=value_cutoff,
             period_type="DAY_ACC",
             include_targets=True,
+            target_scenario=normalized_target_scenario,
         )
         _append_changes(
             session,
@@ -1207,8 +1226,10 @@ def get_dashboard_matrix_page(
     sort_indicator: str | None = None, sort_mode: str = "doneDesc",
     page: int = 1, page_size: int = 100,
     value_mode: str = "REALTIME",
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     normalized_mode = _normalize_value_mode(value_mode)
+    normalized_target_scenario = normalize_target_scenario(target_scenario)
     del parent_node_type
     with Session(engine) as session:
         run = _latest_run(session)
@@ -1232,6 +1253,7 @@ def get_dashboard_matrix_page(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_scenario=normalized_target_scenario,
         )
         anchor = _change_anchor_time(run)
         _append_changes(
@@ -1249,6 +1271,7 @@ def get_dashboard_matrix_page(
             nodes=nodes,
             indicators=indicators,
             run=run,
+            target_scenario=normalized_target_scenario,
         )
         result = {
             "data_mode": normalized_mode,
@@ -1269,11 +1292,13 @@ def get_historical_matrix_page(
     indicator_codes: list[str] | None = None, change_window: int = 60,
     search: str | None = None, sort_indicator: str | None = None,
     sort_mode: str = "doneDesc", page: int = 1, page_size: int = 100,
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     result = get_historical_with_changes(
         engine, as_of=as_of, node_type=node_type, change_windows=[change_window],
         indicator_codes=indicator_codes, scope_mode=scope_mode, parent_id=parent_id,
         parent_node_type=parent_node_type, branch_code=branch_code,
+        target_scenario=target_scenario,
     )
     return _matrix_result(result, search=search, sort_indicator=sort_indicator, sort_mode=sort_mode, page=page, page_size=page_size)
 
@@ -1323,6 +1348,7 @@ def _acc_rows_in_session(
     indicators: list[IndicatorV2],
     period_type: str,
     target_day: date,
+    target_scenario: str = "NORMAL",
 ) -> list[dict[str, Any]]:
     components, physical = _components(session, indicators)
     metrics_by_id = _acc_metrics_in_session(
@@ -1340,6 +1366,7 @@ def _acc_rows_in_session(
         indicator_ids=[row.id for row in physical],
         period_type=period_type,
         target_date=target_day,
+        target_scenario=target_scenario,
     )
     rows: list[dict[str, Any]] = []
     for node in nodes:
@@ -1363,10 +1390,12 @@ def get_acc_wide_table(
     engine: Engine, *, period_type: str = "DAY_ACC", node_type: str | None = None,
     parent_id: int | None = None, stat_date: str | None = None,
     indicator_codes: list[str] | None = None,
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     normalized = str(period_type).strip().upper()
     if normalized not in {"DAY_ACC", "MONTH"}:
         raise ValueError(f"period_type 只支持 DAY_ACC/MONTH: {period_type!r}")
+    normalized_target_scenario = normalize_target_scenario(target_scenario)
     with Session(engine) as session:
         through_date = date.fromisoformat(stat_date) if stat_date else _yesterday_shanghai()
         target_day = (
@@ -1388,6 +1417,7 @@ def get_acc_wide_table(
                 indicators=indicators,
                 period_type=normalized,
                 target_day=target_day,
+                target_scenario=normalized_target_scenario,
             )
             if target_day is not None
             else []
@@ -1411,8 +1441,10 @@ def get_dashboard_overview(
     period_type: str = "DAY_ACC", change_windows: list[int] | None = None,
     indicator_codes: list[str] | None = None, include_acc: bool = True,
     value_mode: str = "REALTIME",
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     normalized_mode = _normalize_value_mode(value_mode)
+    normalized_target_scenario = normalize_target_scenario(target_scenario)
     with Session(engine) as session:
         run = _latest_run(session)
         branches = _nodes(session, node_type="BRANCH")
@@ -1455,6 +1487,7 @@ def get_dashboard_overview(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_scenario=normalized_target_scenario,
         )
         anchor = _change_anchor_time(run)
         _append_changes(
@@ -1472,6 +1505,7 @@ def get_dashboard_overview(
             nodes=nodes,
             indicators=indicators,
             run=run,
+            target_scenario=normalized_target_scenario,
         )
         acc_rows: list[dict[str, Any]] = []
         if include_acc and normalized_mode == "REALTIME":
@@ -1487,6 +1521,7 @@ def get_dashboard_overview(
                 indicators=indicators,
                 period_type=normalized_period,
                 target_day=acc_date,
+                target_scenario=normalized_target_scenario,
             )
         result = {
             "data_mode": normalized_mode,
@@ -1509,8 +1544,10 @@ def get_drill_down(
     indicator_codes: list[str] | None = None, include_acc: bool = True,
     tree_mode: str = "full",
     value_mode: str = "REALTIME",
+    target_scenario: str = "NORMAL",
 ) -> dict[str, Any]:
     normalized_mode = _normalize_value_mode(value_mode)
+    normalized_target_scenario = normalize_target_scenario(target_scenario)
     parent_type = _normalized_node_type(parent_node_type)
     normalized_tree_mode = str(tree_mode or "").strip().lower()
     if normalized_tree_mode not in {"full", "flat"}:
@@ -1547,6 +1584,7 @@ def get_drill_down(
                     if normalized_mode == "REALTIME_ACC"
                     else None
                 ),
+                target_scenario=normalized_target_scenario,
             )
             anchor = _change_anchor_time(run)
             _append_changes(
@@ -1564,6 +1602,7 @@ def get_drill_down(
                 nodes=nodes,
                 indicators=indicators,
                 run=run,
+                target_scenario=normalized_target_scenario,
             )
             acc_rows = []
             if include_acc and normalized_mode == "REALTIME":
@@ -1579,6 +1618,7 @@ def get_drill_down(
                     indicators=indicators,
                     period_type=normalized_period,
                     target_day=acc_date,
+                    target_scenario=normalized_target_scenario,
                 )
             result = {
                 "data_mode": normalized_mode,
@@ -1618,6 +1658,7 @@ def get_drill_down(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_scenario=normalized_target_scenario,
         )
         anchor = _change_anchor_time(run)
         _append_changes(
@@ -1635,6 +1676,7 @@ def get_drill_down(
             nodes=context_nodes,
             indicators=indicators,
             run=run,
+            target_scenario=normalized_target_scenario,
         )
         acc_rows: list[dict[str, Any]] = []
         if include_acc and normalized_mode == "REALTIME":
@@ -1650,6 +1692,7 @@ def get_drill_down(
                 indicators=indicators,
                 period_type=normalized_period,
                 target_day=acc_date,
+                target_scenario=normalized_target_scenario,
             )
         result = {
             "data_mode": normalized_mode,

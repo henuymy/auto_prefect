@@ -610,6 +610,7 @@ def dashboard_history_with_changes(
     branch_code: str | None = Query("AQ"),
     change_windows: str | None = Query(None),
     indicator_codes: str | None = Query(None),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -629,6 +630,7 @@ def dashboard_history_with_changes(
                 branch_code,
                 tuple(parsed_windows or ()),
                 tuple(parsed_codes or ()),
+                target_scenario,
             ),
             loader=lambda: get_historical_with_changes(
                 engine,
@@ -640,6 +642,7 @@ def dashboard_history_with_changes(
                 parent_id=parent_id,
                 parent_node_type=parent_node_type,
                 branch_code=branch_code,
+                target_scenario=target_scenario,
             ),
         )
     except ValueError as exc:
@@ -666,6 +669,7 @@ def dashboard_history_matrix(
     sort_mode: str = Query("doneDesc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=200),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -689,6 +693,7 @@ def dashboard_history_matrix(
                 sort_mode,
                 page,
                 page_size,
+                target_scenario,
             ),
             loader=lambda: get_historical_matrix_page(
                 engine,
@@ -705,6 +710,7 @@ def dashboard_history_matrix(
                 sort_mode=sort_mode,
                 page=page,
                 page_size=page_size,
+                target_scenario=target_scenario,
             ),
         )
     except ValueError as exc:
@@ -731,6 +737,7 @@ def dashboard_matrix(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=200),
     value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -752,6 +759,7 @@ def dashboard_matrix(
                 page,
                 page_size,
                 value_mode,
+                target_scenario,
             ),
             lambda: get_dashboard_matrix_page(
                 engine,
@@ -768,6 +776,7 @@ def dashboard_matrix(
                 page=page,
                 page_size=page_size,
                 value_mode=value_mode,
+                target_scenario=target_scenario,
             ),
         )
     except ValueError as exc:
@@ -794,6 +803,7 @@ def dashboard_overview(
     ),
     include_acc: bool = Query(True),
     value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -810,6 +820,7 @@ def dashboard_overview(
                 tuple(parsed_codes or ()),
                 include_acc,
                 value_mode,
+                target_scenario,
             ),
             lambda: get_dashboard_overview(
                 engine,
@@ -820,6 +831,7 @@ def dashboard_overview(
                 indicator_codes=parsed_codes,
                 include_acc=include_acc,
                 value_mode=value_mode,
+                target_scenario=target_scenario,
             ),
         )
     except ValueError as exc:
@@ -850,6 +862,7 @@ def dashboard_drill_down(
     include_acc: bool = Query(True),
     tree_mode: str = Query("full", pattern="^(full|flat)$"),
     value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
 ):
     """Lightweight drill-down: only returns children of the given parent."""
     engine = get_dashboard_engine()
@@ -868,6 +881,7 @@ def dashboard_drill_down(
                 include_acc,
                 tree_mode,
                 value_mode,
+                target_scenario,
             ),
             lambda: get_drill_down(
                 engine,
@@ -879,6 +893,7 @@ def dashboard_drill_down(
                 include_acc=include_acc,
                 tree_mode=tree_mode,
                 value_mode=value_mode,
+                target_scenario=target_scenario,
             ),
         )
     except ValueError as exc:
@@ -896,6 +911,7 @@ def current_dashboard(
     parent_id: int | None = Query(None, ge=1),
     indicator_codes: str | None = Query(None),
     value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -905,6 +921,7 @@ def current_dashboard(
             parent_id=parent_id,
             indicator_codes=_parse_indicator_codes(indicator_codes),
             value_mode=value_mode,
+            target_scenario=target_scenario,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -925,6 +942,7 @@ def current_with_changes(
     ),
     indicator_codes: str | None = Query(None),
     value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
 ):
     engine = get_dashboard_engine()
     try:
@@ -939,6 +957,7 @@ def current_with_changes(
                 tuple(parsed_windows or ()),
                 tuple(parsed_codes or ()),
                 value_mode,
+                target_scenario,
             ),
             lambda: get_current_with_changes(
                 engine,
@@ -947,6 +966,7 @@ def current_with_changes(
                 change_windows=parsed_windows,
                 indicator_codes=parsed_codes,
                 value_mode=value_mode,
+                target_scenario=target_scenario,
             ),
         )
     except ValueError as exc:
@@ -965,6 +985,7 @@ def acc_dashboard(
     parent_id: int | None = Query(None, ge=1),
     stat_date: str | None = Query(None),
     indicator_codes: str | None = Query(None),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
 ):
     normalized = str(period_type or "").strip().upper()
     if normalized not in {"DAY_ACC", "MONTH"}:
@@ -984,6 +1005,7 @@ def acc_dashboard(
                 parent_id,
                 stat_date,
                 tuple(parsed_codes or ()),
+                target_scenario,
             ),
             lambda: get_acc_wide_table(
                 engine,
@@ -992,6 +1014,7 @@ def acc_dashboard(
                 parent_id=parent_id,
                 stat_date=stat_date,
                 indicator_codes=parsed_codes,
+                target_scenario=target_scenario,
             ),
         )
     except SQLAlchemyError as exc:

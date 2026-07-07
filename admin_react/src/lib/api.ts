@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { CreateTargetPlanPayload, DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetValuesResponse, DashboardValueMode, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
+import type { CreateTargetPlanPayload, DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetValuesResponse, DashboardValueMode, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -108,12 +108,14 @@ export async function getCurrentDashboard(
   parentId?: number,
   indicatorCodes?: string[],
   valueMode: DashboardValueMode = "REALTIME",
+  targetScenario: DashboardTargetScenario = "NORMAL",
 ) {
   const params = new URLSearchParams();
   if (nodeType) params.set("node_type", nodeType);
   if (parentId != null) params.set("parent_id", String(parentId));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   params.set("value_mode", valueMode);
+  params.set("target_scenario", targetScenario);
   const qs = params.toString();
   return request<DashboardCurrentResponse>(
     `/api/dashboard/current${qs ? `?${qs}` : ""}`,
@@ -274,6 +276,7 @@ export async function getDashboardHistoryWithChanges(
   scopeMode: "default" | "all" = "default",
   parentId?: number,
   parentNodeType?: string,
+  targetScenario: DashboardTargetScenario = "NORMAL",
 ) {
   const params = new URLSearchParams({ as_of: asOf, scope_mode: scopeMode });
   if (nodeType) params.set("node_type", nodeType);
@@ -281,6 +284,7 @@ export async function getDashboardHistoryWithChanges(
   if (parentNodeType) params.set("parent_node_type", parentNodeType);
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
+  params.set("target_scenario", targetScenario);
   return request<DashboardChangesResponse>(
     `/api/dashboard/history/current-with-changes?${params.toString()}`,
   );
@@ -300,6 +304,7 @@ export async function getDashboardHistoryMatrix(params: {
   sortMode: string;
   page: number;
   pageSize: number;
+  targetScenario?: DashboardTargetScenario;
 }) {
   const query = new URLSearchParams({
     as_of: params.asOf,
@@ -311,6 +316,7 @@ export async function getDashboardHistoryMatrix(params: {
     sort_mode: params.sortMode,
     page: String(params.page),
     page_size: String(params.pageSize),
+    target_scenario: params.targetScenario || "NORMAL",
   });
   if (params.parentId != null) query.set("parent_id", String(params.parentId));
   if (params.parentNodeType) query.set("parent_node_type", params.parentNodeType);
@@ -335,6 +341,7 @@ export async function getDashboardMatrix(params: {
   page: number;
   pageSize: number;
   valueMode?: DashboardValueMode;
+  targetScenario?: DashboardTargetScenario;
 }) {
   const query = new URLSearchParams({
     node_type: params.nodeType,
@@ -346,6 +353,7 @@ export async function getDashboardMatrix(params: {
     page: String(params.page),
     page_size: String(params.pageSize),
     value_mode: params.valueMode || "REALTIME",
+    target_scenario: params.targetScenario || "NORMAL",
   });
   if (params.parentId != null) query.set("parent_id", String(params.parentId));
   if (params.parentNodeType) query.set("parent_node_type", params.parentNodeType);
@@ -364,6 +372,7 @@ export async function getDashboardOverview(
   indicatorCodes?: string[],
   includeAcc = true,
   valueMode: DashboardValueMode = "REALTIME",
+  targetScenario: DashboardTargetScenario = "NORMAL",
 ) {
   const params = new URLSearchParams();
   params.set("period_type", periodType);
@@ -373,6 +382,7 @@ export async function getDashboardOverview(
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   params.set("include_acc", String(includeAcc));
   params.set("value_mode", valueMode);
+  params.set("target_scenario", targetScenario);
   return request<DashboardOverviewResponse>(
     `/api/dashboard/overview?${params.toString()}`,
   );
@@ -384,6 +394,7 @@ export async function getDashboardWithChanges(
   changeWindows?: number[],
   indicatorCodes?: string[],
   valueMode: DashboardValueMode = "REALTIME",
+  targetScenario: DashboardTargetScenario = "NORMAL",
 ) {
   const params = new URLSearchParams();
   if (nodeType) params.set("node_type", nodeType);
@@ -391,6 +402,7 @@ export async function getDashboardWithChanges(
   if (changeWindows?.length) params.set("change_windows", changeWindows.join(","));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   params.set("value_mode", valueMode);
+  params.set("target_scenario", targetScenario);
   const qs = params.toString();
   return request<DashboardChangesResponse>(
     `/api/dashboard/current-with-changes${qs ? `?${qs}` : ""}`,
@@ -403,6 +415,7 @@ export async function getAccDashboard(
   nodeType?: string,
   parentId?: number,
   indicatorCodes?: string[],
+  targetScenario: DashboardTargetScenario = "NORMAL",
 ) {
   const params = new URLSearchParams();
   params.set("period_type", periodType);
@@ -410,6 +423,7 @@ export async function getAccDashboard(
   if (nodeType) params.set("node_type", nodeType);
   if (parentId != null) params.set("parent_id", String(parentId));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
+  params.set("target_scenario", targetScenario);
   return request<DashboardAccResponse>(
     `/api/dashboard/acc?${params.toString()}`,
   );
@@ -424,6 +438,7 @@ export async function getDashboardDrillDown(
   includeAcc = true,
   treeMode: "full" | "flat" = "full",
   valueMode: DashboardValueMode = "REALTIME",
+  targetScenario: DashboardTargetScenario = "NORMAL",
 ) {
   const params = new URLSearchParams({
     parent_id: String(parentId),
@@ -435,6 +450,7 @@ export async function getDashboardDrillDown(
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   params.set("include_acc", String(includeAcc));
   params.set("value_mode", valueMode);
+  params.set("target_scenario", targetScenario);
   return request<DashboardOverviewResponse>(
     `/api/dashboard/drill-down?${params.toString()}`,
   );

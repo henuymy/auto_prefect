@@ -212,6 +212,41 @@ def test_overview_returns_v2_tree_with_manager_and_without_legacy_fields():
     assert not ({"area_id", "area_code", "area_name", "level_type"} & manager.keys())
 
 
+def test_target_scenario_is_explicit_instead_of_pk_fallback():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO target_plan
+                (id, plan_name, scenario, period_type, effective_from, status)
+            VALUES (9, 'PK日目标', 'PK', 'DAY', '2026-01-01', 'ACTIVE')
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (9, 9, 4, 1, 60)
+        """))
+
+    normal = get_dashboard_overview(
+        engine,
+        branch_code="AQ",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+        target_scenario="NORMAL",
+    )
+    pk = get_dashboard_overview(
+        engine,
+        branch_code="AQ",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+        target_scenario="PK",
+    )
+
+    normal_manager = next(row for row in normal["rows"] if row["node_type"] == "CHANNEL_MANAGER")
+    pk_manager = next(row for row in pk["rows"] if row["node_type"] == "CHANNEL_MANAGER")
+    assert normal_manager["targets"]["channel_count"] == 30
+    assert pk_manager["targets"]["channel_count"] == 60
+
+
 def test_change_window_matches_v1_finished_anchor_and_nearby_snapshot():
     engine = _engine()
     with engine.begin() as connection:
