@@ -735,6 +735,8 @@ ${today}              当前日期，YYYY-MM-DD
 ${today_yyyymmdd}     当前日期，YYYYMMDD
 ${yesterday}          前一天日期，YYYY-MM-DD
 ${yesterday_yyyymmdd} 前一天日期，YYYYMMDD
+${day_before_yesterday}          前天日期，YYYY-MM-DD
+${day_before_yesterday_yyyymmdd} 前天日期，YYYYMMDD
 ${hour}               当前小时，0-23
 ${hour2}              当前小时，00-23
 ${session_storage:xxx} 从当前 stage 的 sessionStorage 读取字段
@@ -746,7 +748,8 @@ ${local_storage:xxx}   从当前 stage 的 localStorage 读取字段
 ```json
 {
   "queryDate": "${yesterday}",
-  "versionName": "${yesterday_yyyymmdd}"
+  "versionName": "${yesterday_yyyymmdd}",
+  "beforeYesterday": "${day_before_yesterday_yyyymmdd}"
 }
 ```
 

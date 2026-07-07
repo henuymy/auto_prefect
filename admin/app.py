@@ -56,6 +56,8 @@ BODY_PLACEHOLDER_OPTIONS = [
     "今天 YYYYMMDD",
     "昨天 YYYY-MM-DD",
     "昨天 YYYYMMDD",
+    "前天 YYYY-MM-DD",
+    "前天 YYYYMMDD",
     "当前小时",
     "当前小时两位",
     "sessionStorage",
@@ -66,6 +68,8 @@ BODY_PLACEHOLDER_MAP = {
     "今天 YYYYMMDD": "${today_yyyymmdd}",
     "昨天 YYYY-MM-DD": "${yesterday}",
     "昨天 YYYYMMDD": "${yesterday_yyyymmdd}",
+    "前天 YYYY-MM-DD": "${day_before_yesterday}",
+    "前天 YYYYMMDD": "${day_before_yesterday_yyyymmdd}",
     "当前小时": "${hour}",
     "当前小时两位": "${hour2}",
 }
@@ -1154,11 +1158,14 @@ def build_report_config_payload(
 def resolve_placeholder_preview(payload):
     now = datetime.now()
     yesterday = now - timedelta(days=1)
+    day_before_yesterday = now - timedelta(days=2)
     replacements = {
         "${today}": now.strftime("%Y-%m-%d"),
         "${today_yyyymmdd}": now.strftime("%Y%m%d"),
         "${yesterday}": yesterday.strftime("%Y-%m-%d"),
         "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
+        "${day_before_yesterday}": day_before_yesterday.strftime("%Y-%m-%d"),
+        "${day_before_yesterday_yyyymmdd}": day_before_yesterday.strftime("%Y%m%d"),
         "${hour}": str(now.hour),
         "${hour2}": now.strftime("%H"),
     }
@@ -1330,7 +1337,8 @@ with col_edit:
     st.caption("一行就是一个下载请求；下载标识用于后续比对匹配，也会作为落盘文件名前缀，避免同名 Excel 覆盖。")
     st.caption(
         "占位符支持：`${today}`(YYYY-MM-DD)、`${yesterday}`(前一天 YYYY-MM-DD)、"
-        "`${today_yyyymmdd}`(今天 YYYYMMDD)、`${yesterday_yyyymmdd}`(前一天 YYYYMMDD)、"
+        "`${day_before_yesterday}`(前天 YYYY-MM-DD)、`${today_yyyymmdd}`(今天 YYYYMMDD)、"
+        "`${yesterday_yyyymmdd}`(前一天 YYYYMMDD)、`${day_before_yesterday_yyyymmdd}`(前天 YYYYMMDD)、"
         "`${hour}`(0-23)、`${hour2}`(00-23)、"
         "`${session_storage:zhyyptInfo.accessToken}`、`${local_storage:tokenInfo.accessToken}`。"
     )

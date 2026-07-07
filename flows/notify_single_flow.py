@@ -88,11 +88,14 @@ def resolve_dynamic_placeholders(value, now=None):
         return value
     now = now or datetime.now()
     yesterday = now - timedelta(days=1)
+    day_before_yesterday = now - timedelta(days=2)
     replacements = {
         "${today}": now.strftime("%Y-%m-%d"),
         "${today_yyyymmdd}": now.strftime("%Y%m%d"),
         "${yesterday}": yesterday.strftime("%Y-%m-%d"),
         "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
+        "${day_before_yesterday}": day_before_yesterday.strftime("%Y-%m-%d"),
+        "${day_before_yesterday_yyyymmdd}": day_before_yesterday.strftime("%Y%m%d"),
         "${hour}": str(now.hour),
         "${hour2}": now.strftime("%H"),
     }

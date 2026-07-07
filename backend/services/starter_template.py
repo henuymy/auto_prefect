@@ -126,11 +126,14 @@ def _resolve_dynamic_value(value: Any, now: datetime | None = None) -> Any:
 
     now = now or datetime.now()
     yesterday = now - timedelta(days=1)
+    day_before_yesterday = now - timedelta(days=2)
     replacements = {
         "${today}": now.strftime("%Y-%m-%d"),
         "${today_yyyymmdd}": now.strftime("%Y%m%d"),
         "${yesterday}": yesterday.strftime("%Y-%m-%d"),
         "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
+        "${day_before_yesterday}": day_before_yesterday.strftime("%Y-%m-%d"),
+        "${day_before_yesterday_yyyymmdd}": day_before_yesterday.strftime("%Y%m%d"),
         "${hour}": str(now.hour),
         "${hour2}": now.strftime("%H"),
     }
@@ -231,9 +234,8 @@ def _merge_downloads_to_template(download_manifest: dict[str, Any], output_path:
             stage = str(result.get("stage") or result.get("source") or "source")
             download_name = str(result.get("name") or f"下载{result_index}")
             for source_sheet in source_workbook.worksheets:
-                prefix = "" if result.get("source") == "tencent_sheet" else f"{stage}_"
                 sheet_name = _safe_sheet_name(
-                    f"{prefix}{download_name}_{source_sheet.title}",
+                    f"{download_name}_{source_sheet.title}",
                     used_sheet_names,
                 )
                 target_sheet = workbook.create_sheet(sheet_name)

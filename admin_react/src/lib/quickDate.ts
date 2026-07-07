@@ -12,12 +12,14 @@ export interface QuickDateField {
 export const DATE_PRESETS = [
   { value: "${today_yyyymmdd}", label: "今天 · YYYYMMDD" },
   { value: "${yesterday_yyyymmdd}", label: "昨天 · YYYYMMDD" },
+  { value: "${day_before_yesterday_yyyymmdd}", label: "前天 · YYYYMMDD" },
   { value: "${today}", label: "今天 · YYYY-MM-DD" },
   { value: "${yesterday}", label: "昨天 · YYYY-MM-DD" },
+  { value: "${day_before_yesterday}", label: "前天 · YYYY-MM-DD" },
 ] as const;
 
 const DATE_KEY_PATTERN = /(querydate|versionname|bizdate|statdate|startdate|enddate|begindate|start[_-]?time|end[_-]?time|begin[_-]?time|query[_-]?time|stat[_-]?time|timestamp|acctmonth|date|day|month|year|日期|时间|账期|月份)/i;
-const DATE_VALUE_PATTERN = /^(?:\$\{(?:today|yesterday)(?:_yyyymmdd)?\}|\d{4}[-/]?\d{2}[-/]?\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)$/i;
+const DATE_VALUE_PATTERN = /^(?:\$\{(?:today|yesterday|day_before_yesterday)(?:_yyyymmdd)?\}|\d{4}[-/]?\d{2}[-/]?\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)$/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);

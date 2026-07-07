@@ -75,8 +75,10 @@ function parseObject(text: string, fallback: Record<string, unknown>) {
 const PLACEHOLDER_TIPS = [
   "${today}: 今天 YYYY-MM-DD",
   "${yesterday}: 昨天 YYYY-MM-DD",
+  "${day_before_yesterday}: 前天 YYYY-MM-DD",
   "${today_yyyymmdd}: 今天 YYYYMMDD",
   "${yesterday_yyyymmdd}: 昨天 YYYYMMDD",
+  "${day_before_yesterday_yyyymmdd}: 前天 YYYYMMDD",
   "${hour}: 当前小时 0-23",
   "${hour2}: 当前小时 00-23",
 ];
