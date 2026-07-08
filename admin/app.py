@@ -1973,6 +1973,7 @@ with col_edit:
     st.markdown("**等待重试（wait_for_change）**")
     wait_enabled = same_action_value == "等待数据变化后发送"
     if wait_enabled:
+        st.caption("数据一致、下载数据区为空，或接口提示“对应地区暂未生成报表数据”时，会按间隔重新下载并比对。")
         wait_poll_seconds = st.number_input(
             "重试间隔秒数（poll_interval_seconds）",
             min_value=1,

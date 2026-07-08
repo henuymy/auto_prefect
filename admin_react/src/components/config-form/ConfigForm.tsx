@@ -1200,7 +1200,7 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle>same 时处理方式</CardTitle><CardDescription>控制数据一致或下载数据区为空时怎么继续。</CardDescription></CardHeader>
+        <CardHeader><CardTitle>same 时处理方式</CardTitle><CardDescription>当数据未变化、参与比对的下载 Sheet 表头下没有数据，或平台提示报表尚未生成时，选择继续等待还是直接发送。</CardDescription></CardHeader>
         <CardContent className="space-y-5">
           <div className="rounded-xl border border-border bg-muted/30 p-1">
             <div className="grid grid-cols-2 gap-1">
@@ -1230,7 +1230,7 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
           </div>
           <div className="rounded-lg border border-dashed border-sky-200 bg-sky-50/70 px-3 py-2 text-sm text-sky-950">
             {sameMode === "retry"
-              ? "数据一致或下载数据区为空时，按间隔重新下载并比对。"
+              ? "数据未变化、参与比对的下载 Sheet 表头下没有数据，或接口提示“对应地区暂未生成报表数据”时，按间隔重新下载并比对。"
               : "即使数据一致，也继续生成并发送当前通报。"}
           </div>
           {sameMode === "retry" && (

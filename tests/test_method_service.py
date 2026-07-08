@@ -9,12 +9,15 @@ from services.method_service import (
     build_request_kwargs,
     build_headers,
     build_cookie_string,
+    download_one_report,
     download_reports,
+    EmptyReportDataError,
     filename_from_content_disposition,
     find_stage,
     normalize_downloaded_excel,
     output_filename_for_report,
     raise_for_status_with_context,
+    response_business_error,
     request_report,
 )
 
@@ -284,6 +287,48 @@ def test_raise_for_status_reports_non_auth_redirect_location():
         assert "file.xlsx" in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_response_business_error_decodes_returnmsg_header():
+    response = FakeResponse(
+        200,
+        "",
+        headers={
+            "returncode": "1",
+            "returnmsg": "%E5%AF%B9%E5%BA%94%E5%9C%B0%E5%8C%BA%E6%9A%82%E6%9C%AA%E7%94%9F%E6%88%90%E6%8A%A5%E8%A1%A8%E6%95%B0%E6%8D%AE%EF%BC%81",
+        },
+    )
+
+    assert response_business_error(response) == ("1", "对应地区暂未生成报表数据！")
+
+
+def test_download_one_report_raises_empty_report_data_error(monkeypatch):
+    response = FakeResponse(
+        200,
+        "",
+        url="https://example/export",
+        headers={
+            "Content-Type": "text/html;charset=UTF-8",
+            "returncode": "1",
+            "returnmsg": "%E5%AF%B9%E5%BA%94%E5%9C%B0%E5%8C%BA%E6%9A%82%E6%9C%AA%E7%94%9F%E6%88%90%E6%8A%A5%E8%A1%A8%E6%95%B0%E6%8D%AE%EF%BC%81",
+        },
+    )
+    monkeypatch.setattr("services.method_service.request_report", lambda *args, **kwargs: response)
+
+    try:
+        download_one_report(
+            {"name": "降档", "method": "POST", "url": "https://example/export", "response_mode": "file"},
+            {"cookies": []},
+            Path("."),
+            30,
+            False,
+            False,
+            None,
+        )
+    except EmptyReportDataError as exc:
+        assert exc.returnmsg == "对应地区暂未生成报表数据！"
+    else:
+        raise AssertionError("expected EmptyReportDataError")
 
 
 def test_build_request_kwargs_sends_raw_body_as_data():

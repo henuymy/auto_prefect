@@ -20,6 +20,7 @@ from tasks.notify_tasks import build_message_package_task, send_notification_pac
 from tasks.session_tasks import prepare_session_task
 from tasks.template_tasks import update_template_task
 from services.compare_service import find_empty_download_sheet_mappings
+from services.method_service import EmptyReportDataError
 from utils.config_loader import load_json_with_local_override
 
 try:
@@ -424,7 +425,43 @@ def auto_notify_flow(config_path=None):
     update_manifest = None
     while True:
         attempt += 1
-        download_manifest = run_download_with_session_retry()
+        try:
+            download_manifest = run_download_with_session_retry()
+        except EmptyReportDataError as exc:
+            if not wait_cfg["enabled"]:
+                raise
+            compare_result = {
+                "result": "same",
+                "reason": "report_data_not_generated",
+                "message": str(exc),
+                "sheets": [],
+                "summary": {
+                    "same": 1,
+                    "changed": 0,
+                    "invalid": 0,
+                    "total": 1,
+                },
+                "update_condition": get_update_condition(report_cfg),
+            }
+            write_json(str(flow_runtime_dir / "compare_result.json"), compare_result)
+            elapsed_seconds = int(monotonic() - wait_started_at)
+            max_wait_seconds = wait_cfg["max_wait_seconds"]
+            if max_wait_seconds is not None and elapsed_seconds >= max_wait_seconds:
+                logger.warning("报表数据持续未生成，已超时（%s 秒），停止重试", max_wait_seconds)
+                return {
+                    "status": "timeout_no_change",
+                    "reason": "report_data_not_generated_timeout",
+                    "attempts": attempt,
+                    "elapsed_seconds": elapsed_seconds,
+                    "message": str(exc),
+                }
+            logger.info(
+                "报表数据暂未生成（第 %s 次），%s 秒后重试下载",
+                attempt,
+                wait_cfg["poll_interval_seconds"],
+            )
+            sleep(wait_cfg["poll_interval_seconds"])
+            continue
         if download_manifest and download_manifest.get("dry_run"):
             logger.info("下载 dry-run 完成，停止后续比对和发送")
             return {"status": "skipped", "reason": "download_dry_run", "download_manifest": download_manifest}

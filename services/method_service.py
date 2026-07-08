@@ -38,6 +38,20 @@ AUTH_REDIRECT_KEYWORDS = (
 MODERN_EXCEL_SUFFIXES = {".xlsx", ".xlsm", ".xltx", ".xltm"}
 OLE_EXCEL_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 ZIP_MAGIC = b"PK\x03\x04"
+
+
+class EmptyReportDataError(RuntimeError):
+    """Raised when the platform says the report data has not been generated yet."""
+
+    def __init__(self, report_name: str, url: str, returncode: str, returnmsg: str):
+        self.report_name = report_name
+        self.url = url
+        self.returncode = returncode
+        self.returnmsg = returnmsg
+        super().__init__(
+            f"下载接口返回业务空数据: report={report_name}, "
+            f"returncode={returncode}, returnmsg={returnmsg}, url={url}"
+        )
 XL_OPENXML_WORKBOOK = 51
 
 
@@ -451,6 +465,26 @@ def is_html_response(response):
     return preview.lstrip().startswith(b"<!doctype html") or preview.lstrip().startswith(b"<html")
 
 
+def response_business_error(response) -> tuple[str, str] | None:
+    returncode = str(response.headers.get("returncode") or "").strip()
+    if not returncode or returncode == "0":
+        return None
+    returnmsg = unquote(str(response.headers.get("returnmsg") or "")).strip()
+    return returncode, returnmsg
+
+
+def is_empty_report_data_message(message: str) -> bool:
+    return any(
+        keyword in message
+        for keyword in (
+            "暂未生成报表数据",
+            "暂未生成数据",
+            "暂无报表数据",
+            "暂无数据",
+        )
+    )
+
+
 def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, proxies, request_retry=None):
     started = perf_counter()
     request_retry = retry_settings(report, request_retry)
@@ -460,6 +494,16 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     session.headers.update({"User-Agent": "report-downloader/1.0"})
     response = request_report(session, report, stage, timeout, verify_ssl, proxies, retry=request_retry)
     raise_for_status_with_context(response)
+    business_error = response_business_error(response)
+    if business_error:
+        returncode, returnmsg = business_error
+        if not response.content and is_empty_report_data_message(returnmsg):
+            raise EmptyReportDataError(report.get("name") or "未命名报表", response.url, returncode, returnmsg)
+        raise RuntimeError(
+            "下载接口返回业务错误: "
+            f"report={report.get('name') or '未命名报表'}, "
+            f"returncode={returncode}, returnmsg={returnmsg}, url={response.url}"
+        )
     if is_html_response(response):
         raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {response.url}")
     if not response.content:
