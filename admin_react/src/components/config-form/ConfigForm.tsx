@@ -251,7 +251,7 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
 
   async function handleGenerateStarterTemplate() {
     const confirmed = window.confirm(
-      "将真实下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n会按 Prefect 会话策略处理：先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会重新登录；下载阶段只有明确提示 session 已过期时才强制刷新。\n\n不会发送企业微信，不会提交正式模板，也不会替换当前模板路径。确定继续吗？",
+      "将真实下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n会按 Prefect 会话策略处理：先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会重新登录；下载阶段只有明确提示 session 已过期时才强制刷新。\n\n不会发送企业微信，不会提交正式模板；生成成功后会自动把模板路径切换为新模板。确定继续吗？",
     );
     if (!confirmed) return;
     setStarterStep(0);
@@ -259,9 +259,10 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
     try {
       const result = await generateStarterTemplate(config);
       setStarterStep(STARTER_TEMPLATE_STEPS.length - 1);
+      onChange({ ...config, template_path: result.template_path });
       await refreshTemplates();
       toast.success("新手模板已生成", {
-        description: `已生成 ${result.template_path}，当前模板路径未自动替换`,
+        description: `已生成并切换到 ${result.template_path}`,
         action: {
           label: "下载模板",
           onClick: () => window.open(templateDownloadUrl(result.filename), "_blank", "noopener,noreferrer"),

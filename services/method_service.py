@@ -341,6 +341,21 @@ def normalize_downloaded_excel(output_path, visible=False):
     return output_path
 
 
+def normalize_downloaded_excel_with_retry(output_path, visible=False, retries=1, delay_seconds=2):
+    output_path = Path(output_path)
+    attempt = 0
+    while True:
+        try:
+            return normalize_downloaded_excel(output_path, visible=visible)
+        except Exception as exc:
+            if attempt >= retries:
+                raise RuntimeError(f"Excel 文件规范化失败，请确认没有弹窗或文件占用: {output_path}: {exc}") from exc
+            attempt += 1
+            print(f"[WARN] Excel 文件规范化失败，准备重试 {attempt}/{retries}: {output_path}: {exc}")
+            if delay_seconds > 0:
+                sleep(delay_seconds)
+
+
 def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
     body_type = report["body_type"].lower().strip()
     kwargs = {
@@ -581,7 +596,12 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(response.content)
     normalize_started = perf_counter()
-    normalized_output_path = normalize_downloaded_excel(output_path, visible=bool(report.get("visible", False)))
+    normalized_output_path = normalize_downloaded_excel_with_retry(
+        output_path,
+        visible=bool(report.get("visible", False)),
+        retries=int(report.get("normalize_retries", 1) or 0),
+        delay_seconds=float(report.get("normalize_retry_delay_seconds", 2) or 0),
+    )
     normalize_seconds = round(perf_counter() - normalize_started, 3)
     converted_to_xlsx = normalized_output_path != output_path
     final_output_path = normalized_output_path

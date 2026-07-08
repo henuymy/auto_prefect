@@ -128,7 +128,9 @@ def generate_starter_template(config_id: str, config: dict):
             raise HTTPException(status_code=400, detail={"issues": result.get("issues") or []})
         append_log("success", "生成新手模板", f"已生成 {result.get('template_path', '')}")
         return result
-    except RuntimeError as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         message, details = _split_error_detail(str(exc), "生成新手模板失败")
         append_log("failed", "生成新手模板失败", message, details)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

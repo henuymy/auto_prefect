@@ -602,3 +602,68 @@ def test_download_reports_file_converts_xls_output_path(monkeypatch):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def test_download_reports_retries_xls_normalization_once(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        manifest_path = work_dir / "manifest.json"
+        output_dir = work_dir / "downloads"
+        write_json(cookie_dump_path, {"stages": [{"stage": "report_analysis", "cookies": []}]})
+
+        class FakeSession:
+            trust_env = False
+
+            def __init__(self):
+                self.cookies = requests.cookies.RequestsCookieJar()
+                self.headers = {}
+
+            def request(self, method, url, **kwargs):
+                response = FakeResponse(
+                    200,
+                    "xls-content",
+                    url=url,
+                    headers={"Content-Disposition": "attachment; filename=日报.xls"},
+                )
+                response.request.method = method
+                return response
+
+        calls = {"count": 0}
+
+        def flaky_normalize(output_path, visible=False):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("Excel 忙")
+            output_path = Path(output_path)
+            converted_path = output_path.with_suffix(".xlsx")
+            converted_path.write_text("xlsx-content", encoding="utf-8")
+            return converted_path
+
+        monkeypatch.setattr("services.method_service.requests.Session", FakeSession)
+        monkeypatch.setattr("services.method_service.normalize_downloaded_excel", flaky_normalize)
+        monkeypatch.setattr("services.method_service.sleep", lambda seconds: None)
+
+        manifest = download_reports(
+            {
+                "cookie_dump_path": str(cookie_dump_path),
+                "manifest_path": str(manifest_path),
+                "output_dir": str(output_dir),
+                "reports": [
+                    {
+                        "enabled": True,
+                        "name": "日报",
+                        "stage": "report_analysis",
+                        "method": "POST",
+                        "url": "https://example/export",
+                        "body_type": "form",
+                        "response_mode": "file",
+                    }
+                ],
+            }
+        )
+
+        assert calls["count"] == 2
+        assert manifest["results"][0]["converted_to_xlsx"] is True
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
