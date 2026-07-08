@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -12,6 +12,7 @@ from openpyxl import Workbook, load_workbook
 from services.method_service import download_reports
 from services.session_manager import prepare_session
 from utils.config_loader import load_json_with_local_override
+from utils.date_placeholders import resolve_dynamic_structure
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -117,30 +118,7 @@ def _validate_downloads(downloads: list[dict[str, Any]]) -> list[dict[str, str]]
 
 
 def _resolve_dynamic_value(value: Any, now: datetime | None = None) -> Any:
-    if isinstance(value, dict):
-        return {key: _resolve_dynamic_value(item, now=now) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_resolve_dynamic_value(item, now=now) for item in value]
-    if not isinstance(value, str):
-        return value
-
-    now = now or datetime.now()
-    yesterday = now - timedelta(days=1)
-    day_before_yesterday = now - timedelta(days=2)
-    replacements = {
-        "${today}": now.strftime("%Y-%m-%d"),
-        "${today_yyyymmdd}": now.strftime("%Y%m%d"),
-        "${yesterday}": yesterday.strftime("%Y-%m-%d"),
-        "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
-        "${day_before_yesterday}": day_before_yesterday.strftime("%Y-%m-%d"),
-        "${day_before_yesterday_yyyymmdd}": day_before_yesterday.strftime("%Y%m%d"),
-        "${hour}": str(now.hour),
-        "${hour2}": now.strftime("%H"),
-    }
-    resolved = value
-    for token, token_value in replacements.items():
-        resolved = resolved.replace(token, token_value)
-    return resolved
+    return resolve_dynamic_structure(value, now=now)
 
 
 def _build_download_config(downloads: list[dict[str, Any]], run_dir: Path) -> dict[str, Any]:

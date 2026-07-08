@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -22,6 +22,7 @@ from tasks.template_tasks import update_template_task
 from services.compare_service import find_empty_download_sheet_mappings
 from services.method_service import EmptyReportDataError
 from utils.config_loader import load_json_with_local_override
+from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure
 
 try:
     from prefect import flow, get_run_logger, task
@@ -82,36 +83,6 @@ def is_session_expired_error(exc):
         "登录页",
     )
     return any(marker in message for marker in markers)
-
-
-def resolve_dynamic_placeholders(value, now=None):
-    if not isinstance(value, str):
-        return value
-    now = now or datetime.now()
-    yesterday = now - timedelta(days=1)
-    day_before_yesterday = now - timedelta(days=2)
-    replacements = {
-        "${today}": now.strftime("%Y-%m-%d"),
-        "${today_yyyymmdd}": now.strftime("%Y%m%d"),
-        "${yesterday}": yesterday.strftime("%Y-%m-%d"),
-        "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
-        "${day_before_yesterday}": day_before_yesterday.strftime("%Y-%m-%d"),
-        "${day_before_yesterday_yyyymmdd}": day_before_yesterday.strftime("%Y%m%d"),
-        "${hour}": str(now.hour),
-        "${hour2}": now.strftime("%H"),
-    }
-    resolved = value
-    for token, token_value in replacements.items():
-        resolved = resolved.replace(token, token_value)
-    return resolved
-
-
-def resolve_dynamic_structure(payload, now=None):
-    if isinstance(payload, dict):
-        return {key: resolve_dynamic_structure(value, now=now) for key, value in payload.items()}
-    if isinstance(payload, list):
-        return [resolve_dynamic_structure(item, now=now) for item in payload]
-    return resolve_dynamic_placeholders(payload, now=now)
 
 
 def assert_report_schema_contract(report_cfg):

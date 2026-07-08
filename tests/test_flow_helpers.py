@@ -105,6 +105,8 @@ def test_resolve_dynamic_placeholders_supports_today_and_hour():
     assert resolve_dynamic_placeholders("${yesterday_yyyymmdd}", now=now) == "20260313"
     assert resolve_dynamic_placeholders("${day_before_yesterday}", now=now) == "2026-03-12"
     assert resolve_dynamic_placeholders("${day_before_yesterday_yyyymmdd}", now=now) == "20260312"
+    assert resolve_dynamic_placeholders("${date:yesterday-1M|yyyyMMdd}", now=now) == "20260213"
+    assert resolve_dynamic_placeholders("${date:yesterday-1y|yyyyMMdd}", now=now) == "20250313"
     assert resolve_dynamic_placeholders("${hour}", now=now) == "16"
     assert resolve_dynamic_placeholders("${hour2}", now=now) == "16"
 

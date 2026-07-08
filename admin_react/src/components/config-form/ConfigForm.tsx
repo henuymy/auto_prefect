@@ -79,6 +79,9 @@ const PLACEHOLDER_TIPS = [
   "${today_yyyymmdd}: 今天 YYYYMMDD",
   "${yesterday_yyyymmdd}: 昨天 YYYYMMDD",
   "${day_before_yesterday_yyyymmdd}: 前天 YYYYMMDD",
+  "${date:yesterday-1M|yyyyMMdd}: 上月同期 YYYYMMDD",
+  "${date:yesterday-1y|yyyyMMdd}: 去年同期 YYYYMMDD",
+  "${date:today-7d|yyyy-MM-dd}: 7 天前 YYYY-MM-DD",
   "${hour}: 当前小时 0-23",
   "${hour2}: 当前小时 00-23",
 ];
@@ -720,7 +723,7 @@ function QuickDateEditor({ item, fields, onChange }: { item: DownloadItem; field
       </div>
       <div className="space-y-2">
         {fields.map((field) => (
-          <div key={field.id} className="grid gap-2 rounded-lg border border-sky-100 bg-background/85 p-2.5 lg:grid-cols-[minmax(0,1fr)_220px_170px] lg:items-center dark:border-sky-500/20">
+          <div key={field.id} className="grid gap-2 rounded-lg border border-sky-100 bg-background/85 p-2.5 xl:grid-cols-[minmax(0,1fr)_210px_170px_minmax(240px,1fr)] xl:items-center dark:border-sky-500/20">
             <div className="min-w-0">
               <div className="truncate text-xs font-semibold" title={field.label}>{field.label}</div>
               <code className="mt-1 block truncate text-[11px] text-muted-foreground" title={field.value}>{field.value}</code>
@@ -737,6 +740,12 @@ function QuickDateEditor({ item, fields, onChange }: { item: DownloadItem; field
               type="date"
               aria-label={`${field.label} 自定义日期`}
               onChange={(event) => event.target.value && onChange(updateQuickDateField(item, field, formatCustomDate(event.target.value, field.value)))}
+            />
+            <DraftInput
+              aria-label={`${field.label} 自定义占位符`}
+              placeholder="${date:yesterday-1M|yyyyMMdd}"
+              value={field.value}
+              onCommit={(value) => value.trim() && onChange(updateQuickDateField(item, field, value.trim()))}
             />
           </div>
         ))}

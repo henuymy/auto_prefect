@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse
 
@@ -36,6 +36,7 @@ from utils.request_parser import (  # noqa: E402
     headers_from_header_rows,
     parse_request_by_mode,
 )
+from utils.date_placeholders import resolve_dynamic_structure, standard_replacements  # noqa: E402
 
 
 LEGACY_SSR_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -58,6 +59,10 @@ BODY_PLACEHOLDER_OPTIONS = [
     "昨天 YYYYMMDD",
     "前天 YYYY-MM-DD",
     "前天 YYYYMMDD",
+    "上月同期 YYYY-MM-DD",
+    "上月同期 YYYYMMDD",
+    "去年同期 YYYY-MM-DD",
+    "去年同期 YYYYMMDD",
     "当前小时",
     "当前小时两位",
     "sessionStorage",
@@ -70,6 +75,10 @@ BODY_PLACEHOLDER_MAP = {
     "昨天 YYYYMMDD": "${yesterday_yyyymmdd}",
     "前天 YYYY-MM-DD": "${day_before_yesterday}",
     "前天 YYYYMMDD": "${day_before_yesterday_yyyymmdd}",
+    "上月同期 YYYY-MM-DD": "${date:yesterday-1M|yyyy-MM-dd}",
+    "上月同期 YYYYMMDD": "${date:yesterday-1M|yyyyMMdd}",
+    "去年同期 YYYY-MM-DD": "${date:yesterday-1y|yyyy-MM-dd}",
+    "去年同期 YYYYMMDD": "${date:yesterday-1y|yyyyMMdd}",
     "当前小时": "${hour}",
     "当前小时两位": "${hour2}",
 }
@@ -1157,32 +1166,8 @@ def build_report_config_payload(
 
 def resolve_placeholder_preview(payload):
     now = datetime.now()
-    yesterday = now - timedelta(days=1)
-    day_before_yesterday = now - timedelta(days=2)
-    replacements = {
-        "${today}": now.strftime("%Y-%m-%d"),
-        "${today_yyyymmdd}": now.strftime("%Y%m%d"),
-        "${yesterday}": yesterday.strftime("%Y-%m-%d"),
-        "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
-        "${day_before_yesterday}": day_before_yesterday.strftime("%Y-%m-%d"),
-        "${day_before_yesterday_yyyymmdd}": day_before_yesterday.strftime("%Y%m%d"),
-        "${hour}": str(now.hour),
-        "${hour2}": now.strftime("%H"),
-    }
-
-    def _resolve(value):
-        if isinstance(value, dict):
-            return {k: _resolve(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [_resolve(v) for v in value]
-        if isinstance(value, str):
-            resolved = value
-            for token, token_value in replacements.items():
-                resolved = resolved.replace(token, token_value)
-            return resolved
-        return value
-
-    return _resolve(payload), replacements
+    replacements = standard_replacements(now)
+    return resolve_dynamic_structure(payload, now=now), replacements
 
 
 # ── UI ──────────────────────────────────────────────────────────────────────
@@ -1339,6 +1324,7 @@ with col_edit:
         "占位符支持：`${today}`(YYYY-MM-DD)、`${yesterday}`(前一天 YYYY-MM-DD)、"
         "`${day_before_yesterday}`(前天 YYYY-MM-DD)、`${today_yyyymmdd}`(今天 YYYYMMDD)、"
         "`${yesterday_yyyymmdd}`(前一天 YYYYMMDD)、`${day_before_yesterday_yyyymmdd}`(前天 YYYYMMDD)、"
+        "通用日期`${date:yesterday-1M|yyyyMMdd}`(上月同期)、`${date:yesterday-1y|yyyyMMdd}`(去年同期)、"
         "`${hour}`(0-23)、`${hour2}`(00-23)、"
         "`${session_storage:zhyyptInfo.accessToken}`、`${local_storage:tokenInfo.accessToken}`。"
     )

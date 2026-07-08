@@ -472,8 +472,13 @@
 - `${yesterday_yyyymmdd}` -> 前一天日期，例如 `20260421`
 - `${day_before_yesterday}` -> 前天日期，例如 `2026-04-20`
 - `${day_before_yesterday_yyyymmdd}` -> 前天日期，例如 `20260420`
+- `${date:yesterday-1M|yyyyMMdd}` -> 上月同期，例如 `20260321`
+- `${date:yesterday-1y|yyyyMMdd}` -> 去年同期，例如 `20250421`
+- `${date:today-7d|yyyy-MM-dd}` -> 7 天前，例如 `2026-04-15`
 - `${hour}` -> 当前小时，不补零，例如 `15`
 - `${hour2}` -> 当前小时，两位格式，例如 `08`
+
+通用日期格式为 `${date:<基准><偏移>|<格式>}`。基准支持 `today`、`yesterday`、`day_before_yesterday`；偏移支持 `d` 天、`M` 月、`y` 年；格式支持 `yyyyMMdd`、`yyyy-MM-dd`。月/年偏移遇到目标月份没有同一天时，取目标月最后一天。
 
 示例：
 

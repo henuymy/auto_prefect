@@ -737,6 +737,9 @@ ${yesterday}          前一天日期，YYYY-MM-DD
 ${yesterday_yyyymmdd} 前一天日期，YYYYMMDD
 ${day_before_yesterday}          前天日期，YYYY-MM-DD
 ${day_before_yesterday_yyyymmdd} 前天日期，YYYYMMDD
+${date:yesterday-1M|yyyyMMdd}    上月同期，YYYYMMDD
+${date:yesterday-1y|yyyyMMdd}    去年同期，YYYYMMDD
+${date:today-7d|yyyy-MM-dd}      7 天前，YYYY-MM-DD
 ${hour}               当前小时，0-23
 ${hour2}              当前小时，00-23
 ${session_storage:xxx} 从当前 stage 的 sessionStorage 读取字段
@@ -749,11 +752,14 @@ ${local_storage:xxx}   从当前 stage 的 localStorage 读取字段
 {
   "queryDate": "${yesterday}",
   "versionName": "${yesterday_yyyymmdd}",
-  "beforeYesterday": "${day_before_yesterday_yyyymmdd}"
+  "beforeYesterday": "${day_before_yesterday_yyyymmdd}",
+  "lastMonthSameDay": "${date:yesterday-1M|yyyyMMdd}"
 }
 ```
 
 如果不写占位符，参数会原样发送。
+
+通用日期占位符格式为 `${date:<基准><偏移>|<格式>}`。基准支持 `today`、`yesterday`、`day_before_yesterday`；偏移支持 `d` 天、`M` 月、`y` 年；格式支持 `yyyyMMdd`、`yyyy-MM-dd`。月/年偏移遇到目标月份没有同一天时，会取目标月最后一天。
 
 ## 单条命令运行
 
