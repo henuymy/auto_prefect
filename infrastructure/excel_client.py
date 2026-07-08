@@ -76,9 +76,10 @@ class FileLock:
 
 
 class LockedExcel:
-    def __init__(self, excel, lock):
+    def __init__(self, excel, lock, pythoncom_module=None):
         self._excel = excel
         self._lock = lock
+        self._pythoncom = pythoncom_module
         self._released = False
 
     def __getattr__(self, name):
@@ -94,7 +95,11 @@ class LockedExcel:
         if self._released:
             return
         self._released = True
-        self._lock.release()
+        if self._lock is not None:
+            self._lock.release()
+        if self._pythoncom is not None:
+            self._pythoncom.CoUninitialize()
+            self._pythoncom = None
 
 
 def _current_pid():
@@ -171,6 +176,11 @@ def dispatch_excel_dynamic(win32com):
 
 def open_excel(visible=False, manual_calculation=False, use_lock=True):
     win32com = require_win32()
+    try:
+        import pythoncom  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("缺少 pywin32，请先安装: pip install pywin32") from exc
+    pythoncom.CoInitialize()
     lock = FileLock().acquire() if use_lock else None
     try:
         try:
@@ -181,10 +191,11 @@ def open_excel(visible=False, manual_calculation=False, use_lock=True):
             clear_win32com_gencache(win32com)
             excel = dispatch_excel_dynamic(win32com)
         safe_configure_excel(excel, visible=visible, manual_calculation=manual_calculation)
-        return LockedExcel(excel, lock) if lock else excel
+        return LockedExcel(excel, lock, pythoncom)
     except Exception:
         if lock is not None:
             lock.release()
+        pythoncom.CoUninitialize()
         raise
 
 
