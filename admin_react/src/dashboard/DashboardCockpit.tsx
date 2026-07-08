@@ -2140,7 +2140,7 @@ export function DashboardCockpit() {
         max={historyRange.latest}
         actualTime={dataTimeMode === "history"
           ? data?.latestRun?.started_at || data?.latestRun?.finished_at
-          : null}
+          : data?.latestRun?.finished_at || data?.latestRun?.started_at}
         historyMeta={dataTimeMode === "history" ? data?.historyMeta : undefined}
         accumulationMeta={dataTimeMode === "realtime_acc" ? data?.accumulationMeta : undefined}
         cumulativeMeta={dataTimeMode === "cumulative" ? data?.cumulativeMeta : undefined}
@@ -2575,6 +2575,19 @@ function HistoryTimeBar({
         <Search size={14} />
         查询
       </button>}
+      {(mode === "realtime" || mode === "realtime_acc") && (
+        <div className="history-time-result current-batch-result">
+          {loading ? (
+            <><RefreshCw size={14} className="spin" />正在读取当前批次...</>
+          ) : actualTime ? (
+            <>
+              当前批次 <strong>{new Date(actualTime).toLocaleString("zh-CN", { hour12: false })}</strong>
+            </>
+          ) : (
+            <span>暂无当前批次时间</span>
+          )}
+        </div>
+      )}
       {mode === "cumulative" && (
         <div className="history-time-result cumulative-result">
           {loading ? (
