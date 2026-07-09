@@ -241,5 +241,12 @@ function toIssue(error: ErrorObject): ValidationIssue {
 
 export function validateReportConfig(config: ReportConfig): ValidationIssue[] {
   const ok = validate(config);
-  return ok ? [] : (validate.errors || []).map(toIssue);
+  const issues = ok ? [] : (validate.errors || []).map(toIssue);
+  if (config.enabled === true && (!config.compare_sources || config.compare_sources.length === 0)) {
+    issues.push({
+      path: "/compare_sources",
+      message: "启用调度前必须配置至少一个比对源",
+    });
+  }
+  return issues;
 }
