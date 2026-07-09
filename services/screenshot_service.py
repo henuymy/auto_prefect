@@ -25,6 +25,8 @@ COPY_FORMAT = {
     "picture": -4147,
     "bitmap": 2,
 }
+XL_TYPE_PDF = 0
+XL_QUALITY_STANDARD = 0
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
@@ -230,7 +232,158 @@ def copy_range_picture_with_retry(ws, rng, appearance_name, format_name, capture
     ) from last_error
 
 
-def capture_range_to_png(ws, output_path, capture=None):
+def export_range_to_pdf(ws, rng, pdf_path, capture):
+    pdf_path = Path(pdf_path)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    page_setup = ws.PageSetup
+    restore_values = {}
+    page_setup_keys = [
+        "PrintArea",
+        "Zoom",
+        "FitToPagesWide",
+        "FitToPagesTall",
+        "LeftMargin",
+        "RightMargin",
+        "TopMargin",
+        "BottomMargin",
+        "HeaderMargin",
+        "FooterMargin",
+        "CenterHorizontally",
+        "CenterVertically",
+        "Orientation",
+    ]
+    for key in page_setup_keys:
+        try:
+            restore_values[key] = getattr(page_setup, key)
+        except Exception:
+            pass
+
+    try:
+        page_setup.PrintArea = rng.Address
+        page_setup.Zoom = False
+        page_setup.FitToPagesWide = int(capture.get("pdf_fit_to_pages_wide", 1) or 1)
+        page_setup.FitToPagesTall = int(capture.get("pdf_fit_to_pages_tall", 1) or 1)
+        margin_points = float(capture.get("pdf_margin_points", 0) or 0)
+        page_setup.LeftMargin = margin_points
+        page_setup.RightMargin = margin_points
+        page_setup.TopMargin = margin_points
+        page_setup.BottomMargin = margin_points
+        page_setup.HeaderMargin = 0
+        page_setup.FooterMargin = 0
+        page_setup.CenterHorizontally = False
+        page_setup.CenterVertically = False
+        page_setup.Orientation = 2 if float(rng.Width) >= float(rng.Height) else 1
+        ws.ExportAsFixedFormat(
+            Type=XL_TYPE_PDF,
+            Filename=str(pdf_path.resolve()),
+            Quality=XL_QUALITY_STANDARD,
+            IncludeDocProperties=False,
+            IgnorePrintAreas=False,
+            OpenAfterPublish=False,
+        )
+    finally:
+        for key, value in restore_values.items():
+            try:
+                setattr(page_setup, key, value)
+            except Exception:
+                pass
+
+
+def crop_png_whitespace(image_path, background=(255, 255, 255), tolerance=8):
+    try:
+        from PIL import Image, ImageChops
+    except ImportError:
+        return None
+
+    path = Path(image_path)
+    with Image.open(path) as image:
+        source = image.convert("RGB")
+        bg = Image.new("RGB", source.size, background)
+        diff = ImageChops.difference(source, bg)
+        if tolerance > 0:
+            diff = diff.point(lambda value: 0 if value <= tolerance else 255)
+        bbox = diff.getbbox()
+        if not bbox:
+            return None
+        padding = 2
+        left = max(0, bbox[0] - padding)
+        top = max(0, bbox[1] - padding)
+        right = min(source.width, bbox[2] + padding)
+        bottom = min(source.height, bbox[3] + padding)
+        if (left, top, right, bottom) == (0, 0, source.width, source.height):
+            return source.size
+        cropped = source.crop((left, top, right, bottom))
+        cropped.save(path, format="PNG")
+        return cropped.size
+
+
+def render_pdf_to_png(pdf_path, output_path, capture):
+    try:
+        import fitz  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("高清 PDF 截图需要 PyMuPDF，请先安装: pip install PyMuPDF") from exc
+
+    dpi = int(capture.get("pdf_dpi", capture.get("render_dpi", 300)) or 300)
+    dpi = max(96, min(600, dpi))
+    matrix = fitz.Matrix(dpi / 72, dpi / 72)
+    with fitz.open(str(pdf_path)) as document:
+        if document.page_count < 1:
+            raise RuntimeError(f"Excel 导出的 PDF 没有页面: {pdf_path}")
+        page = document.load_page(0)
+        pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+        pixmap.save(str(Path(output_path).resolve()))
+        width, height = pixmap.width, pixmap.height
+
+    if capture.get("pdf_crop_whitespace", True):
+        cropped_size = crop_png_whitespace(
+            output_path,
+            tolerance=int(capture.get("pdf_crop_tolerance", 8) or 8),
+        )
+        if cropped_size:
+            width, height = cropped_size
+    return dpi, width, height
+
+
+def capture_range_to_png_pdf(ws, output_path, capture=None):
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    capture = capture or {}
+    rng = range_from_capture(ws, capture)
+
+    temp_dir = Path(tempfile.gettempdir()) / "auto_notify_excel_exports"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = temp_dir / f"capture_{uuid.uuid4().hex}.pdf"
+    try:
+        export_range_to_pdf(ws, rng, pdf_path, capture)
+        dpi, width, height = render_pdf_to_png(pdf_path, output.resolve(), capture)
+    finally:
+        try:
+            pdf_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    optimize_png(output, capture)
+
+    try:
+        address = rng.Address(False, False)
+    except TypeError:
+        address = str(rng.Address)
+
+    return {
+        "path": str(output.resolve()),
+        "sheet": ws.Name,
+        "range": address,
+        "width": width,
+        "height": height,
+        "engine": "pdf_render",
+        "format": "png",
+        "pdf_dpi": dpi,
+        "optimize_png": bool(capture.get("optimize_png", False)),
+        "png_colors": capture.get("png_colors", 256),
+    }
+
+
+def capture_range_to_png_copy_picture(ws, output_path, capture=None):
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     capture = capture or {}
@@ -283,12 +436,31 @@ def capture_range_to_png(ws, output_path, capture=None):
         "range": address,
         "width": width,
         "height": height,
+        "engine": "copy_picture",
         "appearance": actual_appearance,
         "format": actual_format,
         "export_scale": export_scale,
         "optimize_png": bool(capture.get("optimize_png", False)),
         "png_colors": capture.get("png_colors", 256),
     }
+
+
+def capture_range_to_png(ws, output_path, capture=None):
+    capture = capture or {}
+    engine = capture.get("engine", "pdf_render")
+    if engine == "copy_picture":
+        return capture_range_to_png_copy_picture(ws, output_path, capture)
+    if engine != "pdf_render":
+        raise ValueError(f"不支持的截图引擎: {engine}")
+    try:
+        return capture_range_to_png_pdf(ws, output_path, capture)
+    except Exception as exc:
+        if not capture.get("pdf_fallback_to_copy_picture", True):
+            raise
+        result = capture_range_to_png_copy_picture(ws, output_path, capture)
+        result["engine"] = "copy_picture_fallback"
+        result["fallback_reason"] = str(exc)
+        return result
 
 
 def optimize_png(image_path, capture):

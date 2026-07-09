@@ -2,6 +2,9 @@
   "capture_defaults": {
     "mode": "used_range",
     "shrink_empty_edges": true,
+    "engine": "pdf_render",
+    "pdf_dpi": 300,
+    "pdf_crop_whitespace": true,
     "appearance": "printer",
     "format": "picture",
     "export_scale": 2,

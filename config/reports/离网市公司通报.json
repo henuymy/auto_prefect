@@ -1,0 +1,123 @@
+{
+  "id": "离网市公司通报",
+  "name": "离网市公司通报",
+  "template_path": "templates/离网市公司通报_新手模板_20260708_232927.xlsx",
+  "enabled": false,
+  "description": "",
+  "downloads": [
+    {
+      "name": "519067",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=519067",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "87821",
+        "sheetIndex": "-1",
+        "sheetName": "离网整体",
+        "type": "excel",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
+        "resId": "519067",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      },
+      "source": "http_api"
+    },
+    {
+      "source": "http_api",
+      "name": "514970",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=514970",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "85918",
+        "sheetIndex": "-1",
+        "sheetName": "中高端客户",
+        "type": "excel",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
+        "resId": "514970",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
+    }
+  ],
+  "compare_sources": [],
+  "send": {
+    "webhook_url": "",
+    "workbook_name": "新建通报配置",
+    "items": [
+      {
+        "type": "image",
+        "sheet": "通报",
+        "capture": {
+          "mode": "used_range"
+        }
+      }
+    ]
+  },
+  "template_update": {
+    "engine": "hybrid",
+    "update_condition": "any_changed",
+    "write_sheets": "all_compared",
+    "send_when_same": true
+  },
+  "wait_for_change": {
+    "enabled": false,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "deployment": {
+    "enabled": false,
+    "crons": [],
+    "timezone": "Asia/Shanghai"
+  },
+  "lastRun": "disabled",
+  "updatedAt": "2026-07-08 17:11:08",
+  "source": "draft",
+  "has_draft": true
+}
