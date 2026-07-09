@@ -390,6 +390,7 @@
 
 - `output.keep_intermediate_files`
 作用：是否保留截图与打包过程的中间产物，便于排查图片在哪一步异常。
+建议：默认关闭，仅在排障时临时开启。
 
 - `output.cleanup_after_send`
 作用：发送成功后是否清理中间产物。
