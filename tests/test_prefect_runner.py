@@ -270,6 +270,30 @@ def test_validate_config_requires_compare_engine_and_workers():
     assert "/compare_sources/0/max_workers" in paths
 
 
+def test_validate_config_requires_compare_sources_when_enabled():
+    issues = prefect_runner.validate_config(
+        {
+            "name": "日报",
+            "template_path": "templates/missing.xlsx",
+            "enabled": True,
+            "downloads": [
+                {
+                    "name": "下载",
+                    "stage": "report_analysis",
+                    "method": "POST",
+                    "url": "https://example/export",
+                    "body_type": "form",
+                    "response_mode": "file",
+                }
+            ],
+            "compare_sources": [],
+            "send": {"items": [{"type": "image", "sheet": "通报"}]},
+        }
+    )
+
+    assert "/compare_sources" in {issue["path"] for issue in issues}
+
+
 def test_validate_config_requires_explicit_send_ranges():
     config = {
         "name": "日报",

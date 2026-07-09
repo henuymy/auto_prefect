@@ -346,6 +346,8 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
 
     if not config.get("downloads"):
         issues.append({"path": "/downloads", "message": "至少需要一个数据抓取项"})
+    if config.get("enabled") is True and not config.get("compare_sources"):
+        issues.append({"path": "/compare_sources", "message": "启用调度前必须配置至少一个比对源"})
     known_stages = _known_stages()
     download_names = set()
     allowed_methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}

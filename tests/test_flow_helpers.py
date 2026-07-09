@@ -3,6 +3,7 @@ from pathlib import Path
 
 from flows.notify_single_flow import (
     aggregate_compare_results,
+    assert_report_schema_contract,
     build_download_config,
     build_compare_source_configs,
     build_login_config,
@@ -93,6 +94,26 @@ def test_should_send_when_same_reads_template_update_flag():
     assert should_send_when_same({"template_update": {"send_when_same": True}}) is True
     assert should_send_when_same({"template_update": {"send_when_same": False}}) is False
     assert should_send_when_same({}) is False
+
+
+def test_enabled_report_requires_compare_sources():
+    with pytest.raises(ValueError, match="compare_sources"):
+        assert_report_schema_contract(
+            {
+                "enabled": True,
+                "downloads": [
+                    {
+                        "name": "下载",
+                        "stage": "report_analysis",
+                        "method": "POST",
+                        "url": "https://example/export",
+                        "body_type": "form",
+                        "response_mode": "file",
+                    }
+                ],
+                "compare_sources": [],
+            }
+        )
 
 
 def test_resolve_dynamic_placeholders_supports_today_and_hour():

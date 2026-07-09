@@ -133,6 +133,8 @@ def assert_report_schema_contract(report_cfg):
                 raise ValueError(f"compare_sources[{source_index}].sheet_mappings[{mapping_index}] 缺少 new_sheet_name")
             if not mapping.get("template_sheet_name"):
                 raise ValueError(f"compare_sources[{source_index}].sheet_mappings[{mapping_index}] 缺少 template_sheet_name")
+    if report_cfg.get("enabled") is True and not report_cfg.get("compare_sources"):
+        raise ValueError("启用的报表必须配置 compare_sources，避免调度运行后在比对阶段失败")
 
 
 def build_download_config(base_config, report_cfg):

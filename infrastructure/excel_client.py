@@ -222,7 +222,7 @@ def dispatch_excel_dynamic(win32com):
     return win32com.dynamic.Dispatch(dispatch)
 
 
-def open_excel(visible=False, manual_calculation=False, use_lock=True, cleanup_orphaned=True):
+def open_excel(visible=False, manual_calculation=False, use_lock=True, cleanup_orphaned=False):
     win32com = require_win32()
     try:
         import pythoncom  # type: ignore
