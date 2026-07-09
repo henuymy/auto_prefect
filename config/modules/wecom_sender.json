@@ -50,6 +50,8 @@
     "package_file": "message_package.json",
     "preview_image_file": "preview.png",
     "send_result_file": "send_result.json",
+    "intermediate_dir": "intermediates",
+    "keep_intermediate_files": true,
     "cleanup_after_send": true
   }
 }

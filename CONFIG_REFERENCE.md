@@ -385,6 +385,12 @@
 - `output.send_result_file`
 作用：发送结果文件路径。
 
+- `output.intermediate_dir`
+作用：截图与打包过程的中间产物目录，默认相对于 `runtime_dir`。
+
+- `output.keep_intermediate_files`
+作用：是否保留截图与打包过程的中间产物，便于排查图片在哪一步异常。
+
 - `output.cleanup_after_send`
 作用：发送成功后是否清理中间产物。
 

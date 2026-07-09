@@ -45,10 +45,52 @@ def get_output_paths(config, base_dir=PROJECT_DIR):
     return image_dir, package_file, preview_file
 
 
+def get_intermediate_dir(config, base_dir=PROJECT_DIR):
+    output_config = config.get("output", {})
+    runtime_dir = resolve_path(output_config.get("runtime_dir", "runtime"), base_dir)
+    return resolve_path(output_config.get("intermediate_dir", "intermediates"), runtime_dir)
+
+
 def merge_capture_config(defaults, item_config):
     merged = dict(defaults or {})
     merged.update(item_config or {})
     return merged
+
+
+def with_intermediate_capture(config, capture_config, image_name, base_dir=PROJECT_DIR):
+    output_config = config.get("output", {})
+    if not output_config.get("keep_intermediate_files", False):
+        return capture_config
+    capture_config = dict(capture_config or {})
+    capture_config["_keep_intermediate_files"] = True
+    capture_config["_intermediate_dir"] = str(get_intermediate_dir(config, base_dir))
+    capture_config["_intermediate_stem"] = Path(image_name).stem
+    return capture_config
+
+
+def intermediate_path(capture, stage, suffix):
+    if not capture.get("_keep_intermediate_files"):
+        return None
+    directory = Path(capture["_intermediate_dir"])
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{capture['_intermediate_stem']}_{stage}{suffix}"
+
+
+def copy_intermediate_file(source_path, capture, stage, suffix=None):
+    target = intermediate_path(capture, stage, suffix or Path(source_path).suffix)
+    if not target:
+        return None
+    shutil.copyfile(source_path, target)
+    return str(target.resolve())
+
+
+def save_intermediate_json(capture, stage, payload):
+    target = intermediate_path(capture, stage, ".json")
+    if not target:
+        return None
+    with target.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return str(target.resolve())
 
 
 def normalize_2d(values):
@@ -333,6 +375,7 @@ def render_pdf_to_png(pdf_path, output_path, capture):
         pixmap = page.get_pixmap(matrix=matrix, alpha=False)
         pixmap.save(str(Path(output_path).resolve()))
         width, height = pixmap.width, pixmap.height
+        copy_intermediate_file(output_path, capture, "02_pdf_render_raw", ".png")
 
     if capture.get("pdf_crop_whitespace", True):
         cropped_size = crop_png_whitespace(
@@ -341,6 +384,7 @@ def render_pdf_to_png(pdf_path, output_path, capture):
         )
         if cropped_size:
             width, height = cropped_size
+        copy_intermediate_file(output_path, capture, "03_after_crop", ".png")
     return dpi, width, height
 
 
@@ -355,6 +399,7 @@ def capture_range_to_png_pdf(ws, output_path, capture=None):
     pdf_path = temp_dir / f"capture_{uuid.uuid4().hex}.pdf"
     try:
         export_range_to_pdf(ws, rng, pdf_path, capture)
+        copy_intermediate_file(pdf_path, capture, "01_excel_export", ".pdf")
         dpi, width, height = render_pdf_to_png(pdf_path, output.resolve(), capture)
     finally:
         try:
@@ -363,6 +408,7 @@ def capture_range_to_png_pdf(ws, output_path, capture=None):
             pass
 
     optimize_png(output, capture)
+    final_intermediate = copy_intermediate_file(output, capture, "04_final", ".png")
 
     try:
         address = rng.Address(False, False)
@@ -380,6 +426,8 @@ def capture_range_to_png_pdf(ws, output_path, capture=None):
         "pdf_dpi": dpi,
         "optimize_png": bool(capture.get("optimize_png", False)),
         "png_colors": capture.get("png_colors", 256),
+        "intermediate_dir": str(Path(capture["_intermediate_dir"]).resolve()) if capture.get("_keep_intermediate_files") else None,
+        "final_intermediate": final_intermediate,
     }
 
 
@@ -420,10 +468,12 @@ def capture_range_to_png_copy_picture(ws, output_path, capture=None):
             attempts=int(capture.get("export_attempts", 2) or 2),
             delay_seconds=float(capture.get("export_retry_delay_seconds", 0.5) or 0.5),
         )
+        copy_intermediate_file(output, capture, "01_copy_picture_export", ".png")
     finally:
         chart_object.Delete()
 
     optimize_png(output, capture)
+    final_intermediate = copy_intermediate_file(output, capture, "02_final", ".png")
 
     try:
         address = rng.Address(False, False)
@@ -442,6 +492,8 @@ def capture_range_to_png_copy_picture(ws, output_path, capture=None):
         "export_scale": export_scale,
         "optimize_png": bool(capture.get("optimize_png", False)),
         "png_colors": capture.get("png_colors", 256),
+        "intermediate_dir": str(Path(capture["_intermediate_dir"]).resolve()) if capture.get("_keep_intermediate_files") else None,
+        "final_intermediate": final_intermediate,
     }
 
 
@@ -455,11 +507,22 @@ def capture_range_to_png(ws, output_path, capture=None):
     try:
         return capture_range_to_png_pdf(ws, output_path, capture)
     except Exception as exc:
+        fallback_error_path = save_intermediate_json(
+            capture,
+            "02_pdf_render_error",
+            {
+                "stage": "pdf_render",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "fallback_to": "copy_picture" if capture.get("pdf_fallback_to_copy_picture", True) else None,
+            },
+        )
         if not capture.get("pdf_fallback_to_copy_picture", True):
             raise
         result = capture_range_to_png_copy_picture(ws, output_path, capture)
         result["engine"] = "copy_picture_fallback"
         result["fallback_reason"] = str(exc)
+        result["fallback_error_intermediate"] = fallback_error_path
         return result
 
 
@@ -520,6 +583,18 @@ def image_payload_from_file(image_path):
     }
 
 
+def save_package_payload_intermediate(capture_result, image_payload):
+    intermediate_dir = capture_result.get("intermediate_dir")
+    if not intermediate_dir:
+        return None
+    final_path = Path(capture_result["path"])
+    stem = final_path.stem
+    target = Path(intermediate_dir) / f"{stem}_05_package_base64_decoded.png"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(base64.b64decode(image_payload["base64"]))
+    return str(target.resolve())
+
+
 def build_preview_image(package, preview_file):
     image_paths = [
         Path(item["capture"]["path"])
@@ -575,6 +650,17 @@ def save_package(package_file, package):
     package_file.parent.mkdir(parents=True, exist_ok=True)
     with package_file.open("w", encoding="utf-8") as f:
         json.dump(package, f, ensure_ascii=False, indent=2)
+
+
+def save_package_snapshot(config, package, base_dir=PROJECT_DIR):
+    output_config = config.get("output", {})
+    if not output_config.get("keep_intermediate_files", False):
+        return None
+    snapshot_path = get_intermediate_dir(config, base_dir) / "message_package_snapshot.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    with snapshot_path.open("w", encoding="utf-8") as f:
+        json.dump(package, f, ensure_ascii=False, indent=2)
+    return str(snapshot_path.resolve())
 
 
 def get_excel_process_id(excel):
@@ -733,6 +819,7 @@ def render_openpyxl_range_to_png(ws, output_path, capture=None):
         y += row_heights[row_offset]
 
     image.save(output, format="PNG")
+    final_intermediate = copy_intermediate_file(output, capture, "01_openpyxl_final", ".png")
     return {
         "path": str(output.resolve()),
         "sheet": ws.title,
@@ -742,6 +829,8 @@ def render_openpyxl_range_to_png(ws, output_path, capture=None):
         "appearance": "openpyxl_fallback",
         "format": "png",
         "fallback": True,
+        "intermediate_dir": str(Path(capture["_intermediate_dir"]).resolve()) if capture.get("_keep_intermediate_files") else None,
+        "final_intermediate": final_intermediate,
     }
 
 
@@ -806,8 +895,12 @@ def build_message_package_openpyxl(config, base_dir=PROJECT_DIR, fallback_reason
                             sheet_name,
                         )
                         image_path = image_dir / image_name
+                        capture_config = with_intermediate_capture(config, capture_config, image_name, base_dir)
                         capture_result = render_openpyxl_range_to_png(ws, image_path, capture_config)
                         image_payload = image_payload_from_file(capture_result["path"])
+                        package_payload_path = save_package_payload_intermediate(capture_result, image_payload)
+                        if package_payload_path:
+                            capture_result["package_payload_intermediate"] = package_payload_path
                         package_item["capture"] = capture_result
                         package_item["image"] = image_payload
                     else:
@@ -829,6 +922,7 @@ def build_message_package_openpyxl(config, base_dir=PROJECT_DIR, fallback_reason
         "engine": "openpyxl",
     }
     save_package(package_file, package)
+    save_package_snapshot(config, package, base_dir)
     return package, str(package_file)
 
 
@@ -897,8 +991,12 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
                                 sheet_name,
                             )
                             image_path = image_dir / image_name
+                            capture_config = with_intermediate_capture(config, capture_config, image_name, base_dir)
                             capture_result = capture_range_to_png(ws, image_path, capture_config)
                             image_payload = image_payload_from_file(capture_result["path"])
+                            package_payload_path = save_package_payload_intermediate(capture_result, image_payload)
+                            if package_payload_path:
+                                capture_result["package_payload_intermediate"] = package_payload_path
                             package_item["capture"] = capture_result
                             package_item["image"] = image_payload
                         else:
@@ -924,6 +1022,7 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
         "engine": "com",
     }
     save_package(package_file, package)
+    save_package_snapshot(config, package, base_dir)
     return package, str(package_file)
 
 
