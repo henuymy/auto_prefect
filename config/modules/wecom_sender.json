@@ -5,7 +5,7 @@
     "appearance": "printer",
     "format": "picture",
     "export_scale": 2,
-    "optimize_png": true,
+    "optimize_png": false,
     "png_colors": 256
   },
   "workbooks": [
