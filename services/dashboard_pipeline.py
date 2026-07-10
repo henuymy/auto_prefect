@@ -292,6 +292,7 @@ def execute_dashboard_pipeline(
                 write_timings["metric_write_seconds"] = perf_counter() - stage_started
 
                 stage_started = perf_counter()
+                batch.database_lock.assert_held()
                 transaction.commit()
                 write_timings["commit_seconds"] = perf_counter() - stage_started
             except Exception:

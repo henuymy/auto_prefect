@@ -15,7 +15,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from infrastructure.dashboard_run_store import CollectionRunStore
-from infrastructure.dashboard_mysql import create_dashboard_engine, dashboard_mysql_lock
+from infrastructure.dashboard_mysql import (
+    DashboardMySQLLockLease,
+    create_dashboard_engine,
+    dashboard_mysql_lock,
+)
 from services.dashboard_collection_orchestrator import (
     collect_validate_metric_rows_simple,
     naive_shanghai_now,
@@ -53,6 +57,7 @@ class DashboardBatchContext:
     indicator_codes: list[str]
     indicator_code: str
     stage: dict[str, Any]
+    database_lock: DashboardMySQLLockLease
     lock_result: dict[str, Any]
 
     def collect_validate_simple(
@@ -174,7 +179,7 @@ def dashboard_batch(
                         "collection_database_lock_idle_timeout_seconds", 300
                     ) or 0
                 ),
-            ) as database_lock_result:
+            ) as database_lock:
                 with Session(engine) as recovery_session:
                     recovered_runs = recover_stale_collection_runs(
                         recovery_session,
@@ -226,9 +231,10 @@ def dashboard_batch(
                     indicator_codes=indicator_codes,
                     indicator_code=indicator_codes[0],
                     stage=stage,
+                    database_lock=database_lock,
                     lock_result={
                         **lock_result,
-                        "database_lock": database_lock_result,
+                        "database_lock": database_lock.as_dict(),
                     },
                 )
         except Exception as exc:

@@ -13,7 +13,11 @@ from typing import Any, Callable, Iterator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from infrastructure.dashboard_mysql import create_dashboard_engine, dashboard_mysql_lock
+from infrastructure.dashboard_mysql import (
+    DashboardMySQLLockLease,
+    create_dashboard_engine,
+    dashboard_mysql_lock,
+)
 from infrastructure.dashboard_run_store import CollectionRunStore
 from infrastructure.dashboard_v2_run_store import MySQLV2CollectionRunStore
 from models.dashboard_v2 import CollectionRunV2
@@ -44,6 +48,7 @@ class DashboardV2BatchContext:
     targets: list[CollectionTarget]
     indicator_plan: dict[str, Any]
     stage: dict[str, Any]
+    database_lock: DashboardMySQLLockLease
     lock_result: dict[str, Any]
 
     def collect_validate(
@@ -230,9 +235,10 @@ def dashboard_v2_batch(
                     targets=targets,
                     indicator_plan=indicator_plan,
                     stage=stage,
+                    database_lock=database_lock,
                     lock_result={
                         **local_lock,
-                        "database_lock": database_lock,
+                        "database_lock": database_lock.as_dict(),
                     },
                 )
         except Exception as exc:

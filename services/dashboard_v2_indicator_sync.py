@@ -125,6 +125,7 @@ def execute_dashboard_v2_indicator_sync(
                     run.finished_at = finished_at
                     run.session_status = session_result.get("status")
                     run.row_count = result["source_count"]
+                    database_lock.assert_held()
                 total_seconds = perf_counter() - started
                 logger.info(
                     "V2 指标库同步完成 batch_no=%s source=%s inserted=%s total=%.3fs",
@@ -141,7 +142,10 @@ def execute_dashboard_v2_indicator_sync(
                     "session_status": session_result.get("status"),
                     "period_type": "INDICATOR_SYNC",
                     "timing": {"total_seconds": round(total_seconds, 3)},
-                    "lock": {**local_lock, "database_lock": database_lock},
+                    "lock": {
+                        **local_lock,
+                        "database_lock": database_lock.as_dict(),
+                    },
                     **result,
                 }
     except Exception as exc:

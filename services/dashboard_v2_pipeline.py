@@ -302,6 +302,7 @@ def _write_v2_transaction(
             snapshot_insert_count=snapshot_count,
             acc_upsert_count=acc_count,
         )
+        batch.database_lock.assert_held()
     return {
         "batch_no": batch.batch_no,
         "status": "SUCCESS",
