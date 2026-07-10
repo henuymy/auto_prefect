@@ -2173,6 +2173,16 @@ export function DashboardCockpit() {
           setLoading(true);
           setHistoryAsOf(nextAsOf);
         }}
+        onCumulativeChange={setCumulativeInput}
+        onCumulativeQuery={() => {
+          if (!cumulativeInput) return;
+          if (cumulativeInput === cumulativeAsOf) {
+            void fetchData(true);
+            return;
+          }
+          setLoading(true);
+          setCumulativeAsOf(cumulativeInput);
+        }}
       />
 
       {customManagerOpen && (
@@ -2483,7 +2493,7 @@ function Header({
 function HistoryTimeBar({
   mode,
   value,
-  cumulativeValue: _cumulativeValue,
+  cumulativeValue,
   options,
   min,
   max,
@@ -2495,6 +2505,8 @@ function HistoryTimeBar({
   onModeChange,
   onChange,
   onQuery,
+  onCumulativeChange,
+  onCumulativeQuery,
 }: {
   mode: DataTimeMode;
   value: string;
@@ -2510,6 +2522,8 @@ function HistoryTimeBar({
   onModeChange: (mode: DataTimeMode) => void;
   onChange: (value: string) => void;
   onQuery: () => void;
+  onCumulativeChange: (value: string) => void;
+  onCumulativeQuery: () => void;
 }) {
   const selectedDate = value.slice(0, 10);
   const selectedTime = value.slice(11, 16);
@@ -2586,6 +2600,28 @@ function HistoryTimeBar({
         <Search size={14} />
         查询
       </button>}
+      {mode === "cumulative" && <>
+        <div className="history-time-input active">
+          <CalendarClock size={15} />
+          <span>累计日期</span>
+          <input
+            aria-label="累计日期"
+            type="date"
+            value={cumulativeValue}
+            disabled={loading}
+            onChange={(event) => onCumulativeChange(event.currentTarget.value)}
+          />
+        </div>
+        <button
+          type="button"
+          className="history-query-button"
+          disabled={loading || !cumulativeValue}
+          onClick={onCumulativeQuery}
+        >
+          <Search size={14} />
+          查询
+        </button>
+      </>}
       {(mode === "realtime" || mode === "realtime_acc") && (
         <div className="history-time-result current-batch-result">
           {loading ? (

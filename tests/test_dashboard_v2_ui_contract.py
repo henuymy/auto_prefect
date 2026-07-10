@@ -20,3 +20,10 @@ def test_cumulative_mode_queries_selected_daily_accumulation_date():
     assert '"DAY_ACC",\n            cumulativeAsOf || undefined,' in source
     assert 'cumulativeValue={cumulativeInput}' in source
     assert 'asOf: dataTimeMode === "history" ? historyAsOf : cumulativeAsOf || null,' in source
+
+
+def test_cumulative_mode_exposes_a_daily_accumulation_date_query_control():
+    source = COCKPIT.read_text(encoding="utf-8")
+    assert 'aria-label="累计日期"' in source
+    assert 'type="date"' in source
+    assert 'onCumulativeQuery' in source
