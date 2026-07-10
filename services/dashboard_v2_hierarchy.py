@@ -504,8 +504,8 @@ def sync_v2_hierarchy_in_session(
                 if getattr(node, field) != value:
                     setattr(node, field, value)
                     changed = True
+            node.last_seen_at = collected_at
             if changed:
-                node.last_seen_at = collected_at
                 updated += 1
             if was_disabled:
                 restored += 1
@@ -537,7 +537,6 @@ def sync_v2_hierarchy_in_session(
         if node.missing_count < missing_disable_threshold:
             continue
         node.enabled = False
-        node.last_seen_at = collected_at
         _close_active_parent_history(session, node.id, collected_at)
         disabled += 1
 
