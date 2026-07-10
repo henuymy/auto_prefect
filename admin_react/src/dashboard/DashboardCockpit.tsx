@@ -2197,13 +2197,13 @@ export function DashboardCockpit() {
         <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -6 }}>
           <div className="section-title-copy">
             <strong>{dataTimeMode === "history"
-              ? "历史时刻"
+              ? "历史采集档位"
               : dataTimeMode === "cumulative"
                 ? "累计"
                 : dataTimeMode === "realtime_acc" ? "实时累计" : "当日实时"}</strong>
             <span>
               {dataTimeMode === "history"
-                ? "数据固定于所选时间之前最近的成功批次"
+                ? "按批次开始时间选择；展示该批次完成后的历史快照"
                 : dataTimeMode === "cumulative"
                   ? data?.cumulativeMeta?.statDate
                     ? `累计截止 ${data.cumulativeMeta.statDate}${data.cumulativeMeta.isFallback ? "（已回退最近可用日期）" : ""}`
@@ -2437,7 +2437,7 @@ function Header({
         <span className={online ? "pulse-dot" : "pulse-dot muted"} />
         <span>
           {dataTimeMode === "history"
-            ? online ? "历史快照" : "该时刻无数据"
+            ? online ? "历史快照" : "该档位无数据"
             : dataTimeMode === "cumulative"
               ? online ? "累计数据" : "暂无累计"
               : dataTimeMode === "realtime_acc"
@@ -2446,7 +2446,7 @@ function Header({
         </span>
         <span className="divider" />
         <span>{dataTimeMode === "history"
-          ? "批次时间"
+          ? "批次开始时间"
           : dataTimeMode === "cumulative" ? "累计日期" : "更新时间"}</span>
         <strong>{updatedAt}</strong>
         <ProgressColorConfig
@@ -2533,12 +2533,12 @@ function HistoryTimeBar({
           className={mode === "history" ? "active" : ""}
           onClick={() => onModeChange("history")}
         >
-          历史时刻
+          历史档位
         </button>
       </div>
       {mode !== "cumulative" && <div className={mode === "history" ? "history-time-input active" : "history-time-input"}>
         <CalendarClock size={15} />
-        <span>查询时间</span>
+        <span>{mode === "history" ? "采集档位（批次开始时间）" : "查询时间"}</span>
         <select
           aria-label="历史日期"
           value={selectedDate}
@@ -2634,10 +2634,10 @@ function HistoryTimeBar({
             <><RefreshCw size={14} className="spin" />正在还原...</>
           ) : actualTime ? (
             <>
-              实际批次 <strong>{new Date(actualTime).toLocaleString("zh-CN", { hour12: false })}</strong>
+              匹配批次开始时间 <strong>{new Date(actualTime).toLocaleString("zh-CN", { hour12: false })}</strong>
               {historyMeta?.batch_finished_at && (
                 <span>
-                  完成 {new Date(historyMeta.batch_finished_at).toLocaleTimeString("zh-CN", { hour12: false })}
+                  批次完成时间 {new Date(historyMeta.batch_finished_at).toLocaleTimeString("zh-CN", { hour12: false })}
                 </span>
               )}
               {historyMeta?.duration_seconds != null && (
@@ -2652,7 +2652,7 @@ function HistoryTimeBar({
       )}
       {mode === "history" && (
         <span className="history-target-basis" title="历史完成值来自快照；目标值使用当前启用的目标配置">
-          目标：当前配置
+          变化基线：理论时间前后 ±{historyMeta?.change_tolerance_minutes ?? 3} 分钟内最近快照；目标：当前配置
         </span>
       )}
       {mode !== "cumulative" && <span className="history-range-note">

@@ -233,6 +233,8 @@ export type DashboardHistoryMeta = {
   duration_seconds: number | null;
   fallback_seconds: number | null;
   is_fallback: boolean;
+  time_basis: "BATCH_STARTED_AT";
+  change_tolerance_minutes: number;
 };
 
 export type DashboardMatrixResponse = DashboardChangesResponse & {
