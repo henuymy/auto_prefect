@@ -563,6 +563,8 @@ def test_historical_time_uses_v1_completed_batch_and_started_anchor():
         "rate": 5 / 95,
     }
     assert result["history_meta"]["fallback_seconds"] == 240
+    assert result["history_meta"]["time_basis"] == "BATCH_STARTED_AT"
+    assert result["history_meta"]["change_tolerance_minutes"] == 3
 
 
 def test_default_matrix_scope_keeps_manager_under_selected_branch():

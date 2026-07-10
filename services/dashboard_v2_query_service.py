@@ -690,6 +690,8 @@ def _history_meta(run: CollectionRunV2 | None, selected_time: datetime) -> dict[
         "duration_seconds": duration_seconds,
         "fallback_seconds": fallback_seconds,
         "is_fallback": bool(fallback_seconds and fallback_seconds > 0),
+        "time_basis": "BATCH_STARTED_AT",
+        "change_tolerance_minutes": CHANGE_WINDOW_TOLERANCE_MINUTES,
     }
 
 
