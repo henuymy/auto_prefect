@@ -1005,6 +1005,8 @@ export function DashboardCockpit() {
   const [targetScenario, setTargetScenario] = useState<DashboardTargetScenario>("NORMAL");
   const [historyAsOf, setHistoryAsOf] = useState("");
   const [historyInput, setHistoryInput] = useState("");
+  const [cumulativeAsOf, setCumulativeAsOf] = useState("");
+  const [cumulativeInput, setCumulativeInput] = useState("");
   const [historyRange, setHistoryRange] = useState<{ earliest: string; latest: string }>({
     earliest: "",
     latest: "",
@@ -1136,7 +1138,7 @@ export function DashboardCockpit() {
     targetScenario,
     dayLevelAllMode,
     monthLevelAllMode,
-    asOf: dataTimeMode === "history" ? historyAsOf : null,
+    asOf: dataTimeMode === "history" ? historyAsOf : cumulativeAsOf || null,
   });
   const selectableIndicators = useMemo(
     () => (data?.indicatorCatalog || [])
@@ -1188,7 +1190,7 @@ export function DashboardCockpit() {
       targetScenario,
       dayLevelAllMode: nextScopeState.dayLevelAllMode,
       monthLevelAllMode: nextScopeState.monthLevelAllMode,
-      asOf: dataTimeMode === "history" ? historyAsOf : null,
+      asOf: dataTimeMode === "history" ? historyAsOf : cumulativeAsOf || null,
     });
     const cached = queryCacheRef.current.get(nextCacheKey);
     const cacheFresh = cached && Date.now() - cached.cachedAt <= DASHBOARD_CACHE_TTL_MS;
@@ -1315,7 +1317,7 @@ export function DashboardCockpit() {
       const [changesData, accRows] = cumulativeActive
         ? await getAccDashboard(
             "DAY_ACC",
-            undefined,
+            cumulativeAsOf || undefined,
             undefined,
             undefined,
             requestedIndicatorCodes,
@@ -1637,6 +1639,11 @@ export function DashboardCockpit() {
 
       if (seq !== fetchSeqRef.current) return;
 
+      if (cumulativeActive && !cumulativeAsOf && cumulativeMeta?.statDate) {
+        setCumulativeAsOf(cumulativeMeta.statDate);
+        setCumulativeInput(cumulativeMeta.statDate);
+      }
+
       const nextData = makeData();
       cacheData(nextData);
       setBackgroundLoadingLevels({});
@@ -1690,6 +1697,7 @@ export function DashboardCockpit() {
     monthLevelAllMode.CHANNEL,
     dataTimeMode,
     historyAsOf,
+    cumulativeAsOf,
     targetScenario,
   ]);
 
@@ -2135,6 +2143,7 @@ export function DashboardCockpit() {
       <HistoryTimeBar
         mode={dataTimeMode}
         value={historyInput}
+        cumulativeValue={cumulativeInput}
         options={historyOptions}
         min={historyRange.earliest}
         max={historyRange.latest}
@@ -2474,6 +2483,7 @@ function Header({
 function HistoryTimeBar({
   mode,
   value,
+  cumulativeValue: _cumulativeValue,
   options,
   min,
   max,
@@ -2488,6 +2498,7 @@ function HistoryTimeBar({
 }: {
   mode: DataTimeMode;
   value: string;
+  cumulativeValue: string;
   options: DashboardHistoryOptionsResponse["dates"];
   min: string;
   max: string;
