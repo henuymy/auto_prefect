@@ -3,7 +3,7 @@
   "autologin_config_path": "config/modules/autologin.json",
   "required_stage": "city_ops",
   "collection_lock_path": "runtime/locks/dashboard_collection.lock",
-  "collection_lock_wait_seconds": 5,
+  "collection_lock_wait_seconds": 240,
   "collection_lock_poll_seconds": 1,
   "collection_lock_stale_seconds": 1800,
   "collection_database_lock_name": "auto_notify_dashboard_collection",
