@@ -497,6 +497,7 @@ def _wide_rows(
     period_type: str | None = None,
     include_targets: bool = False,
     current_stat_date: date | None = None,
+    target_date: date | None = None,
     target_scenario: str = "NORMAL",
 ) -> list[dict[str, Any]]:
     components, physical = _components(session, indicators)
@@ -534,7 +535,7 @@ def _wide_rows(
             node_ids=list(by_id),
             indicator_ids=[row.id for row in physical],
             period_type=period_type,
-            target_date=(as_of.date() if as_of else date.today()),
+            target_date=target_date or (as_of.date() if as_of else date.today()),
             target_scenario=target_scenario,
         )
         for node_id, row in by_id.items():
@@ -1024,6 +1025,7 @@ def get_current_wide_table(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
         )
         accumulation_meta = _apply_value_mode(
@@ -1075,6 +1077,7 @@ def get_current_with_changes(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
         )
         anchor = _change_anchor_time(run)
@@ -1283,6 +1286,7 @@ def get_dashboard_matrix_page(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
         )
         anchor = _change_anchor_time(run)
@@ -1517,6 +1521,7 @@ def get_dashboard_overview(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
         )
         anchor = _change_anchor_time(run)
@@ -1614,6 +1619,7 @@ def get_drill_down(
                     if normalized_mode == "REALTIME_ACC"
                     else None
                 ),
+                target_date=_realtime_business_date(run),
                 target_scenario=normalized_target_scenario,
             )
             anchor = _change_anchor_time(run)
@@ -1688,6 +1694,7 @@ def get_drill_down(
                 if normalized_mode == "REALTIME_ACC"
                 else None
             ),
+            target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
         )
         anchor = _change_anchor_time(run)

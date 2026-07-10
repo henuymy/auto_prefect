@@ -189,6 +189,13 @@ export async function activateDashboardTargetPlan(planId: number) {
   );
 }
 
+export async function cloneDashboardTargetPlan(planId: number) {
+  return request<DashboardTargetPlan>(
+    `/api/dashboard/target-plans/${planId}/clone`,
+    { method: "POST" },
+  );
+}
+
 export async function getDashboardTargetValues(params: {
   planId: number;
   nodeType?: string;

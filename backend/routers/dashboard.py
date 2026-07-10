@@ -41,6 +41,7 @@ from services.dashboard_v2_query_service import (
 from services.dashboard_v2_target_admin_service import (
     activate_target_plan,
     build_target_template,
+    clone_target_plan,
     create_target_plan,
     get_target_values,
     import_target_template,
@@ -451,6 +452,25 @@ def activate_dashboard_target_plan(plan_id: int):
         raise HTTPException(
             status_code=503,
             detail=f"目标方案激活失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.post("/target-plans/{plan_id}/clone")
+def clone_dashboard_target_plan(plan_id: int, effective_from: date | None = None):
+    """Create an editable DRAFT copy of an ACTIVE or RETIRED plan."""
+    engine = get_dashboard_engine()
+    try:
+        result = clone_target_plan(
+            engine, source_plan_id=plan_id, effective_from=effective_from
+        )
+        _invalidate_version_state()
+        return result
+    except (ValueError, TargetPlanError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标方案复制失败: {type(exc).__name__}",
         ) from exc
 
 

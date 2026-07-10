@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Iterable
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import MetricTargetValue, TargetPlan
@@ -69,36 +69,40 @@ def resolve_v2_target_plan(
     period_type: str,
     scenario: str = "NORMAL",
 ) -> TargetPlan | None:
-    """Resolve the active target plan for an explicit business scenario."""
+    """Resolve the one active target plan for the business date's month.
+
+    ``effective_from`` identifies a plan's natural-month ownership.  It is not
+    a within-month cutover date, so a plan dated July 15 applies equally to
+    July 1 and July 31.  Retired plans are historical records only and must
+    never be selected for calculation.
+    """
     normalized_period = str(period_type or "").strip().upper()
     if normalized_period not in {"DAY", "MONTH"}:
         raise ValueError("period_type 只支持 DAY/MONTH")
     normalized_scenario = normalize_target_scenario(scenario)
+    month_start = business_date.replace(day=1)
+    month_end = (
+        month_start.replace(year=month_start.year + 1, month=1)
+        if month_start.month == 12
+        else month_start.replace(month=month_start.month + 1)
+    )
     plans = list(
         session.scalars(
             select(TargetPlan).where(
                 TargetPlan.scenario == normalized_scenario,
                 TargetPlan.period_type == normalized_period,
-                TargetPlan.status.in_(["ACTIVE", "RETIRED"]),
-                TargetPlan.effective_from <= business_date,
-                or_(
-                    TargetPlan.effective_to.is_(None),
-                    TargetPlan.effective_to >= business_date,
-                ),
+                TargetPlan.status == "ACTIVE",
+                TargetPlan.effective_from >= month_start,
+                TargetPlan.effective_from < month_end,
             )
         )
     )
-    winner = choose_target_plan_candidate(
-        TargetPlanCandidate(
-            id=plan.id,
-            scenario=plan.scenario,
-            period_type=plan.period_type,
-            effective_from=plan.effective_from,
-            priority=plan.priority,
+    if len(plans) > 1:
+        raise AmbiguousTargetPlanError(
+            f"同一场景、目标周期、自然月存在多个 ACTIVE 目标方案: "
+            f"ids={[plan.id for plan in plans]}"
         )
-        for plan in plans
-    )
-    return next((plan for plan in plans if winner is not None and plan.id == winner.id), None)
+    return plans[0] if plans else None
 
 
 def load_v2_target_values(
@@ -193,9 +197,6 @@ def clone_v2_target_plan_in_session(
     )
     if source is None:
         raise TargetPlanError(f"目标方案不存在: {source_plan_id}")
-    if effective_from <= source.effective_from:
-        raise TargetPlanError("新版本 effective_from 必须晚于旧版本")
-
     latest_version = session.scalar(
         select(TargetPlan.version_no)
         .where(
@@ -244,14 +245,19 @@ def activate_v2_target_plan_in_session(
     plan_id: int,
     activated_at: datetime,
 ) -> TargetPlan:
-    """Activate one DRAFT and retire its explicitly superseded version."""
+    """Make a plan the single active version for its scenario/period/month.
+
+    A month is the business scope of an effective date.  Plans are never
+    modified in place after activation; an ACTIVE plan may be cloned to a
+    DRAFT, and either a DRAFT or a RETIRED plan can subsequently be activated.
+    """
     plan = session.scalar(
         select(TargetPlan).where(TargetPlan.id == plan_id).with_for_update()
     )
     if plan is None:
         raise TargetPlanError(f"目标方案不存在: {plan_id}")
-    if plan.status != "DRAFT":
-        raise TargetPlanError("只有 DRAFT 目标方案允许激活")
+    if plan.status not in {"DRAFT", "RETIRED"}:
+        raise TargetPlanError("只有 DRAFT 或 RETIRED 目标方案允许激活")
     value_count = len(
         session.scalars(
             select(MetricTargetValue.id).where(
@@ -262,45 +268,31 @@ def activate_v2_target_plan_in_session(
     if value_count == 0:
         raise TargetPlanError("空目标方案不允许激活")
 
-    if plan.supersedes_plan_id is not None:
-        previous = session.scalar(
-            select(TargetPlan)
-            .where(TargetPlan.id == plan.supersedes_plan_id)
-            .with_for_update()
-        )
-        if previous is None:
-            raise TargetPlanError("被替代的目标方案不存在")
-        if (
-            previous.scenario != plan.scenario
-            or previous.period_type != plan.period_type
-        ):
-            raise TargetPlanError("新旧目标方案场景或周期不一致")
-        if plan.effective_from <= previous.effective_from:
-            raise TargetPlanError("新版本生效日期必须晚于旧版本")
-        previous.status = "RETIRED"
-        previous.retired_at = activated_at
-        previous.effective_to = plan.effective_from - timedelta(days=1)
-
-    conflicting = list(
+    month_start = plan.effective_from.replace(day=1)
+    month_end = (
+        month_start.replace(year=month_start.year + 1, month=1)
+        if month_start.month == 12
+        else month_start.replace(month=month_start.month + 1)
+    )
+    current_active = list(
         session.scalars(
             select(TargetPlan)
             .where(
                 TargetPlan.id != plan.id,
                 TargetPlan.scenario == plan.scenario,
                 TargetPlan.period_type == plan.period_type,
-                TargetPlan.status.in_(["ACTIVE", "RETIRED"]),
-                TargetPlan.priority == plan.priority,
-                TargetPlan.effective_from == plan.effective_from,
+                TargetPlan.status == "ACTIVE",
+                TargetPlan.effective_from >= month_start,
+                TargetPlan.effective_from < month_end,
             )
             .with_for_update()
         )
     )
-    if conflicting:
-        raise AmbiguousTargetPlanError(
-            f"目标方案优先级和生效日期冲突: "
-            f"ids={[item.id for item in conflicting]}"
-        )
+    for previous in current_active:
+        previous.status = "RETIRED"
+        previous.retired_at = activated_at
     plan.status = "ACTIVE"
     plan.activated_at = activated_at
+    plan.retired_at = None
     session.flush()
     return plan

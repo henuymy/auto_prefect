@@ -189,7 +189,7 @@ def _engine():
         connection.execute(text("""
             INSERT INTO target_plan
                 (id, plan_name, scenario, period_type, effective_from, status)
-            VALUES (1, '日目标', 'NORMAL', 'DAY', '2026-01-01', 'ACTIVE')
+            VALUES (1, '日目标', 'NORMAL', 'DAY', '2026-06-01', 'ACTIVE')
         """))
         connection.execute(text("""
             INSERT INTO metric_target_value
@@ -219,7 +219,7 @@ def test_target_scenario_is_explicit_instead_of_pk_fallback():
         connection.execute(text("""
             INSERT INTO target_plan
                 (id, plan_name, scenario, period_type, effective_from, status)
-            VALUES (9, 'PK日目标', 'PK', 'DAY', '2026-01-01', 'ACTIVE')
+            VALUES (9, 'PK日目标', 'PK', 'DAY', '2026-06-01', 'ACTIVE')
         """))
         connection.execute(text("""
             INSERT INTO metric_target_value
@@ -687,7 +687,7 @@ def _insert_month_target_and_acc(
         connection.execute(text("""
             INSERT INTO target_plan
                 (id, plan_name, scenario, period_type, effective_from, status)
-            VALUES (2, '月目标', 'NORMAL', 'MONTH', '2026-01-01', 'ACTIVE')
+            VALUES (2, '月目标', 'NORMAL', 'MONTH', '2026-06-01', 'ACTIVE')
         """))
         connection.execute(text("""
             INSERT INTO metric_target_value

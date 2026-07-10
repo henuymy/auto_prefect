@@ -9,12 +9,17 @@ from openpyxl import Workbook, load_workbook
 from services.dashboard_v2_target_admin_service import (
     activate_target_plan,
     build_target_template,
+    clone_target_plan,
     create_target_plan,
     get_target_values,
     import_target_template,
     list_target_plans,
     save_target_values,
 )
+from services.dashboard_v2_target_service import resolve_v2_target_plan
+from models.dashboard_v2 import TargetPlan
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from services.dashboard_v2_query_service import get_current_wide_table
 from tests.test_dashboard_v2_query_service import _engine
 
@@ -47,7 +52,7 @@ def test_create_edit_activate_target_plan_and_current_uses_target():
         plan_name="界面日目标",
         scenario="NORMAL",
         period_type="DAY",
-        effective_from=date(2026, 1, 1),
+        effective_from=date(2026, 6, 15),
         priority=20,
     )
     assert plan["status"] == "DRAFT"
@@ -139,3 +144,55 @@ def test_list_target_plans_returns_value_counts():
     plans = list_target_plans(engine)
     assert plans["plans"]
     assert all("value_count" in plan for plan in plans["plans"])
+
+
+def test_same_month_activation_retires_previous_and_retired_can_reactivate():
+    engine = _engine()
+    first = create_target_plan(
+        engine, plan_name="同月方案", scenario="NORMAL", period_type="DAY",
+        effective_from=date(2026, 7, 1),
+    )
+    save_target_values(engine, plan_id=first["id"], values=[
+        {"node_id": 2, "indicator_id": 1, "target_value": 100},
+    ])
+    activate_target_plan(engine, first["id"])
+
+    second = clone_target_plan(engine, source_plan_id=first["id"])
+    assert second["status"] == "DRAFT"
+    assert second["effective_from"] == "2026-07-01"
+    assert second["value_count"] == 1
+    activate_target_plan(engine, second["id"])
+
+    with Session(engine) as session:
+        statuses = dict(session.execute(select(TargetPlan.id, TargetPlan.status)).all())
+    assert statuses[first["id"]] == "RETIRED"
+    assert statuses[second["id"]] == "ACTIVE"
+
+    activate_target_plan(engine, first["id"])
+    with Session(engine) as session:
+        statuses = dict(session.execute(select(TargetPlan.id, TargetPlan.status)).all())
+    assert statuses[first["id"]] == "ACTIVE"
+    assert statuses[second["id"]] == "RETIRED"
+
+
+def test_active_plan_applies_to_its_whole_month_not_from_its_effective_day():
+    engine = _engine()
+    plan = create_target_plan(
+        engine, plan_name="月内口径", scenario="NORMAL", period_type="DAY",
+        effective_from=date(2026, 7, 15),
+    )
+    save_target_values(engine, plan_id=plan["id"], values=[
+        {"node_id": 2, "indicator_id": 1, "target_value": 100},
+    ])
+    activate_target_plan(engine, plan["id"])
+
+    with Session(engine) as session:
+        assert resolve_v2_target_plan(
+            session, business_date=date(2026, 7, 1), period_type="DAY"
+        ).id == plan["id"]
+        assert resolve_v2_target_plan(
+            session, business_date=date(2026, 7, 31), period_type="DAY"
+        ).id == plan["id"]
+        assert resolve_v2_target_plan(
+            session, business_date=date(2026, 6, 30), period_type="DAY"
+        ).id == 1

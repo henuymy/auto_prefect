@@ -20,6 +20,7 @@ from services.dashboard_metric_store import parse_metric_value
 from services.dashboard_v2_target_service import (
     TargetPlanError,
     activate_v2_target_plan_in_session,
+    clone_v2_target_plan_in_session,
 )
 
 
@@ -165,6 +166,30 @@ def activate_target_plan(engine: Engine, plan_id: int) -> dict:
             )
         )
         return serialize_target_plan(plan, int(count or 0))
+
+
+def clone_target_plan(
+    engine: Engine,
+    *,
+    source_plan_id: int,
+    effective_from: date | None = None,
+) -> dict:
+    """Copy an immutable plan and all values into a new editable DRAFT."""
+    with Session(engine) as session, session.begin():
+        source = session.get(TargetPlan, source_plan_id)
+        if source is None:
+            raise TargetPlanError(f"目标方案不存在: {source_plan_id}")
+        clone = clone_v2_target_plan_in_session(
+            session,
+            source_plan_id=source_plan_id,
+            effective_from=effective_from or source.effective_from,
+        )
+        count = session.scalar(
+            select(func.count(MetricTargetValue.id)).where(
+                MetricTargetValue.plan_id == clone.id
+            )
+        )
+        return serialize_target_plan(clone, int(count or 0))
 
 
 def get_target_values(

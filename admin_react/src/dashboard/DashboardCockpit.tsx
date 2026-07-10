@@ -6,6 +6,7 @@ import {
   ArrowUp,
   BarChart3,
   CalendarClock,
+  Copy,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import {
   activateDashboardTargetPlan,
+  cloneDashboardTargetPlan,
   createDashboardTargetPlan,
   deleteDashboardCustomIndicator,
   dashboardTargetTemplateUrl,
@@ -2951,7 +2953,7 @@ function TargetValueManager({
   const createPlan = async () => {
     const priority = Number(draft.priority || 0);
     if (!draft.plan_name.trim() || !draft.effective_from || !Number.isFinite(priority)) {
-      setMessage("请填写方案名称、生效日期和有效优先级");
+      setMessage("请填写方案名称、所属月份和有效优先级");
       return;
     }
     setBusy(true);
@@ -3008,7 +3010,8 @@ function TargetValueManager({
 
   const activate = async () => {
     if (!selectedPlanId || !selectedPlan) return;
-    if (!window.confirm(`确定激活「${selectedPlan.plan_name}」吗？完成率会按新目标值计算。`)) {
+    const month = selectedPlan.effective_from.slice(0, 7);
+    if (!window.confirm(`确定激活「${selectedPlan.plan_name}」吗？这会替换 ${month} 当前生效的同场景、同周期方案。`)) {
       return;
     }
     setBusy(true);
@@ -3018,6 +3021,22 @@ function TargetValueManager({
       await loadPlans();
       onSaved();
       setMessage("目标方案已激活，驾驶舱数据已刷新");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clonePlan = async () => {
+    if (!selectedPlanId || !selectedPlan) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const cloned = await cloneDashboardTargetPlan(selectedPlanId);
+      await loadPlans();
+      setSelectedPlanId(cloned.id);
+      setMessage("已复制为新草稿，可修改目标值后再激活");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3047,7 +3066,7 @@ function TargetValueManager({
         <header className="custom-metric-head">
           <div>
             <strong>目标值设置</strong>
-            <span>维护目标方案草稿，确认后激活用于完成率计算</span>
+            <span>维护目标方案草稿；日期仅标识所属自然月，确认后激活用于完成率计算</span>
           </div>
           <button type="button" onClick={onClose}>关闭</button>
         </header>
@@ -3096,7 +3115,7 @@ function TargetValueManager({
               </div>
               <div>
                 <label>
-                  <span>生效日期</span>
+                  <span>所属月份（日期）</span>
                   <input
                     type="date"
                     value={draft.effective_from}
@@ -3258,13 +3277,21 @@ function TargetValueManager({
             </div>
             {message && <div className="custom-metric-message">{message}</div>}
             <div className="custom-metric-actions">
+              {selectedPlan?.status === "ACTIVE" && (
+                <button type="button" disabled={busy} onClick={() => void clonePlan()}>
+                  <Copy size={14} />
+                  复制为草稿并编辑
+                </button>
+              )}
               <button type="button" disabled={busy || !editable} onClick={() => void saveValues()}>
                 <Save size={14} />
                 保存草稿
               </button>
-              <button type="button" className="primary" disabled={busy || !editable} onClick={() => void activate()}>
-                激活方案
-              </button>
+              {(selectedPlan?.status === "DRAFT" || selectedPlan?.status === "RETIRED") && (
+                <button type="button" className="primary" disabled={busy} onClick={() => void activate()}>
+                  {selectedPlan.status === "RETIRED" ? "重新激活" : "激活方案"}
+                </button>
+              )}
             </div>
           </main>
         </div>
