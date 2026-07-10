@@ -9,8 +9,8 @@ import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
-from threading import Event, Thread
-from typing import Mapping
+from threading import Event, Lock, Thread
+from typing import Any, Mapping
 
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.engine import Engine
@@ -29,6 +29,71 @@ REQUIRED_ENV_NAMES = (
 
 class DashboardMySQLConfigError(ValueError):
     pass
+
+
+class DashboardMySQLLockLostError(RuntimeError):
+    """Raised when a collector no longer owns its server-side named lock."""
+
+    error_type = "DASHBOARD_MYSQL_LOCK_LOST"
+
+
+class DashboardMySQLLockLease:
+    """Thread-safe ownership handle for one MySQL named lock."""
+
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        lock_name: str,
+        backend: str,
+        connection_id: int | None = None,
+    ) -> None:
+        self._connection = connection
+        self.name = lock_name
+        self.backend = backend
+        self.connection_id = connection_id
+        self._connection_guard = Lock()
+        self._lost = Event()
+        self._loss_type: str | None = None
+
+    def mark_lost(self, reason: object) -> None:
+        self._loss_type = (
+            reason if isinstance(reason, str) else type(reason).__name__
+        )
+        self._lost.set()
+
+    def assert_held(self) -> None:
+        if self.backend not in {"mysql", "mariadb"}:
+            return
+        if self._lost.is_set():
+            raise DashboardMySQLLockLostError(
+                f"MySQL 驾驶舱采集锁已丢失: {self.name} "
+                f"({self._loss_type or 'UNKNOWN'})"
+            )
+        try:
+            with self._connection_guard:
+                owner = self._connection.scalar(
+                    text("SELECT IS_USED_LOCK(:lock_name)"),
+                    {"lock_name": self.name},
+                )
+        except SQLAlchemyError as exc:
+            self.mark_lost(exc)
+            raise DashboardMySQLLockLostError(
+                f"MySQL 驾驶舱采集锁校验失败: {self.name} "
+                f"({type(exc).__name__})"
+            ) from exc
+        if owner != self.connection_id:
+            self.mark_lost("OWNER_MISMATCH")
+            raise DashboardMySQLLockLostError(
+                f"MySQL 驾驶舱采集锁所有权已丢失: {self.name}"
+            )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "backend": self.backend,
+            "connection_id": self.connection_id,
+        }
 
 
 @dataclass(frozen=True)
@@ -174,7 +239,11 @@ def dashboard_mysql_lock(
     ):
         raise ValueError("MySQL 锁心跳间隔必须小于空闲断开时间")
     if engine.dialect.name not in {"mysql", "mariadb"}:
-        yield {"name": normalized_name, "backend": engine.dialect.name}
+        yield DashboardMySQLLockLease(
+            connection=None,
+            lock_name=normalized_name,
+            backend=engine.dialect.name,
+        )
         return
 
     with engine.connect() as connection:
@@ -190,14 +259,23 @@ def dashboard_mysql_lock(
             raise TimeoutError(
                 f"等待 MySQL 驾驶舱采集锁超时: {normalized_name}"
             )
+        connection_id = connection.scalar(text("SELECT CONNECTION_ID()"))
+        if connection_id is None:
+            raise RuntimeError("MySQL 未返回命名锁连接 ID")
+        lease = DashboardMySQLLockLease(
+            connection=connection,
+            lock_name=normalized_name,
+            backend=engine.dialect.name,
+            connection_id=int(connection_id),
+        )
         heartbeat_stop = Event()
         heartbeat_thread: Thread | None = None
         if heartbeat_seconds > 0:
             def keep_lock_connection_alive() -> None:
                 while not heartbeat_stop.wait(heartbeat_seconds):
                     try:
-                        connection.exec_driver_sql("SELECT 1")
-                    except SQLAlchemyError as exc:
+                        lease.assert_held()
+                    except DashboardMySQLLockLostError as exc:
                         logger.warning(
                             "MySQL 驾驶舱采集锁心跳失败: %s (%s)",
                             normalized_name,
@@ -212,16 +290,17 @@ def dashboard_mysql_lock(
             )
             heartbeat_thread.start()
         try:
-            yield {"name": normalized_name, "backend": engine.dialect.name}
+            yield lease
         finally:
             heartbeat_stop.set()
             if heartbeat_thread is not None:
                 heartbeat_thread.join(timeout=max(1, heartbeat_seconds + 1))
             try:
-                released = connection.scalar(
-                    text("SELECT RELEASE_LOCK(:lock_name)"),
-                    {"lock_name": normalized_name},
-                )
+                with lease._connection_guard:
+                    released = connection.scalar(
+                        text("SELECT RELEASE_LOCK(:lock_name)"),
+                        {"lock_name": normalized_name},
+                    )
                 if released != 1:
                     logger.warning(
                         "MySQL 驾驶舱采集锁释放结果异常: %s", normalized_name

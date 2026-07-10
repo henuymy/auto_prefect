@@ -113,7 +113,11 @@ def test_mysql_partition_maintenance_executes_against_real_server(mysql_engine):
 
 
 def test_mysql_named_lock_blocks_second_connection(mysql_engine):
-    with dashboard_mysql_lock(mysql_engine, lock_name="auto_notify_ci_lock"):
+    with dashboard_mysql_lock(
+        mysql_engine, lock_name="auto_notify_ci_lock"
+    ) as lease:
+        lease.assert_held()
+        assert lease.connection_id is not None
         with mysql_engine.connect() as second:
             acquired = second.scalar(
                 text("SELECT GET_LOCK('auto_notify_ci_lock', 0)")

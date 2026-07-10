@@ -139,7 +139,7 @@ def test_dashboard_mysql_lock_acquires_and_releases_named_lock():
     calls = []
 
     class FakeConnection:
-        results = iter([1, 1])
+        results = iter([1, 41, 1])
 
         def __enter__(self):
             return self
@@ -147,7 +147,7 @@ def test_dashboard_mysql_lock_acquires_and_releases_named_lock():
         def __exit__(self, *_args):
             return None
 
-        def scalar(self, statement, params):
+        def scalar(self, statement, params=None):
             calls.append((str(statement), params))
             return next(self.results)
 
@@ -164,12 +164,17 @@ def test_dashboard_mysql_lock_acquires_and_releases_named_lock():
         FakeEngine(), lock_name="dashboard-test", wait_seconds=3,
         heartbeat_seconds=0, idle_timeout_seconds=300,
     ) as lock:
-        assert lock == {"name": "dashboard-test", "backend": "mysql"}
+        assert lock.as_dict() == {
+            "name": "dashboard-test",
+            "backend": "mysql",
+            "connection_id": 41,
+        }
 
     assert "wait_timeout = 300" in calls[0][0]
     assert "GET_LOCK" in calls[1][0]
     assert calls[1][1]["wait_seconds"] == 3
-    assert "RELEASE_LOCK" in calls[2][0]
+    assert "CONNECTION_ID" in calls[2][0]
+    assert "RELEASE_LOCK" in calls[3][0]
 
 
 def test_dashboard_mysql_lock_times_out_without_entering_body():
@@ -205,9 +210,11 @@ def test_dashboard_mysql_lock_release_error_does_not_fail_completed_body():
         def __exit__(self, *_args):
             return None
 
-        def scalar(self, statement, _params):
+        def scalar(self, statement, _params=None):
             if "GET_LOCK" in str(statement):
                 return 1
+            if "CONNECTION_ID" in str(statement):
+                return 41
             raise SQLAlchemyError("connection lost")
 
         def exec_driver_sql(self, _statement):
@@ -237,3 +244,99 @@ def test_dashboard_mysql_lock_rejects_heartbeat_not_below_idle_timeout():
             FakeEngine(), heartbeat_seconds=60, idle_timeout_seconds=60
         ):
             raise AssertionError("lock body must not run")
+
+
+class FakeLockConnection:
+    def __init__(
+        self,
+        *,
+        get_lock=1,
+        connection_id=41,
+        owners=(),
+        release=1,
+        owner_error=None,
+    ):
+        self.get_lock = get_lock
+        self.connection_id = connection_id
+        self.owners = iter(owners)
+        self.release = release
+        self.owner_error = owner_error
+        self.calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def scalar(self, statement, params=None):
+        sql = str(statement)
+        self.calls.append((sql, params))
+        if "GET_LOCK" in sql:
+            return self.get_lock
+        if "CONNECTION_ID" in sql:
+            return self.connection_id
+        if "IS_USED_LOCK" in sql:
+            if self.owner_error is not None:
+                raise self.owner_error
+            return next(self.owners, self.connection_id)
+        if "RELEASE_LOCK" in sql:
+            return self.release
+        raise AssertionError(f"unexpected scalar SQL: {sql}")
+
+    def exec_driver_sql(self, statement):
+        self.calls.append((statement, None))
+
+
+class FakeLockEngine:
+    dialect = type("Dialect", (), {"name": "mysql"})()
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def connect(self):
+        return self.connection
+
+
+def test_dashboard_mysql_lock_lease_rejects_lost_owner():
+    connection = FakeLockConnection(owners=[99])
+
+    with dashboard_mysql.dashboard_mysql_lock(
+        FakeLockEngine(connection), heartbeat_seconds=0
+    ) as lease:
+        with pytest.raises(
+            dashboard_mysql.DashboardMySQLLockLostError,
+            match="所有权已丢失",
+        ):
+            lease.assert_held()
+
+
+def test_dashboard_mysql_lock_lease_wraps_owner_check_error():
+    connection = FakeLockConnection(owner_error=SQLAlchemyError("connection lost"))
+
+    with dashboard_mysql.dashboard_mysql_lock(
+        FakeLockEngine(connection), heartbeat_seconds=0
+    ) as lease:
+        with pytest.raises(
+            dashboard_mysql.DashboardMySQLLockLostError,
+            match="校验失败",
+        ) as exc_info:
+            lease.assert_held()
+
+    assert isinstance(exc_info.value.__cause__, SQLAlchemyError)
+
+
+def test_dashboard_mysql_lock_lease_exposes_serializable_summary():
+    connection = FakeLockConnection(owners=[41])
+
+    with dashboard_mysql.dashboard_mysql_lock(
+        FakeLockEngine(connection),
+        lock_name="dashboard-test",
+        heartbeat_seconds=0,
+    ) as lease:
+        lease.assert_held()
+        assert lease.as_dict() == {
+            "name": "dashboard-test",
+            "backend": "mysql",
+            "connection_id": 41,
+        }
