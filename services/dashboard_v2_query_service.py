@@ -964,6 +964,34 @@ def get_history_options(
     return {"dates": dates, "date_count": len(dates)}
 
 
+def get_acc_options(
+    engine: Engine, *, page: int = 1, page_size: int = 50
+) -> dict[str, Any]:
+    with Session(engine) as session:
+        total = session.scalar(
+            select(func.count(func.distinct(MetricAccV2.stat_date))).where(
+                MetricAccV2.period_type == "DAY_ACC"
+            )
+        ) or 0
+        dates = list(
+            session.scalars(
+                select(MetricAccV2.stat_date)
+                .where(MetricAccV2.period_type == "DAY_ACC")
+                .distinct()
+                .order_by(MetricAccV2.stat_date.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+    return {
+        "dates": [_iso(value) for value in dates],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "has_more": page * page_size < total,
+    }
+
+
 def get_historical_run_id(engine: Engine, as_of: datetime) -> int | None:
     with Session(engine) as session:
         run = _historical_run(session, as_of)
@@ -1712,7 +1740,7 @@ def get_drill_down(
 
 
 __all__ = [
-    "get_acc_wide_table", "get_current_wide_table", "get_current_with_changes",
+    "get_acc_options", "get_acc_wide_table", "get_current_wide_table", "get_current_with_changes",
     "get_dashboard_matrix_page", "get_dashboard_overview", "get_drill_down",
     "get_historical_matrix_page", "get_historical_run_id",
     "get_historical_with_changes", "get_history_options", "get_history_range",

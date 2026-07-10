@@ -74,3 +74,14 @@ def test_parse_indicator_codes_deduplicates_and_limits():
     assert parsed is not None
     assert len(parsed) == 20
     assert parsed[0] == "metric_1"
+
+
+def test_acc_options_route_forwards_pagination(monkeypatch):
+    dashboard._dashboard_cache.clear()
+    monkeypatch.setattr(dashboard, "get_dashboard_engine", FakeEngine)
+    monkeypatch.setattr(dashboard, "get_acc_options", lambda engine, **kw: kw)
+
+    assert dashboard.dashboard_acc_options(page=2, page_size=50) == {
+        "page": 2,
+        "page_size": 50,
+    }

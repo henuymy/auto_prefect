@@ -25,6 +25,7 @@ from services.dashboard_v2_query_service import (
     get_dashboard_overview,
     get_dashboard_matrix_page,
     get_drill_down,
+    get_acc_options,
     get_acc_wide_table,
     get_current_wide_table,
     get_current_with_changes,
@@ -597,6 +598,25 @@ def dashboard_history_options(indicator_codes: str | None = Query(None)):
         raise HTTPException(
             status_code=503,
             detail=f"历史可选时间查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/acc/options")
+def dashboard_acc_options(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=50),
+):
+    engine = get_dashboard_engine()
+    try:
+        return _cached_response(
+            engine,
+            ("acc-options", page, page_size),
+            lambda: get_acc_options(engine, page=page, page_size=page_size),
+        )
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"累计可选日期查询失败: {type(exc).__name__}",
         ) from exc
 
 

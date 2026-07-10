@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, text
 from services import dashboard_v2_query_service
 
 from services.dashboard_v2_query_service import (
+    get_acc_options,
     get_acc_wide_table,
     get_current_with_changes,
     get_dashboard_matrix_page,
@@ -630,6 +631,37 @@ def test_acc_uses_latest_stat_date_through_yesterday_and_attaches_targets(monkey
     assert result["through_date"] == "2026-06-30"
     assert result["stat_date"] == "2026-06-29"
     assert result["is_fallback"] is True
+
+
+def test_acc_options_returns_distinct_daily_dates_in_descending_pages():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO metric_acc
+                (id, period_type, stat_date, node_id, indicator_id,
+                 collection_run_id, metric_value, collected_at)
+            VALUES
+                (1, 'DAY_ACC', '2026-06-30', 2, 1, 1, 10, '2026-06-30 08:00:00'),
+                (2, 'DAY_ACC', '2026-06-30', 3, 1, 1, 20, '2026-06-30 08:00:00'),
+                (3, 'DAY_ACC', '2026-06-29', 2, 1, 1, 10, '2026-06-29 08:00:00'),
+                (4, 'DAY_ACC', '2026-06-28', 2, 1, 1, 10, '2026-06-28 08:00:00'),
+                (5, 'MONTH', '2026-06-30', 2, 1, 1, 10, '2026-06-30 08:00:00')
+        """))
+
+    assert get_acc_options(engine, page=1, page_size=2) == {
+        "dates": ["2026-06-30", "2026-06-29"],
+        "page": 1,
+        "page_size": 2,
+        "total": 3,
+        "has_more": True,
+    }
+    assert get_acc_options(engine, page=2, page_size=2) == {
+        "dates": ["2026-06-28"],
+        "page": 2,
+        "page_size": 2,
+        "total": 3,
+        "has_more": False,
+    }
 
 
 def test_acc_returns_empty_rows_when_no_data_exists_before_yesterday(monkeypatch):
