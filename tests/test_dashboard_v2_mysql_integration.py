@@ -413,7 +413,26 @@ def test_v2_partition_maintenance_creates_future_window_idempotently(
     assert first["partition_create_count"] == 38
     assert second["partition_create_count"] == 0
     assert {"p20260623", "p20260730", "p_future"} <= partitions
-    assert check_dashboard_v2_schema()["ok"] is True
+    assert check_dashboard_v2_schema(now=datetime(2026, 6, 30, 12))["ok"] is True
+
+
+def test_v2_readiness_rejects_missing_critical_index(v2_mysql_engine):
+    engine, _ = v2_mysql_engine
+    index_name = "ix_metric_current_stat_date_indicator"
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"DROP INDEX `{index_name}` ON `metric_current`"
+        )
+    try:
+        result = check_dashboard_v2_schema(now=datetime(2026, 6, 30, 12))
+        assert result["ok"] is False
+        assert f"metric_current.{index_name}" in result["missing_indexes"]
+    finally:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                f"CREATE INDEX `{index_name}` "
+                "ON `metric_current` (`stat_date`, `indicator_id`)"
+            )
 
 
 def test_v2_baseline_can_downgrade_and_upgrade(v2_mysql_engine):
