@@ -8,6 +8,7 @@ from services.session_manager import (
     format_probe_validation_error,
     lock_is_stale,
     prepare_session,
+    prepare_session_from_config,
     validate_cookie_dump,
     validate_stage_probes,
 )
@@ -94,6 +95,35 @@ def test_prepare_session_reuses_existing_cookie_dump():
         )
 
         assert result["status"] == "reused"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_prepare_session_from_config_keeps_project_base_dir():
+    work_dir = make_work_dir()
+    try:
+        config_path = work_dir / "config" / "modules" / "autologin.json"
+        cookie_dump_path = work_dir / "runtime" / "cookies" / "cookie_dump.json"
+        write_json(
+            config_path,
+            {
+                "cookie_dump_path": "runtime/cookies/cookie_dump.json",
+                "required_stages": ["report_analysis"],
+                "allow_login": False,
+            },
+        )
+        write_json(
+            cookie_dump_path,
+            {"stages": [{"stage": "report_analysis", "cookies": [{"name": "sid", "value": "x"}]}]},
+        )
+
+        result = prepare_session_from_config(
+            "config/modules/autologin.json",
+            base_dir=work_dir,
+        )
+
+        assert result["status"] == "reused"
+        assert result["cookie_dump_path"] == str(cookie_dump_path.resolve())
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 

@@ -602,5 +602,8 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
 
 def prepare_session_from_config(config_path, base_dir=PROJECT_DIR, force_refresh=False):
     config_path = resolve_path(config_path, base_dir)
-    config, resolved = load_json(config_path)
-    return prepare_session(config, base_dir=resolved.parent, force_refresh=force_refresh)
+    config, _ = load_json(config_path)
+    # The bundled module configs intentionally express runtime paths from the
+    # project root, not from config/modules. Preserve the caller's base_dir so
+    # direct helper use resolves Cookie files and login commands consistently.
+    return prepare_session(config, base_dir=base_dir, force_refresh=force_refresh)

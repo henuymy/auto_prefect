@@ -19,7 +19,7 @@
     "code_regex": "(?<!\\d)(\\d{4,8})(?!\\d)",
     "preferred_code_lengths": [6],
     "timeout_seconds": 45,
-    "poll_interval_seconds": 3,
+    "poll_interval_seconds": 0.5,
     "max_request_count": 3,
     "retry_interval_seconds": 10,
     "message_ttl_seconds": 600,
@@ -29,10 +29,11 @@
     "delete_after_success": true
   },
   "usm_cookie_apps": [
-    {"stage": "report_analysis", "name": "报表分析系统"},
+    {"stage": "report_analysis", "name": "报表分析系统", "url_contains": "/bicpreport/"},
     {
       "stage": "smart_ops",
       "name": "智慧运营平台",
+      "url_contains": "/zhyypt/",
       "storage_ready": {
         "type": "session_storage",
         "path": "zhyyptInfo.accessToken",
@@ -44,28 +45,37 @@
       "name": "地市作战平台",
       "source_stage": "usm_console",
       "icon_src_contains": "dszzIcon",
+      "url_contains": "/dszzCombat/",
       "storage_ready": {
         "type": "session_storage",
         "path": "uapToken",
         "timeout_seconds": 45
       }
     },
-    {"stage": "data_market", "name": "数据超市"}
+    {"stage": "data_market", "name": "数据超市", "url_contains": "/BICP_HA/"}
   ],
   "cookie_dump": {
     "enabled": true,
     "output_file": "runtime/cookies/cookie_dump.json"
   },
+  "login_waits": {
+    "existing_session_dialog_seconds": 1.5
+  },
+  "session_validation": {
+    "enabled": true,
+    "config_path": "config/modules/autologin.json",
+    "required_stages": ["report_analysis", "smart_ops", "city_ops", "data_market"]
+  },
   "browser": {
-    "keep_open_after_login": true,
+    "headless": true,
     "session_state_path": "runtime/browser_session/session.json",
     "user_data_dir": "runtime/browser_session/edge_profile_auto_login",
     "window_width": 1920,
     "window_height": 1080,
     "close_existing_before_start": true,
-    "clear_profile_before_start": true,
+    "clear_profile_before_start": false,
     "close_wait_seconds": 10,
-    "implicit_wait": 3,
+    "implicit_wait": 0,
     "page_load_strategy": "none",
     "page_load_timeout_seconds": 60,
     "script_timeout_seconds": 15,

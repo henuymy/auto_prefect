@@ -15,6 +15,7 @@ from selenium.common.exceptions import TimeoutException
 from services.cookie_recorder import CookieRecorder, resolve_cookie_dump_path
 from services.otp_service import delete_message, prepare_wait_context, wait_for_otp
 from services.browser_session import browser_config, close_browser_session, record_browser_session
+from services.session_manager import format_probe_validation_error, validate_existing_session
 from utils.config_loader import load_json_with_local_override
 
 
@@ -291,7 +292,9 @@ class AutoLogin:
                 print(f"[INFO] 启动前已删除自动登录浏览器 profile: {browser['user_data_dir']}")
             browser["user_data_dir"].mkdir(parents=True, exist_ok=True)
             options.add_argument(f"--user-data-dir={browser['user_data_dir']}")
-        if browser["keep_open_after_login"]:
+        if browser["headless"]:
+            options.add_argument("--headless=new")
+        elif browser["keep_open_after_login"]:
             options.add_experimental_option("detach", True)
         options.add_argument('--ignore-certificate-errors')
         options.add_argument('--allow-insecure-localhost')
@@ -302,15 +305,23 @@ class AutoLogin:
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
-        options.add_argument('--window-size=1920,1080')
+        window_width = int(browser_options.get("window_width", 1920) or 1920)
+        window_height = int(browser_options.get("window_height", 1080) or 1080)
+        if window_width <= 0 or window_height <= 0:
+            raise ValueError("浏览器窗口宽高必须大于 0")
+        options.add_argument(f"--window-size={window_width},{window_height}")
         self.driver = webdriver.Edge(options=options)
         webdriver_timeout = int(browser_options.get("webdriver_timeout_seconds", 30) or 30)
         if hasattr(self.driver.command_executor, "set_timeout"):
             self.driver.command_executor.set_timeout(webdriver_timeout)
         self.driver.set_page_load_timeout(int(browser_options.get("page_load_timeout_seconds", 60) or 60))
         self.driver.set_script_timeout(int(browser_options.get("script_timeout_seconds", 15) or 15))
-        self.driver.implicitly_wait(int(browser_options.get("implicit_wait", 3) or 3))
-        print("[INFO] Edge浏览器已启动（有头模式，已忽略SSL证书错误）")
+        implicit_wait = float(browser_options.get("implicit_wait", 0) or 0)
+        if implicit_wait < 0:
+            raise ValueError("浏览器 implicit_wait 不能小于 0")
+        self.driver.implicitly_wait(implicit_wait)
+        browser_mode = "无头模式" if browser["headless"] else "有头模式"
+        print(f"[INFO] Edge浏览器已启动（{browser_mode}，已忽略SSL证书错误）")
 
     def keep_open_after_login(self):
         return browser_config(self.config)["keep_open_after_login"]
@@ -416,16 +427,23 @@ class AutoLogin:
         )
 
     def confirm_existing_session_if_needed(self):
+        def visible_dialog(driver):
+            dialogs = driver.find_elements(By.ID, "jMsgboxBox")
+            return next((item for item in dialogs if item.is_displayed()), False)
+
         try:
-            confirm_dialog = WebDriverWait(self.driver, 5).until(
-                EC.visibility_of_element_located((By.ID, "jMsgboxBox"))
+            confirm_dialog = visible_dialog(self.driver) or WebDriverWait(
+                self.driver,
+                float(self.config.get("login_waits", {}).get("existing_session_dialog_seconds", 1.5)),
+                poll_frequency=0.2,
+            ).until(
+                visible_dialog
             )
             print("[INFO] 检测到登录确认弹窗，自动点击「确认」...")
             confirm_btn = confirm_dialog.find_element(
                 By.XPATH, ".//input[@class='msgbox_button' and contains(@value,'确')]"
             )
             confirm_btn.click()
-            time.sleep(1)
         except TimeoutException:
             pass
         except Exception as e:
@@ -434,7 +452,6 @@ class AutoLogin:
     def trigger_first_login(self):
         print("[INFO] 第一次点击登录按钮")
         self.wait_and_click((By.ID, "login_btn"), timeout=30)
-        time.sleep(1)
         self.confirm_existing_session_if_needed()
 
     def submit_sms_code(self, sms_code):
@@ -669,13 +686,13 @@ class AutoLogin:
         usm_host = self.get_usm_host()
         self.driver.switch_to.default_content()
         try:
-            WebDriverWait(self.driver, 30).until(lambda d: usm_host in d.current_url)
+            WebDriverWait(self.driver, 30, poll_frequency=0.1).until(lambda d: usm_host in d.current_url)
         except TimeoutException as exc:
             raise RuntimeError(f"应用登录后未进入 USM，当前URL={self.driver.current_url}") from exc
         self.usm_window_handle = self.driver.current_window_handle
         self.usm_entry_url = self.driver.current_url
         try:
-            wait = WebDriverWait(self.driver, 60)
+            wait = WebDriverWait(self.driver, 60, poll_frequency=0.1)
             wait.until(EC.presence_of_element_located((By.ID, "iFrame1")))
             self.driver.switch_to.frame("iFrame1")
             try:
@@ -686,9 +703,15 @@ class AutoLogin:
             raise RuntimeError(f"访问 USM 控制台失败: {e}") from e
 
     def enter_usm_app(self, app_config):
+        handle = self.launch_usm_app(app_config)
+        self.driver.switch_to.window(handle)
+        self.wait_for_app_navigation(app_config)
+        return handle
+
+    def launch_usm_app(self, app_config):
         app_name = app_config["name"]
         self._switch_to_usm_app_list()
-        app_div = WebDriverWait(self.driver, 30).until(
+        app_div = WebDriverWait(self.driver, 30, poll_frequency=0.1).until(
             EC.visibility_of_element_located((By.XPATH,
                 f"//div[contains(@class,'customizedList') and contains(@class,'module')][contains(., '{app_name}')]"
             ))
@@ -696,18 +719,20 @@ class AutoLogin:
         old_handles = set(self.driver.window_handles)
         self.driver.execute_script("arguments[0].click();", app_div)
         try:
-            WebDriverWait(self.driver, 15).until(lambda d: len(set(d.window_handles) - old_handles) > 0)
+            WebDriverWait(self.driver, 15, poll_frequency=0.1).until(lambda d: len(set(d.window_handles) - old_handles) > 0)
         except TimeoutException as exc:
             raise RuntimeError(f"点击 {app_name} 后未打开独立页面") from exc
         new_handle = list(set(self.driver.window_handles) - old_handles)[-1]
         self.driver.switch_to.window(new_handle)
-        try:
-            WebDriverWait(self.driver, 30).until(lambda d: d.execute_script("return document.readyState") == "complete")
-        except TimeoutException:
-            pass
         return self.driver.current_window_handle
 
     def enter_usm_app_from_source(self, app_config):
+        handle = self.launch_usm_app_from_source(app_config)
+        self.driver.switch_to.window(handle)
+        self.wait_for_app_navigation(app_config)
+        return handle
+
+    def launch_usm_app_from_source(self, app_config):
         app_name = app_config["name"]
         source_stage = app_config.get("source_stage")
         source_handle = self.usm_window_handle if source_stage == "usm_console" else self.opened_app_handles.get(source_stage)
@@ -735,7 +760,7 @@ class AutoLogin:
             (By.XPATH, icon_xpath),
         ]:
             try:
-                element = WebDriverWait(self.driver, 30).until(EC.element_to_be_clickable(locator))
+                element = WebDriverWait(self.driver, 30, poll_frequency=0.1).until(EC.element_to_be_clickable(locator))
                 break
             except TimeoutException:
                 continue
@@ -747,17 +772,33 @@ class AutoLogin:
         self.driver.execute_script("arguments[0].click();", element)
 
         try:
-            WebDriverWait(self.driver, 10).until(lambda d: len(set(d.window_handles) - old_handles) > 0)
+            WebDriverWait(self.driver, 10, poll_frequency=0.1).until(lambda d: len(set(d.window_handles) - old_handles) > 0)
             new_handle = list(set(self.driver.window_handles) - old_handles)[-1]
             self.driver.switch_to.window(new_handle)
         except TimeoutException:
             self.driver.switch_to.window(source_handle)
 
-        try:
-            WebDriverWait(self.driver, 30).until(lambda d: d.execute_script("return document.readyState") == "complete")
-        except TimeoutException:
-            pass
         return self.driver.current_window_handle
+
+    def wait_for_app_navigation(self, app_config):
+        expected = str(app_config.get("url_contains") or "").strip()
+        timeout_seconds = float(app_config.get("navigation_timeout_seconds", 30) or 30)
+        try:
+            if expected:
+                WebDriverWait(self.driver, timeout_seconds, poll_frequency=0.1).until(
+                    lambda d: expected in (d.current_url or "")
+                )
+            else:
+                WebDriverWait(self.driver, timeout_seconds, poll_frequency=0.1).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
+                )
+        except TimeoutException as exc:
+            if expected:
+                raise RuntimeError(
+                    f"{app_config.get('name') or app_config.get('stage')} 未进入目标页面 "
+                    f"{expected!r}，当前URL={self.driver.current_url}"
+                ) from exc
+            raise
 
     def wait_for_storage_ready(self, app_config):
         storage_ready = app_config.get("storage_ready")
@@ -786,7 +827,7 @@ class AutoLogin:
             return value || "";
         """
         try:
-            WebDriverWait(self.driver, timeout_seconds).until(
+            WebDriverWait(self.driver, timeout_seconds, poll_frequency=0.1).until(
                 lambda d: d.execute_script(script, storage_type, storage_path)
             )
             print(f"[INFO] Storage 已就绪: {storage_type}.{storage_path}")
@@ -801,15 +842,20 @@ class AutoLogin:
             raise RuntimeError(f"当前不在 USM，当前URL={self.driver.current_url}")
         self.driver.switch_to.default_content()
         self.driver.switch_to.frame(
-            WebDriverWait(self.driver, 30).until(EC.presence_of_element_located((By.ID, "iFrame1")))
+            WebDriverWait(self.driver, 30, poll_frequency=0.1).until(EC.presence_of_element_located((By.ID, "iFrame1")))
         )
 
     def capture_usm_apps_cookies(self):
-        for app_config in self.get_usm_cookie_apps():
+        app_configs = self.get_usm_cookie_apps()
+        for app_config in app_configs:
             stage = app_config.get("stage")
             app_name = app_config.get("name")
             if not stage or not app_name:
                 raise ValueError("usm_cookie_apps 每一项都必须包含 stage 和 name")
+
+        for app_config in app_configs:
+            stage = app_config["stage"]
+            app_name = app_config["name"]
             print(f"[INFO] 准备捕获 USM 应用 Cookie: {stage} / {app_name}")
             if app_config.get("source_stage"):
                 self.opened_app_handles[stage] = self.enter_usm_app_from_source(app_config)
@@ -819,6 +865,37 @@ class AutoLogin:
             self.capture_cookies(stage)
             if self.usm_window_handle and self.usm_window_handle in self.driver.window_handles:
                 self.driver.switch_to.window(self.usm_window_handle)
+
+    def verify_captured_session(self):
+        validation_config = self.config.get("session_validation") or {}
+        if not validation_config.get("enabled", False):
+            return None
+        if not self.cookie_recorder:
+            raise RuntimeError("已启用 session 探活，但 Cookie 导出未启用")
+
+        source_path = validation_config.get("config_path", "config/modules/autologin.json")
+        source_path = Path(source_path)
+        if not source_path.is_absolute():
+            source_path = PROJECT_DIR / source_path
+        session_config, _ = load_json_with_local_override(source_path)
+        required_stages = validation_config.get("required_stages") or session_config.get("required_stages") or []
+        cookie_dump = json.loads(self.cookie_recorder.output_path.read_text(encoding="utf-8"))
+        validation, probe_validation = validate_existing_session(
+            cookie_dump,
+            required_stages,
+            session_config.get("stage_probes") or {},
+            min_ttl_seconds=int(validation_config.get("min_ttl_seconds", 0) or 0),
+        )
+        if not validation.get("valid"):
+            raise RuntimeError(f"登录后 Cookie 静态校验失败: {validation}")
+        if not probe_validation or not probe_validation.get("valid"):
+            raise RuntimeError(
+                "登录后 session 探活失败: "
+                f"{format_probe_validation_error(probe_validation)}"
+            )
+        checked = ", ".join(required_stages)
+        print(f"[INFO] Session 探活通过: {checked}")
+        return validation
 
     def login_and_capture_cookies(self):
         if not self.driver:
@@ -830,6 +907,7 @@ class AutoLogin:
         self.access_usm_console()
         self.capture_cookies("usm_console")
         self.capture_usm_apps_cookies()
+        self.verify_captured_session()
         return {
             "cookie_dump": str(self.cookie_recorder.output_path) if self.cookie_recorder else None,
             "opened_app_handles": dict(self.opened_app_handles),

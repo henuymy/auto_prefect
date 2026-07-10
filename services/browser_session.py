@@ -24,8 +24,14 @@ def resolve_path(value, base_dir=PROJECT_DIR):
 
 def browser_config(config: dict, base_dir=PROJECT_DIR):
     browser = config.get("browser") or {}
+    headless = bool(browser.get("headless", False))
     return {
-        "keep_open_after_login": bool(browser.get("keep_open_after_login", False)),
+        "headless": headless,
+        # The login mode is controlled by one switch. Legacy local configs may
+        # still contain keep_open_after_login; intentionally ignore it so
+        # headless=true is always ephemeral and headless=false retains the
+        # original visible browser workflow.
+        "keep_open_after_login": not headless,
         "session_state_path": resolve_path(browser.get("session_state_path"), base_dir) or DEFAULT_SESSION_STATE_PATH,
         "user_data_dir": resolve_path(browser.get("user_data_dir"), base_dir) or DEFAULT_USER_DATA_DIR,
     }

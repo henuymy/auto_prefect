@@ -212,7 +212,7 @@ def wait_for_otp(
 ) -> OtpResult:
     """Poll Gotify until a matching OTP message appears."""
     timeout_seconds = int(otp_config.get("timeout_seconds", 180))
-    poll_interval = int(otp_config.get("poll_interval_seconds", 3))
+    poll_interval = max(0.2, float(otp_config.get("poll_interval_seconds", 3)))
     started_at = time.monotonic()
     last_error = None
     last_messages = []
