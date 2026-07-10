@@ -19,7 +19,14 @@ def test_cumulative_mode_queries_selected_daily_accumulation_date():
     assert 'const [cumulativeInput, setCumulativeInput] = useState("");' in source
     assert '"DAY_ACC",\n            cumulativeAsOf || undefined,' in source
     assert 'cumulativeValue={cumulativeInput}' in source
-    assert 'asOf: dataTimeMode === "history" ? historyAsOf : cumulativeAsOf || null,' in source
+    cumulative_only_cache_as_of = '''asOf: dataTimeMode === "history"
+      ? historyAsOf
+      : dataTimeMode === "cumulative"
+        ? cumulativeAsOf || null
+        : null,'''
+    normalized_source = "\n".join(line.lstrip() for line in source.splitlines())
+    normalized_contract = "\n".join(line.lstrip() for line in cumulative_only_cache_as_of.splitlines())
+    assert normalized_source.count(normalized_contract) == 2
 
 
 def test_cumulative_mode_exposes_a_daily_accumulation_date_query_control():

@@ -1138,7 +1138,11 @@ export function DashboardCockpit() {
     targetScenario,
     dayLevelAllMode,
     monthLevelAllMode,
-    asOf: dataTimeMode === "history" ? historyAsOf : cumulativeAsOf || null,
+    asOf: dataTimeMode === "history"
+      ? historyAsOf
+      : dataTimeMode === "cumulative"
+        ? cumulativeAsOf || null
+        : null,
   });
   const selectableIndicators = useMemo(
     () => (data?.indicatorCatalog || [])
@@ -1190,7 +1194,11 @@ export function DashboardCockpit() {
       targetScenario,
       dayLevelAllMode: nextScopeState.dayLevelAllMode,
       monthLevelAllMode: nextScopeState.monthLevelAllMode,
-      asOf: dataTimeMode === "history" ? historyAsOf : cumulativeAsOf || null,
+      asOf: dataTimeMode === "history"
+        ? historyAsOf
+        : dataTimeMode === "cumulative"
+          ? cumulativeAsOf || null
+          : null,
     });
     const cached = queryCacheRef.current.get(nextCacheKey);
     const cacheFresh = cached && Date.now() - cached.cachedAt <= DASHBOARD_CACHE_TTL_MS;
