@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { CreateTargetPlanPayload, DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetValuesResponse, DashboardValueMode, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
+import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetValuesResponse, DashboardValueMode, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -265,6 +265,16 @@ export async function getDashboardHistoryOptions(indicatorCodes?: string[]) {
   const query = params.toString();
   return request<DashboardHistoryOptionsResponse>(
     `/api/dashboard/history/options${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function getDashboardAccOptions(page = 1, pageSize = 50) {
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  return request<DashboardAccOptionsResponse>(
+    `/api/dashboard/acc/options?${params.toString()}`,
   );
 }
 

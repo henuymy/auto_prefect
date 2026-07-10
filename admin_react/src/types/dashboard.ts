@@ -216,6 +216,14 @@ export type DashboardHistoryOptionsResponse = {
   date_count: number;
 };
 
+export type DashboardAccOptionsResponse = {
+  dates: string[];
+  page: number;
+  page_size: number;
+  total: number;
+  has_more: boolean;
+};
+
 export type DashboardHistoryCoverage = {
   levels: Partial<Record<"BRANCH" | "GRID" | "CHANNEL_MANAGER" | "CHANNEL", {
     expected_nodes: number;

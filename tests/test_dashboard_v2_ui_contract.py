@@ -29,8 +29,11 @@ def test_cumulative_mode_queries_selected_daily_accumulation_date():
     assert normalized_source.count(normalized_contract) == 2
 
 
-def test_cumulative_mode_exposes_a_daily_accumulation_date_query_control():
+def test_cumulative_mode_uses_lazy_available_date_selector():
     source = COCKPIT.read_text(encoding="utf-8")
+    assert "getDashboardAccOptions" in source
+    assert "cumulativeDateOptions" in source
     assert 'aria-label="累计日期"' in source
-    assert 'type="date"' in source
+    assert "onCumulativeLoadMore" in source
+    assert "加载更多日期" in source
     assert 'onCumulativeQuery' in source

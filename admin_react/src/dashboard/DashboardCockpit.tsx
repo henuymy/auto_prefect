@@ -34,6 +34,7 @@ import {
   getDashboardIndicators,
   getDashboardHistoryMatrix,
   getDashboardHistoryOptions,
+  getDashboardAccOptions,
   getDashboardHistoryRange,
   getDashboardHistoryWithChanges,
   getDashboardLatestRun,
@@ -60,6 +61,7 @@ import type {
   DashboardHistoryOptionsResponse,
   DashboardMatrixResponse,
   DashboardAccumulationMeta,
+  DashboardAccOptionsResponse,
   DashboardTargetPeriod,
   DashboardTargetPlan,
   DashboardTargetScenario,
@@ -1007,6 +1009,11 @@ export function DashboardCockpit() {
   const [historyInput, setHistoryInput] = useState("");
   const [cumulativeAsOf, setCumulativeAsOf] = useState("");
   const [cumulativeInput, setCumulativeInput] = useState("");
+  const [cumulativeDateOptions, setCumulativeDateOptions] = useState<string[]>([]);
+  const [cumulativeDatePage, setCumulativeDatePage] = useState(0);
+  const [cumulativeDatesHasMore, setCumulativeDatesHasMore] = useState(true);
+  const [cumulativeDatesLoading, setCumulativeDatesLoading] = useState(false);
+  const [cumulativeDatesLoaded, setCumulativeDatesLoaded] = useState(false);
   const [historyRange, setHistoryRange] = useState<{ earliest: string; latest: string }>({
     earliest: "",
     latest: "",
@@ -1058,6 +1065,7 @@ export function DashboardCockpit() {
   });
   const latestDataVersionRef = useRef<string | null>(null);
   const latestConfigVersionRef = useRef<string | null>(null);
+  const cumulativeDateRequestRef = useRef(false);
   const [daySorts, setDaySorts] = useState<Record<LevelKey, SortKey>>({
     BRANCH: "done",
     GRID: "done",
@@ -1281,9 +1289,43 @@ export function DashboardCockpit() {
     }
   }, [requestedIndicatorCodes]);
 
+  const loadCumulativeDateOptions = useCallback(async (firstPage = false) => {
+    if (
+      cumulativeDateRequestRef.current
+      || cumulativeDatesLoading
+      || (!firstPage && !cumulativeDatesHasMore)
+    ) return;
+    const page = firstPage ? 1 : cumulativeDatePage + 1;
+    cumulativeDateRequestRef.current = true;
+    setCumulativeDatesLoading(true);
+    try {
+      const result: DashboardAccOptionsResponse = await getDashboardAccOptions(page);
+      setCumulativeDateOptions((current) => firstPage
+        ? result.dates
+        : [...new Set([...current, ...result.dates])]);
+      setCumulativeDatePage(result.page);
+      setCumulativeDatesHasMore(result.has_more);
+      if (firstPage) {
+        const latestDate = result.dates[0] || "";
+        setCumulativeInput((current) => current || latestDate);
+        setCumulativeAsOf((current) => current || latestDate);
+      }
+    } finally {
+      setCumulativeDatesLoaded(true);
+      setCumulativeDatesLoading(false);
+      cumulativeDateRequestRef.current = false;
+    }
+  }, [cumulativeDatePage, cumulativeDatesHasMore, cumulativeDatesLoading]);
+
   useEffect(() => {
     void loadHistoryAvailability();
   }, [loadHistoryAvailability]);
+
+  useEffect(() => {
+    if (dataTimeMode === "cumulative" && !cumulativeDatesLoaded) {
+      void loadCumulativeDateOptions(true);
+    }
+  }, [cumulativeDatesLoaded, dataTimeMode, loadCumulativeDateOptions]);
 
   /* Query cache is reused for navigation/filter state; timed refresh bypasses it. */
   const fetchData = useCallback(async (forceRefresh = false) => {
@@ -1726,6 +1768,7 @@ export function DashboardCockpit() {
       }
     }
     if (dataTimeMode === "history" && !historyAsOf) return;
+    if (dataTimeMode === "cumulative" && !cumulativeDatesLoaded) return;
     void fetchData(false);
     if (dataTimeMode === "cumulative") return;
     const timer = window.setInterval(() => {
@@ -1764,6 +1807,7 @@ export function DashboardCockpit() {
     return () => window.clearInterval(timer);
   }, [
     dataTimeMode,
+    cumulativeDatesLoaded,
     fetchData,
     historyAsOf,
     loadHistoryAvailability,
@@ -2152,6 +2196,9 @@ export function DashboardCockpit() {
         mode={dataTimeMode}
         value={historyInput}
         cumulativeValue={cumulativeInput}
+        cumulativeDateOptions={cumulativeDateOptions}
+        cumulativeDatesHasMore={cumulativeDatesHasMore}
+        cumulativeDatesLoading={cumulativeDatesLoading}
         options={historyOptions}
         min={historyRange.earliest}
         max={historyRange.latest}
@@ -2182,6 +2229,7 @@ export function DashboardCockpit() {
           setHistoryAsOf(nextAsOf);
         }}
         onCumulativeChange={setCumulativeInput}
+        onCumulativeLoadMore={() => void loadCumulativeDateOptions()}
         onCumulativeQuery={() => {
           if (!cumulativeInput) return;
           if (cumulativeInput === cumulativeAsOf) {
@@ -2502,6 +2550,9 @@ function HistoryTimeBar({
   mode,
   value,
   cumulativeValue,
+  cumulativeDateOptions,
+  cumulativeDatesHasMore,
+  cumulativeDatesLoading,
   options,
   min,
   max,
@@ -2514,11 +2565,15 @@ function HistoryTimeBar({
   onChange,
   onQuery,
   onCumulativeChange,
+  onCumulativeLoadMore,
   onCumulativeQuery,
 }: {
   mode: DataTimeMode;
   value: string;
   cumulativeValue: string;
+  cumulativeDateOptions: string[];
+  cumulativeDatesHasMore: boolean;
+  cumulativeDatesLoading: boolean;
   options: DashboardHistoryOptionsResponse["dates"];
   min: string;
   max: string;
@@ -2531,6 +2586,7 @@ function HistoryTimeBar({
   onChange: (value: string) => void;
   onQuery: () => void;
   onCumulativeChange: (value: string) => void;
+  onCumulativeLoadMore: () => void;
   onCumulativeQuery: () => void;
 }) {
   const selectedDate = value.slice(0, 10);
@@ -2612,14 +2668,27 @@ function HistoryTimeBar({
         <div className="history-time-input active">
           <CalendarClock size={15} />
           <span>累计日期</span>
-          <input
+          <select
             aria-label="累计日期"
-            type="date"
             value={cumulativeValue}
-            disabled={loading}
+            disabled={loading || cumulativeDatesLoading}
             onChange={(event) => onCumulativeChange(event.currentTarget.value)}
-          />
+          >
+            {!cumulativeDateOptions.length && <option value="">暂无累计日期</option>}
+            {cumulativeDateOptions.map((date) => (
+              <option key={date} value={date}>{date}</option>
+            ))}
+          </select>
         </div>
+        {cumulativeDatesHasMore && <button
+          type="button"
+          className="history-query-button"
+          disabled={loading || cumulativeDatesLoading}
+          onClick={onCumulativeLoadMore}
+        >
+          {cumulativeDatesLoading ? <RefreshCw size={14} className="spin" /> : <ChevronDown size={14} />}
+          加载更多日期
+        </button>}
         <button
           type="button"
           className="history-query-button"
