@@ -301,16 +301,17 @@
 `capture_defaults.shrink_empty_edges`
 作用：是否自动裁掉外围空白区域。
 
-`capture_defaults.appearance`
-作用：Excel `CopyPicture` 外观参数。
-常见值：`printer`、`screen`
+`capture_defaults.engine`
+作用：截图引擎。目前仅支持 `pdf_render`，不再使用 `CopyPicture` 及其失败兜底。
 
-`capture_defaults.format`
-作用：图片格式。
-常见值：`picture`、`bitmap`
+`capture_defaults.excel_ready_timeout_seconds`
+作用：截图前等待 Excel 完成计算并进入 Ready 状态的最大秒数，默认 60。
 
-`capture_defaults.export_scale`
-作用：导出图片缩放倍数。
+`capture_defaults.excel_ready_poll_seconds`
+作用：检查 Excel Ready/CalculationState 状态的轮询间隔，默认 0.2 秒。
+
+`capture_defaults.excel_active_printer`
+作用：Excel 计算分页时固定使用的打印机，默认 `Microsoft Print to PDF on PORTPROMPT:`，避免 RustDesk 等虚拟默认打印机导致分页漂移。
 
 `capture_defaults.optimize_png`
 作用：是否压缩 PNG。
@@ -384,6 +385,13 @@
 
 - `output.send_result_file`
 作用：发送结果文件路径。
+
+- `output.intermediate_dir`
+作用：截图与打包过程的中间产物目录，默认相对于 `runtime_dir`。
+
+- `output.keep_intermediate_files`
+作用：是否保留截图与打包过程的中间产物，便于排查图片在哪一步异常。
+建议：默认关闭，仅在排障时临时开启。
 
 - `output.cleanup_after_send`
 作用：发送成功后是否清理中间产物。
@@ -467,8 +475,18 @@
 当前支持的占位符：
 
 - `${today}` -> 当前日期，例如 `2026-04-22`
+- `${today_yyyymmdd}` -> 当前日期，例如 `20260422`
+- `${yesterday}` -> 前一天日期，例如 `2026-04-21`
+- `${yesterday_yyyymmdd}` -> 前一天日期，例如 `20260421`
+- `${day_before_yesterday}` -> 前天日期，例如 `2026-04-20`
+- `${day_before_yesterday_yyyymmdd}` -> 前天日期，例如 `20260420`
+- `${date:yesterday-1M|yyyyMMdd}` -> 上月同期，例如 `20260321`
+- `${date:yesterday-1y|yyyyMMdd}` -> 去年同期，例如 `20250421`
+- `${date:today-7d|yyyy-MM-dd}` -> 7 天前，例如 `2026-04-15`
 - `${hour}` -> 当前小时，不补零，例如 `15`
 - `${hour2}` -> 当前小时，两位格式，例如 `08`
+
+通用日期格式为 `${date:<基准><偏移>|<格式>}`。基准支持 `today`、`yesterday`、`day_before_yesterday`；偏移支持 `d` 天、`M` 月、`y` 年；格式支持 `yyyyMMdd`、`yyyy-MM-dd`。月/年偏移遇到目标月份没有同一天时，取目标月最后一天。
 
 示例：
 

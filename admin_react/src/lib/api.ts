@@ -28,6 +28,16 @@ function normalizeDeploymentCrons(deployment?: Partial<ReportConfig["deployment"
   return crons.map((cron) => String(cron || "").trim()).filter(Boolean);
 }
 
+function sheetIdFromDocUrl(value?: string) {
+  if (!value) return "";
+  try {
+    return new URL(value).searchParams.get("tab") || "";
+  } catch {
+    const match = value.match(/[?&]tab=([^&#]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+}
+
 export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
   const { download: legacyDownload, env: _legacyEnv, compare: _legacyCompare, ...rest } = config;
   const downloads: RawDownloadItem[] = (rest.downloads?.length ? rest.downloads : legacyDownload ? [legacyDownload] : []) as RawDownloadItem[];
@@ -37,8 +47,27 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
     downloads: downloads.map((item, index) => {
       const { csrf_headers_from_cookies: _legacyCsrf, ...cleanItem } = item;
       const bodyType = cleanItem.body_type;
+      if (cleanItem.source === "tencent_sheet") {
+        const parsedSheetId = sheetIdFromDocUrl(cleanItem.doc_url);
+        const sheets = cleanItem.sheets?.length
+          ? cleanItem.sheets
+          : [{ sheet_name: "日报", sheet_id: "", range: "A1:Z1000", output_sheet_name: "日报" }];
+        return {
+          ...cleanItem,
+          source: "tencent_sheet",
+          name: cleanItem.name || `腾讯文档-${index + 1}`,
+          headers: cleanItem.headers || {},
+          file_id: cleanItem.file_id || "",
+          doc_url: cleanItem.doc_url || "",
+          output_filename: cleanItem.output_filename || "",
+          sheets: sheets.map((sheet, sheetIndex) => (
+            sheetIndex === 0 && !sheet.sheet_id && parsedSheetId ? { ...sheet, sheet_id: parsedSheetId } : sheet
+          )),
+        } as DownloadItem;
+      }
       return {
         ...cleanItem,
+        source: cleanItem.source || "http_api",
         name: cleanItem.name || `抓取项-${index + 1}`,
         stage: AUTH_PRESET_STAGE[normalizeAuthPreset(cleanItem.auth_preset)] || cleanItem.stage || "report_analysis",
         auth_preset: normalizeAuthPreset(cleanItem.auth_preset),
@@ -55,7 +84,11 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
     send: {
       webhook_url: config.send?.webhook_url || "",
       workbook_name: config.send?.workbook_name || config.name || "",
-      items: config.send?.items || [],
+      items: (config.send?.items || []).map((item) => (
+        item.type === "image"
+          ? { ...item, capture: item.capture || { mode: "used_range" }, text: undefined }
+          : { ...item, text: item.text?.mode ? item.text : { mode: "used_range" }, capture: undefined }
+      )),
     },
     template_update: {
       engine: config.template_update?.engine || "hybrid",
@@ -491,6 +524,13 @@ export async function listConfigs() {
   return configs.map(normalizeReportConfig);
 }
 
+export async function updateConfigOrder(ids: string[]) {
+  return request<{ ids: string[] }>("/api/configs/order", {
+    method: "PUT",
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export async function getConfig(id: string, source: ConfigSource = "published") {
   return normalizeReportConfig(await request<ReportConfig>(`/api/configs/${encodeURIComponent(id)}?source=${source}`));
 }
@@ -557,11 +597,26 @@ export async function publishConfig(config: ReportConfig) {
     crons?: string[];
     timezone?: string;
     scheduleStatus?: "enabled" | "disabled" | "none";
+    publishMode?: "schedule-state-only";
   }>(`/api/configs/${encodeURIComponent(config.id)}/publish`, {
     method: "POST",
     body: JSON.stringify(normalizeReportConfig(config)),
   });
   const log = pushLog("success", "发布到调度", result.message, result.output || result.taskConfigPath);
+  return { ...result, log };
+}
+
+export async function deleteDeployment(config: ReportConfig) {
+  const result = await request<{
+    deleted: boolean;
+    deploymentId: string;
+    deploymentName: string;
+    message: string;
+  }>(`/api/configs/${encodeURIComponent(config.id)}/deployment`, {
+    method: "DELETE",
+    body: JSON.stringify(normalizeReportConfig(config)),
+  });
+  const log = pushLog("success", "删除 Deployment", result.message, result.deploymentId);
   return { ...result, log };
 }
 

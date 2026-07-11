@@ -1,32 +1,9 @@
 {
-  "name": "爱家亲情网每日盯控",
-  "template_path": "templates/爱家亲情网每日盯控表.xlsx",
-  "send": {
-    "webhook_url": "",
-    "workbook_name": "爱家亲情网每日盯控",
-    "items": [
-      {
-        "type": "image",
-        "sheet": "通报",
-        "capture": {
-          "mode": "used_range"
-        }
-      },
-      {
-        "type": "text",
-        "sheet": "通报文字",
-        "text": {
-          "mode": "used_range"
-        }
-      }
-    ]
-  },
-  "template_update": {
-    "engine": "hybrid",
-    "update_condition": "any_changed",
-    "write_sheets": "all_compared",
-    "send_when_same": true
-  },
+  "id": "日常进度",
+  "name": "日常进度",
+  "template_path": "templates/日常进度.xlsx",
+  "enabled": true,
+  "description": "",
   "downloads": [
     {
       "name": "区公司实时数据",
@@ -42,25 +19,20 @@
         "Origin": "https://usm.ha.cmcc:19011",
         "Pragma": "no-cache",
         "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
       },
       "body_type": "json",
+      "response_mode": "json_to_excel",
       "data": {
-        "indCodes": "sgs_ajvwdz,",
+        "indCodes": "sgs_ajvwdz",
         "areaId": "AQ",
-        "diyCodes": "sgs_ajvwdz,",
+        "diyCodes": "sgs_ajvwdz",
         "areaType": null,
         "queryDate": "${today_yyyymmdd}"
       },
-      "response_mode": "json_to_excel",
-      "source": "http_api",
       "raw_body": "",
-      "headers_from_session_storage": {
-        "Uaptoken": "uapToken"
-      },
       "excel": {
         "data_path": "result.tableData",
-        "sheet_name": "区公司实时数据",
         "columns": [
           {
             "field": "areaCode",
@@ -75,15 +47,34 @@
             "header": "爱家亲情网(V网版)",
             "type": "number"
           }
-        ]
-      }
+        ],
+        "sheet_name": "区公司实时数据"
+      },
+      "drilldown": {
+        "data_path": "result.tableData",
+        "request_area_field": "areaId",
+        "next_area_field": "areaCode",
+        "levels": [
+          "网格",
+          "渠道经理",
+          "渠道",
+          "人员"
+        ],
+        "skip_self_row": true,
+        "max_requests": 1000,
+        "max_workers": 6
+      },
+      "headers_from_session_storage": {
+        "Uaptoken": "uapToken"
+      },
+      "source": "http_api"
     },
     {
-      "name": "区公司累计数据",
+      "name": "市公司实时数据",
       "stage": "city_ops",
       "auth_preset": "地市平台 Uaptoken",
       "method": "POST",
-      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailsByDateAndArea",
+      "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getDetailByAreaAndIndex",
       "headers": {
         "Accept": "*/*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
@@ -92,23 +83,20 @@
         "Origin": "https://usm.ha.cmcc:19011",
         "Pragma": "no-cache",
         "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0"
       },
       "body_type": "json",
-      "data": {
-        "indCodes": "sgs_ajvwdz,",
-        "indType": "DD",
-        "areaId": "AQ",
-        "diyCodes": "sgs_ajvwdz,",
-        "queryDate": "${yesterday_yyyymmdd}",
-        "areaType": null
-      },
       "response_mode": "json_to_excel",
-      "source": "http_api",
-      "raw_body": "",
+      "data": {
+        "indCodes": "sgs_ajvwdz",
+        "areaId": "A",
+        "diyCodes": "sgs_ajvwdz",
+        "areaType": null,
+        "queryDate": "${today_yyyymmdd}"
+      },
       "excel": {
         "data_path": "result.tableData",
-        "sheet_name": "区公司累计数据",
+        "sheet_name": "市公司实时数据",
         "columns": [
           {
             "field": "areaCode",
@@ -127,14 +115,15 @@
       },
       "headers_from_session_storage": {
         "Uaptoken": "uapToken"
-      }
+      },
+      "source": "http_api"
     }
   ],
   "compare_sources": [
     {
       "download_name": "区公司实时数据",
       "engine": "openpyxl",
-      "max_workers": 4,
+      "max_workers": 1,
       "sheet_mappings": [
         {
           "name": "区公司实时数据",
@@ -147,14 +136,14 @@
       ]
     },
     {
-      "download_name": "区公司累计数据",
+      "download_name": "市公司实时数据",
       "engine": "openpyxl",
-      "max_workers": 4,
+      "max_workers": 1,
       "sheet_mappings": [
         {
-          "name": "区公司累计数据",
-          "new_sheet_name": "区公司累计数据",
-          "template_sheet_name": "区公司累计数据",
+          "name": "市公司实时数据",
+          "new_sheet_name": "市公司实时数据",
+          "template_sheet_name": "市公司实时数据",
           "header_row": 1,
           "ignore_columns": [],
           "key_columns": []
@@ -162,9 +151,25 @@
       ]
     }
   ],
-  "id": "爱家亲情网每日盯控",
-  "enabled": false,
-  "description": "",
+  "send": {
+    "webhook_url": "",
+    "workbook_name": "新建通报配置",
+    "items": [
+      {
+        "type": "image",
+        "sheet": "日常通报",
+        "capture": {
+          "mode": "used_range"
+        }
+      }
+    ]
+  },
+  "template_update": {
+    "engine": "hybrid",
+    "update_condition": "any_changed",
+    "write_sheets": "all_compared",
+    "send_when_same": true
+  },
   "wait_for_change": {
     "enabled": false,
     "poll_interval_seconds": 300,
@@ -173,11 +178,16 @@
   "deployment": {
     "enabled": true,
     "crons": [
-      "0 9-18 * * *"
+      "0 9-13 * * *",
+      "0,30 14-15 * * *",
+      "*/10 16 * * *",
+      "0,30 17-18 * * *",
+      "0 19 * * *"
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-07-06 15:04:10",
-  "source": "published",
-  "has_draft": false
+  "lastRun": "disabled",
+  "has_draft": false,
+  "updatedAt": "2026-07-04 21:52:21",
+  "source": "published"
 }

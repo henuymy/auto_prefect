@@ -16,15 +16,8 @@ from pathlib import Path
 from infrastructure.excel_client import get_sheet, open_excel, open_workbook
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-OPENPYXL_FALLBACK_NOTICE = "Excel COM 截图失败，已使用 openpyxl/Pillow 简化渲染兜底"
-COPY_APPEARANCE = {
-    "screen": 1,
-    "printer": 2,
-}
-COPY_FORMAT = {
-    "picture": -4147,
-    "bitmap": 2,
-}
+XL_TYPE_PDF = 0
+XL_QUALITY_STANDARD = 0
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
@@ -43,10 +36,43 @@ def get_output_paths(config, base_dir=PROJECT_DIR):
     return image_dir, package_file, preview_file
 
 
+def get_intermediate_dir(config, base_dir=PROJECT_DIR):
+    output_config = config.get("output", {})
+    runtime_dir = resolve_path(output_config.get("runtime_dir", "runtime"), base_dir)
+    return resolve_path(output_config.get("intermediate_dir", "intermediates"), runtime_dir)
+
+
 def merge_capture_config(defaults, item_config):
     merged = dict(defaults or {})
     merged.update(item_config or {})
     return merged
+
+
+def with_intermediate_capture(config, capture_config, image_name, base_dir=PROJECT_DIR):
+    output_config = config.get("output", {})
+    if not output_config.get("keep_intermediate_files", False):
+        return capture_config
+    capture_config = dict(capture_config or {})
+    capture_config["_keep_intermediate_files"] = True
+    capture_config["_intermediate_dir"] = str(get_intermediate_dir(config, base_dir))
+    capture_config["_intermediate_stem"] = Path(image_name).stem
+    return capture_config
+
+
+def intermediate_path(capture, stage, suffix):
+    if not capture.get("_keep_intermediate_files"):
+        return None
+    directory = Path(capture["_intermediate_dir"])
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{capture['_intermediate_stem']}_{stage}{suffix}"
+
+
+def copy_intermediate_file(source_path, capture, stage, suffix=None):
+    target = intermediate_path(capture, stage, suffix or Path(source_path).suffix)
+    if not target:
+        return None
+    shutil.copyfile(source_path, target)
+    return str(target.resolve())
 
 
 def normalize_2d(values):
@@ -85,7 +111,61 @@ def used_range_bounds(ws, shrink_empty_edges=True):
 
     rows = [item[0] for item in populated]
     cols = [item[1] for item in populated]
-    return min(rows), min(cols), max(rows), max(cols)
+    bounds = [min(rows), min(cols), max(rows), max(cols)]
+
+    # A merged title/group cell only stores its value in the top-left cell.  If
+    # empty edges are shrunk solely from values, the remaining columns/rows of
+    # that merge are silently cut off. Expand every merge that intersects the
+    # current content bounds; repeat because an expanded merge can touch another.
+    areas = []
+    seen_areas = set()
+    for row_index, col_index in populated:
+        try:
+            cell = ws.Cells(row_index, col_index)
+            if not cell.MergeCells:
+                continue
+            area = cell.MergeArea
+            identity = (
+                int(area.Row),
+                int(area.Column),
+                int(area.Rows.Count),
+                int(area.Columns.Count),
+            )
+            if identity not in seen_areas:
+                seen_areas.add(identity)
+                areas.append(area)
+        except Exception:
+            # Some Excel-compatible COM implementations do not expose merge
+            # metadata. Value-based shrinking remains a safe fallback there.
+            continue
+
+    changed = True
+    while changed:
+        changed = False
+        for area in areas:
+            area_first_row = int(area.Row)
+            area_first_col = int(area.Column)
+            area_last_row = area_first_row + int(area.Rows.Count) - 1
+            area_last_col = area_first_col + int(area.Columns.Count) - 1
+            intersects = not (
+                area_last_row < bounds[0]
+                or area_first_row > bounds[2]
+                or area_last_col < bounds[1]
+                or area_first_col > bounds[3]
+            )
+            if not intersects:
+                continue
+            expanded = [
+                min(bounds[0], area_first_row),
+                min(bounds[1], area_first_col),
+                max(bounds[2], area_last_row),
+                max(bounds[3], area_last_col),
+            ]
+            if expanded != bounds:
+                bounds = expanded
+                changed = True
+
+    return tuple(bounds)
 
 
 def range_from_capture(ws, capture):
@@ -148,129 +228,301 @@ def refresh_workbook(excel, workbook, timeout_seconds=120):
     raise TimeoutError(f"刷新查询和连接超时: {timeout_seconds} 秒")
 
 
-def export_chart_to_png(chart, output_path, attempts=2, delay_seconds=0.5):
-    output = Path(output_path)
-    temp_dir = Path(tempfile.gettempdir()) / "auto_notify_excel_exports"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    last_error = None
-
-    for attempt in range(1, attempts + 1):
-        temp_file = temp_dir / f"capture_{uuid.uuid4().hex}.png"
-        try:
-            chart.Export(str(temp_file), "PNG")
-            if not temp_file.exists() or temp_file.stat().st_size == 0:
-                raise RuntimeError(f"Excel 导出的 PNG 为空: {temp_file}")
-            shutil.copyfile(temp_file, output)
-            return
-        except Exception as exc:
-            last_error = exc
-            if attempt < attempts:
-                time.sleep(delay_seconds)
-        finally:
-            try:
-                temp_file.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    raise RuntimeError(f"Excel 导出 PNG 失败: {output}") from last_error
-
-
-def activate_range_for_copy(ws, rng):
-    """Excel CopyPicture is much more reliable when the sheet/range is active."""
+def prepare_excel_for_capture(ws, capture):
+    """Normalize and wait for Excel state before touching printer pagination."""
     excel = ws.Application
+    timeout_seconds = max(5, int(capture.get("excel_ready_timeout_seconds", 60) or 60))
+    poll_seconds = max(0.05, float(capture.get("excel_ready_poll_seconds", 0.2) or 0.2))
+
+    active_printer = str(
+        capture.get("excel_active_printer", "Microsoft Print to PDF on PORTPROMPT:") or ""
+    ).strip()
+    if active_printer:
+        try:
+            current_printer = str(excel.ActivePrinter)
+            expected_name = active_printer.split(" on ", 1)[0]
+            if expected_name not in current_printer:
+                raise RuntimeError(f"当前 Excel 打印机为 {current_printer!r}")
+        except Exception as exc:
+            raise RuntimeError(
+                f"无法为 Excel 设置稳定打印机 {active_printer!r}；拒绝使用系统默认打印机进行分页"
+            ) from exc
+
+    # These properties can be left altered after a failed COM call. Set them
+    # explicitly for every image rather than trusting application-global state.
+    for name, value in (
+        ("DisplayAlerts", False),
+        ("ScreenUpdating", False),
+        ("EnableEvents", False),
+        ("CutCopyMode", False),
+        ("PrintCommunication", True),
+    ):
+        try:
+            setattr(excel, name, value)
+        except Exception:
+            pass
+
     try:
         ws.Parent.Activate()
-    except Exception:
-        pass
-    try:
         ws.Activate()
     except Exception:
         pass
+
     try:
-        excel.CutCopyMode = False
-    except Exception:
-        pass
-    try:
-        rng.Select()
+        excel.CalculateUntilAsyncQueriesDone()
     except Exception:
         pass
 
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            ready = bool(excel.Ready)
+        except Exception:
+            ready = True
+        try:
+            calculation_done = int(excel.CalculationState) == 0
+        except Exception:
+            calculation_done = True
+        if ready and calculation_done:
+            return
+        try:
+            import pythoncom  # type: ignore
 
-def copy_range_picture_with_retry(ws, rng, appearance_name, format_name, capture):
-    attempts = int(capture.get("copy_attempts", 3) or 3)
-    delay_seconds = float(capture.get("copy_retry_delay_seconds", 0.5) or 0.5)
-    fallback_pairs = capture.get("copy_fallbacks") or [
-        {"appearance": appearance_name, "format": format_name},
-        {"appearance": "screen", "format": format_name},
-        {"appearance": "screen", "format": "bitmap"},
+            pythoncom.PumpWaitingMessages()
+        except Exception:
+            pass
+        time.sleep(poll_seconds)
+
+    raise TimeoutError(f"Excel 截图前等待就绪超时: sheet={ws.Name}, timeout={timeout_seconds}s")
+
+
+def wait_for_pdf_export(excel, pdf_path, timeout_seconds=30, poll_seconds=0.2):
+    """Wait until the asynchronous Excel/PDF driver has finished writing."""
+    path = Path(pdf_path)
+    deadline = time.monotonic() + max(5, timeout_seconds)
+    previous_size = -1
+    stable_checks = 0
+    while time.monotonic() < deadline:
+        try:
+            size = path.stat().st_size
+        except (FileNotFoundError, OSError):
+            size = 0
+        try:
+            ready = bool(excel.Ready)
+        except Exception:
+            ready = True
+        if size > 0 and size == previous_size and ready:
+            stable_checks += 1
+            if stable_checks >= 3:
+                return
+        else:
+            stable_checks = 0
+        previous_size = size
+        time.sleep(max(0.05, poll_seconds))
+    raise TimeoutError(f"等待 Excel PDF 导出完成超时: {path}, timeout={timeout_seconds}s")
+
+
+def export_range_to_pdf(ws, rng, pdf_path, capture):
+    pdf_path = Path(pdf_path)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    page_setup = ws.PageSetup
+    restore_values = {}
+    page_setup_keys = [
+        "PrintArea",
+        "Zoom",
+        "FitToPagesWide",
+        "FitToPagesTall",
+        "LeftMargin",
+        "RightMargin",
+        "TopMargin",
+        "BottomMargin",
+        "HeaderMargin",
+        "FooterMargin",
+        "CenterHorizontally",
+        "CenterVertically",
+        "Orientation",
     ]
-    last_error = None
+    for key in page_setup_keys:
+        try:
+            restore_values[key] = getattr(page_setup, key)
+        except Exception:
+            pass
 
-    for pair in fallback_pairs:
-        current_appearance = pair.get("appearance", appearance_name)
-        current_format = pair.get("format", format_name)
-        if current_appearance not in COPY_APPEARANCE or current_format not in COPY_FORMAT:
-            continue
-        for attempt in range(1, attempts + 1):
+    excel = ws.Application
+    try:
+        # Manual page breaks survive ordinary FitToPages assignments and can
+        # force Excel to emit several PDF pages. The workbook is opened read-only
+        # and closed without saving, so resetting them is safe for the template.
+        try:
+            ws.Activate()
+            ws.ResetAllPageBreaks()
+        except Exception:
+            pass
+        # Excel may defer PageSetup changes while talking to the printer driver.
+        # Batch the changes and explicitly flush them before exporting so stale
+        # pagination from a previous/default printer is not used.
+        try:
+            excel.PrintCommunication = False
+        except Exception:
+            pass
+        page_setup.PrintArea = rng.Address
+        page_setup.Zoom = False
+        page_setup.FitToPagesWide = 1
+        page_setup.FitToPagesTall = 1
+        margin_points = float(capture.get("pdf_margin_points", 0) or 0)
+        page_setup.LeftMargin = margin_points
+        page_setup.RightMargin = margin_points
+        page_setup.TopMargin = margin_points
+        page_setup.BottomMargin = margin_points
+        page_setup.HeaderMargin = 0
+        page_setup.FooterMargin = 0
+        page_setup.CenterHorizontally = False
+        page_setup.CenterVertically = False
+        orientation = str(capture.get("pdf_orientation", "auto") or "auto").lower()
+        if orientation == "auto":
+            page_setup.Orientation = 2 if float(rng.Width) >= float(rng.Height) else 1
+        elif orientation == "portrait":
+            page_setup.Orientation = 1
+        elif orientation == "landscape":
+            page_setup.Orientation = 2
+        else:
+            raise ValueError("pdf_orientation 仅支持 auto/portrait/landscape")
+        try:
+            excel.PrintCommunication = True
+        except Exception:
+            pass
+        # Reading the values back forces Excel to finish applying the queued
+        # printer settings. Reapply once when a driver ignored the first batch.
+        try:
+            fit_applied = (
+                page_setup.Zoom is False
+                and int(page_setup.FitToPagesWide) == 1
+                and int(page_setup.FitToPagesTall) == 1
+            )
+        except Exception:
+            fit_applied = True
+        if not fit_applied:
+            page_setup.Zoom = False
+            page_setup.FitToPagesWide = 1
+            page_setup.FitToPagesTall = 1
+        try:
+            excel.CalculateFull()
+        except Exception:
+            pass
+        ws.ExportAsFixedFormat(
+            Type=XL_TYPE_PDF,
+            Filename=str(pdf_path.resolve()),
+            Quality=XL_QUALITY_STANDARD,
+            IncludeDocProperties=False,
+            IgnorePrintAreas=False,
+            OpenAfterPublish=False,
+        )
+        # ExportAsFixedFormat may return before the printer driver finishes
+        # consuming PageSetup. Do not restore it until the PDF is stable.
+        wait_for_pdf_export(
+            excel,
+            pdf_path,
+            timeout_seconds=int(capture.get("pdf_export_timeout_seconds", 30) or 30),
+            poll_seconds=float(capture.get("pdf_export_poll_seconds", 0.2) or 0.2),
+        )
+    finally:
+        try:
+            excel.PrintCommunication = False
+        except Exception:
+            pass
+        for key, value in restore_values.items():
             try:
-                activate_range_for_copy(ws, rng)
-                rng.CopyPicture(
-                    Appearance=COPY_APPEARANCE[current_appearance],
-                    Format=COPY_FORMAT[current_format],
-                )
-                return current_appearance, current_format
-            except Exception as exc:
-                last_error = exc
-                if attempt < attempts:
-                    time.sleep(delay_seconds)
-
-    raise RuntimeError(
-        f"Excel 区域复制为图片失败: sheet={ws.Name}, "
-        f"range={getattr(rng, 'Address', 'unknown')}"
-    ) from last_error
+                setattr(page_setup, key, value)
+            except Exception:
+                pass
+        try:
+            excel.PrintCommunication = True
+        except Exception:
+            pass
 
 
-def capture_range_to_png(ws, output_path, capture=None):
+def crop_png_whitespace(image_path, background=(255, 255, 255), tolerance=8):
+    try:
+        from PIL import Image, ImageChops
+    except ImportError:
+        return None
+
+    path = Path(image_path)
+    with Image.open(path) as image:
+        source = image.convert("RGB")
+        bg = Image.new("RGB", source.size, background)
+        diff = ImageChops.difference(source, bg)
+        if tolerance > 0:
+            diff = diff.point(lambda value: 0 if value <= tolerance else 255)
+        bbox = diff.getbbox()
+        if not bbox:
+            return None
+        padding = 2
+        left = max(0, bbox[0] - padding)
+        top = max(0, bbox[1] - padding)
+        right = min(source.width, bbox[2] + padding)
+        bottom = min(source.height, bbox[3] + padding)
+        if (left, top, right, bottom) == (0, 0, source.width, source.height):
+            return source.size
+        cropped = source.crop((left, top, right, bottom))
+        cropped.save(path, format="PNG")
+        return cropped.size
+
+
+def render_pdf_to_png(pdf_path, output_path, capture):
+    try:
+        import fitz  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("高清 PDF 截图需要 PyMuPDF，请先安装: pip install PyMuPDF") from exc
+
+    dpi = int(capture.get("pdf_dpi", capture.get("render_dpi", 300)) or 300)
+    dpi = max(96, min(600, dpi))
+    matrix = fitz.Matrix(dpi / 72, dpi / 72)
+    with fitz.open(str(pdf_path)) as document:
+        if document.page_count < 1:
+            raise RuntimeError(f"Excel 导出的 PDF 没有页面: {pdf_path}")
+        if document.page_count != 1:
+            raise RuntimeError(
+                f"Excel PDF 导出产生 {document.page_count} 页；发送图片只允许单页"
+            )
+        pixmap = document.load_page(0).get_pixmap(matrix=matrix, alpha=False)
+        pixmap.save(str(Path(output_path).resolve()))
+        width, height = pixmap.width, pixmap.height
+        copy_intermediate_file(output_path, capture, "02_pdf_render_raw", ".png")
+
+    if capture.get("pdf_crop_whitespace", True):
+        cropped_size = crop_png_whitespace(
+            output_path,
+            tolerance=int(capture.get("pdf_crop_tolerance", 8) or 8),
+        )
+        if cropped_size:
+            width, height = cropped_size
+        copy_intermediate_file(output_path, capture, "03_after_crop", ".png")
+    return dpi, width, height
+
+
+def capture_range_to_png_pdf(ws, output_path, capture=None):
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     capture = capture or {}
+    prepare_excel_for_capture(ws, capture)
     rng = range_from_capture(ws, capture)
 
-    appearance_name = capture.get("appearance", "printer")
-    format_name = capture.get("format", "picture")
-    if appearance_name not in COPY_APPEARANCE:
-        raise ValueError(f"不支持的 CopyPicture appearance: {appearance_name}")
-    if format_name not in COPY_FORMAT:
-        raise ValueError(f"不支持的 CopyPicture format: {format_name}")
-
-    actual_appearance, actual_format = copy_range_picture_with_retry(
-        ws,
-        rng,
-        appearance_name,
-        format_name,
-        capture,
-    )
-    export_scale = float(capture.get("export_scale", 1) or 1)
-    if export_scale <= 0:
-        raise ValueError("capture.export_scale 必须大于 0")
-    width = max(float(rng.Width) * export_scale, 100.0)
-    height = max(float(rng.Height) * export_scale, 50.0)
-    chart_object = ws.ChartObjects().Add(float(rng.Left), float(rng.Top), width, height)
+    temp_dir = Path(tempfile.gettempdir()) / "auto_notify_excel_exports"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = temp_dir / f"capture_{uuid.uuid4().hex}.pdf"
     try:
-        chart_object.Activate()
-        chart = chart_object.Chart
-        chart.Paste()
-        time.sleep(float(capture.get("paste_wait_seconds", 0.2) or 0.2))
-        export_chart_to_png(
-            chart,
-            output.resolve(),
-            attempts=int(capture.get("export_attempts", 2) or 2),
-            delay_seconds=float(capture.get("export_retry_delay_seconds", 0.5) or 0.5),
-        )
+        export_range_to_pdf(ws, rng, pdf_path, capture)
+        copy_intermediate_file(pdf_path, capture, "01_excel_export", ".pdf")
+        dpi, width, height = render_pdf_to_png(pdf_path, output.resolve(), capture)
     finally:
-        chart_object.Delete()
+        try:
+            pdf_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     optimize_png(output, capture)
+    final_intermediate = copy_intermediate_file(output, capture, "04_final", ".png")
 
     try:
         address = rng.Address(False, False)
@@ -283,12 +535,22 @@ def capture_range_to_png(ws, output_path, capture=None):
         "range": address,
         "width": width,
         "height": height,
-        "appearance": actual_appearance,
-        "format": actual_format,
-        "export_scale": export_scale,
+        "engine": "pdf_render",
+        "format": "png",
+        "pdf_dpi": dpi,
         "optimize_png": bool(capture.get("optimize_png", False)),
         "png_colors": capture.get("png_colors", 256),
+        "intermediate_dir": str(Path(capture["_intermediate_dir"]).resolve()) if capture.get("_keep_intermediate_files") else None,
+        "final_intermediate": final_intermediate,
     }
+
+
+def capture_range_to_png(ws, output_path, capture=None):
+    capture = capture or {}
+    engine = capture.get("engine", "pdf_render")
+    if engine != "pdf_render":
+        raise ValueError(f"不支持的截图引擎: {engine}；当前仅支持 pdf_render")
+    return capture_range_to_png_pdf(ws, output_path, capture)
 
 
 def optimize_png(image_path, capture):
@@ -348,6 +610,18 @@ def image_payload_from_file(image_path):
     }
 
 
+def save_package_payload_intermediate(capture_result, image_payload):
+    intermediate_dir = capture_result.get("intermediate_dir")
+    if not intermediate_dir:
+        return None
+    final_path = Path(capture_result["path"])
+    stem = final_path.stem
+    target = Path(intermediate_dir) / f"{stem}_05_package_base64_decoded.png"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(base64.b64decode(image_payload["base64"]))
+    return str(target.resolve())
+
+
 def build_preview_image(package, preview_file):
     image_paths = [
         Path(item["capture"]["path"])
@@ -405,6 +679,17 @@ def save_package(package_file, package):
         json.dump(package, f, ensure_ascii=False, indent=2)
 
 
+def save_package_snapshot(config, package, base_dir=PROJECT_DIR):
+    output_config = config.get("output", {})
+    if not output_config.get("keep_intermediate_files", False):
+        return None
+    snapshot_path = get_intermediate_dir(config, base_dir) / "message_package_snapshot.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    with snapshot_path.open("w", encoding="utf-8") as f:
+        json.dump(package, f, ensure_ascii=False, indent=2)
+    return str(snapshot_path.resolve())
+
+
 def get_excel_process_id(excel):
     try:
         import win32process
@@ -454,7 +739,7 @@ def openpyxl_used_bounds(ws):
                 max_row = max(max_row, cell.row)
                 max_col = max(max_col, cell.column)
     if not found:
-        raise ValueError(f"工作表 {ws.title} 没有可截图的非空单元格")
+        raise ValueError(f"工作表 {ws.title} 没有非空单元格")
     return min_row, min_col, max_row, max_col
 
 
@@ -478,101 +763,6 @@ def openpyxl_range_bounds(ws, capture):
     return openpyxl_used_bounds(ws)
 
 
-def openpyxl_color_to_rgb(color, default=(255, 255, 255)):
-    if not color or color.type != "rgb" or not color.rgb:
-        return default
-    value = color.rgb[-6:]
-    try:
-        return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
-    except ValueError:
-        return default
-
-
-def load_fallback_font(size=14, bold=False):
-    try:
-        from PIL import ImageFont
-    except ImportError as exc:
-        raise RuntimeError("openpyxl 截图兜底需要 Pillow，请先安装 pillow") from exc
-
-    candidates = [
-        "C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-    ]
-    for font_path in candidates:
-        try:
-            return ImageFont.truetype(font_path, size=size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
-
-
-def render_openpyxl_range_to_png(ws, output_path, capture=None):
-    try:
-        from PIL import Image, ImageDraw
-    except ImportError as exc:
-        raise RuntimeError("openpyxl 截图兜底需要 Pillow，请先安装 pillow") from exc
-
-    output = Path(output_path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    capture = capture or {}
-    min_row, min_col, max_row, max_col = openpyxl_range_bounds(ws, capture)
-
-    col_widths = []
-    from openpyxl.utils import get_column_letter
-
-    for col_index in range(min_col, max_col + 1):
-        letter = get_column_letter(col_index)
-        width = ws.column_dimensions[letter].width or 10
-        col_widths.append(max(56, int(float(width) * 8 + 16)))
-
-    row_heights = []
-    for row_index in range(min_row, max_row + 1):
-        height = ws.row_dimensions[row_index].height or 18
-        row_heights.append(max(24, int(float(height) * 1.45)))
-
-    image_width = sum(col_widths) + 1
-    image_height = sum(row_heights) + 1
-    fallback_background = tuple(capture.get("fallback_background", (255, 255, 255)))
-    fallback_grid_color = tuple(capture.get("fallback_grid_color", (232, 236, 242)))
-    fallback_use_cell_fill = bool(capture.get("fallback_use_cell_fill", False))
-    image = Image.new("RGB", (image_width, image_height), fallback_background)
-    draw = ImageDraw.Draw(image)
-    normal_font = load_fallback_font(14, bold=False)
-    bold_font = load_fallback_font(14, bold=True)
-
-    y = 0
-    for row_offset, row_index in enumerate(range(min_row, max_row + 1)):
-        x = 0
-        for col_offset, col_index in enumerate(range(min_col, max_col + 1)):
-            cell = ws.cell(row=row_index, column=col_index)
-            width = col_widths[col_offset]
-            height = row_heights[row_offset]
-            fill = openpyxl_color_to_rgb(cell.fill.fgColor, default=fallback_background)
-            if not fallback_use_cell_fill:
-                fill = fallback_background
-            draw.rectangle([x, y, x + width, y + height], fill=fill, outline=fallback_grid_color)
-            value = "" if cell.value is None else str(cell.value)
-            if value:
-                font = bold_font if cell.font and cell.font.bold else normal_font
-                font_color = openpyxl_color_to_rgb(cell.font.color, default=(30, 30, 30)) if cell.font else (30, 30, 30)
-                draw.text((x + 6, y + 4), value, fill=font_color, font=font)
-            x += width
-        y += row_heights[row_offset]
-
-    image.save(output, format="PNG")
-    return {
-        "path": str(output.resolve()),
-        "sheet": ws.title,
-        "range": f"{ws.cell(min_row, min_col).coordinate}:{ws.cell(max_row, max_col).coordinate}",
-        "width": image_width,
-        "height": image_height,
-        "appearance": "openpyxl_fallback",
-        "format": "png",
-        "fallback": True,
-    }
-
-
 def read_text_from_openpyxl_sheet(ws, text_config=None):
     text_config = text_config or {}
     min_row, min_col, max_row, max_col = openpyxl_range_bounds(ws, text_config)
@@ -584,17 +774,14 @@ def read_text_from_openpyxl_sheet(ws, text_config=None):
     return "\n".join(lines).strip()
 
 
-def build_message_package_openpyxl(config, base_dir=PROJECT_DIR, fallback_reason=None):
+def build_text_message_package(config, base_dir=PROJECT_DIR):
     from openpyxl import load_workbook
 
     started = time.perf_counter()
-    image_dir, package_file, preview_file = get_output_paths(config, base_dir)
-    default_capture = config.get("capture_defaults", {})
+    _, package_file, _ = get_output_paths(config, base_dir)
     package = {
         "generated_at": datetime.now().isoformat(),
         "items": [],
-        "fallback": OPENPYXL_FALLBACK_NOTICE,
-        "fallback_reason": str(fallback_reason) if fallback_reason else None,
     }
 
     for workbook_index, workbook_config in enumerate(config.get("workbooks", []), start=1):
@@ -607,8 +794,8 @@ def build_message_package_openpyxl(config, base_dir=PROJECT_DIR, fallback_reason
                 for item_index, item in enumerate(report.get("items", []), start=1):
                     item_type = item.get("type")
                     sheet_name = item.get("sheet")
-                    if item_type not in {"image", "text"}:
-                        raise ValueError(f"{workbook_name}/{report_name} 存在不支持的 item.type: {item_type}")
+                    if item_type != "text":
+                        raise ValueError(f"纯文本消息包不支持 item.type: {item_type}")
                     if not sheet_name:
                         raise ValueError(f"{workbook_name}/{report_name} 的 item 缺少 sheet")
                     if sheet_name not in workbook.sheetnames:
@@ -623,40 +810,22 @@ def build_message_package_openpyxl(config, base_dir=PROJECT_DIR, fallback_reason
                         "type": item_type,
                         "sheet": sheet_name,
                     }
-                    if item_type == "image":
-                        capture_config = merge_capture_config(default_capture, item.get("capture"))
-                        image_name = item_output_name(
-                            workbook_index,
-                            report_index,
-                            item_index,
-                            workbook_name,
-                            report_name,
-                            sheet_name,
-                        )
-                        image_path = image_dir / image_name
-                        capture_result = render_openpyxl_range_to_png(ws, image_path, capture_config)
-                        image_payload = image_payload_from_file(capture_result["path"])
-                        package_item["capture"] = capture_result
-                        package_item["image"] = image_payload
-                    else:
-                        text = read_text_from_openpyxl_sheet(ws, item.get("text"))
-                        if not text:
-                            raise ValueError(f"{workbook_name}/{report_name}/{sheet_name} 未读取到文字")
-                        package_item["text"] = text
-                        package_item["text_length"] = len(text)
+                    text = read_text_from_openpyxl_sheet(ws, item.get("text"))
+                    if not text:
+                        raise ValueError(f"{workbook_name}/{report_name}/{sheet_name} 未读取到文字")
+                    package_item["text"] = text
+                    package_item["text_length"] = len(text)
                     package["items"].append(package_item)
                     save_package(package_file, package)
         finally:
             workbook.close()
 
-    preview_path = build_preview_image(package, preview_file)
-    if preview_path:
-        package["preview_image_file"] = preview_path
     package["timings"] = {
         "total_seconds": round(time.perf_counter() - started, 3),
-        "engine": "openpyxl",
+        "engine": "openpyxl_text",
     }
     save_package(package_file, package)
+    save_package_snapshot(config, package, base_dir)
     return package, str(package_file)
 
 
@@ -673,7 +842,37 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
         "items": [],
     }
 
-    excel = open_excel(visible=visible)
+    # A previous abnormal task may leave an invisible EXCEL.EXE holding stale
+    # printer/COM state. The shared lock is acquired before cleanup, so another
+    # healthy automation task cannot be killed here.
+    excel = open_excel(visible=visible, cleanup_orphaned=True)
+    win32print_module = None
+    previous_default_printer = None
+    try:
+        import win32print  # type: ignore
+
+        win32print_module = win32print
+        previous_default_printer = win32print.GetDefaultPrinter()
+        win32print.SetDefaultPrinter("Microsoft Print to PDF")
+    except Exception as exc:
+        quit_excel(excel, get_excel_process_id(excel))
+        raise RuntimeError("无法临时将系统默认打印机切换为 Microsoft Print to PDF") from exc
+    active_printer = str(
+        default_capture.get("excel_active_printer", "Microsoft Print to PDF on PORTPROMPT:") or ""
+    ).strip()
+    if active_printer:
+        try:
+            excel.ActivePrinter = active_printer
+        except Exception as exc:
+            quit_excel(excel, get_excel_process_id(excel))
+            if win32print_module is not None and previous_default_printer:
+                try:
+                    win32print_module.SetDefaultPrinter(previous_default_printer)
+                except Exception:
+                    pass
+            raise RuntimeError(
+                f"无法在打开工作簿前设置 Excel 打印机 {active_printer!r}"
+            ) from exc
     excel_pid = get_excel_process_id(excel)
     try:
         for workbook_index, workbook_config in enumerate(workbooks, start=1):
@@ -725,8 +924,12 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
                                 sheet_name,
                             )
                             image_path = image_dir / image_name
+                            capture_config = with_intermediate_capture(config, capture_config, image_name, base_dir)
                             capture_result = capture_range_to_png(ws, image_path, capture_config)
                             image_payload = image_payload_from_file(capture_result["path"])
+                            package_payload_path = save_package_payload_intermediate(capture_result, image_payload)
+                            if package_payload_path:
+                                capture_result["package_payload_intermediate"] = package_payload_path
                             package_item["capture"] = capture_result
                             package_item["image"] = image_payload
                         else:
@@ -743,6 +946,11 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
                     workbook.Close(SaveChanges=False)
     finally:
         quit_excel(excel, excel_pid)
+        if win32print_module is not None and previous_default_printer:
+            try:
+                win32print_module.SetDefaultPrinter(previous_default_printer)
+            except Exception:
+                pass
 
     preview_path = build_preview_image(package, preview_file)
     if preview_path:
@@ -752,6 +960,7 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
         "engine": "com",
     }
     save_package(package_file, package)
+    save_package_snapshot(config, package, base_dir)
     return package, str(package_file)
 
 
@@ -767,21 +976,8 @@ def package_has_only_text_items(config):
 
 
 def build_message_package(config, base_dir=PROJECT_DIR, visible=False):
-    if config.get("openpyxl_fallback_only", False):
-        return build_message_package_openpyxl(
-            config,
-            base_dir=base_dir,
-            fallback_reason="openpyxl_fallback_only=true",
-        )
     if package_has_only_text_items(config):
-        return build_message_package_openpyxl(
-            config,
-            base_dir=base_dir,
-            fallback_reason="text_only_openpyxl_fast_path",
-        )
-    try:
-        return build_message_package_com(config, base_dir=base_dir, visible=visible)
-    except Exception as exc:
-        if not config.get("openpyxl_fallback", True):
-            raise
-        return build_message_package_openpyxl(config, base_dir=base_dir, fallback_reason=exc)
+        return build_text_message_package(config, base_dir=base_dir)
+    # Image generation is strict: only Excel -> single-page PDF -> PNG is
+    # accepted. Any rendering failure stops the task before an image is sent.
+    return build_message_package_com(config, base_dir=base_dir, visible=visible)

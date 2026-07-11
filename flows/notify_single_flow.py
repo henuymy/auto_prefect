@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -19,7 +19,10 @@ from tasks.method_tasks import download_reports_task
 from tasks.notify_tasks import build_message_package_task, send_notification_package_task
 from tasks.session_tasks import prepare_session_task
 from tasks.template_tasks import update_template_task
+from services.compare_service import find_empty_download_sheet_mappings
+from services.method_service import EmptyReportDataError
 from utils.config_loader import load_json_with_local_override
+from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure
 
 try:
     from prefect import flow, get_run_logger, task
@@ -82,33 +85,6 @@ def is_session_expired_error(exc):
     return any(marker in message for marker in markers)
 
 
-def resolve_dynamic_placeholders(value, now=None):
-    if not isinstance(value, str):
-        return value
-    now = now or datetime.now()
-    yesterday = now - timedelta(days=1)
-    replacements = {
-        "${today}": now.strftime("%Y-%m-%d"),
-        "${today_yyyymmdd}": now.strftime("%Y%m%d"),
-        "${yesterday}": yesterday.strftime("%Y-%m-%d"),
-        "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
-        "${hour}": str(now.hour),
-        "${hour2}": now.strftime("%H"),
-    }
-    resolved = value
-    for token, token_value in replacements.items():
-        resolved = resolved.replace(token, token_value)
-    return resolved
-
-
-def resolve_dynamic_structure(payload, now=None):
-    if isinstance(payload, dict):
-        return {key: resolve_dynamic_structure(value, now=now) for key, value in payload.items()}
-    if isinstance(payload, list):
-        return [resolve_dynamic_structure(item, now=now) for item in payload]
-    return resolve_dynamic_placeholders(payload, now=now)
-
-
 def assert_report_schema_contract(report_cfg):
     if "download" in report_cfg:
         raise ValueError("report config 仍包含旧字段 download，请保存为 schema 新结构")
@@ -123,6 +99,18 @@ def assert_report_schema_contract(report_cfg):
     for index, item in enumerate(report_cfg.get("downloads") or [], start=1):
         if "csrf_headers_from_cookies" in item:
             raise ValueError(f"downloads[{index}] 包含旧字段 csrf_headers_from_cookies，请使用 headers_from_cookies 或动态认证字段")
+        if item.get("source") == "tencent_sheet":
+            if not item.get("name"):
+                raise ValueError(f"downloads[{index}] 缺少必填字段 name")
+            if not (item.get("doc_url") or item.get("file_id")):
+                raise ValueError(f"downloads[{index}] 腾讯文档缺少 doc_url 或 file_id")
+            sheets = item.get("sheets") or []
+            if not sheets:
+                raise ValueError(f"downloads[{index}] 腾讯文档至少需要一个 Sheet 范围")
+            for sheet_index, sheet in enumerate(sheets, start=1):
+                if not (sheet.get("sheet_id") or sheet.get("sheet_name")):
+                    raise ValueError(f"downloads[{index}].sheets[{sheet_index}] 缺少 sheet_id 或 sheet_name")
+            continue
         for field in required_download_fields:
             if not item.get(field):
                 raise ValueError(f"downloads[{index}] 缺少必填字段 {field}")
@@ -145,6 +133,8 @@ def assert_report_schema_contract(report_cfg):
                 raise ValueError(f"compare_sources[{source_index}].sheet_mappings[{mapping_index}] 缺少 new_sheet_name")
             if not mapping.get("template_sheet_name"):
                 raise ValueError(f"compare_sources[{source_index}].sheet_mappings[{mapping_index}] 缺少 template_sheet_name")
+    if report_cfg.get("enabled") is True and not report_cfg.get("compare_sources"):
+        raise ValueError("启用的报表必须配置 compare_sources，避免调度运行后在比对阶段失败")
 
 
 def build_download_config(base_config, report_cfg):
@@ -176,6 +166,8 @@ def required_stages_for_report(report_cfg):
     stages = []
     seen = set()
     for item in enabled_downloads(report_cfg):
+        if item.get("source") == "tencent_sheet":
+            continue
         stage = str(item.get("stage") or "").strip()
         if stage and stage not in seen:
             stages.append(stage)
@@ -406,7 +398,43 @@ def auto_notify_flow(config_path=None):
     update_manifest = None
     while True:
         attempt += 1
-        download_manifest = run_download_with_session_retry()
+        try:
+            download_manifest = run_download_with_session_retry()
+        except EmptyReportDataError as exc:
+            if not wait_cfg["enabled"]:
+                raise
+            compare_result = {
+                "result": "same",
+                "reason": "report_data_not_generated",
+                "message": str(exc),
+                "sheets": [],
+                "summary": {
+                    "same": 1,
+                    "changed": 0,
+                    "invalid": 0,
+                    "total": 1,
+                },
+                "update_condition": get_update_condition(report_cfg),
+            }
+            write_json(str(flow_runtime_dir / "compare_result.json"), compare_result)
+            elapsed_seconds = int(monotonic() - wait_started_at)
+            max_wait_seconds = wait_cfg["max_wait_seconds"]
+            if max_wait_seconds is not None and elapsed_seconds >= max_wait_seconds:
+                logger.warning("报表数据持续未生成，已超时（%s 秒），停止重试", max_wait_seconds)
+                return {
+                    "status": "timeout_no_change",
+                    "reason": "report_data_not_generated_timeout",
+                    "attempts": attempt,
+                    "elapsed_seconds": elapsed_seconds,
+                    "message": str(exc),
+                }
+            logger.info(
+                "报表数据暂未生成（第 %s 次），%s 秒后重试下载",
+                attempt,
+                wait_cfg["poll_interval_seconds"],
+            )
+            sleep(wait_cfg["poll_interval_seconds"])
+            continue
         if download_manifest and download_manifest.get("dry_run"):
             logger.info("下载 dry-run 完成，停止后续比对和发送")
             return {"status": "skipped", "reason": "download_dry_run", "download_manifest": download_manifest}
@@ -419,6 +447,60 @@ def auto_notify_flow(config_path=None):
             steps["compare"],
             flow_runtime_dir,
         )
+        if wait_cfg["enabled"]:
+            empty_sheet_mappings = find_empty_download_sheet_mappings(
+                download_manifest,
+                report_cfg.get("compare_sources") or [],
+                base_dir=PROJECT_DIR,
+            )
+            if empty_sheet_mappings:
+                compare_result = {
+                    "result": "same",
+                    "reason": "download_sheet_empty_below_header",
+                    "message": "下载文件存在参与比对的 Sheet 数据区为空，等待下一轮",
+                    "sheets": [
+                        {
+                            "name": item.get("new_sheet_name"),
+                            "new_sheet_name": item.get("new_sheet_name"),
+                            "template_sheet_name": item.get("template_sheet_name"),
+                            "download_name": item.get("download_name"),
+                            "source_report_path": item.get("source_report_path"),
+                            "header_row": item.get("header_row"),
+                            "result": "same",
+                            "reason": item.get("reason"),
+                        }
+                        for item in empty_sheet_mappings
+                    ],
+                    "summary": {
+                        "same": len(empty_sheet_mappings),
+                        "changed": 0,
+                        "invalid": 0,
+                        "total": len(empty_sheet_mappings),
+                    },
+                    "update_condition": get_update_condition(report_cfg),
+                }
+                write_json(str(flow_runtime_dir / "compare_result.json"), compare_result)
+                elapsed_seconds = int(monotonic() - wait_started_at)
+                max_wait_seconds = wait_cfg["max_wait_seconds"]
+                if max_wait_seconds is not None and elapsed_seconds >= max_wait_seconds:
+                    logger.warning(
+                        "下载数据区持续为空，已超时（%s 秒），停止重试",
+                        max_wait_seconds,
+                    )
+                    return {
+                        "status": "timeout_no_change",
+                        "reason": "download_sheet_empty_below_header_timeout",
+                        "attempts": attempt,
+                        "elapsed_seconds": elapsed_seconds,
+                        "empty_sheets": empty_sheet_mappings,
+                    }
+                logger.info(
+                    "下载数据区为空（第 %s 次），%s 秒后重试下载",
+                    attempt,
+                    wait_cfg["poll_interval_seconds"],
+                )
+                sleep(wait_cfg["poll_interval_seconds"])
+                continue
         compare_runs = []
         for index, compare_item in enumerate(compare_configs, start=1):
             compare_config_path = write_json(

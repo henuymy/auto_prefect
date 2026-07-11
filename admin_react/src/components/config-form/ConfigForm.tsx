@@ -3,7 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { toast } from "sonner";
-import { AlertCircle, ArrowDown, ArrowUp, Bell, CalendarClock, ChevronDown, CloudDownload, Download, FilePlus2, GitCompareArrows, Info, Plus, Settings, Trash2, Upload } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Bell, CalendarClock, ChevronDown, CloudDownload, Download, FilePlus2, GitCompareArrows, Info, Plus, RefreshCw, Settings, Trash2, Upload } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,8 @@ import { ResponseParserPanel } from "@/components/config-form/ResponseParserPane
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tabs } from "@/components/ui/tabs";
 import { generateStarterTemplate, listTemplates, templateDownloadUrl, uploadTemplate } from "@/lib/api";
-import { parseJsonSafe, prettyJson } from "@/lib/utils";
+import { collectQuickDateFields, DATE_PRESETS, formatCustomDate, updateQuickDateField, type QuickDateField } from "@/lib/quickDate";
+import { cn, parseJsonSafe, prettyJson } from "@/lib/utils";
 import type { CompareSource, DownloadItem, ExcelColumn, ReportConfig, SendItem } from "@/types/config";
 
 const basicSchema = z.object({
@@ -74,8 +75,13 @@ function parseObject(text: string, fallback: Record<string, unknown>) {
 const PLACEHOLDER_TIPS = [
   "${today}: 今天 YYYY-MM-DD",
   "${yesterday}: 昨天 YYYY-MM-DD",
+  "${day_before_yesterday}: 前天 YYYY-MM-DD",
   "${today_yyyymmdd}: 今天 YYYYMMDD",
   "${yesterday_yyyymmdd}: 昨天 YYYYMMDD",
+  "${day_before_yesterday_yyyymmdd}: 前天 YYYYMMDD",
+  "${date:yesterday-1M|yyyyMMdd}: 上月同期 YYYYMMDD",
+  "${date:yesterday-1y|yyyyMMdd}: 去年同期 YYYYMMDD",
+  "${date:today-7d|yyyy-MM-dd}: 7 天前 YYYY-MM-DD",
   "${hour}: 当前小时 0-23",
   "${hour2}: 当前小时 00-23",
 ];
@@ -245,7 +251,7 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
 
   async function handleGenerateStarterTemplate() {
     const confirmed = window.confirm(
-      "将真实下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n会按 Prefect 会话策略处理：先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会重新登录；下载阶段只有明确提示 session 已过期时才强制刷新。\n\n不会发送企业微信，也不会提交正式模板。确定继续吗？",
+      "将真实下载当前配置中的所有抓取项，生成一个包含“通报”空白页和全部下载数据页的 Excel 模板。\n\n会按 Prefect 会话策略处理：先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会重新登录；下载阶段只有明确提示 session 已过期时才强制刷新。\n\n不会发送企业微信，不会提交正式模板；生成成功后会自动把模板路径切换为新模板。确定继续吗？",
     );
     if (!confirmed) return;
     setStarterStep(0);
@@ -256,7 +262,7 @@ function BaseTab({ config, onChange }: { config: ReportConfig; onChange: (config
       onChange({ ...config, template_path: result.template_path });
       await refreshTemplates();
       toast.success("新手模板已生成", {
-        description: result.template_path,
+        description: `已生成并切换到 ${result.template_path}`,
         action: {
           label: "下载模板",
           onClick: () => window.open(templateDownloadUrl(result.filename), "_blank", "noopener,noreferrer"),
@@ -388,42 +394,128 @@ function StarterTemplateProgress({ currentStep }: { currentStep: number }) {
   );
 }
 
-function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
-  const add = () => {
-    const next: DownloadItem = {
-      name: `抓取项-${config.downloads.length + 1}`,
-      stage: "report_analysis",
-      auth_preset: "无",
-      method: "POST",
-      url: "",
-      headers: {},
-      body_type: "json",
-      response_mode: "file",
-      data: {},
-    };
-    onChange({ ...config, downloads: [...config.downloads, next] });
+function sourceOf(item: DownloadItem) {
+  return item.source === "tencent_sheet" ? "tencent_sheet" : "http_api";
+}
+
+function defaultHttpDownload(index: number): DownloadItem {
+  return {
+    source: "http_api",
+    name: `抓取项-${index}`,
+    stage: "report_analysis",
+    auth_preset: "无",
+    method: "POST",
+    url: "",
+    headers: {},
+    body_type: "json",
+    response_mode: "file",
+    data: {},
   };
+}
+
+function defaultTencentSheetDownload(index: number): DownloadItem {
+  return {
+    source: "tencent_sheet",
+    name: `腾讯文档-${index}`,
+    headers: {},
+    file_id: "",
+    doc_url: "",
+    output_filename: `腾讯文档-${index}.xlsx`,
+    sheets: [{ sheet_name: "日报", sheet_id: "", range: "auto", output_sheet_name: "日报" }],
+  };
+}
+
+function sheetIdFromDocUrl(value?: string) {
+  if (!value) return "";
+  try {
+    return new URL(value).searchParams.get("tab") || "";
+  } catch {
+    const match = value.match(/[?&]tab=([^&#]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+}
+
+function applyDocUrlToTencentSheet(item: DownloadItem, docUrl: string): DownloadItem {
+  const parsedSheetId = sheetIdFromDocUrl(docUrl);
+  if (!parsedSheetId) {
+    return { ...item, source: "tencent_sheet", doc_url: docUrl };
+  }
+  const currentSheets = item.sheets?.length ? item.sheets : [{ sheet_name: "日报", sheet_id: "", range: "auto", output_sheet_name: "日报" }];
+  const sheets = currentSheets.map((sheet, index) => (
+    index === 0 && !sheet.sheet_id ? { ...sheet, sheet_id: parsedSheetId } : sheet
+  ));
+  return { ...item, source: "tencent_sheet", doc_url: docUrl, sheets };
+}
+
+function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
+  const [activeSource, setActiveSource] = useState<"http_api" | "tencent_sheet">("http_api");
+  const entries = config.downloads.map((item, index) => ({ item, index }));
+  const httpEntries = entries.filter(({ item }) => sourceOf(item) === "http_api");
+  const tencentEntries = entries.filter(({ item }) => sourceOf(item) === "tencent_sheet");
+  const activeEntries = activeSource === "http_api" ? httpEntries : tencentEntries;
+  const updateDownload = (index: number, next: DownloadItem) => onChange({ ...config, downloads: updateAt(config.downloads, index, next) });
+  const deleteDownload = (index: number) => onChange({ ...config, downloads: config.downloads.filter((_, itemIndex) => itemIndex !== index) });
+  const addHttp = () => onChange({ ...config, downloads: [...config.downloads, defaultHttpDownload(httpEntries.length + 1)] });
+  const addTencent = () => onChange({ ...config, downloads: [...config.downloads, defaultTencentSheetDownload(tencentEntries.length + 1)] });
 
   return (
     <Card>
-      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <CardTitle>数据抓取</CardTitle>
-          <CardDescription>每一张卡就是一个下载/JSON 转 Excel 请求，支持 Cookie Stage 和动态认证。</CardDescription>
+      <CardHeader className="space-y-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <CardTitle>数据抓取</CardTitle>
+            <CardDescription>按数据源分开配置，避免业务接口请求和腾讯文档范围读取混用。</CardDescription>
+          </div>
+          <Button className="self-start sm:self-auto" variant="outline" onClick={activeSource === "http_api" ? addHttp : addTencent}>
+            <Plus className="h-4 w-4" />
+            {activeSource === "http_api" ? "添加接口抓取" : "添加腾讯文档"}
+          </Button>
         </div>
-        <Button className="self-start sm:self-auto" variant="outline" onClick={add}><Plus className="h-4 w-4" />添加抓取项</Button>
+        <div className="inline-flex w-full rounded-lg border border-border bg-muted/40 p-1 sm:w-auto">
+          <button
+            type="button"
+            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition sm:flex-none ${activeSource === "http_api" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            onClick={() => setActiveSource("http_api")}
+          >
+            业务接口 <span className="ml-1 text-xs text-muted-foreground">{httpEntries.length}</span>
+          </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition sm:flex-none ${activeSource === "tencent_sheet" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            onClick={() => setActiveSource("tencent_sheet")}
+          >
+            腾讯文档 <span className="ml-1 text-xs text-muted-foreground">{tencentEntries.length}</span>
+          </button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <PlaceholderGuide />
-        {config.downloads.map((item, index) => (
-          <DownloadCard
-            key={`${item.name}-${index}`}
-            item={item}
-            index={index}
-            onChange={(next) => onChange({ ...config, downloads: updateAt(config.downloads, index, next) })}
-            onDelete={() => onChange({ ...config, downloads: config.downloads.filter((_, itemIndex) => itemIndex !== index) })}
-          />
+        {activeSource === "http_api" && <PlaceholderGuide />}
+        {activeEntries.map(({ item, index }, viewIndex) => (
+          activeSource === "http_api" ? (
+            <HttpDownloadCard
+              key={`${item.name}-${index}`}
+              item={item}
+              index={viewIndex}
+              onChange={(next) => updateDownload(index, next)}
+              onDelete={() => deleteDownload(index)}
+              deleteDisabled={config.downloads.length <= 1}
+            />
+          ) : (
+            <TencentSheetDownloadCard
+              key={`${item.name}-${index}`}
+              item={item}
+              index={viewIndex}
+              onChange={(next) => updateDownload(index, next)}
+              onDelete={() => deleteDownload(index)}
+              deleteDisabled={config.downloads.length <= 1}
+            />
+          )
         ))}
+        {!activeEntries.length && (
+          <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+            {activeSource === "http_api" ? "还没有业务接口抓取项。" : "还没有腾讯文档抓取项。"}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -484,8 +576,9 @@ function PlaceholderGuide() {
   );
 }
 
-function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem; index: number; onChange: (item: DownloadItem) => void; onDelete: () => void }) {
+function HttpDownloadCard({ item, index, onChange, onDelete, deleteDisabled }: { item: DownloadItem; index: number; onChange: (item: DownloadItem) => void; onDelete: () => void; deleteDisabled?: boolean }) {
   const [open, setOpen] = useState(index === 0);
+  const [dateOpen, setDateOpen] = useState(false);
   const [headersText, setHeadersText] = useState(prettyJson(item.headers || {}));
   const [dataText, setDataText] = useState(prettyJson(item.data || {}));
   const [authText, setAuthText] = useState(prettyJson(getAuthMapping(item)));
@@ -493,6 +586,7 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
   const dataError = dataText.trim() ? parseJsonSafe(dataText).ok ? "" : "请求体 JSON 格式错误" : "";
   const authError = authText.trim() ? parseJsonSafe(authText).ok ? "" : "动态认证 JSON 格式错误" : "";
   const hasJsonError = Boolean(headersError || dataError || authError);
+  const quickDateFields = collectQuickDateFields(item);
 
   useEffect(() => {
     setHeadersText(prettyJson(item.headers || {}));
@@ -551,15 +645,26 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
         <button type="button" onClick={() => setOpen((value) => !value)} className="min-w-0 flex-1 text-left">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">#{index + 1}</Badge>
-          <Badge>{item.response_mode || "response_mode 未填"}</Badge>
-            <Badge variant="outline">{item.stage}</Badge>
+            <Badge>{item.response_mode || "response_mode 未填"}</Badge>
+            <Badge variant="outline">{item.stage || "stage 未填"}</Badge>
             <ChevronDown className={`h-4 w-4 text-muted-foreground transition ${open ? "rotate-180" : ""}`} />
           </div>
           <h3 className="mt-2 text-base font-black">{item.name || "未命名抓取项"}</h3>
           <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.url || "尚未填写 URL"}</p>
         </button>
-        <Button variant="ghost" size="icon" onClick={onDelete} disabled={index === 0}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {quickDateFields.length > 0 && (
+            <Button variant={dateOpen ? "default" : "outline"} size="sm" onClick={() => setDateOpen((value) => !value)} title="快速修改请求日期">
+              <CalendarClock className="h-4 w-4" />
+              日期 {quickDateFields.length}
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" onClick={onDelete} disabled={deleteDisabled}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+        </div>
       </div>
+      {dateOpen && quickDateFields.length > 0 && (
+        <QuickDateEditor item={item} fields={quickDateFields} onChange={onChange} />
+      )}
       {!open && (
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
           <Badge variant="outline">{item.method || "method 未填"}</Badge>
@@ -573,7 +678,7 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
       <ResponseParserPanel item={item} onApply={onChange} />
       <div className="grid gap-4 lg:grid-cols-3">
         <Field label="下载标识 name"><DraftInput value={item.name} onCommit={(value) => onChange({ ...item, name: value })} /></Field>
-        <Field label="Cookie Stage"><Select value={item.stage} onChange={(event) => onChange({ ...item, stage: event.target.value })}><option>report_analysis</option><option>smart_ops</option><option>city_ops</option><option>data_market</option></Select></Field>
+        <Field label="Cookie Stage"><Select value={item.stage || "report_analysis"} onChange={(event) => onChange({ ...item, stage: event.target.value })}><option>report_analysis</option><option>smart_ops</option><option>city_ops</option><option>data_market</option></Select></Field>
         <Field label="响应模式 response_mode"><Select value={item.response_mode || ""} onChange={(event) => onChange(ensureDrilldown({ ...item, response_mode: event.target.value as DownloadItem["response_mode"] }))}><option value="" disabled>请选择响应模式</option><option value="file">file</option><option value="json_to_excel">json_to_excel</option><option value="json_drilldown_to_excel">json_drilldown_to_excel</option></Select></Field>
         <Field label="请求方法 method"><Select value={item.method || ""} onChange={(event) => onChange({ ...item, method: event.target.value as DownloadItem["method"] })}><option value="" disabled>请选择请求方法</option><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option><option>DELETE</option></Select></Field>
         <Field label="载体类型 body_type"><Select value={item.body_type || ""} onChange={(event) => onChange({ ...item, body_type: event.target.value as DownloadItem["body_type"] })}><option value="" disabled>请选择载体类型</option><option>json</option><option>form</option><option>raw</option></Select></Field>
@@ -583,13 +688,144 @@ function DownloadCard({ item, index, onChange, onDelete }: { item: DownloadItem;
           </Select>
           <p className="mt-1 text-xs text-muted-foreground">{getAuthTargetLabel(item)}；选择预设会自动切换 Cookie Stage。</p>
         </Field>
-        <Field label="下载 URL" hint="可以写占位符，例如 queryDate=${today_yyyymmdd}" className="lg:col-span-3"><DraftInput value={item.url} onCommit={(value) => onChange({ ...item, url: value })} /></Field>
+        <Field label="下载 URL" hint="可以写占位符，例如 queryDate=${today_yyyymmdd}" className="lg:col-span-3"><DraftInput value={item.url || ""} onCommit={(value) => onChange({ ...item, url: value })} /></Field>
         <JsonTextField label="请求头 Headers JSON" value={headersText} error={headersError} onChange={setHeadersText} onBlur={applyJsonTexts} />
         <JsonTextField label="请求体 data/json" value={dataText} error={dataError} onChange={setDataText} onBlur={applyJsonTexts} />
         <JsonTextField label="动态认证 JSON" value={authText} error={authError} onChange={setAuthText} onBlur={applyJsonTexts} />
       </div>
       <ResponseModeConfig item={item} onChange={onChange} />
         </>
+      )}
+    </div>
+  );
+}
+
+function QuickDateEditor({ item, fields, onChange }: { item: DownloadItem; fields: QuickDateField[]; onChange: (item: DownloadItem) => void }) {
+  const applyAll = (day: "today" | "yesterday") => {
+    let next = item;
+    fields.forEach((field) => {
+      const compact = /_yyyymmdd\}/i.test(field.value) || /^\d{8}$/.test(field.value);
+      next = updateQuickDateField(next, field, compact ? `\${${day}_yyyymmdd}` : `\${${day}}`);
+    });
+    onChange(next);
+  };
+
+  return (
+    <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-950/25">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-sky-950 dark:text-sky-100">快速修改日期</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">自动识别 URL、请求体、请求头和 Raw Body 中的日期字段。</p>
+        </div>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => applyAll("today")}>全部今天</Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => applyAll("yesterday")}>全部昨天</Button>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {fields.map((field) => (
+          <div key={field.id} className="grid gap-2 rounded-lg border border-sky-100 bg-background/85 p-2.5 xl:grid-cols-[minmax(0,1fr)_210px_170px_minmax(240px,1fr)] xl:items-center dark:border-sky-500/20">
+            <div className="min-w-0">
+              <div className="truncate text-xs font-semibold" title={field.label}>{field.label}</div>
+              <code className="mt-1 block truncate text-[11px] text-muted-foreground" title={field.value}>{field.value}</code>
+            </div>
+            <Select
+              aria-label={`${field.label} 日期预设`}
+              value={DATE_PRESETS.some((preset) => preset.value === field.value) ? field.value : ""}
+              onChange={(event) => event.target.value && onChange(updateQuickDateField(item, field, event.target.value))}
+            >
+              <option value="">选择动态日期…</option>
+              {DATE_PRESETS.map((preset) => <option key={preset.value} value={preset.value}>{preset.label}</option>)}
+            </Select>
+            <Input
+              type="date"
+              aria-label={`${field.label} 自定义日期`}
+              onChange={(event) => event.target.value && onChange(updateQuickDateField(item, field, formatCustomDate(event.target.value, field.value)))}
+            />
+            <DraftInput
+              aria-label={`${field.label} 自定义占位符`}
+              placeholder="${date:yesterday-1M|yyyyMMdd}"
+              value={field.value}
+              onCommit={(value) => value.trim() && onChange(updateQuickDateField(item, field, value.trim()))}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TencentSheetDownloadCard({ item, index, onChange, onDelete, deleteDisabled }: { item: DownloadItem; index: number; onChange: (item: DownloadItem) => void; onDelete: () => void; deleteDisabled?: boolean }) {
+  const [open, setOpen] = useState(index === 0);
+  const sheets = item.sheets?.length ? item.sheets : [{ sheet_name: "日报", sheet_id: "", range: "auto", output_sheet_name: "日报" }];
+  const updateSheets = (nextSheets: NonNullable<DownloadItem["sheets"]>) => onChange({ ...item, source: "tencent_sheet", sheets: nextSheets });
+  const subtitle = item.doc_url || (item.file_id ? `file_id: ${item.file_id}` : "尚未填写腾讯文档完整链接");
+
+  return (
+    <div className="rounded-xl border border-border bg-muted/20 p-3 sm:p-4">
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <button type="button" onClick={() => setOpen((value) => !value)} className="min-w-0 flex-1 text-left">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">#{index + 1}</Badge>
+            <Badge>腾讯文档</Badge>
+            <Badge variant="outline">按范围读取</Badge>
+            <Badge variant="outline">{sheets.length} 个 Sheet</Badge>
+            <ChevronDown className={`h-4 w-4 text-muted-foreground transition ${open ? "rotate-180" : ""}`} />
+          </div>
+          <h3 className="mt-2 text-base font-black">{item.name || "未命名腾讯文档"}</h3>
+          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{subtitle}</p>
+        </button>
+        <Button variant="ghost" size="icon" onClick={onDelete} disabled={deleteDisabled}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+      </div>
+      {open && (
+        <div className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="下载标识 name"><DraftInput value={item.name} onCommit={(value) => onChange({ ...item, source: "tencent_sheet", name: value })} /></Field>
+            <Field label="输出文件名"><DraftInput value={item.output_filename || ""} onCommit={(value) => onChange({ ...item, source: "tencent_sheet", output_filename: value })} /></Field>
+            <Field label="腾讯文档完整链接 doc_url" hint="建议填写带 tab 的完整链接，例如 https://docs.qq.com/sheet/DY1h4R1Rmd0FwWFhF?tab=000002；首个 Sheet 的 sheet_id 会自动带出。">
+              <DraftInput value={item.doc_url || ""} onCommit={(value) => onChange(applyDocUrlToTencentSheet(item, value))} />
+            </Field>
+            <Field label="高级：file_id（可选）" hint="通常留空；只有已拿到 OpenAPI 内部 file_id 时才填写。">
+              <DraftInput value={item.file_id || ""} onCommit={(value) => onChange({ ...item, source: "tencent_sheet", file_id: value })} />
+            </Field>
+          </div>
+          <div className="rounded-xl border border-border bg-background/70 p-3">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-black">Sheet 范围配置</div>
+                <p className="mt-1 text-xs text-muted-foreground">运行时会自动分块读取，避开导出接口每日 9 次限制。</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => updateSheets([...sheets, { sheet_name: "日报", sheet_id: "", range: "auto", output_sheet_name: "日报" }])}>
+                <Plus className="h-4 w-4" />添加 Sheet
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <div className="hidden grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 px-2 text-xs font-semibold text-muted-foreground lg:grid">
+                <div>Sheet 名称</div>
+                <div>sheet_id</div>
+                <div>读取范围</div>
+                <div>输出 Sheet</div>
+                <div />
+              </div>
+              {sheets.map((sheet, sheetIndex) => (
+                <div key={sheetIndex} className="grid gap-2 rounded-lg border border-border bg-muted/10 p-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+                  <DraftInput placeholder="Sheet 名称" value={sheet.sheet_name || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, sheet_name: value }))} />
+                  <DraftInput placeholder="sheet_id" value={sheet.sheet_id || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, sheet_id: value }))} />
+                  <DraftInput placeholder="auto 或 A1:Z1000" value={sheet.range || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, range: value || "auto" }))} />
+                  <DraftInput placeholder="输出 Sheet" value={sheet.output_sheet_name || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, output_sheet_name: value }))} />
+                  <div className="flex items-center justify-end gap-1">
+                    <Button variant="ghost" size="icon" title="复制" onClick={() => updateSheets([...sheets.slice(0, sheetIndex + 1), { ...sheet }, ...sheets.slice(sheetIndex + 1)])}>
+                      <FilePlus2 className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" title="删除" onClick={() => updateSheets(removeAt(sheets, sheetIndex))} disabled={sheets.length <= 1}>
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -858,7 +1094,7 @@ function CompareTab({ config, onChange }: { config: ReportConfig; onChange: (con
                 <DraftInput placeholder="映射备注" value={mapping.name || ""} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, name: value })} />
                 <DraftInput placeholder="源 sheet" value={mapping.new_sheet_name} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, new_sheet_name: value })} />
                 <DraftInput placeholder="模板 sheet" value={mapping.template_sheet_name} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, template_sheet_name: value })} />
-                <DraftInput type="number" placeholder="表头行" value={mapping.header_row || 1} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, header_row: Number(value || 1) })} />
+                <DraftInput type="number" placeholder="表头行，0=无表头" value={mapping.header_row ?? 1} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, header_row: value === "" ? 1 : Number(value) })} />
                 <DraftInput placeholder="主键列，逗号分隔" value={(mapping.key_columns || []).join(",")} onCommit={(value) => updateMapping(config, onChange, sourceIndex, mappingIndex, { ...mapping, key_columns: value.split(",").map((item) => item.trim()).filter(Boolean) })} />
               </div>
             ))}
@@ -883,6 +1119,10 @@ function updateMapping(config: ReportConfig, onChange: (config: ReportConfig) =>
 function SendTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
   const send = config.send;
   const updateItem = (index: number, item: SendItem) => onChange({ ...config, send: { ...send, items: updateAt(send.items, index, item) } });
+  const itemRangeConfig = (item: SendItem) => item.type === "image" ? item.capture : item.text;
+  const updateRangeConfig = (index: number, item: SendItem, next: NonNullable<SendItem["capture"]>) => {
+    updateItem(index, item.type === "image" ? { ...item, capture: next } : { ...item, text: next });
+  };
   return (
     <Card>
       <CardHeader>
@@ -895,15 +1135,41 @@ function SendTab({ config, onChange }: { config: ReportConfig; onChange: (config
           <Field label="企业微信 Webhook"><DraftInput value={send.webhook_url} onCommit={(value) => onChange({ ...config, send: { ...send, webhook_url: value } })} /></Field>
         </div>
         <div className="space-y-3">
-          {send.items.map((item, index) => (
-            <div key={index} className="grid gap-3 rounded-xl border border-border bg-muted/20 p-3 sm:grid-cols-[minmax(120px,160px)_1fr] lg:grid-cols-[160px_1fr_180px_auto]">
-              <Select value={item.type} onChange={(event) => updateItem(index, { ...item, type: event.target.value as SendItem["type"] })}><option value="image">image</option><option value="text">text</option></Select>
-              <DraftInput placeholder="sheet" value={item.sheet} onCommit={(value) => updateItem(index, { ...item, sheet: value })} />
-              <Select value={item.text?.mode || "none"} onChange={(event) => updateItem(index, { ...item, text: { mode: event.target.value as "used_range" | "none" } })}><option value="none">none</option><option value="used_range">used_range</option></Select>
-              <Button variant="ghost" size="icon" onClick={() => onChange({ ...config, send: { ...send, items: send.items.filter((_, itemIndex) => itemIndex !== index) } })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-            </div>
-          ))}
-          <Button variant="outline" onClick={() => onChange({ ...config, send: { ...send, items: [...send.items, { type: "image", sheet: "" }] } })}><Plus className="h-4 w-4" />添加发送项</Button>
+          {send.items.map((item, index) => {
+            const rangeConfig = itemRangeConfig(item) || { mode: "used_range" as const };
+            const mode = rangeConfig.mode || "used_range";
+            return (
+              <div key={index} className="grid gap-3 rounded-xl border border-border bg-muted/20 p-3 md:grid-cols-2 xl:grid-cols-[140px_minmax(180px,1fr)_180px_minmax(180px,1fr)_auto] xl:items-center">
+                <Select
+                  value={item.type}
+                  onChange={(event) => {
+                    const type = event.target.value as SendItem["type"];
+                    updateItem(index, type === "image"
+                      ? { ...item, type, capture: item.capture || { mode: "used_range" }, text: undefined }
+                      : { ...item, type, text: item.text || { mode: "used_range" }, capture: undefined });
+                  }}
+                ><option value="image">图片</option><option value="text">文字</option></Select>
+                <DraftInput placeholder="Sheet 名称" value={item.sheet} onCommit={(value) => updateItem(index, { ...item, sheet: value })} />
+                <Select
+                  value={mode}
+                  onChange={(event) => updateRangeConfig(index, item, { ...rangeConfig, mode: event.target.value as NonNullable<typeof rangeConfig.mode> })}
+                >
+                  <option value="used_range">有效区域</option>
+                  <option value="explicit_range">自定义范围</option>
+                  <option value="current_region">当前连续区域</option>
+                </Select>
+                {mode === "explicit_range" ? (
+                  <DraftInput placeholder="例如 A1:H20" value={rangeConfig.range || ""} onCommit={(value) => updateRangeConfig(index, item, { ...rangeConfig, range: value })} />
+                ) : mode === "current_region" ? (
+                  <DraftInput placeholder="起始单元格，例如 A1" value={rangeConfig.start_cell || "A1"} onCommit={(value) => updateRangeConfig(index, item, { ...rangeConfig, start_cell: value || "A1" })} />
+                ) : (
+                  <div className="flex h-10 items-center rounded-lg border border-dashed border-border px-3 text-xs text-muted-foreground">自动裁剪非空单元格</div>
+                )}
+                <Button className="md:col-span-2 xl:col-span-1" variant="ghost" size="icon" onClick={() => onChange({ ...config, send: { ...send, items: send.items.filter((_, itemIndex) => itemIndex !== index) } })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+              </div>
+            );
+          })}
+          <Button variant="outline" onClick={() => onChange({ ...config, send: { ...send, items: [...send.items, { type: "image", sheet: "", capture: { mode: "used_range" } }] } })}><Plus className="h-4 w-4" />添加发送项</Button>
         </div>
       </CardContent>
     </Card>
@@ -915,6 +1181,14 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
   const wait = config.wait_for_change;
   const deployment = config.deployment;
   const crons = normalizeCronList(deployment);
+  const sameMode: "retry" | "send" = update.send_when_same ? "send" : "retry";
+  const setSameMode = (mode: "retry" | "send") => {
+    onChange({
+      ...config,
+      template_update: { ...update, send_when_same: mode === "send" },
+      wait_for_change: { ...wait, enabled: mode === "retry" },
+    });
+  };
   const updateDeployment = (next: ReportConfig["deployment"], nextCrons = crons) => {
     const cleanCrons = nextCrons.map((cron) => cron.trim()).filter(Boolean);
     onChange({ ...config, deployment: { ...next, crons: cleanCrons, enabled: cleanCrons.length > 0 } });
@@ -933,15 +1207,48 @@ function AdvancedTab({ config, onChange }: { config: ReportConfig; onChange: (co
           <Field label="更新引擎"><Select value={update.engine || "hybrid"} onChange={(event) => onChange({ ...config, template_update: { ...update, engine: event.target.value as NonNullable<typeof update.engine> } })}><option value="hybrid">hybrid</option><option value="com_copy">com_copy</option></Select></Field>
           <Field label="changed 判断条件"><Select value={update.update_condition} onChange={(event) => onChange({ ...config, template_update: { ...update, update_condition: event.target.value as typeof update.update_condition } })}><option value="any_changed">any_changed</option><option value="all_changed">all_changed</option></Select></Field>
           <Field label="写入范围"><Select value={update.write_sheets} onChange={(event) => onChange({ ...config, template_update: { ...update, write_sheets: event.target.value as typeof update.write_sheets } })}><option value="changed">changed</option><option value="all_compared">all_compared</option></Select></Field>
-          <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={update.send_when_same} onChange={(event) => onChange({ ...config, template_update: { ...update, send_when_same: event.target.checked } })} /> same 时直接发送当前通报</label>
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle>等待重试</CardTitle><CardDescription>数据未变化时按间隔等待，再重新下载比对。</CardDescription></CardHeader>
-        <CardContent className="space-y-4">
-          <label className="flex items-center gap-3 text-sm"><input type="checkbox" checked={wait.enabled} onChange={(event) => onChange({ ...config, wait_for_change: { ...wait, enabled: event.target.checked } })} /> 启用 same 自动重试</label>
-          <Field label="重试间隔秒"><DraftInput type="number" value={wait.poll_interval_seconds} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, poll_interval_seconds: Number(value || 0) } })} /></Field>
-          <Field label="最大等待分钟"><DraftInput type="number" value={wait.max_wait_minutes} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, max_wait_minutes: Number(value || 0) } })} /></Field>
+        <CardHeader><CardTitle>same 时处理方式</CardTitle><CardDescription>当数据未变化、参与比对的下载 Sheet 表头下没有数据，或平台提示报表尚未生成时，选择继续等待还是直接发送。</CardDescription></CardHeader>
+        <CardContent className="space-y-5">
+          <div className="rounded-xl border border-border bg-muted/30 p-1">
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                className={cn(
+                  "flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition",
+                  sameMode === "retry" ? "border-sky-300 bg-sky-100 text-sky-950 shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                )}
+                onClick={() => setSameMode("retry")}
+              >
+                <RefreshCw className="h-4 w-4" />
+                等待重试
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "flex h-10 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition",
+                  sameMode === "send" ? "border-sky-300 bg-sky-100 text-sky-950 shadow-sm" : "border-transparent text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                )}
+                onClick={() => setSameMode("send")}
+              >
+                <Bell className="h-4 w-4" />
+                直接发送
+              </button>
+            </div>
+          </div>
+          <div className="rounded-lg border border-dashed border-sky-200 bg-sky-50/70 px-3 py-2 text-sm text-sky-950">
+            {sameMode === "retry"
+              ? "数据未变化、参与比对的下载 Sheet 表头下没有数据，或接口提示“对应地区暂未生成报表数据”时，按间隔重新下载并比对。"
+              : "即使数据一致，也继续生成并发送当前通报。"}
+          </div>
+          {sameMode === "retry" && (
+            <div className="grid gap-4 rounded-xl bg-muted/30 p-3 sm:grid-cols-2">
+              <Field label="重试间隔秒"><DraftInput type="number" value={wait.poll_interval_seconds} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, poll_interval_seconds: Number(value || 0) } })} /></Field>
+              <Field label="最大等待分钟"><DraftInput type="number" value={wait.max_wait_minutes} onCommit={(value) => onChange({ ...config, wait_for_change: { ...wait, max_wait_minutes: Number(value || 0) } })} /></Field>
+            </div>
+          )}
         </CardContent>
       </Card>
       <Card className="xl:col-span-2">

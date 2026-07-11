@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -12,10 +13,57 @@ DEFAULT_EXCEL_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "loc
 DEFAULT_EXCEL_LOCK_TIMEOUT_SECONDS = 900
 DEFAULT_EXCEL_LOCK_POLL_SECONDS = 2
 DEFAULT_EXCEL_LOCK_STALE_SECONDS = 180
+DEFAULT_ORPHANED_EXCEL_MIN_AGE_SECONDS = 120
 
 
 class ExcelComLockTimeout(RuntimeError):
     pass
+
+
+def cleanup_orphaned_excel_processes(min_age_seconds=DEFAULT_ORPHANED_EXCEL_MIN_AGE_SECONDS):
+    if sys.platform != "win32":
+        return []
+    min_age_seconds = max(0, int(min_age_seconds or 0))
+    command = f"""
+$now = Get-Date
+Get-Process -Name EXCEL -ErrorAction SilentlyContinue |
+  Where-Object {{
+    $_.MainWindowHandle -eq 0 -and
+    $_.StartTime -and
+    (($now - $_.StartTime).TotalSeconds -ge {min_age_seconds})
+  }} |
+  ForEach-Object {{
+    $item = [PSCustomObject]@{{
+      Id = $_.Id
+      StartTime = $_.StartTime.ToString('yyyy-MM-dd HH:mm:ss')
+      MainWindowTitle = $_.MainWindowTitle
+    }}
+    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    $item
+  }} |
+  ConvertTo-Json -Compress
+"""
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", command],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return []
+    try:
+        import json
+
+        payload = json.loads(completed.stdout)
+    except Exception:
+        return []
+    if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list):
+        return payload
+    return []
 
 
 class FileLock:
@@ -76,9 +124,10 @@ class FileLock:
 
 
 class LockedExcel:
-    def __init__(self, excel, lock):
+    def __init__(self, excel, lock, pythoncom_module=None):
         self._excel = excel
         self._lock = lock
+        self._pythoncom = pythoncom_module
         self._released = False
 
     def __getattr__(self, name):
@@ -94,7 +143,11 @@ class LockedExcel:
         if self._released:
             return
         self._released = True
-        self._lock.release()
+        if self._lock is not None:
+            self._lock.release()
+        if self._pythoncom is not None:
+            self._pythoncom.CoUninitialize()
+            self._pythoncom = None
 
 
 def _current_pid():
@@ -169,10 +222,17 @@ def dispatch_excel_dynamic(win32com):
     return win32com.dynamic.Dispatch(dispatch)
 
 
-def open_excel(visible=False, manual_calculation=False, use_lock=True):
+def open_excel(visible=False, manual_calculation=False, use_lock=True, cleanup_orphaned=False):
     win32com = require_win32()
+    try:
+        import pythoncom  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("缺少 pywin32，请先安装: pip install pywin32") from exc
+    pythoncom.CoInitialize()
     lock = FileLock().acquire() if use_lock else None
     try:
+        if cleanup_orphaned:
+            cleanup_orphaned_excel_processes()
         try:
             excel = win32com.DispatchEx("Excel.Application")
         except AttributeError as exc:
@@ -181,10 +241,11 @@ def open_excel(visible=False, manual_calculation=False, use_lock=True):
             clear_win32com_gencache(win32com)
             excel = dispatch_excel_dynamic(win32com)
         safe_configure_excel(excel, visible=visible, manual_calculation=manual_calculation)
-        return LockedExcel(excel, lock) if lock else excel
+        return LockedExcel(excel, lock, pythoncom)
     except Exception:
         if lock is not None:
             lock.release()
+        pythoncom.CoUninitialize()
         raise
 
 

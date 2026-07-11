@@ -9,18 +9,30 @@ export interface ExcelColumn {
   type?: "number" | "";
 }
 
+export interface TencentSheetConfig {
+  sheet_name?: string;
+  sheet_id?: string;
+  range: string;
+  output_sheet_name?: string;
+}
+
 export interface DownloadItem {
   name: string;
   enabled?: boolean;
-  stage: string;
+  source?: "http_api" | "tencent_sheet";
+  stage?: string;
   auth_preset?: string;
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  url: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  url?: string;
+  file_id?: string;
+  doc_url?: string;
+  output_filename?: string;
+  sheets?: TencentSheetConfig[];
   headers: Record<string, string>;
-  body_type: BodyType;
+  body_type?: BodyType;
   data?: Record<string, unknown>;
   raw_body?: string;
-  response_mode: ResponseMode;
+  response_mode?: ResponseMode;
   headers_from_cookies?: Record<string, string>;
   headers_from_session_storage?: Record<string, string>;
   headers_from_local_storage?: Record<string, string>;
@@ -60,8 +72,15 @@ export interface CompareSource {
 export interface SendItem {
   type: "image" | "text";
   sheet: string;
+  capture?: {
+    mode?: "used_range" | "explicit_range" | "current_region";
+    range?: string;
+    start_cell?: string;
+  };
   text?: {
-    mode?: "used_range" | "none";
+    mode?: "used_range" | "explicit_range" | "current_region";
+    range?: string;
+    start_cell?: string;
   };
 }
 

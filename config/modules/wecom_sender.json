@@ -2,10 +2,13 @@
   "capture_defaults": {
     "mode": "used_range",
     "shrink_empty_edges": true,
-    "appearance": "printer",
-    "format": "picture",
-    "export_scale": 2,
-    "optimize_png": true,
+    "engine": "pdf_render",
+    "pdf_dpi": 300,
+    "pdf_crop_whitespace": true,
+    "excel_ready_timeout_seconds": 60,
+    "excel_ready_poll_seconds": 0.2,
+    "excel_active_printer": "Microsoft Print to PDF on PORTPROMPT:",
+    "optimize_png": false,
     "png_colors": 256
   },
   "workbooks": [
@@ -47,6 +50,8 @@
     "package_file": "message_package.json",
     "preview_image_file": "preview.png",
     "send_result_file": "send_result.json",
+    "intermediate_dir": "intermediates",
+    "keep_intermediate_files": false,
     "cleanup_after_send": true
   }
 }

@@ -13,7 +13,7 @@ import { TemplateDrawer } from "@/components/templates/TemplateDrawer";
 import { VersionDrawer } from "@/components/versions/VersionDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { createConfig, deleteConfig, deleteRuntime, getConfig, getSystemStatus, listConfigVersions, listConfigs, listRunLogs, listRuntime, previewRuntimeCleanup, publishConfig, realTestRunConfig, restoreConfigVersion, runRuntimeCleanup, saveDraftConfig, testRunConfig, updateConfig, validateConfig } from "@/lib/api";
+import { createConfig, deleteConfig, deleteDeployment, deleteRuntime, getConfig, getSystemStatus, listConfigVersions, listConfigs, listRunLogs, listRuntime, previewRuntimeCleanup, publishConfig, realTestRunConfig, restoreConfigVersion, runRuntimeCleanup, saveDraftConfig, testRunConfig, updateConfig, updateConfigOrder, validateConfig } from "@/lib/api";
 import type { ConfigSource } from "@/lib/api";
 import { uid } from "@/lib/utils";
 import { validateReportConfig } from "@/schemas/reportConfigSchema";
@@ -143,6 +143,8 @@ export default function App() {
   const [jsonFocusPath, setJsonFocusPath] = useState<JsonPath>([]);
   const [activeConfigTab, setActiveConfigTab] = useState<ConfigFormTab>("base");
   const [publishing, setPublishing] = useState(false);
+  const [deletingDeployment, setDeletingDeployment] = useState(false);
+  const [reorderingConfigs, setReorderingConfigs] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testStep, setTestStep] = useState(0);
   const [realTesting, setRealTesting] = useState(false);
@@ -270,6 +272,94 @@ export default function App() {
     setConfig(next);
     setIssues(validateReportConfig(next));
     toast.success("已新建通报配置", { description: "填写完成后点击“保存配置”写入 config/reports。" });
+  }
+
+  async function moveConfig(id: string, direction: -1 | 1) {
+    const index = configs.findIndex((item) => item.id === id);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= configs.length) return;
+
+    const next = [...configs];
+    [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+    await reorderConfigs(next.map((item) => item.id));
+  }
+
+  async function reorderConfigs(ids: string[]) {
+    if (reorderingConfigs) return;
+    const previous = configs;
+    const configsById = new Map(configs.map((item) => [item.id, item]));
+    const next = ids.map((id) => configsById.get(id)).filter((item): item is ReportConfig => Boolean(item));
+    for (const item of configs) {
+      if (!ids.includes(item.id)) next.push(item);
+    }
+    if (next.length !== configs.length) return;
+
+    setConfigs(next);
+    setReorderingConfigs(true);
+    try {
+      await updateConfigOrder(next.map((item) => item.id));
+      toast.success("配置顺序已保存", { id: "config-order", duration: 1200 });
+    } catch (error) {
+      setConfigs(previous);
+      toast.error("配置顺序保存失败", { id: "config-order", description: toastDescription(error), duration: 3000 });
+    } finally {
+      setReorderingConfigs(false);
+    }
+  }
+
+  function suggestedCopyName(sourceName: string) {
+    const existingNames = new Set(configs.flatMap((item) => [item.id, item.name]));
+    const baseName = `${sourceName}-副本`;
+    if (!existingNames.has(baseName)) return baseName;
+    let index = 2;
+    while (existingNames.has(`${baseName}-${index}`)) index += 1;
+    return `${baseName}-${index}`;
+  }
+
+  async function copyCurrentConfig() {
+    if (!config) return;
+    if (isTemporaryConfigId(config.id)) {
+      toast.info("请先保存当前配置", { description: "保存后即可复制为新的独立配置。" });
+      return;
+    }
+    const newName = window.prompt("请输入副本配置名称", suggestedCopyName(config.name))?.trim();
+    if (!newName) return;
+    if (configs.some((item) => item.id === newName || item.name === newName)) {
+      toast.error("配置名称已存在", { description: "请换一个名称后重试。" });
+      return;
+    }
+
+    const snapshot = structuredClone(config);
+    const copy: ReportConfig = {
+      ...snapshot,
+      id: uid("cfg"),
+      name: newName,
+      enabled: false,
+      source: undefined,
+      has_draft: false,
+      updatedAt: undefined,
+      lastRun: "disabled",
+      send: {
+        ...snapshot.send,
+        workbook_name: snapshot.send.workbook_name === snapshot.name ? newName : snapshot.send.workbook_name,
+      },
+    };
+
+    try {
+      const created = await createConfig(copy);
+      const nextConfigs = await listConfigs();
+      setConfigs(nextConfigs);
+      setSelectedId(created.id);
+      setConfig(created);
+      setIssues(validateReportConfig(created));
+      setLogs(await listRunLogs());
+      toast.success("配置复制成功", {
+        description: `已创建 ${created.name}，定时调度默认关闭；模板继续引用 ${created.template_path}`,
+        duration: 4200,
+      });
+    } catch (error) {
+      toast.error("复制配置失败", { description: toastDescription(error), duration: 3000 });
+    }
   }
 
   function updateConfigFromForm(next: ReportConfig) {
@@ -440,7 +530,7 @@ export default function App() {
         toast.error("发布前请先修复校验错误", { id: toastId, description: `发现 ${nextIssues.length} 个问题`, duration: 3600 });
         return;
       }
-      toast.loading("正在发布到调度", { id: toastId, description: "创建 Prefect deployment 并启用调度..." });
+      toast.loading("正在发布到调度", { id: toastId, description: "同名更新原调度；改名会新建调度。" });
       const result = await publishConfig(config);
       const nextConfigs = await listConfigs();
       setConfigs(nextConfigs);
@@ -457,13 +547,42 @@ export default function App() {
         : result.scheduleStatus === "disabled"
           ? "部署已创建，定时调度已停用"
           : "部署已创建，未配置 Cron";
-      toast.success("已发布到调度", { id: toastId, description: scheduleText, duration: 4200 });
+      toast.success(result.publishMode === "schedule-state-only" ? "调度状态已快速更新" : "已发布到调度", {
+        id: toastId,
+        description: scheduleText,
+        duration: 4200,
+      });
     } catch (error) {
       setLogs(await listRunLogs());
       setLogsOpen(true);
       toast.error("发布失败，详情见运行日志", { id: toastId, description: toastDescription(error), duration: 5200 });
     } finally {
       setPublishing(false);
+    }
+  }
+
+  async function removeDeployment() {
+    if (!config || isTemporaryConfigId(config.id)) return;
+    const deploymentName = `auto-notify-flow/notify-${config.name}`;
+    if (!window.confirm(`确定删除 Deployment「${deploymentName}」吗？\n\n该操作只删除 Prefect 部署，不会删除当前配置文件。`)) return;
+
+    const toastId = toast.loading("正在删除 Deployment", { description: deploymentName });
+    setDeletingDeployment(true);
+    try {
+      const result = await deleteDeployment(config);
+      setLogs(await listRunLogs());
+      setLogsOpen(true);
+      if (result.deleted) {
+        toast.success("Deployment 已删除", { id: toastId, description: result.deploymentName });
+      } else {
+        toast.info("Deployment 不存在", { id: toastId, description: result.deploymentName });
+      }
+    } catch (error) {
+      setLogs(await listRunLogs());
+      setLogsOpen(true);
+      toast.error("删除 Deployment 失败", { id: toastId, description: toastDescription(error), duration: 5200 });
+    } finally {
+      setDeletingDeployment(false);
     }
   }
 
@@ -590,6 +709,9 @@ export default function App() {
         onTabChange={setActiveConfigTab}
         onSelect={selectConfig}
         onCreate={createLocalConfig}
+        onMove={moveConfig}
+        onReorder={reorderConfigs}
+        reordering={reorderingConfigs}
       />
       <main className="flex min-w-0 flex-1 flex-col">
         <Header
@@ -597,6 +719,8 @@ export default function App() {
           onDarkToggle={() => setDark((value) => !value)}
           onSaveDraft={saveDraft}
           onSaveConfig={saveConfig}
+          onCopyConfig={copyCurrentConfig}
+          canCopy={!isTemporaryConfigId(config.id)}
           onValidate={validate}
           onTestRun={testRun}
           testing={testing}
@@ -606,6 +730,9 @@ export default function App() {
           canDelete={!isTemporaryConfigId(config.id)}
           onPublish={publish}
           publishing={publishing}
+          onDeleteDeployment={removeDeployment}
+          deletingDeployment={deletingDeployment}
+          canDeleteDeployment={!isTemporaryConfigId(config.id)}
         />
         {testing && (
           <div className="border-b border-sky-200 bg-sky-50/90 px-3 py-3 text-xs text-sky-900 dark:border-sky-500/30 dark:bg-sky-950/35 dark:text-sky-100 lg:px-5">

@@ -1,6 +1,16 @@
 __pycache__/
 **/__pycache__/
 *.py[cod]
+.venv/
+venv/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
 
 # Python environments and build artifacts
 .venv/
@@ -24,7 +34,7 @@ legacy_modules/modules/report-compare/*.xls
 legacy_modules/modules/report-compare/*.xlsx
 
 # Runtime output
-runtime/
+/runtime/
 logs/
 temp/
 cache/
@@ -33,7 +43,6 @@ cache/
 ~$*
 .env
 .env.*
-
 # Local credentials, tokens, cookies, sessions, and keys
 *.pem
 *.key
@@ -47,12 +56,15 @@ cookie*.json
 **/cookie_dump.json
 **/Cookies
 **/Cookies-journal
+tenxunwendang.txt
+tenxunwendang*.local.*
+*tencent*token*.txt
 config/tasks/local.json
 config/tasks/*.local.json
 config/modules/*.local.json
 scripts/*.local.ps1
 scripts/**/*.local.ps1
-templates/
+/templates/
 docs/prefect启动环境本地说明.md
 
 # Local FRP binaries and credentials

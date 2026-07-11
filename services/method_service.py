@@ -22,6 +22,7 @@ from services.json_excel_service import (
     json_response_to_excel,
     set_by_path,
 )
+from services.tencent_sheet_service import download_tencent_sheet_report
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
@@ -37,6 +38,20 @@ AUTH_REDIRECT_KEYWORDS = (
 MODERN_EXCEL_SUFFIXES = {".xlsx", ".xlsm", ".xltx", ".xltm"}
 OLE_EXCEL_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 ZIP_MAGIC = b"PK\x03\x04"
+
+
+class EmptyReportDataError(RuntimeError):
+    """Raised when the platform says the report data has not been generated yet."""
+
+    def __init__(self, report_name: str, url: str, returncode: str, returnmsg: str):
+        self.report_name = report_name
+        self.url = url
+        self.returncode = returncode
+        self.returnmsg = returnmsg
+        super().__init__(
+            f"下载接口返回业务空数据: report={report_name}, "
+            f"returncode={returncode}, returnmsg={returnmsg}, url={url}"
+        )
 XL_OPENXML_WORKBOOK = 51
 
 
@@ -326,6 +341,21 @@ def normalize_downloaded_excel(output_path, visible=False):
     return output_path
 
 
+def normalize_downloaded_excel_with_retry(output_path, visible=False, retries=1, delay_seconds=2):
+    output_path = Path(output_path)
+    attempt = 0
+    while True:
+        try:
+            return normalize_downloaded_excel(output_path, visible=visible)
+        except Exception as exc:
+            if attempt >= retries:
+                raise RuntimeError(f"Excel 文件规范化失败，请确认没有弹窗或文件占用: {output_path}: {exc}") from exc
+            attempt += 1
+            print(f"[WARN] Excel 文件规范化失败，准备重试 {attempt}/{retries}: {output_path}: {exc}")
+            if delay_seconds > 0:
+                sleep(delay_seconds)
+
+
 def build_request_kwargs(report, stage, timeout, verify_ssl, proxies):
     body_type = report["body_type"].lower().strip()
     kwargs = {
@@ -450,6 +480,26 @@ def is_html_response(response):
     return preview.lstrip().startswith(b"<!doctype html") or preview.lstrip().startswith(b"<html")
 
 
+def response_business_error(response) -> tuple[str, str] | None:
+    returncode = str(response.headers.get("returncode") or "").strip()
+    if not returncode or returncode == "0":
+        return None
+    returnmsg = unquote(str(response.headers.get("returnmsg") or "")).strip()
+    return returncode, returnmsg
+
+
+def is_empty_report_data_message(message: str) -> bool:
+    return any(
+        keyword in message
+        for keyword in (
+            "暂未生成报表数据",
+            "暂未生成数据",
+            "暂无报表数据",
+            "暂无数据",
+        )
+    )
+
+
 def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, proxies, request_retry=None):
     started = perf_counter()
     request_retry = retry_settings(report, request_retry)
@@ -459,6 +509,16 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     session.headers.update({"User-Agent": "report-downloader/1.0"})
     response = request_report(session, report, stage, timeout, verify_ssl, proxies, retry=request_retry)
     raise_for_status_with_context(response)
+    business_error = response_business_error(response)
+    if business_error:
+        returncode, returnmsg = business_error
+        if not response.content and is_empty_report_data_message(returnmsg):
+            raise EmptyReportDataError(report.get("name") or "未命名报表", response.url, returncode, returnmsg)
+        raise RuntimeError(
+            "下载接口返回业务错误: "
+            f"report={report.get('name') or '未命名报表'}, "
+            f"returncode={returncode}, returnmsg={returnmsg}, url={response.url}"
+        )
     if is_html_response(response):
         raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {response.url}")
     if not response.content:
@@ -536,7 +596,12 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(response.content)
     normalize_started = perf_counter()
-    normalized_output_path = normalize_downloaded_excel(output_path, visible=bool(report.get("visible", False)))
+    normalized_output_path = normalize_downloaded_excel_with_retry(
+        output_path,
+        visible=bool(report.get("visible", False)),
+        retries=int(report.get("normalize_retries", 1) or 0),
+        delay_seconds=float(report.get("normalize_retry_delay_seconds", 2) or 0),
+    )
     normalize_seconds = round(perf_counter() - normalize_started, 3)
     converted_to_xlsx = normalized_output_path != output_path
     final_output_path = normalized_output_path
@@ -573,12 +638,33 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
     verify_ssl = bool(config.get("verify_ssl", True))
     trust_env = bool(config.get("trust_env", False))
     proxies = config.get("proxies") or None
-    cookie_dump = load_json(cookie_dump_path)
-
     results = []
     reports = [report for report in config.get("reports", []) if report.get("enabled", True)]
+    needs_cookie_dump = any((report.get("source") or "http_api") != "tencent_sheet" for report in reports)
+    cookie_dump = load_json(cookie_dump_path) if needs_cookie_dump else {"stages": []}
     for report in reports:
         name = report.get("name", report.get("url", "未命名报表"))
+        if report.get("source") == "tencent_sheet":
+            if dry_run:
+                payload = {
+                    "name": name,
+                    "source": "tencent_sheet",
+                    "doc_url": report.get("doc_url"),
+                    "file_id": report.get("file_id"),
+                    "sheets": report.get("sheets") or [],
+                    "dry_run": True,
+                }
+                if debug:
+                    payload["request_summary"] = {
+                        "source": "tencent_sheet",
+                        "sheet_count": len(report.get("sheets") or []),
+                        "credential_source": "config/modules/tencent_docs.local.json",
+                    }
+                results.append(payload)
+                continue
+            results.append(download_tencent_sheet_report(report, output_dir, base_dir=base_dir))
+            continue
+
         stage_name = report.get("stage")
         if not stage_name:
             raise ValueError(f"报表 {name} 缺少 stage")

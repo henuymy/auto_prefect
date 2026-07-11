@@ -51,6 +51,7 @@
         "Content-Type": "application/x-www-form-urlencoded"
       },
       "auth_preset": "报表分析 Ssr-token",
+      "source": "http_api",
       "headers_from_cookies": {
         "Ssr-token": "ssr-token"
       }
@@ -81,6 +82,7 @@
         "Content-Type": "application/x-www-form-urlencoded"
       },
       "auth_preset": "报表分析 Ssr-token",
+      "source": "http_api",
       "headers_from_cookies": {
         "Ssr-token": "ssr-token"
       }
@@ -157,7 +159,7 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-05-25 09:29:06",
+  "updatedAt": "2026-06-23 15:18:02",
   "source": "published",
   "has_draft": false
 }

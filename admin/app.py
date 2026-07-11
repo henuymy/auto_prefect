@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse
 
@@ -36,6 +36,7 @@ from utils.request_parser import (  # noqa: E402
     headers_from_header_rows,
     parse_request_by_mode,
 )
+from utils.date_placeholders import resolve_dynamic_structure, standard_replacements  # noqa: E402
 
 
 LEGACY_SSR_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -56,6 +57,12 @@ BODY_PLACEHOLDER_OPTIONS = [
     "今天 YYYYMMDD",
     "昨天 YYYY-MM-DD",
     "昨天 YYYYMMDD",
+    "前天 YYYY-MM-DD",
+    "前天 YYYYMMDD",
+    "上月同期 YYYY-MM-DD",
+    "上月同期 YYYYMMDD",
+    "去年同期 YYYY-MM-DD",
+    "去年同期 YYYYMMDD",
     "当前小时",
     "当前小时两位",
     "sessionStorage",
@@ -66,6 +73,12 @@ BODY_PLACEHOLDER_MAP = {
     "今天 YYYYMMDD": "${today_yyyymmdd}",
     "昨天 YYYY-MM-DD": "${yesterday}",
     "昨天 YYYYMMDD": "${yesterday_yyyymmdd}",
+    "前天 YYYY-MM-DD": "${day_before_yesterday}",
+    "前天 YYYYMMDD": "${day_before_yesterday_yyyymmdd}",
+    "上月同期 YYYY-MM-DD": "${date:yesterday-1M|yyyy-MM-dd}",
+    "上月同期 YYYYMMDD": "${date:yesterday-1M|yyyyMMdd}",
+    "去年同期 YYYY-MM-DD": "${date:yesterday-1y|yyyy-MM-dd}",
+    "去年同期 YYYYMMDD": "${date:yesterday-1y|yyyyMMdd}",
     "当前小时": "${hour}",
     "当前小时两位": "${hour2}",
 }
@@ -1153,29 +1166,8 @@ def build_report_config_payload(
 
 def resolve_placeholder_preview(payload):
     now = datetime.now()
-    yesterday = now - timedelta(days=1)
-    replacements = {
-        "${today}": now.strftime("%Y-%m-%d"),
-        "${today_yyyymmdd}": now.strftime("%Y%m%d"),
-        "${yesterday}": yesterday.strftime("%Y-%m-%d"),
-        "${yesterday_yyyymmdd}": yesterday.strftime("%Y%m%d"),
-        "${hour}": str(now.hour),
-        "${hour2}": now.strftime("%H"),
-    }
-
-    def _resolve(value):
-        if isinstance(value, dict):
-            return {k: _resolve(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [_resolve(v) for v in value]
-        if isinstance(value, str):
-            resolved = value
-            for token, token_value in replacements.items():
-                resolved = resolved.replace(token, token_value)
-            return resolved
-        return value
-
-    return _resolve(payload), replacements
+    replacements = standard_replacements(now)
+    return resolve_dynamic_structure(payload, now=now), replacements
 
 
 # ── UI ──────────────────────────────────────────────────────────────────────
@@ -1330,7 +1322,9 @@ with col_edit:
     st.caption("一行就是一个下载请求；下载标识用于后续比对匹配，也会作为落盘文件名前缀，避免同名 Excel 覆盖。")
     st.caption(
         "占位符支持：`${today}`(YYYY-MM-DD)、`${yesterday}`(前一天 YYYY-MM-DD)、"
-        "`${today_yyyymmdd}`(今天 YYYYMMDD)、`${yesterday_yyyymmdd}`(前一天 YYYYMMDD)、"
+        "`${day_before_yesterday}`(前天 YYYY-MM-DD)、`${today_yyyymmdd}`(今天 YYYYMMDD)、"
+        "`${yesterday_yyyymmdd}`(前一天 YYYYMMDD)、`${day_before_yesterday_yyyymmdd}`(前天 YYYYMMDD)、"
+        "通用日期`${date:yesterday-1M|yyyyMMdd}`(上月同期)、`${date:yesterday-1y|yyyyMMdd}`(去年同期)、"
         "`${hour}`(0-23)、`${hour2}`(00-23)、"
         "`${session_storage:zhyyptInfo.accessToken}`、`${local_storage:tokenInfo.accessToken}`。"
     )
@@ -1965,6 +1959,7 @@ with col_edit:
     st.markdown("**等待重试（wait_for_change）**")
     wait_enabled = same_action_value == "等待数据变化后发送"
     if wait_enabled:
+        st.caption("数据一致、下载数据区为空，或接口提示“对应地区暂未生成报表数据”时，会按间隔重新下载并比对。")
         wait_poll_seconds = st.number_input(
             "重试间隔秒数（poll_interval_seconds）",
             min_value=1,

@@ -26,6 +26,16 @@ def list_configs():
     return config_store.list_configs()
 
 
+@router.put("/order")
+def save_config_order(payload: dict):
+    config_ids = payload.get("ids")
+    if not isinstance(config_ids, list):
+        raise HTTPException(status_code=400, detail="ids 必须是配置 ID 数组")
+    saved_ids = config_store.save_config_order(config_ids)
+    append_log("success", "调整配置顺序", f"已保存 {len(saved_ids)} 项配置的显示顺序")
+    return {"ids": saved_ids}
+
+
 @router.get("/{config_id}")
 def get_config(config_id: str, source: str = Query("published", pattern="^(published|draft)$")):
     try:
@@ -36,9 +46,13 @@ def get_config(config_id: str, source: str = Query("published", pattern="^(publi
 
 @router.post("")
 def create_config(config: dict):
-    saved = config_store.create_config(config)
-    append_log("success", "新建配置", f"已创建 {saved.get('name', '')}")
-    return saved
+    try:
+        saved = config_store.create_config(config)
+        append_log("success", "新建配置", f"已创建 {saved.get('name', '')}")
+        return saved
+    except FileExistsError as exc:
+        append_log("failed", "新建配置失败", str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.put("/{config_id}")
@@ -114,7 +128,9 @@ def generate_starter_template(config_id: str, config: dict):
             raise HTTPException(status_code=400, detail={"issues": result.get("issues") or []})
         append_log("success", "生成新手模板", f"已生成 {result.get('template_path', '')}")
         return result
-    except RuntimeError as exc:
+    except HTTPException:
+        raise
+    except Exception as exc:
         message, details = _split_error_detail(str(exc), "生成新手模板失败")
         append_log("failed", "生成新手模板失败", message, details)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -181,12 +197,37 @@ def publish_config(config_id: str, config: dict):
     if issues:
         append_log("failed", "发布到调度失败", f"配置校验失败，发现 {len(issues)} 个问题")
         raise HTTPException(status_code=400, detail={"issues": issues})
+    try:
+        previous = config_store.get_config(config_id, source="published")
+    except FileNotFoundError:
+        previous = None
     saved = config_store.save_config(config_id, config)
     try:
-        result = prefect_runner.publish_config(saved)
+        result = None
+        if previous and prefect_runner.can_fast_toggle_schedule(previous, saved):
+            result = prefect_runner.fast_toggle_schedule(saved)
+        if result is None:
+            result = prefect_runner.publish_config(saved)
         append_log("success", "发布到调度", result.get("message", ""), result.get("output") or result.get("taskConfigPath"))
         return result
     except RuntimeError as exc:
         message, details = _split_error_detail(str(exc), "发布到调度失败")
         append_log("failed", "发布到调度失败", message, details)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.delete("/{config_id}/deployment")
+def delete_deployment(config_id: str, config: dict):
+    try:
+        result = prefect_runner.delete_deployment(config)
+        append_log(
+            "success",
+            "删除 Deployment",
+            result.get("message", ""),
+            result.get("deploymentId", ""),
+        )
+        return result
+    except RuntimeError as exc:
+        message, details = _split_error_detail(str(exc), "删除 Deployment 失败")
+        append_log("failed", "删除 Deployment 失败", message, details)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

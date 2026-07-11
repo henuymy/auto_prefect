@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+import pytest
+
 from backend.services import config_store
 
 
@@ -35,6 +37,7 @@ def _patch_dirs(monkeypatch, tmp_path):
     monkeypatch.setattr(config_store, "TASKS_DIR", tmp_path / "config" / "tasks")
     monkeypatch.setattr(config_store, "DRAFTS_DIR", tmp_path / "runtime" / "drafts")
     monkeypatch.setattr(config_store, "VERSIONS_DIR", tmp_path / "runtime" / "config_versions")
+    monkeypatch.setattr(config_store, "CONFIG_ORDER_PATH", tmp_path / "config" / "report_order.json")
 
 
 def test_list_configs_reads_published_only(monkeypatch, tmp_path):
@@ -67,6 +70,42 @@ def test_list_configs_marks_published_with_draft(monkeypatch, tmp_path):
     assert configs[0]["has_draft"] is True
 
 
+def test_list_configs_uses_saved_order(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+    _write(config_store.REPORTS_DIR / "甲.json", "甲")
+    _write(config_store.REPORTS_DIR / "乙.json", "乙")
+    _write(config_store.REPORTS_DIR / "丙.json", "丙")
+
+    saved = config_store.save_config_order(["丙", "甲", "乙"])
+    configs = config_store.list_configs()
+
+    assert saved == ["丙", "甲", "乙"]
+    assert [item["id"] for item in configs] == ["丙", "甲", "乙"]
+
+
+def test_config_order_ignores_unknown_and_duplicate_ids(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+    _write(config_store.REPORTS_DIR / "甲.json", "甲")
+
+    saved = config_store.save_config_order(["不存在", "甲", "甲"])
+
+    assert saved == ["甲"]
+    assert json.loads(config_store.CONFIG_ORDER_PATH.read_text(encoding="utf-8")) == {"ids": ["甲"]}
+
+
+def test_rename_and_delete_maintain_saved_order(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+    _write(config_store.REPORTS_DIR / "甲.json", "甲")
+    _write(config_store.REPORTS_DIR / "乙.json", "乙")
+    config_store.save_config_order(["甲", "乙"])
+
+    config_store.save_config("甲", {"name": "新甲", "template_path": "templates/a.xlsx"})
+    assert config_store._read_config_order() == ["新甲", "乙"]
+
+    config_store.delete_config("新甲")
+    assert config_store._read_config_order() == ["乙"]
+
+
 def test_save_config_removes_same_name_draft(monkeypatch, tmp_path):
     _patch_dirs(monkeypatch, tmp_path)
     _write(config_store.DRAFTS_DIR / "同名.json", "同名")
@@ -77,6 +116,24 @@ def test_save_config_removes_same_name_draft(monkeypatch, tmp_path):
     assert saved["has_draft"] is False
     assert (config_store.REPORTS_DIR / "同名.json").exists()
     assert not (config_store.DRAFTS_DIR / "同名.json").exists()
+
+
+def test_create_config_rejects_duplicate_name(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+    _write(config_store.REPORTS_DIR / "日报.json", "日报")
+
+    with pytest.raises(FileExistsError, match="配置已存在: 日报"):
+        config_store.create_config({"name": "日报", "template_path": "templates/a.xlsx"})
+
+
+def test_create_config_saves_new_name(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+
+    saved = config_store.create_config({"name": "日报-副本", "template_path": "templates/a.xlsx", "enabled": False})
+
+    assert saved["id"] == "日报-副本"
+    assert saved["enabled"] is False
+    assert (config_store.REPORTS_DIR / "日报-副本.json").exists()
 
 
 def test_normalize_config_fills_compare_defaults():

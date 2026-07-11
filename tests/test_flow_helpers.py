@@ -3,6 +3,7 @@ from pathlib import Path
 
 from flows.notify_single_flow import (
     aggregate_compare_results,
+    assert_report_schema_contract,
     build_download_config,
     build_compare_source_configs,
     build_login_config,
@@ -95,6 +96,26 @@ def test_should_send_when_same_reads_template_update_flag():
     assert should_send_when_same({}) is False
 
 
+def test_enabled_report_requires_compare_sources():
+    with pytest.raises(ValueError, match="compare_sources"):
+        assert_report_schema_contract(
+            {
+                "enabled": True,
+                "downloads": [
+                    {
+                        "name": "下载",
+                        "stage": "report_analysis",
+                        "method": "POST",
+                        "url": "https://example/export",
+                        "body_type": "form",
+                        "response_mode": "file",
+                    }
+                ],
+                "compare_sources": [],
+            }
+        )
+
+
 def test_resolve_dynamic_placeholders_supports_today_and_hour():
     from datetime import datetime
 
@@ -103,6 +124,10 @@ def test_resolve_dynamic_placeholders_supports_today_and_hour():
     assert resolve_dynamic_placeholders("${today_yyyymmdd}", now=now) == "20260314"
     assert resolve_dynamic_placeholders("${yesterday}", now=now) == "2026-03-13"
     assert resolve_dynamic_placeholders("${yesterday_yyyymmdd}", now=now) == "20260313"
+    assert resolve_dynamic_placeholders("${day_before_yesterday}", now=now) == "2026-03-12"
+    assert resolve_dynamic_placeholders("${day_before_yesterday_yyyymmdd}", now=now) == "20260312"
+    assert resolve_dynamic_placeholders("${date:yesterday-1M|yyyyMMdd}", now=now) == "20260213"
+    assert resolve_dynamic_placeholders("${date:yesterday-1y|yyyyMMdd}", now=now) == "20250313"
     assert resolve_dynamic_placeholders("${hour}", now=now) == "16"
     assert resolve_dynamic_placeholders("${hour2}", now=now) == "16"
 
@@ -183,6 +208,12 @@ def test_required_stages_for_report_uses_enabled_downloads_only():
             {"name": "B", "stage": "smart_ops", "enabled": False},
             {"name": "C", "stage": "city_ops"},
             {"name": "D", "stage": "report_analysis"},
+            {
+                "source": "tencent_sheet",
+                "name": "腾讯文档",
+                "doc_url": "https://docs.qq.com/sheet/DY1h4R1Rmd0FwWFhF?tab=000002",
+                "sheets": [{"sheet_id": "000002", "range": "A1:B2"}],
+            },
         ]
     }
 
@@ -271,6 +302,28 @@ def test_build_download_config_requires_schema_fields():
                 ],
             },
         )
+
+
+def test_build_download_config_accepts_tencent_sheet_source_without_stage():
+    config = build_download_config(
+        {"report_defaults": {}, "output_dir": "runtime/downloads"},
+        {
+            "name": "腾讯文档通报",
+            "downloads": [
+                {
+                    "source": "tencent_sheet",
+                    "name": "腾讯文档日报",
+                    "doc_url": "https://docs.qq.com/sheet/DY1h4R1Rmd0FwWFhF?tab=000002",
+                    "sheets": [{"sheet_id": "000002", "range": "A1:B2", "output_sheet_name": "日报"}],
+                }
+            ],
+        },
+    )
+
+    report = config["reports"][0]
+    assert report["source"] == "tencent_sheet"
+    assert report["sheets"][0]["sheet_id"] == "000002"
+    assert "stage" not in report
 
 
 
