@@ -231,3 +231,17 @@ $ErrorActionPreference = 'Stop'
                 path.unlink(missing_ok=True)
             else:
                 path.write_bytes(content)
+
+
+def test_prefect_and_web_entry_points_preserve_runtime_json_defaults():
+    prefect_start = (ROOT / "scripts" / "prefect_start.ps1").read_text(encoding="utf-8")
+    start_web = (ROOT / "scripts" / "start_web.ps1").read_text(encoding="utf-8")
+
+    assert '"lib\\runtime_config.ps1"' in prefect_start
+    assert "Import-ProjectRuntimeConfig" in prefect_start
+    assert "$ApiUrl = $env:PREFECT_API_URL" in prefect_start
+    assert "$WorkPool = $env:PREFECT_WORK_POOL_NAME" in prefect_start
+
+    assert '"lib\\runtime_config.ps1"' in start_web
+    assert "Import-ProjectRuntimeConfig" in start_web
+    assert "$PrefectApiUrl = $env:PREFECT_API_URL" in start_web

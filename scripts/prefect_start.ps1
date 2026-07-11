@@ -1,8 +1,8 @@
 param(
     [ValidateSet("server", "worker", "both")]
     [string]$Mode = "both",
-    [string]$ApiUrl = "http://127.0.0.1:4200/api",
-    [string]$WorkPool = "default-agent-pool",
+    [string]$ApiUrl = "",
+    [string]$WorkPool = "",
     [string]$PrefectHome = "",
     [string]$PythonExe = "",
     [string]$DatabaseUrl = "",
@@ -15,11 +15,29 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "python_env.ps1")
-$LocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
-if (Test-Path -LiteralPath $LocalEnvPath) {
-    . $LocalEnvPath
+$UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
+$LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
+. (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
+if (-not (Import-ProjectRuntimeConfig)) {
+    if (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
+        . $UnifiedLocalEnvPath
+    } elseif (Test-Path -LiteralPath $LegacyLocalEnvPath) {
+        . $LegacyLocalEnvPath
+    }
 }
 . (Join-Path $PSScriptRoot "dashboard\mysql_env.ps1")
+if (-not $ApiUrl) {
+    $ApiUrl = $env:PREFECT_API_URL
+    if (-not $ApiUrl) {
+        $ApiUrl = "http://127.0.0.1:4200/api"
+    }
+}
+if (-not $WorkPool) {
+    $WorkPool = $env:PREFECT_WORK_POOL_NAME
+    if (-not $WorkPool) {
+        $WorkPool = "default-agent-pool"
+    }
+}
 if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 }
