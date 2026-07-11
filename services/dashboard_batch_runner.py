@@ -34,7 +34,7 @@ from services.dashboard_failure_report import (
     write_dashboard_failure_report,
 )
 from services.dashboard_retention_service import recover_stale_collection_runs
-from services.dashboard_trigger import (
+from services.dashboard_v2_trigger import (
     build_run_store,
     execute_session_phase,
     load_dashboard_config,

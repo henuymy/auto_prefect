@@ -5,7 +5,7 @@ from __future__ import annotations
 from prefect import get_run_logger, task
 
 from infrastructure.dashboard_mysql import create_dashboard_engine, dashboard_mysql_lock
-from services.dashboard_trigger import load_dashboard_config
+from services.dashboard_v2_trigger import load_dashboard_config
 from services.dashboard_v2_retention_service import execute_v2_retention_maintenance
 
 

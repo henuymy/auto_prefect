@@ -1,4 +1,4 @@
-"""Dashboard trigger, batch lifecycle, and session preparation."""
+"""Dashboard V2 trigger, batch lifecycle, and session preparation."""
 
 from __future__ import annotations
 
@@ -14,11 +14,7 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from infrastructure.dashboard_run_store import (
-    CollectionRunStore,
-    JsonCollectionRunStore,
-    MySQLCollectionRunStore,
-)
+from infrastructure.dashboard_v2_run_store import MySQLV2CollectionRunStore
 from services.dashboard_failure_report import (
     DEFAULT_FAILURE_DIRECTORY,
     write_dashboard_failure_report,
@@ -69,7 +65,10 @@ def sanitize_error(value: object, limit: int = 2000) -> str:
 
 def load_dashboard_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> tuple[dict[str, Any], Path]:
     resolved = resolve_project_path(config_path)
-    return read_json(resolved), resolved
+    dashboard_config = read_json(resolved)
+    if dashboard_config.get("schema_version") != 2:
+        raise ValueError("dashboard schema_version 只支持 2")
+    return dashboard_config, resolved
 
 
 def build_city_ops_login_config(
@@ -90,16 +89,8 @@ def build_city_ops_login_config(
     return autologin_config
 
 
-def build_run_store(dashboard_config: dict[str, Any]) -> CollectionRunStore:
-    store_type = str(dashboard_config.get("run_store_type") or "mysql").strip().lower()
-    if store_type == "mysql":
-        return MySQLCollectionRunStore()
-    if store_type == "json":
-        run_store_dir = resolve_project_path(
-            dashboard_config.get("run_store_dir", "runtime/dashboard/collection_runs")
-        )
-        return JsonCollectionRunStore(run_store_dir, now_provider=now_shanghai)
-    raise ValueError(f"run_store_type 只支持 mysql/json: {store_type!r}")
+def build_run_store(dashboard_config: dict[str, Any]) -> MySQLV2CollectionRunStore:
+    return MySQLV2CollectionRunStore()
 
 
 def execute_session_phase(

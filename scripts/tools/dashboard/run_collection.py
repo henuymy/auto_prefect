@@ -18,7 +18,7 @@ from services.dashboard_pipeline import (
     execute_dashboard_monthly_pipeline,
     execute_dashboard_pipeline,
 )
-from services.dashboard_trigger import load_dashboard_config
+from services.dashboard_v2_trigger import load_dashboard_config
 from services.dashboard_v2_pipeline import execute_dashboard_v2_pipeline
 
 

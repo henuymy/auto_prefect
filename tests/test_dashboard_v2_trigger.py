@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from services import dashboard_trigger
+from services import dashboard_v2_trigger
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -41,6 +41,7 @@ def make_configs(tmp_path: Path) -> tuple[Path, Path, Path]:
     write_json(
         dashboard_config_path,
         {
+            "schema_version": 2,
             "autologin_config_path": str(autologin_path),
             "required_stage": "city_ops",
             "run_store_type": "json",
@@ -54,18 +55,35 @@ def make_configs(tmp_path: Path) -> tuple[Path, Path, Path]:
     return dashboard_config_path, run_store_dir, lock_path
 
 
+class MemoryRunStore:
+    def __init__(self):
+        self.records: dict[str, dict] = {}
+
+    def create(self, batch_no: str, trigger_type: str, run_type: str = "REALTIME") -> dict:
+        record = {"batch_no": batch_no, "trigger_type": trigger_type, "run_type": run_type}
+        self.records[batch_no] = record
+        return record
+
+    def update(self, batch_no: str, **changes) -> dict:
+        self.records[batch_no].update(changes)
+        return self.records[batch_no]
+
+    def close(self) -> None:
+        return None
+
+
 def test_generate_batch_no_contains_shanghai_timestamp(monkeypatch):
     fixed = datetime(2026, 6, 10, 9, 30, 5, tzinfo=ZoneInfo("Asia/Shanghai"))
-    monkeypatch.setattr(dashboard_trigger, "uuid4", lambda: type("U", (), {"hex": "abcdef123456"})())
+    monkeypatch.setattr(dashboard_v2_trigger, "uuid4", lambda: type("U", (), {"hex": "abcdef123456"})())
 
-    assert dashboard_trigger.generate_batch_no(fixed) == "dashboard-20260610-093005-abcdef12"
+    assert dashboard_v2_trigger.generate_batch_no(fixed) == "dashboard-20260610-093005-abcdef12"
 
 
 def test_build_city_ops_login_config_only_keeps_required_probe(tmp_path):
     config_path, _, _ = make_configs(tmp_path)
-    dashboard_config, resolved = dashboard_trigger.load_dashboard_config(config_path)
+    dashboard_config, resolved = dashboard_v2_trigger.load_dashboard_config(config_path)
 
-    result = dashboard_trigger.build_city_ops_login_config(
+    result = dashboard_v2_trigger.build_city_ops_login_config(
         dashboard_config,
         resolved.parent,
     )
@@ -75,9 +93,11 @@ def test_build_city_ops_login_config_only_keeps_required_probe(tmp_path):
 
 
 def test_execute_session_phase_records_success(monkeypatch, tmp_path):
-    config_path, run_store_dir, _ = make_configs(tmp_path)
+    config_path, _, _ = make_configs(tmp_path)
+    run_store = MemoryRunStore()
+    monkeypatch.setattr(dashboard_v2_trigger, "build_run_store", lambda _: run_store)
     monkeypatch.setattr(
-        dashboard_trigger,
+        dashboard_v2_trigger,
         "prepare_session",
         lambda *args, **kwargs: {
             "status": "reused",
@@ -85,15 +105,13 @@ def test_execute_session_phase_records_success(monkeypatch, tmp_path):
         },
     )
 
-    result = dashboard_trigger.execute_session_phase(
+    result = dashboard_v2_trigger.execute_session_phase(
         config_path=config_path,
         trigger_type="MANUAL",
         batch_no="dashboard-test-success",
     )
 
-    record = json.loads(
-        (run_store_dir / "dashboard-test-success.json").read_text(encoding="utf-8")
-    )
+    record = run_store.records["dashboard-test-success"]
     assert result["phase"] == "SESSION_READY"
     assert result["session_status"] == "reused"
     assert record["status"] == "SUCCESS"
@@ -101,24 +119,32 @@ def test_execute_session_phase_records_success(monkeypatch, tmp_path):
 
 
 def test_execute_session_phase_records_sanitized_failure(monkeypatch, tmp_path):
-    config_path, run_store_dir, _ = make_configs(tmp_path)
+    config_path, _, _ = make_configs(tmp_path)
+    run_store = MemoryRunStore()
+    monkeypatch.setattr(dashboard_v2_trigger, "build_run_store", lambda _: run_store)
 
     def fail(*args, **kwargs):
         raise RuntimeError("uapToken=secret-value session probe failed")
 
-    monkeypatch.setattr(dashboard_trigger, "prepare_session", fail)
+    monkeypatch.setattr(dashboard_v2_trigger, "prepare_session", fail)
 
     with pytest.raises(RuntimeError, match="session probe failed"):
-        dashboard_trigger.execute_session_phase(
+        dashboard_v2_trigger.execute_session_phase(
             config_path=config_path,
             trigger_type="SCHEDULED",
             batch_no="dashboard-test-failed",
         )
 
-    record = json.loads(
-        (run_store_dir / "dashboard-test-failed.json").read_text(encoding="utf-8")
-    )
+    record = run_store.records["dashboard-test-failed"]
     assert record["status"] == "FAILED"
     assert record["error_type"] == "RuntimeError"
     assert "secret-value" not in record["error_message"]
     assert "uapToken=***" in record["error_message"]
+
+
+def test_load_dashboard_config_rejects_non_v2_schema(tmp_path):
+    config_path = tmp_path / "session.json"
+    write_json(config_path, {"schema_version": 1})
+
+    with pytest.raises(ValueError, match="只支持.*2"):
+        dashboard_v2_trigger.load_dashboard_config(config_path)

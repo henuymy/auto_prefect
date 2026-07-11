@@ -22,7 +22,7 @@ from infrastructure.dashboard_run_store import CollectionRunStore
 from infrastructure.dashboard_v2_run_store import MySQLV2CollectionRunStore
 from models.dashboard_v2 import CollectionRunV2
 from services.dashboard_collection_service import CollectionTarget
-from services.dashboard_trigger import (
+from services.dashboard_v2_trigger import (
     build_city_ops_login_config,
     load_dashboard_config,
     normalize_trigger_type,
@@ -34,7 +34,7 @@ from services.dashboard_v2_indicator_service import load_v2_metric_indicator_pla
 from services.dashboard_v2_orchestrator import collect_validate_metric_rows_v2
 from services.method_service import find_stage, load_json
 from services.session_manager import file_lock, prepare_session
-from services.dashboard_trigger import now_shanghai
+from services.dashboard_v2_trigger import now_shanghai
 
 
 @dataclass(frozen=True)

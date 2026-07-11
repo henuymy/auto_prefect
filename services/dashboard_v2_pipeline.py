@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from models.dashboard_v2 import CollectionRunV2
 from services.dashboard_custom_indicator_service import compose_store_metric_rows
 from services.dashboard_simple_collection import create_simple_fetcher
-from services.dashboard_trigger import generate_batch_no, now_shanghai
+from services.dashboard_v2_trigger import generate_batch_no, now_shanghai
 from services.dashboard_v2_batch_runner import dashboard_v2_batch
 from services.dashboard_v2_hierarchy import (
     attach_v2_node_ids_in_session,

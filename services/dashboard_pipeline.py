@@ -35,7 +35,7 @@ from services.dashboard_metric_store import (
 )
 from models.dashboard_collection_run import CollectionRun
 from services.dashboard_simple_collection import create_simple_fetcher
-from services.dashboard_trigger import (
+from services.dashboard_v2_trigger import (
     generate_batch_no,
     now_shanghai,
 )

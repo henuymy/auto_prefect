@@ -9,7 +9,7 @@ from typing import Any
 
 from backend.services import prefect_runner
 from infrastructure.dashboard_mysql import check_dashboard_mysql
-from services.dashboard_trigger import load_dashboard_config
+from services.dashboard_v2_trigger import load_dashboard_config
 from services.dashboard_v2_readiness import check_dashboard_v2_schema
 
 

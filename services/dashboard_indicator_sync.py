@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from infrastructure.dashboard_mysql import create_dashboard_engine
 from models.dashboard_indicator import Indicator
-from services.dashboard_trigger import (
+from services.dashboard_v2_trigger import (
     execute_session_phase,
     generate_batch_no,
     load_dashboard_config,

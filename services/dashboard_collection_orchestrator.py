@@ -26,7 +26,7 @@ from services.dashboard_collection_service import (
     CollectionTarget,
     execute_collection_phase,
 )
-from services.dashboard_trigger import now_shanghai
+from services.dashboard_v2_trigger import now_shanghai
 
 
 SPECIAL_GRID_BRANCH_CODES = {

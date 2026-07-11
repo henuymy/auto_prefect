@@ -19,7 +19,7 @@ from infrastructure.dashboard_mysql import (
     DashboardMySQLSettings,
     create_dashboard_engine,
 )
-from services.dashboard_trigger import now_shanghai
+from services.dashboard_v2_trigger import now_shanghai
 from services.dashboard_v2_hierarchy import (
     initialize_base_hierarchy_in_session,
     load_bootstrap_manifest,

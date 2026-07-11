@@ -17,7 +17,7 @@ from services.dashboard_indicator_sync import (
     _extract_indicator_records,
     fetch_user_diy_indicators,
 )
-from services.dashboard_trigger import (
+from services.dashboard_v2_trigger import (
     build_city_ops_login_config,
     generate_batch_no,
     load_dashboard_config,
