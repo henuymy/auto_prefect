@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.dashboard.export_metric_sample import classify_value, enrich_rows
+from scripts.tools.dashboard.export_metric_sample import classify_value, enrich_rows
 
 
 def test_classify_value_preserves_raw_value_categories():

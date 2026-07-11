@@ -93,41 +93,41 @@ pwsh -File scripts/setup_windows_env.ps1
 - `config/tasks/*.json`：Prefect Flow 的任务入参。
 - `config/modules/*.json`：登录、下载、比对、模板和发送模块配置。
 - `config/dashboard/session.json`：驾驶舱采集、数据库、并发与留存策略。
-- `scripts/dashboard/mysql_env.local.ps1`：本机 MySQL 连接信息。
+- `scripts/tools/dashboard/`：驾驶舱导入、导出、审计与迁移等低频工具。
 
 常用本地覆盖示例：
 
 ```text
 config/modules/login_config.local.json
 config/modules/wecom_sender.local.json
-scripts/dashboard/mysql_env.local.ps1
+config/runtime.local.json
 scripts/prefect_env_prod.local.ps1
 ```
 
-### 统一数据库配置
+### 统一运行配置
 
-将 `scripts/environment.local.example.ps1` 复制为
-`scripts/environment.local.ps1`，在该文件中统一维护 Prefect PostgreSQL 和
-驾驶舱 MySQL 的地址、数据库和账号密码。该本地文件已被 Git 忽略，不能提交。
+将 `config/runtime.local.example.json` 复制为 `config/runtime.local.json`，在该文件中统一维护 Prefect PostgreSQL、驾驶舱 MySQL、Prefect API 地址和 Work Pool。该本地文件已被 Git 忽略，不能提交。
 
-统一文件存在时，启动脚本会优先使用它；仅在文件缺失时，才回退读取旧的
-`scripts/prefect_env_prod.local.ps1` 与 `scripts/dashboard/mysql_env.*.local.ps1`。
+启动脚本优先使用 JSON；仅在 JSON 缺失时，才回退读取
+`scripts/environment.local.ps1` 和旧的 `scripts/prefect_env_prod.local.ps1`。
 Prefect PostgreSQL 地址必须以 `/prefect` 结尾，项目会自动派生开发库
 `prefect_dev`。
 
 ## 启动
 
+`scripts/run.ps1` 只启动服务并同步 Prefect deployment；通报和驾驶舱采集仍由既有 Cron 调度执行，不会自动触发全部通报。
+
 一键启动本地 Prefect、API 和前端：
 
 ```powershell
-pwsh -File scripts/dev/start.ps1
+pwsh -File scripts/run.ps1
 ```
 
 查看或停止服务：
 
 ```powershell
-pwsh -File scripts/dev/status.ps1
-pwsh -File scripts/dev/stop.ps1
+pwsh -File scripts/status.ps1
+pwsh -File scripts/stop.ps1
 ```
 
 只启动配置中心和驾驶舱：
@@ -193,7 +193,7 @@ npm run build
 
 ## 故障定位
 
-1. 运行 `scripts/dev/status.ps1` 检查进程和端口。
+1. 运行 `scripts/status.ps1` 检查进程和端口。
 2. 请求 `/api/live` 判断 API 进程是否存活，再请求 `/api/health` 检查依赖。
 3. 查看 `runtime/logs/` 和 Prefect Flow Run 日志。
 4. 登录失败时检查 `runtime/browser_session/`、Cookie 有效期和本地登录配置。

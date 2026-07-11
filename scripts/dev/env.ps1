@@ -20,7 +20,7 @@ if ($RuntimeConfigLoaded) {
     throw "缺少本机数据库配置: $ProdLocalEnvPath"
 }
 
-. (Join-Path $ScriptsDir "dashboard\mysql_env.ps1")
+. (Join-Path $ScriptsDir "tools\dashboard\mysql_env.ps1")
 
 $prodUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
 if (-not $prodUrl) {

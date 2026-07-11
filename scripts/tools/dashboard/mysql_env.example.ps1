@@ -1,4 +1,4 @@
-# Copy this file to scripts/dashboard/mysql_env.local.ps1 and fill in local values.
+# Copy this file to scripts/tools/dashboard/mysql_env.local.ps1 and fill in local values.
 # For cutover/rollback, keep separate ignored profiles such as
 # mysql_env.v1.local.ps1 and mysql_env.v2.local.ps1, then set
 # DASHBOARD_MYSQL_ENV_FILE before loading mysql_env.ps1.

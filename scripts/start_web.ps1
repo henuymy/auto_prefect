@@ -12,7 +12,7 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "python_env.ps1")
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 Import-ProjectRuntimeConfig | Out-Null
-. (Join-Path $PSScriptRoot "dashboard\mysql_env.ps1")
+. (Join-Path $PSScriptRoot "tools\dashboard\mysql_env.ps1")
 if (-not $PrefectApiUrl) {
     $PrefectApiUrl = $env:PREFECT_API_URL
     if (-not $PrefectApiUrl) {

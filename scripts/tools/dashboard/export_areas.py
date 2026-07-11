@@ -4,8 +4,8 @@ The script reuses the existing city-ops request configuration and cookie dump.
 It stops at CHANNEL and does not request the STAFF level.
 
 Usage:
-    python scripts/dashboard/export_areas.py
-    python scripts/dashboard/export_areas.py --output runtime/exports/dashboard_areas.xlsx
+    python scripts/tools/dashboard/export_areas.py
+    python scripts/tools/dashboard/export_areas.py --output runtime/exports/dashboard_areas.xlsx
 """
 
 from __future__ import annotations

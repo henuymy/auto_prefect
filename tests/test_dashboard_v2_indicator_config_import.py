@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from infrastructure.dashboard_mysql import DashboardMySQLSettings
 from models.dashboard_v2 import IndicatorFormulaComponent, IndicatorV2
-from scripts.dashboard import import_v2_indicator_config
+from scripts.tools.dashboard import import_v2_indicator_config
 from tests.test_dashboard_v2_query_service import _engine
 
 

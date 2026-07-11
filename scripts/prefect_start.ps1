@@ -25,7 +25,7 @@ if (-not (Import-ProjectRuntimeConfig)) {
         . $LegacyLocalEnvPath
     }
 }
-. (Join-Path $PSScriptRoot "dashboard\mysql_env.ps1")
+. (Join-Path $PSScriptRoot "tools\dashboard\mysql_env.ps1")
 if (-not $ApiUrl) {
     $ApiUrl = $env:PREFECT_API_URL
     if (-not $ApiUrl) {

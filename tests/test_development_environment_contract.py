@@ -98,7 +98,7 @@ def test_readme_declares_install_commands_and_feature_prerequisites():
 def test_single_local_environment_file_is_documented_and_loaded_first():
     template = ROOT / "scripts" / "environment.local.example.ps1"
     prefect_source = (ROOT / "scripts" / "prefect_env_prod.ps1").read_text(encoding="utf-8")
-    mysql_source = (ROOT / "scripts" / "dashboard" / "mysql_env.ps1").read_text(encoding="utf-8")
+    mysql_source = (ROOT / "scripts" / "tools" / "dashboard" / "mysql_env.ps1").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
@@ -146,7 +146,7 @@ def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
     config_path = ROOT / "config" / "runtime.local.json"
     unified_path = ROOT / "scripts" / "environment.local.ps1"
     legacy_path = ROOT / "scripts" / "prefect_env_prod.local.ps1"
-    dashboard_legacy_path = ROOT / "scripts" / "dashboard" / "mysql_env.v2.local.ps1"
+    dashboard_legacy_path = ROOT / "scripts" / "tools" / "dashboard" / "mysql_env.v2.local.ps1"
     original_files = {
         path: path.read_bytes() if path.exists() else None
         for path in (config_path, unified_path, legacy_path, dashboard_legacy_path)
@@ -282,3 +282,37 @@ def test_legacy_dev_entry_points_only_forward_to_unified_scripts():
         assert target in source
         assert "prefect deploy --all" not in source.lower()
         assert "prefect flow run" not in source.lower()
+
+
+def test_dashboard_low_frequency_tools_are_archived_outside_lifecycle_scripts():
+    tools_dir = ROOT / "scripts" / "tools" / "dashboard"
+    for name in (
+        "import_areas.py",
+        "export_areas.py",
+        "import_metric_targets.py",
+        "export_v2_migration_bundle.py",
+        "v2_cutover_audit.py",
+    ):
+        assert (tools_dir / name).is_file(), f"missing archived tool: {name}"
+
+    for relative_path in (
+        "scripts/run.ps1",
+        "scripts/stop.ps1",
+        "scripts/status.ps1",
+        "scripts/prefect_start.ps1",
+        "scripts/start_web.ps1",
+    ):
+        assert "scripts\\dashboard" not in (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def test_docs_describe_json_lifecycle_entry_points_and_cron_safety():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "PROJECT_GUIDE.md").read_text(encoding="utf-8")
+
+    for document in (readme, guide):
+        assert "config/runtime.local.json" in document
+        assert "scripts/run.ps1" in document
+        assert "scripts/stop.ps1" in document
+        assert "scripts/status.ps1" in document
+        assert "Cron" in document
+        assert "不会自动" in document

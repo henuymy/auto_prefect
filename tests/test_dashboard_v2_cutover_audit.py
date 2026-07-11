@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from prefect.client.schemas.objects import StateType
 
-from scripts.dashboard.v2_cutover_audit import (
+from scripts.tools.dashboard.v2_cutover_audit import (
     ACTIVE_FLOW_STATE_TYPES,
     _approval_check,
     _bundle_check,

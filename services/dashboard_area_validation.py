@@ -181,8 +181,8 @@ def validate_metric_rows(
         ),
         "sync_commands": (
             [
-                "python scripts/dashboard/export_areas.py",
-                "python scripts/dashboard/import_areas.py",
+                "python scripts/tools/dashboard/export_areas.py",
+                "python scripts/tools/dashboard/import_areas.py",
             ]
             if unmatched_by_identity
             else []

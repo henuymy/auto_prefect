@@ -77,8 +77,8 @@ def test_named_unmatched_area_fails_with_sync_instruction():
     assert result["sync_required"] is True
     assert "新批次重采" in result["next_action"]
     assert result["sync_commands"] == [
-        "python scripts/dashboard/export_areas.py",
-        "python scripts/dashboard/import_areas.py",
+        "python scripts/tools/dashboard/export_areas.py",
+        "python scripts/tools/dashboard/import_areas.py",
     ]
 
 

@@ -24,7 +24,7 @@ if (-not (Import-ProjectRuntimeConfig)) {
         throw "缺少运行配置。请创建 config\runtime.local.json，或在迁移期使用 scripts\environment.local.ps1。"
     }
 }
-. (Join-Path $PSScriptRoot "dashboard\mysql_env.ps1")
+. (Join-Path $PSScriptRoot "tools\dashboard\mysql_env.ps1")
 
 if (-not $ApiUrl) {
     $ApiUrl = $env:PREFECT_API_URL

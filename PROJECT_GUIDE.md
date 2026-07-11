@@ -78,13 +78,13 @@
 私密连接信息统一放在：
 
 ```text
-scripts/environment.local.ps1
+config/runtime.local.json
 ```
 
 该文件被 Git 忽略，可提交模板为：
 
 ```text
-scripts/environment.local.example.ps1
+config/runtime.local.example.json
 ```
 
 其中维护 Prefect PostgreSQL 与驾驶舱 MySQL 的地址、端口、数据库、账号和密码。配置值不应写入 README、本文件或 Git 提交。
@@ -94,10 +94,10 @@ scripts/environment.local.example.ps1
 当前开发环境总入口为：
 
 ```powershell
-pwsh -File scripts/dev/start.ps1
+pwsh -File scripts/run.ps1
 ```
 
-它启动 Prefect Server、Worker、FastAPI 和 React 前端。通报与驾驶舱采集通过 Prefect deployment 的 Cron 执行；启动服务不会自动触发全部通报，避免重复发送通知。
+它启动 Prefect Server、Worker、FastAPI 和 React 前端。通报与驾驶舱采集通过 Prefect deployment 的 Cron 执行；启动服务不会自动触发全部通报，避免重复发送通知。停止和状态检查分别使用 `scripts/stop.ps1` 与 `scripts/status.ps1`。
 
 ## 四、变更记录
 
@@ -118,7 +118,7 @@ pwsh -File scripts/dev/start.ps1
 
 - 原因：Prefect PostgreSQL 与驾驶舱 MySQL 连接信息分散在多个本地 PowerShell 文件中，不利于迁移和维护。
 - 修改内容：新增统一 `scripts/environment.local.ps1` 入口和可提交模板；加载器优先读取统一文件，旧 profile 作为回退。
-- 涉及文件：`scripts/environment.local.example.ps1`、`scripts/prefect_env_prod.ps1`、`scripts/dashboard/mysql_env.ps1`、`README.md`。
+- 涉及文件：`config/runtime.local.example.json`、`scripts/prefect_env_prod.ps1`、`scripts/tools/dashboard/mysql_env.ps1`、`README.md`。
 - 配置或迁移：填写被忽略的 `scripts/environment.local.ps1`，不提交密码。
 - 验证：`python -m pytest -p no:cacheprovider tests/test_development_environment_contract.py -q`。
 - 风险与回滚：删除统一文件即可恢复旧 `.local.ps1` 回退逻辑。

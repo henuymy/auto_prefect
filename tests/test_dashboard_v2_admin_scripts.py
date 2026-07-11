@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import TargetPlan
-from scripts.dashboard import import_v2_target_plan
+from scripts.tools.dashboard import import_v2_target_plan
 from tests.test_dashboard_v2_query_service import _engine
 
 

@@ -12,7 +12,7 @@ if (Import-ProjectRuntimeConfig) {
 } elseif (Test-Path -LiteralPath $LegacyLocalEnvPath) {
     . $LegacyLocalEnvPath
 }
-. (Join-Path $PSScriptRoot "dashboard\mysql_env.ps1")
+. (Join-Path $PSScriptRoot "tools\dashboard\mysql_env.ps1")
 $SourceDatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
 if (-not $SourceDatabaseUrl) {
     throw "缺少 Prefect 数据库连接串，请在 scripts\prefect_env_prod.local.ps1 中设置 `$env:AUTO_NOTIFY_PREFECT_DATABASE_URL"
