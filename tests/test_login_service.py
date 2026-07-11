@@ -35,6 +35,37 @@ class FakeDriver:
         self.implicit_wait_seconds = timeout
 
 
+class FakeWindowSwitch:
+    def __init__(self, driver) -> None:
+        self.driver = driver
+
+    def window(self, handle: str) -> None:
+        self.driver.current_window_handle = handle
+
+
+class FakeWindowDriver:
+    def __init__(self, urls: dict[str, str]) -> None:
+        self.urls = urls
+        self.window_handles = list(urls)
+        self.current_window_handle = self.window_handles[0]
+        self.switch_to = FakeWindowSwitch(self)
+
+    @property
+    def current_url(self) -> str:
+        return self.urls[self.current_window_handle]
+
+
+class ImmediateWait:
+    def __init__(self, driver, timeout, poll_frequency=None) -> None:
+        self.driver = driver
+
+    def until(self, condition):
+        result = condition(self.driver)
+        if not result:
+            raise login_service.TimeoutException()
+        return result
+
+
 def make_login(tmp_path: Path, **browser_overrides) -> login_service.AutoLogin:
     instance = login_service.AutoLogin.__new__(login_service.AutoLogin)
     instance.config = {
@@ -128,3 +159,42 @@ def test_default_login_config_uses_headless_ephemeral_browser():
         "city_ops",
         "data_market",
     ]
+    report = config["usm_cookie_apps"][0]
+    assert report["cookie_ready"] == "ssr-token"
+    assert report["capture_attempts"] == 3
+
+
+def test_launched_app_window_ignores_about_blank(monkeypatch):
+    driver = FakeWindowDriver(
+        {
+            "usm": "https://usm.example/console/",
+            "blank": "about:blank",
+            "report": "https://usm.example/bicpreport/index.html",
+        }
+    )
+    login = login_service.AutoLogin.__new__(login_service.AutoLogin)
+    login.driver = driver
+    monkeypatch.setattr(login_service, "WebDriverWait", ImmediateWait)
+
+    handle = login.wait_for_launched_app_window(
+        {"usm"},
+        {"stage": "report_analysis", "name": "报表分析系统", "url_contains": "/bicpreport/"},
+    )
+
+    assert handle == "report"
+    assert driver.current_window_handle == "report"
+
+
+def test_capture_cookies_returns_recorder_stage():
+    expected = {"stage": "report_analysis", "cookies": [{"name": "sid"}]}
+
+    class Recorder:
+        def capture(self, driver, stage_name):
+            assert stage_name == "report_analysis"
+            return expected
+
+    login = login_service.AutoLogin.__new__(login_service.AutoLogin)
+    login.driver = object()
+    login.cookie_recorder = Recorder()
+
+    assert login.capture_cookies("report_analysis") == expected
