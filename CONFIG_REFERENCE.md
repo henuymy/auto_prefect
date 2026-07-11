@@ -301,16 +301,17 @@
 `capture_defaults.shrink_empty_edges`
 作用：是否自动裁掉外围空白区域。
 
-`capture_defaults.appearance`
-作用：Excel `CopyPicture` 外观参数。
-常见值：`printer`、`screen`
+`capture_defaults.engine`
+作用：截图引擎。目前仅支持 `pdf_render`，不再使用 `CopyPicture` 及其失败兜底。
 
-`capture_defaults.format`
-作用：图片格式。
-常见值：`picture`、`bitmap`
+`capture_defaults.excel_ready_timeout_seconds`
+作用：截图前等待 Excel 完成计算并进入 Ready 状态的最大秒数，默认 60。
 
-`capture_defaults.export_scale`
-作用：导出图片缩放倍数。
+`capture_defaults.excel_ready_poll_seconds`
+作用：检查 Excel Ready/CalculationState 状态的轮询间隔，默认 0.2 秒。
+
+`capture_defaults.excel_active_printer`
+作用：Excel 计算分页时固定使用的打印机，默认 `Microsoft Print to PDF on PORTPROMPT:`，避免 RustDesk 等虚拟默认打印机导致分页漂移。
 
 `capture_defaults.optimize_png`
 作用：是否压缩 PNG。

@@ -5,9 +5,9 @@
     "engine": "pdf_render",
     "pdf_dpi": 300,
     "pdf_crop_whitespace": true,
-    "appearance": "printer",
-    "format": "picture",
-    "export_scale": 2,
+    "excel_ready_timeout_seconds": 60,
+    "excel_ready_poll_seconds": 0.2,
+    "excel_active_printer": "Microsoft Print to PDF on PORTPROMPT:",
     "optimize_png": false,
     "png_colors": 256
   },
