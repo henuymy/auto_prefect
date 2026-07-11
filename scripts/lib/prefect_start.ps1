@@ -50,27 +50,14 @@ if ($UseSqliteDebug) {
     $DatabaseUrl = "sqlite+aiosqlite:///" + (($PrefectHome -replace "\\", "/") + "/prefect.db")
 }
 elseif (-not $DatabaseUrl) {
-    $DatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DEV_DATABASE_URL
+    $DatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
     if (-not $DatabaseUrl) {
-        $sourceUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
-        if (-not $sourceUrl) {
-            throw "Missing Prefect database URL. Configure AUTO_NOTIFY_PREFECT_DATABASE_URL so prefect_dev can be derived."
-        }
-        if ($sourceUrl -notmatch "/prefect(?:\?.*)?$") {
-            throw "AUTO_NOTIFY_PREFECT_DATABASE_URL must end with /prefect so prefect_dev can be derived safely."
-        }
-        $DatabaseUrl = $sourceUrl -replace "/prefect(\?.*)?$", "/prefect_dev`$1"
+        throw "Missing Prefect database URL. Configure AUTO_NOTIFY_PREFECT_DATABASE_URL."
     }
 }
 
-if (
-    -not $UseSqliteDebug -and
-    (
-        $DatabaseUrl -notlike "postgresql+asyncpg://*" -or
-        $DatabaseUrl -notmatch "/prefect_dev(?:\?.*)?$"
-    )
-) {
-    throw "Prefect is locked to the prefect_dev database. Refusing DatabaseUrl that does not end with /prefect_dev."
+if (-not $UseSqliteDebug -and $DatabaseUrl -notlike "postgresql+asyncpg://*") {
+    throw "Prefect database URL must use the postgresql+asyncpg scheme."
 }
 
 New-Item -ItemType Directory -Force -Path $PrefectHome | Out-Null
@@ -91,7 +78,7 @@ Write-Host "RepoRoot       : $RepoRoot"
 Write-Host "PythonExe      : $PythonExe"
 Write-Host "PREFECT_HOME   : $($env:PREFECT_HOME)"
 Write-Host "PREFECT_API_URL: $($env:PREFECT_API_URL)"
-$databaseSource = if ($UseSqliteDebug) { "SQLite debug database" } else { "PostgreSQL database: prefect_dev" }
+$databaseSource = if ($UseSqliteDebug) { "SQLite debug database" } else { "PostgreSQL database from configured URL" }
 Write-Host "DatabaseUrl    : $databaseSource"
 Write-Host "DebugSqlite    : $UseSqliteDebug"
 Write-Host "LateRuns       : $($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)"

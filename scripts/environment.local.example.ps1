@@ -1,8 +1,8 @@
 # Copy this file to scripts/environment.local.ps1 and fill in local secrets.
 # This file is ignored by Git. Do not commit real credentials.
 
-# Prefect PostgreSQL. The project derives prefect_dev from the /prefect URL.
-$env:AUTO_NOTIFY_PREFECT_DATABASE_URL = "postgresql+asyncpg://<user>:<url-encoded-password>@49.233.78.70:5432/prefect"
+# Prefect PostgreSQL. This URL is passed directly to Prefect.
+$env:AUTO_NOTIFY_PREFECT_DATABASE_URL = "postgresql+asyncpg://<user>:<url-encoded-password>@49.233.78.70:5432/prefect_test"
 
 # Dashboard MySQL. Use dashboard_v2 when config/dashboard/session.json has schema_version 2.
 $env:DASHBOARD_MYSQL_HOST = "49.233.78.70"

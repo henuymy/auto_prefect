@@ -110,8 +110,14 @@ scripts/prefect_env_prod.local.ps1
 
 启动脚本优先使用 JSON；仅在 JSON 缺失时，才回退读取
 `scripts/environment.local.ps1` 和旧的 `scripts/prefect_env_prod.local.ps1`。
-Prefect PostgreSQL 地址必须以 `/prefect` 结尾，项目会自动派生开发库
-`prefect_dev`。
+`prefect.postgres.url` 指定 Prefect 直接使用的 PostgreSQL 数据库；测试环境可使用
+`prefect_test`，正式环境可切换为新的干净数据库。
+当前测试配置使用 `49.233.78.70:5432/prefect_test`，默认 Work Pool 为
+`default-agent-pool`。首次执行 `scripts/run.ps1` 会初始化 Prefect 元数据、创建
+Work Pool 并同步仓库中的部署；不会迁移旧项目的 Prefect 历史数据。
+
+项目固定 `Prefect 3.7.0`，并将 FastAPI 限制在 `0.115` 系列以避免与较新
+Starlette 路由接口不兼容。安装或更新依赖时请使用 `requirements.lock`。
 
 ## 启动
 

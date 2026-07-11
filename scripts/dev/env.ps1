@@ -26,11 +26,7 @@ $prodUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
 if (-not $prodUrl) {
     throw "AUTO_NOTIFY_PREFECT_DATABASE_URL 未配置"
 }
-if ($prodUrl -notmatch "/prefect(?:\?.*)?$") {
-    throw "正式数据库连接串必须以 /prefect 结尾，无法自动生成 prefect_dev 地址"
-}
-
-$env:AUTO_NOTIFY_PREFECT_DEV_DATABASE_URL = $prodUrl -replace "/prefect(\?.*)?$", "/prefect_dev`$1"
+$env:AUTO_NOTIFY_PREFECT_DEV_DATABASE_URL = $prodUrl
 if (-not $env:PREFECT_API_URL) {
     $env:PREFECT_API_URL = "http://127.0.0.1:4200/api"
 }

@@ -1,13 +1,13 @@
 {
   "prefect": {
     "postgres": {
-      "url": "postgresql+asyncpg://<user>:<url-encoded-password>@<host>:5432/prefect"
+      "url": "postgresql+asyncpg://<user>:<url-encoded-password>@49.233.78.70:5432/prefect_test"
     },
     "api_url": "http://127.0.0.1:4200/api"
   },
   "dashboard": {
     "mysql": {
-      "host": "<host>",
+      "host": "49.233.78.70",
       "port": 3306,
       "database": "dashboard_v2",
       "user": "<user>",
@@ -15,6 +15,6 @@
     }
   },
   "runtime": {
-    "work_pool": "auto-notify-pool"
+    "work_pool": "default-agent-pool"
   }
 }

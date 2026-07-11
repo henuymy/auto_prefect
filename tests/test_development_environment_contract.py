@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -245,6 +246,47 @@ def test_prefect_and_web_entry_points_preserve_runtime_json_defaults():
     assert '"runtime_config.ps1"' in start_web
     assert "Import-ProjectRuntimeConfig" in start_web
     assert "$PrefectApiUrl = $env:PREFECT_API_URL" in start_web
+
+
+def test_prefect_helpers_use_configured_database_url_directly():
+    prefect_start = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(encoding="utf-8")
+    prefect_env = (ROOT / "scripts" / "lib" / "prefect_env_prod.ps1").read_text(encoding="utf-8")
+    dev_env = (ROOT / "scripts" / "dev" / "env.ps1").read_text(encoding="utf-8")
+
+    for source in (prefect_start, prefect_env, dev_env):
+        assert "/prefect_dev" not in source
+        assert "AUTO_NOTIFY_PREFECT_DATABASE_URL" in source
+
+    assert "$DatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL" in prefect_start
+    assert "$DatabaseUrl = $SourceDatabaseUrl" in prefect_env
+    assert "$env:AUTO_NOTIFY_PREFECT_DEV_DATABASE_URL = $prodUrl" in dev_env
+
+
+def test_direct_database_documentation_uses_the_configured_database_name():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    environment_template = (ROOT / "scripts" / "environment.local.example.ps1").read_text(encoding="utf-8")
+
+    assert "自动派生开发库" not in readme
+    assert "prefect_test" in environment_template
+    assert "directly to Prefect" in environment_template
+
+
+def test_prefect_runtime_uses_a_fastapi_release_compatible_with_prefect_3_7():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = project["project"]["dependencies"]
+
+    assert "prefect==3.7.0" in dependencies
+    assert "fastapi>=0.110.0,<0.116" in dependencies
+
+
+def test_prefect_deployments_use_the_runtime_default_work_pool():
+    prefect_config = (ROOT / "prefect.yaml").read_text(encoding="utf-8")
+    deployment_config = (ROOT / "deployments" / "notify_single_deployment.yaml").read_text(encoding="utf-8")
+    runner = (ROOT / "backend" / "services" / "prefect_runner.py").read_text(encoding="utf-8")
+
+    for source in (prefect_config, deployment_config, runner):
+        assert "auto-notify-pool" not in source
+        assert "default-agent-pool" in source
 
 
 def test_unified_runtime_entry_points_start_services_without_running_flows():
