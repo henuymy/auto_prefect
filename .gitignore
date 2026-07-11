@@ -17,6 +17,7 @@ dist/
 venv/
 ENV/
 env/
+.worktrees/
 *.egg-info/
 .mypy_cache/
 .pytest_cache/
