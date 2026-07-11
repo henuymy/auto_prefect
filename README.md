@@ -104,6 +104,17 @@ scripts/dashboard/mysql_env.local.ps1
 scripts/prefect_env_prod.local.ps1
 ```
 
+### 统一数据库配置
+
+将 `scripts/environment.local.example.ps1` 复制为
+`scripts/environment.local.ps1`，在该文件中统一维护 Prefect PostgreSQL 和
+驾驶舱 MySQL 的地址、数据库和账号密码。该本地文件已被 Git 忽略，不能提交。
+
+统一文件存在时，启动脚本会优先使用它；仅在文件缺失时，才回退读取旧的
+`scripts/prefect_env_prod.local.ps1` 与 `scripts/dashboard/mysql_env.*.local.ps1`。
+Prefect PostgreSQL 地址必须以 `/prefect` 结尾，项目会自动派生开发库
+`prefect_dev`。
+
 ## 启动
 
 一键启动本地 Prefect、API 和前端：

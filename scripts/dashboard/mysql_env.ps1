@@ -1,4 +1,10 @@
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$UnifiedLocalEnvPath = Join-Path $RepoRoot "scripts\environment.local.ps1"
+if (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
+    . $UnifiedLocalEnvPath
+    return
+}
+
 $DashboardMySqlLocalEnvPath = if ($env:DASHBOARD_MYSQL_ENV_FILE) {
     $configuredPath = $env:DASHBOARD_MYSQL_ENV_FILE.Trim()
     if ([System.IO.Path]::IsPathRooted($configuredPath)) {

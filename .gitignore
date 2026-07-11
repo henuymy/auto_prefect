@@ -65,6 +65,7 @@ config/tasks/*.local.json
 config/modules/*.local.json
 scripts/*.local.ps1
 scripts/**/*.local.ps1
+scripts/environment.local.ps1
 /templates/
 docs/prefect启动环境本地说明.md
 

@@ -90,3 +90,19 @@ def test_readme_declares_install_commands_and_feature_prerequisites():
     assert "Prefect Server 3.7（仅本地运行 Prefect 服务与调度需要）" in source
     assert "Microsoft Edge（自动登录与网页采集需要）" in source
     assert "涉及 Excel COM 的比对、模板更新和截图功能还需 Microsoft Excel" in source
+
+
+def test_single_local_environment_file_is_documented_and_loaded_first():
+    template = ROOT / "scripts" / "environment.local.example.ps1"
+    prefect_source = (ROOT / "scripts" / "prefect_env_prod.ps1").read_text(encoding="utf-8")
+    mysql_source = (ROOT / "scripts" / "dashboard" / "mysql_env.ps1").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    source = template.read_text(encoding="utf-8")
+    assert "AUTO_NOTIFY_PREFECT_DATABASE_URL" in source
+    assert "DASHBOARD_MYSQL_HOST" in source
+    assert "environment.local.ps1" in prefect_source
+    assert "environment.local.ps1" in mysql_source
+    assert "scripts/environment.local.ps1" in readme
+    assert "scripts/environment.local.ps1" in gitignore
