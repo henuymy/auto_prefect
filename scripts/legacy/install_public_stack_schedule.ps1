@@ -7,8 +7,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$StackScript = Join-Path $PSScriptRoot "public_stack.ps1"
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$StackScript = Join-Path $PSScriptRoot "..\run.ps1"
 
 if (-not (Test-Path -LiteralPath $StackScript)) {
     throw "未找到脚本: $StackScript"

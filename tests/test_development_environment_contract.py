@@ -7,9 +7,9 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = [
     ROOT / "scripts" / "setup_windows_env.ps1",
-    ROOT / "scripts" / "start_web.ps1",
-    ROOT / "scripts" / "prefect_start.ps1",
-    ROOT / "scripts" / "prefect_stop.ps1",
+    ROOT / "scripts" / "lib" / "start_web.ps1",
+    ROOT / "scripts" / "lib" / "prefect_start.ps1",
+    ROOT / "scripts" / "lib" / "prefect_stop.ps1",
     ROOT / "scripts" / "dev" / "env.ps1",
 ]
 
@@ -27,27 +27,27 @@ def test_runtime_scripts_do_not_require_auto_notify_or_disable_user_site():
 
 
 def test_runtime_scripts_use_shared_python_resolver():
-    helper = ROOT / "scripts" / "python_env.ps1"
+    helper = ROOT / "scripts" / "lib" / "python_env.ps1"
     assert "function Get-ProjectPython" in helper.read_text(encoding="utf-8")
 
     for relative_path in (
-        "scripts/start_web.ps1",
-        "scripts/prefect_start.ps1",
-        "scripts/prefect_stop.ps1",
+        "scripts/lib/start_web.ps1",
+        "scripts/lib/prefect_start.ps1",
+        "scripts/lib/prefect_stop.ps1",
         "scripts/dev/env.ps1",
     ):
         assert "python_env.ps1" in (ROOT / relative_path).read_text(encoding="utf-8")
 
 
 def test_prefect_stop_keeps_legacy_kill_switch_and_public_callers_forward_it():
-    stop_source = (ROOT / "scripts" / "prefect_stop.ps1").read_text(encoding="utf-8")
-    public_source = (ROOT / "scripts" / "public_stack.ps1").read_text(encoding="utf-8")
+    stop_source = (ROOT / "scripts" / "lib" / "prefect_stop.ps1").read_text(encoding="utf-8")
+    public_source = (ROOT / "scripts" / "legacy" / "public_stack.ps1").read_text(encoding="utf-8")
     wrapper_source = (ROOT / "scripts" / "stop_public_stack.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$KillAutoNotifyPython = $true" in stop_source
     assert "if ($KillAutoNotifyPython)" in stop_source
     assert "-KillAutoNotifyPython:$KillAutoNotifyPython" in public_source
-    assert "-KillAutoNotifyPython:$KillAutoNotifyPython" in wrapper_source
+    assert "legacy\\stop_public_stack.ps1" in wrapper_source
 
 
 def test_readme_explains_dependency_file_roles():
@@ -97,7 +97,7 @@ def test_readme_declares_install_commands_and_feature_prerequisites():
 
 def test_single_local_environment_file_is_documented_and_loaded_first():
     template = ROOT / "scripts" / "environment.local.example.ps1"
-    prefect_source = (ROOT / "scripts" / "prefect_env_prod.ps1").read_text(encoding="utf-8")
+    prefect_source = (ROOT / "scripts" / "lib" / "prefect_env_prod.ps1").read_text(encoding="utf-8")
     mysql_source = (ROOT / "scripts" / "tools" / "dashboard" / "mysql_env.ps1").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
@@ -234,15 +234,15 @@ $ErrorActionPreference = 'Stop'
 
 
 def test_prefect_and_web_entry_points_preserve_runtime_json_defaults():
-    prefect_start = (ROOT / "scripts" / "prefect_start.ps1").read_text(encoding="utf-8")
-    start_web = (ROOT / "scripts" / "start_web.ps1").read_text(encoding="utf-8")
+    prefect_start = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(encoding="utf-8")
+    start_web = (ROOT / "scripts" / "lib" / "start_web.ps1").read_text(encoding="utf-8")
 
-    assert '"lib\\runtime_config.ps1"' in prefect_start
+    assert '"runtime_config.ps1"' in prefect_start
     assert "Import-ProjectRuntimeConfig" in prefect_start
     assert "$ApiUrl = $env:PREFECT_API_URL" in prefect_start
     assert "$WorkPool = $env:PREFECT_WORK_POOL_NAME" in prefect_start
 
-    assert '"lib\\runtime_config.ps1"' in start_web
+    assert '"runtime_config.ps1"' in start_web
     assert "Import-ProjectRuntimeConfig" in start_web
     assert "$PrefectApiUrl = $env:PREFECT_API_URL" in start_web
 
@@ -299,8 +299,8 @@ def test_dashboard_low_frequency_tools_are_archived_outside_lifecycle_scripts():
         "scripts/run.ps1",
         "scripts/stop.ps1",
         "scripts/status.ps1",
-        "scripts/prefect_start.ps1",
-        "scripts/start_web.ps1",
+        "scripts/lib/prefect_start.ps1",
+        "scripts/lib/start_web.ps1",
     ):
         assert "scripts\\dashboard" not in (ROOT / relative_path).read_text(encoding="utf-8")
 
@@ -316,3 +316,22 @@ def test_docs_describe_json_lifecycle_entry_points_and_cron_safety():
         assert "scripts/status.ps1" in document
         assert "Cron" in document
         assert "不会自动" in document
+
+
+def test_script_root_contains_only_public_entry_points_or_compatibility_wrappers():
+    root = ROOT / "scripts"
+    for name in (
+        "python_env.ps1",
+        "prefect_env_prod.ps1",
+        "prefect_start.ps1",
+        "prefect_stop.ps1",
+        "start_web.ps1",
+        "public_stack.ps1",
+    ):
+        assert not (root / name).exists(), f"internal script remains at root: {name}"
+
+    for relative_path, target in (
+        ("scripts/start_public_stack.ps1", "legacy\\start_public_stack.ps1"),
+        ("scripts/stop_public_stack.ps1", "legacy\\stop_public_stack.ps1"),
+    ):
+        assert target in (ROOT / relative_path).read_text(encoding="utf-8")

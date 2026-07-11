@@ -15,7 +15,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $FrpcExe) {
     $FrpcExe = Join-Path $RepoRoot "frp\frpc.exe"
 }
@@ -120,7 +120,7 @@ function Start-PublicStack {
     $prefectArgs = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", (Join-Path $PSScriptRoot "prefect_start.ps1"),
+        "-File", (Join-Path $PSScriptRoot "..\lib\prefect_start.ps1"),
         "-Mode", "both",
         "-Detached",
         "-ApiUrl", $PrefectApiUrl,
@@ -138,7 +138,7 @@ function Start-PublicStack {
     }
 
     Write-Host "启动管理端后端 + React 前端..."
-    $adminCommand = "& '$PSScriptRoot\start_web.ps1' -Mode both -BackendPort $BackendPort -FrontendPort $FrontendPort -PrefectApiUrl '$PrefectApiUrl'"
+    $adminCommand = "& '$PSScriptRoot\..\lib\start_web.ps1' -Mode both -BackendPort $BackendPort -FrontendPort $FrontendPort -PrefectApiUrl '$PrefectApiUrl'"
     Start-Window -Title "Auto Notify Admin" -Command $adminCommand
 
     if (-not (Wait-HttpOk -Url "http://127.0.0.1:$FrontendPort" -TimeoutSeconds 60)) {
@@ -173,7 +173,7 @@ function Stop-PublicStack {
     Write-Host ""
 
     Write-Host "停止 Prefect..."
-    & (Join-Path $PSScriptRoot "prefect_stop.ps1") -Ports @($ports | Where-Object { $_ -eq 4200 }) -KillAutoNotifyPython:$KillAutoNotifyPython
+    & (Join-Path $PSScriptRoot "..\lib\prefect_stop.ps1") -Ports @($ports | Where-Object { $_ -eq 4200 }) -KillAutoNotifyPython:$KillAutoNotifyPython
 
     $killedByPort = @()
     foreach ($port in ($ports | Where-Object { $_ -ne 4200 })) {

@@ -1,10 +1,11 @@
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
-$UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
-$LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
-. (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
+$ScriptsRoot = Split-Path -Parent $PSScriptRoot
+$UnifiedLocalEnvPath = Join-Path $ScriptsRoot "environment.local.ps1"
+$LegacyLocalEnvPath = Join-Path $ScriptsRoot "prefect_env_prod.local.ps1"
+. (Join-Path $PSScriptRoot "runtime_config.ps1")
 if (Import-ProjectRuntimeConfig) {
     # runtime.local.json is the preferred local configuration source.
 } elseif (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
@@ -12,7 +13,7 @@ if (Import-ProjectRuntimeConfig) {
 } elseif (Test-Path -LiteralPath $LegacyLocalEnvPath) {
     . $LegacyLocalEnvPath
 }
-. (Join-Path $PSScriptRoot "tools\dashboard\mysql_env.ps1")
+. (Join-Path $ScriptsRoot "tools\dashboard\mysql_env.ps1")
 $SourceDatabaseUrl = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
 if (-not $SourceDatabaseUrl) {
     throw "缺少 Prefect 数据库连接串，请在 scripts\prefect_env_prod.local.ps1 中设置 `$env:AUTO_NOTIFY_PREFECT_DATABASE_URL"

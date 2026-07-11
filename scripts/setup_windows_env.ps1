@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-. (Join-Path $PSScriptRoot "python_env.ps1")
+. (Join-Path $PSScriptRoot "lib\python_env.ps1")
 $RuntimeDirs = @(
     "runtime",
     "runtime\cookies",
@@ -79,6 +79,6 @@ Write-Host "PIP 镜像源    : $PipIndexUrl"
 Write-Host ""
 Write-Host "后续常用命令：" -ForegroundColor Green
 Write-Host "1. 本地调试:  . .\scripts\prefect_env_debug.ps1"
-Write-Host "2. 正式调度:  . .\scripts\prefect_env_prod.ps1"
-Write-Host "3. 启动系统: pwsh -File scripts/start_web.ps1 -Mode both"
+Write-Host "2. 正式调度:  . .\scripts\lib\prefect_env_prod.ps1"
+Write-Host "3. 启动系统: pwsh -File scripts/run.ps1"
 Write-Host "4. 单条运行:  python -c `"from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow('config/tasks/日通报.json'))`""

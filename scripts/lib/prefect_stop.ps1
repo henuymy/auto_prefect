@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = "Continue"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot "python_env.ps1")
 if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"

@@ -13,11 +13,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot "python_env.ps1")
-$UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
-$LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
-. (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
+$ScriptsRoot = Split-Path -Parent $PSScriptRoot
+$UnifiedLocalEnvPath = Join-Path $ScriptsRoot "environment.local.ps1"
+$LegacyLocalEnvPath = Join-Path $ScriptsRoot "prefect_env_prod.local.ps1"
+. (Join-Path $PSScriptRoot "runtime_config.ps1")
 if (-not (Import-ProjectRuntimeConfig)) {
     if (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
         . $UnifiedLocalEnvPath
@@ -25,7 +26,7 @@ if (-not (Import-ProjectRuntimeConfig)) {
         . $LegacyLocalEnvPath
     }
 }
-. (Join-Path $PSScriptRoot "tools\dashboard\mysql_env.ps1")
+. (Join-Path $ScriptsRoot "tools\dashboard\mysql_env.ps1")
 if (-not $ApiUrl) {
     $ApiUrl = $env:PREFECT_API_URL
     if (-not $ApiUrl) {

@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $DevScriptsDir = $PSScriptRoot
 $ScriptsDir = Split-Path -Parent $DevScriptsDir
 $RepoRoot = Split-Path -Parent $ScriptsDir
-. (Join-Path $ScriptsDir "python_env.ps1")
+. (Join-Path $ScriptsDir "lib\python_env.ps1")
 $RuntimeConfigLoader = Join-Path $ScriptsDir "lib\runtime_config.ps1"
 $UnifiedLocalEnvPath = Join-Path $ScriptsDir "environment.local.ps1"
 $ProdLocalEnvPath = Join-Path $ScriptsDir "prefect_env_prod.local.ps1"

@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-. (Join-Path $PSScriptRoot "python_env.ps1")
+. (Join-Path $PSScriptRoot "lib\python_env.ps1")
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 $UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
 $LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
@@ -105,7 +105,7 @@ if ($ForceRestart) {
 Test-RuntimeDatabaseConnections
 
 Write-Host "启动 Prefect Server..."
-& (Join-Path $PSScriptRoot "prefect_start.ps1") `
+& (Join-Path $PSScriptRoot "lib\prefect_start.ps1") `
     -Mode server `
     -Detached `
     -ApiUrl $ApiUrl `
@@ -132,7 +132,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "启动 Prefect Worker..."
-& (Join-Path $PSScriptRoot "prefect_start.ps1") `
+& (Join-Path $PSScriptRoot "lib\prefect_start.ps1") `
     -Mode worker `
     -Detached `
     -ApiUrl $ApiUrl `
@@ -141,7 +141,7 @@ Write-Host "启动 Prefect Worker..."
 
 if (-not $SkipWeb) {
     Write-Host "启动管理端..."
-    & (Join-Path $PSScriptRoot "start_web.ps1") `
+    & (Join-Path $PSScriptRoot "lib\start_web.ps1") `
         -Mode both `
         -BackendPort $BackendPort `
         -FrontendPort $FrontendPort `

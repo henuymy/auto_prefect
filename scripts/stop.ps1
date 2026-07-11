@@ -9,7 +9,7 @@ $ErrorActionPreference = "Continue"
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 Import-ProjectRuntimeConfig | Out-Null
 
-& (Join-Path $PSScriptRoot "prefect_stop.ps1") `
+& (Join-Path $PSScriptRoot "lib\prefect_stop.ps1") `
     -Ports @(4200) `
     -KillAutoNotifyPython:$KillAutoNotifyPython
 
