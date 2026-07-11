@@ -48,3 +48,16 @@ function Import-RuntimeConfig {
 
     return $config
 }
+
+function Import-ProjectRuntimeConfig {
+    param(
+        [string]$ConfigPath = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "config\runtime.local.json")
+    )
+
+    if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+        return $false
+    }
+
+    Import-RuntimeConfig -ConfigPath $ConfigPath | Out-Null
+    return $true
+}

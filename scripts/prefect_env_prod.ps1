@@ -4,7 +4,10 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 $UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
 $LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
-if (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
+. (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
+if (Import-ProjectRuntimeConfig) {
+    # runtime.local.json is the preferred local configuration source.
+} elseif (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
     . $UnifiedLocalEnvPath
 } elseif (Test-Path -LiteralPath $LegacyLocalEnvPath) {
     . $LegacyLocalEnvPath
@@ -23,7 +26,9 @@ $env:AUTO_NOTIFY_PREFECT_DEV_DATABASE_URL = $DatabaseUrl
 New-Item -ItemType Directory -Force -Path $PrefectHome | Out-Null
 
 $env:PREFECT_HOME = $PrefectHome
-$env:PREFECT_API_URL = "http://127.0.0.1:4200/api"
+if (-not $env:PREFECT_API_URL) {
+    $env:PREFECT_API_URL = "http://127.0.0.1:4200/api"
+}
 $env:PREFECT_API_DATABASE_CONNECTION_URL = $DatabaseUrl
 $env:PREFECT_SERVER_DATABASE_CONNECTION_URL = $DatabaseUrl
 $env:PREFECT_API_DATABASE_TIMEOUT = "60"

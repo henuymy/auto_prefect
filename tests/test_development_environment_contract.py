@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import shutil
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,3 +136,98 @@ def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment(
         "PREFECT_WORK_POOL_NAME",
     ):
         assert variable in loader_source
+
+
+def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if not powershell:
+        raise AssertionError("PowerShell is required to verify runtime configuration exports")
+
+    config_path = ROOT / "config" / "runtime.local.json"
+    unified_path = ROOT / "scripts" / "environment.local.ps1"
+    legacy_path = ROOT / "scripts" / "prefect_env_prod.local.ps1"
+    dashboard_legacy_path = ROOT / "scripts" / "dashboard" / "mysql_env.v2.local.ps1"
+    original_files = {
+        path: path.read_bytes() if path.exists() else None
+        for path in (config_path, unified_path, legacy_path, dashboard_legacy_path)
+    }
+    json_config = {
+        "prefect": {
+            "postgres": {"url": "postgresql+asyncpg://json:json@db.example:5432/prefect"},
+            "api_url": "http://json.example/api",
+        },
+        "dashboard": {
+            "mysql": {
+                "host": "json-db.example",
+                "port": 3307,
+                "database": "json_dashboard",
+                "user": "json_user",
+                "password": "json_password",
+            }
+        },
+        "runtime": {"work_pool": "json-pool"},
+    }
+    unified_source = """\
+$env:AUTO_NOTIFY_PREFECT_DATABASE_URL = 'postgresql+asyncpg://unified:unified@db.example:5432/prefect'
+$env:DASHBOARD_MYSQL_HOST = 'unified-db.example'
+$env:PREFECT_API_URL = 'http://unified.example/api'
+$env:PREFECT_WORK_POOL_NAME = 'unified-pool'
+"""
+    legacy_source = unified_source.replace("unified", "legacy")
+    command = """
+$ErrorActionPreference = 'Stop'
+. '{script}'
+[pscustomobject]@{{
+  database_url = $env:AUTO_NOTIFY_PREFECT_DATABASE_URL
+  mysql_host = $env:DASHBOARD_MYSQL_HOST
+  mysql_port = $env:DASHBOARD_MYSQL_PORT
+  mysql_database = $env:DASHBOARD_MYSQL_DATABASE
+  mysql_user = $env:DASHBOARD_MYSQL_USER
+  mysql_password = $env:DASHBOARD_MYSQL_PASSWORD
+  prefect_api_url = $env:PREFECT_API_URL
+  work_pool = $env:PREFECT_WORK_POOL_NAME
+}} | ConvertTo-Json -Compress
+""".format(script=(ROOT / "scripts" / "dev" / "env.ps1").as_posix())
+
+    def run_environment():
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-Command", command],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
+        return json.loads(result.stdout.splitlines()[-1])
+
+    try:
+        config_path.write_text(json.dumps(json_config), encoding="utf-8")
+        unified_path.write_text(unified_source, encoding="utf-8")
+        legacy_path.write_text(legacy_source, encoding="utf-8")
+        dashboard_legacy_path.write_text(
+            "$env:DASHBOARD_MYSQL_HOST = 'legacy-dashboard.example'\n",
+            encoding="utf-8",
+        )
+        assert run_environment() == {
+            "database_url": json_config["prefect"]["postgres"]["url"],
+            "mysql_host": json_config["dashboard"]["mysql"]["host"],
+            "mysql_port": str(json_config["dashboard"]["mysql"]["port"]),
+            "mysql_database": json_config["dashboard"]["mysql"]["database"],
+            "mysql_user": json_config["dashboard"]["mysql"]["user"],
+            "mysql_password": json_config["dashboard"]["mysql"]["password"],
+            "prefect_api_url": json_config["prefect"]["api_url"],
+            "work_pool": json_config["runtime"]["work_pool"],
+        }
+
+        config_path.unlink()
+        assert run_environment()["database_url"].startswith("postgresql+asyncpg://unified:")
+
+        unified_path.unlink()
+        assert run_environment()["database_url"].startswith("postgresql+asyncpg://legacy:")
+    finally:
+        for path, content in original_files.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(content)

@@ -1,6 +1,9 @@
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $UnifiedLocalEnvPath = Join-Path $RepoRoot "scripts\environment.local.ps1"
-if (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
+. (Join-Path $RepoRoot "scripts\lib\runtime_config.ps1")
+if (Import-ProjectRuntimeConfig) {
+    return
+} elseif (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
     . $UnifiedLocalEnvPath
     return
 }
