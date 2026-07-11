@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -106,3 +107,30 @@ def test_single_local_environment_file_is_documented_and_loaded_first():
     assert "environment.local.ps1" in mysql_source
     assert "scripts/environment.local.ps1" in readme
     assert "scripts/environment.local.ps1" in gitignore
+
+
+def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment():
+    template = ROOT / "config" / "runtime.local.example.json"
+    loader = ROOT / "scripts" / "lib" / "runtime_config.ps1"
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    config = json.loads(template.read_text(encoding="utf-8"))
+    loader_source = loader.read_text(encoding="utf-8")
+
+    assert config["prefect"]["postgres"]["url"]
+    assert config["dashboard"]["mysql"]["host"]
+    assert config["runtime"]["work_pool"]
+
+    assert "config/runtime.local.json" in gitignore
+    assert "function Import-RuntimeConfig" in loader_source
+    for variable in (
+        "AUTO_NOTIFY_PREFECT_DATABASE_URL",
+        "DASHBOARD_MYSQL_HOST",
+        "DASHBOARD_MYSQL_PORT",
+        "DASHBOARD_MYSQL_DATABASE",
+        "DASHBOARD_MYSQL_USER",
+        "DASHBOARD_MYSQL_PASSWORD",
+        "PREFECT_API_URL",
+        "PREFECT_WORK_POOL_NAME",
+    ):
+        assert variable in loader_source
