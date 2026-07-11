@@ -104,6 +104,11 @@ def execute_dashboard_v2_pipeline(
             logger=logger,
         )
         write_seconds = perf_counter() - write_started
+        write_stage_timings = write_result.get("write_stage_timings", {})
+        measured_write_seconds = sum(write_stage_timings.values())
+        write_stage_timings["transaction_finish_seconds"] = round(
+            max(0.0, write_seconds - measured_write_seconds), 3
+        )
         total_seconds = perf_counter() - pipeline_started
         timing = {
             "fetcher_setup_seconds": round(fetcher_setup_seconds, 3),
@@ -133,6 +138,11 @@ def execute_dashboard_v2_pipeline(
             write_result.get("acc_upsert_count", 0),
             write_result.get("transaction_attempt", 1),
             write_result.get("write_stats", {}),
+        )
+        logger.info(
+            "驾驶舱 V2 写入分阶段耗时 batch_no=%s timings=%s",
+            batch_no,
+            write_stage_timings,
         )
         if orchestrated["structure_changed"]:
             logger.info(
@@ -238,6 +248,8 @@ def _write_v2_transaction(
             raise FileNotFoundError(f"V2 批次不存在: {batch.batch_no}")
         run.structure_change_summary = orchestrated["structure_change_summary"]
 
+        stage_timings: dict[str, float] = {}
+        stage_started = perf_counter()
         sync_result: dict[str, Any] = {"structure_changed": False}
         if orchestrated["structure_changed"]:
             sync_result = sync_v2_hierarchy_in_session(
@@ -253,11 +265,19 @@ def _write_v2_transaction(
                 ),
             )
             sync_result["structure_changed"] = True
+        stage_timings["hierarchy_sync_seconds"] = round(
+            perf_counter() - stage_started, 3
+        )
 
+        stage_started = perf_counter()
         rows = attach_v2_node_ids_in_session(
             session,
             orchestrated["validated_rows"],
         )
+        stage_timings["attach_node_ids_seconds"] = round(
+            perf_counter() - stage_started, 3
+        )
+        stage_started = perf_counter()
         rows = compose_store_metric_rows(rows, plan["custom_components"])
         normalized_by_indicator = {
             code: normalize_v2_metric_rows(
@@ -268,7 +288,11 @@ def _write_v2_transaction(
             )
             for code in plan["store_codes"]
         }
+        stage_timings["normalize_metrics_seconds"] = round(
+            perf_counter() - stage_started, 3
+        )
 
+        stage_started = perf_counter()
         if period_type == "REALTIME":
             metric_result = write_v2_realtime_metrics_in_session(
                 session,
@@ -292,7 +316,11 @@ def _write_v2_transaction(
             current_count = 0
             snapshot_count = 0
             acc_count = metric_result["acc_upsert_count"]
+        stage_timings["metric_sql_seconds"] = round(
+            perf_counter() - stage_started, 3
+        )
 
+        stage_started = perf_counter()
         finalize_v2_run_in_session(
             session,
             batch_no=batch.batch_no,
@@ -303,12 +331,16 @@ def _write_v2_transaction(
             acc_upsert_count=acc_count,
         )
         batch.database_lock.assert_held()
+        stage_timings["finalize_seconds"] = round(
+            perf_counter() - stage_started, 3
+        )
     return {
         "batch_no": batch.batch_no,
         "status": "SUCCESS",
         "phase": "COMPLETED",
         "transaction_attempt": transaction_attempt,
         "sync": sync_result,
+        "write_stage_timings": stage_timings,
         **metric_result,
     }
 

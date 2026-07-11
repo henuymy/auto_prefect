@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import HierarchyNode
@@ -172,3 +172,26 @@ def test_missing_node_disable_keeps_last_trusted_observation_time(session):
     assert channel.enabled is False
     assert channel.last_seen_at == last_observed_at
     assert result["disabled"] == 1
+
+
+def test_parent_history_is_preloaded_once_instead_of_queried_per_node(session):
+    history_selects = 0
+
+    def count_history_selects(_connection, _cursor, statement, *_args):
+        nonlocal history_selects
+        normalized = statement.lower().lstrip()
+        if normalized.startswith("select") and "hierarchy_parent_history" in normalized:
+            history_selects += 1
+
+    event.listen(session.bind, "before_cursor_execute", count_history_selects)
+    try:
+        sync_v2_hierarchy_in_session(
+            session,
+            candidate_graph(),
+            collected_at=datetime(2026, 7, 10, 10, 0),
+            collection_run_id=None,
+        )
+    finally:
+        event.remove(session.bind, "before_cursor_execute", count_history_selects)
+
+    assert history_selects == 1

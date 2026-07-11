@@ -453,6 +453,14 @@ def sync_v2_hierarchy_in_session(
         (node.node_type, node.node_code): node
         for node in session.scalars(select(HierarchyNode)).all()
     }
+    active_history_by_child = {
+        history.child_node_id: history
+        for history in session.scalars(
+            select(HierarchyParentHistory).where(
+                HierarchyParentHistory.valid_to.is_(None)
+            )
+        ).all()
+    }
     created = updated = moved = restored = disabled = missing_incremented = 0
 
     ordered_identities = sorted(
@@ -513,6 +521,7 @@ def sync_v2_hierarchy_in_session(
         if parent is not None:
             relation_change = _ensure_active_parent_history(
                 session,
+                active_history_by_child=active_history_by_child,
                 node=node,
                 parent=parent,
                 collected_at=collected_at,
@@ -537,7 +546,9 @@ def sync_v2_hierarchy_in_session(
         if node.missing_count < missing_disable_threshold:
             continue
         node.enabled = False
-        _close_active_parent_history(session, node.id, collected_at)
+        _close_active_parent_history(
+            active_history_by_child, node.id, collected_at
+        )
         disabled += 1
 
     session.flush()
@@ -584,6 +595,7 @@ def removed_identities_from_change_plan(
 def _ensure_active_parent_history(
     session: Session,
     *,
+    active_history_by_child: dict[int, HierarchyParentHistory],
     node: HierarchyNode,
     parent: HierarchyNode,
     collected_at: datetime,
@@ -591,44 +603,37 @@ def _ensure_active_parent_history(
     restored: bool,
     old_parent_id: int | None,
 ) -> str | None:
-    active = session.scalar(
-        select(HierarchyParentHistory).where(
-            HierarchyParentHistory.child_node_id == node.id,
-            HierarchyParentHistory.valid_to.is_(None),
-        )
-    )
+    active = active_history_by_child.get(node.id)
     if active is not None and active.parent_node_id == parent.id:
         return None
 
     change_type = "RESTORED" if restored else "CREATED"
     if active is not None:
         active.valid_to = collected_at
-        session.flush()
+        active_history_by_child.pop(node.id, None)
+        # Release the generated-column unique key before inserting the new
+        # active history for the same child. This flush only occurs on moves.
+        session.flush([active])
         change_type = "MOVED"
     elif old_parent_id is not None and old_parent_id != parent.id and not restored:
         change_type = "MOVED"
-    session.add(
-        HierarchyParentHistory(
-            child_node_id=node.id,
-            parent_node_id=parent.id,
-            valid_from=collected_at,
-            collection_run_id=collection_run_id,
-            change_type=change_type,
-        )
+    new_history = HierarchyParentHistory(
+        child_node_id=node.id,
+        parent_node_id=parent.id,
+        valid_from=collected_at,
+        collection_run_id=collection_run_id,
+        change_type=change_type,
     )
+    session.add(new_history)
+    active_history_by_child[node.id] = new_history
     return change_type
 
 
 def _close_active_parent_history(
-    session: Session,
+    active_history_by_child: dict[int, HierarchyParentHistory],
     child_node_id: int,
     collected_at: datetime,
 ) -> None:
-    active = session.scalar(
-        select(HierarchyParentHistory).where(
-            HierarchyParentHistory.child_node_id == child_node_id,
-            HierarchyParentHistory.valid_to.is_(None),
-        )
-    )
+    active = active_history_by_child.pop(child_node_id, None)
     if active is not None:
         active.valid_to = collected_at
