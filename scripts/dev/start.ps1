@@ -86,7 +86,7 @@ Write-Host "启动 $DevWorkPool Worker..."
 
 if (-not $SkipAdmin) {
     Write-Host "启动开发管理端..."
-    & (Join-Path $ScriptsDir "admin_react_start.ps1") `
+    & (Join-Path $ScriptsDir "start_web.ps1") `
         -Mode both `
         -BackendPort $DevBackendPort `
         -FrontendPort $DevFrontendPort `

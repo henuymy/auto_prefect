@@ -51,7 +51,7 @@ function Start-Backend {
 }
 
 function Start-Frontend {
-    Set-Location (Join-Path $RepoRoot "admin_react")
+    Set-Location (Join-Path $RepoRoot "frontend")
     $env:VITE_API_BASE = ""
     npm run dev -- --host 127.0.0.1 --port $FrontendPort
 }
@@ -62,7 +62,7 @@ switch ($Mode) {
     "both" {
         $reloadArgs = "--reload-dir backend --reload-dir services --reload-dir models --reload-dir infrastructure --reload-dir utils --reload-dir flows --reload-dir tasks"
         $backendCommand = "cd '$RepoRoot'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PYTHONNOUSERSITE='1'; `$env:PREFECT_API_URL='$PrefectApiUrl'; & '$PythonExe' -m uvicorn backend.app:app --reload $reloadArgs --host 127.0.0.1 --port $BackendPort"
-        $frontendDir = Join-Path $RepoRoot "admin_react"
+        $frontendDir = Join-Path $RepoRoot "frontend"
         $frontendCommand = "cd '$frontendDir'; npm run dev -- --host 127.0.0.1 --port $FrontendPort"
 
         Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCommand

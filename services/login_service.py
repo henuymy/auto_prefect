@@ -49,7 +49,7 @@ def popup_input(prompt: str, title: str = "输入") -> str:
 
 class AutoLogin:
     def __init__(self, config_path=None):
-        self.config_path = Path(config_path).resolve() if config_path else PROJECT_DIR / "legacy_modules/modules/autologin/config.json"
+        self.config_path = Path(config_path).resolve() if config_path else PROJECT_DIR / "config/modules/login_config.json"
         self.config, _ = load_json_with_local_override(self.config_path)
         self.driver = None
         self.pending_otp_message_id = None

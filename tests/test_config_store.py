@@ -5,8 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-import pytest
-
 from backend.services import config_store
 
 

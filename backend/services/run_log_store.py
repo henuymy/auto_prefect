@@ -8,7 +8,7 @@ from uuid import uuid4
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LOG_PATH = PROJECT_ROOT / "runtime" / "logs" / "admin_react_runs.jsonl"
+LOG_PATH = PROJECT_ROOT / "runtime" / "logs" / "web_runs.jsonl"
 MAX_LOGS = 200
 
 

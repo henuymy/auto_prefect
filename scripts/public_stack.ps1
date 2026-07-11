@@ -138,7 +138,7 @@ function Start-PublicStack {
     }
 
     Write-Host "启动管理端后端 + React 前端..."
-    $adminCommand = "& '$PSScriptRoot\admin_react_start.ps1' -Mode both -BackendPort $BackendPort -FrontendPort $FrontendPort -PrefectApiUrl '$PrefectApiUrl'"
+    $adminCommand = "& '$PSScriptRoot\start_web.ps1' -Mode both -BackendPort $BackendPort -FrontendPort $FrontendPort -PrefectApiUrl '$PrefectApiUrl'"
     Start-Window -Title "Auto Notify Admin" -Command $adminCommand
 
     if (-not (Wait-HttpOk -Url "http://127.0.0.1:$FrontendPort" -TimeoutSeconds 60)) {
@@ -205,7 +205,7 @@ function Stop-PublicStack {
             $_.Name -in @("pwsh.exe", "powershell.exe", "cmd.exe") -and
             $_.CommandLine -and
             (
-                $_.CommandLine -like "*admin_react_start.ps1*" -or
+                $_.CommandLine -like "*start_web.ps1*" -or
                 $_.CommandLine -like "*npm run dev*" -or
                 $_.CommandLine -like "*uvicorn backend.app:app*" -or
                 $_.CommandLine -like "*frpc.exe*" -or

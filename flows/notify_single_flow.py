@@ -22,7 +22,7 @@ from tasks.template_tasks import update_template_task
 from services.compare_service import find_empty_download_sheet_mappings
 from services.method_service import EmptyReportDataError
 from utils.config_loader import load_json_with_local_override
-from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure
+from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
 
 try:
     from prefect import flow, get_run_logger, task

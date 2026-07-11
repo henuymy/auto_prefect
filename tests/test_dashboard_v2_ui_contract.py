@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-COCKPIT = Path("admin_react/src/dashboard/DashboardCockpit.tsx")
+COCKPIT = Path("frontend/src/dashboard/DashboardCockpit.tsx")
 
 
 def test_history_time_copy_distinguishes_batch_start_and_finish():

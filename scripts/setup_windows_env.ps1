@@ -153,7 +153,7 @@ if (Test-Path -LiteralPath $autologinPath) {
 
 if (-not $SkipSmokeTest) {
     Write-Step "执行基础自检"
-    & $CondaPython -c "import prefect, requests, selenium, streamlit, fastapi, uvicorn, asyncpg, sqlalchemy, pymysql, alembic; import services.login_service; import services.session_manager; import infrastructure.dashboard_mysql; print('smoke_ok')"
+    & $CondaPython -c "import prefect, requests, selenium, fastapi, uvicorn, asyncpg, sqlalchemy, pymysql, alembic; import services.login_service; import services.session_manager; import infrastructure.dashboard_mysql; print('smoke_ok')"
 }
 
 Write-Step "完成"
@@ -167,5 +167,5 @@ Write-Host "后续常用命令：" -ForegroundColor Green
 Write-Host "1. conda activate $EnvName"
 Write-Host "2. 本地调试:  . .\scripts\prefect_env_debug.ps1"
 Write-Host "3. 正式调度:  . .\scripts\prefect_env_prod.ps1"
-Write-Host "4. 启动 UI:   streamlit run admin/app.py"
+Write-Host "4. 启动系统: pwsh -File scripts/start_web.ps1 -Mode both"
 Write-Host "5. 单条运行:  python -c `"from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow('config/tasks/日通报.json'))`""

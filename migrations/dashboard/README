@@ -1,7 +1,0 @@
-Dashboard-only Alembic environment.
-
-This migration tree reads the independent MySQL connection from
-DASHBOARD_MYSQL_* environment variables. It must never use the Prefect
-PostgreSQL connection or modify the automatic-notification database.
-
-No business-table revision has been created yet.

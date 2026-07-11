@@ -11,8 +11,6 @@ dependencies = [
   "SQLAlchemy>=2.0,<3.0",
   "PyMySQL>=1.1,<2.0",
   "alembic>=1.13,<2.0",
-  "streamlit>=1.40.0",
-  "nicegui>=2.0.0",
   "fastapi>=0.110.0,<1.0",
   "python-multipart>=0.0.9",
   "uvicorn[standard]>=0.29.0,<1.0",
@@ -35,7 +33,7 @@ markers = [
 ]
 
 [tool.ruff]
-exclude = ["admin_nicegui", "legacy_modules", "scripts"]
+exclude = ["scripts"]
 
 [tool.ruff.lint.per-file-ignores]
 "flows/*.py" = ["E402"]
