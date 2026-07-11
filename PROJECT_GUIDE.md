@@ -69,8 +69,8 @@
 - Python：Conda `base`，Python 3.13。
 - 前端：NVM 管理 Node.js 20 LTS，React、Vite、TypeScript。
 - 任务调度：Prefect 3.7。
-- API：FastAPI、Uvicorn。
-- 数据库：Prefect PostgreSQL；驾驶舱 MySQL V2（`dashboard_v2`）。
+- API：FastAPI 0.115 系列、Starlette 0.46 系列、Uvicorn。
+- 数据库：Prefect PostgreSQL（测试库使用 `prefect_test`）；驾驶舱 MySQL V2（`dashboard_v2`）。
 - 本机组件：Microsoft Edge 用于自动登录与采集；Microsoft Excel 用于 COM 比对、模板更新和截图。
 
 ### 统一运行配置
@@ -87,7 +87,11 @@ config/runtime.local.json
 config/runtime.local.example.json
 ```
 
-其中维护 Prefect PostgreSQL 与驾驶舱 MySQL V2 的地址、端口、数据库、账号和密码。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2` 和 `dashboard_v2`；配置值不应写入 README、本文件或 Git 提交。
+其中维护 Prefect PostgreSQL 与驾驶舱 MySQL V2 的地址、端口、数据库、账号和密码。`prefect.postgres.url` 直接指定 Prefect 使用的数据库，不再从 `/prefect` 派生 `/prefect_dev`。当前测试库名为 `prefect_test`；后续正式切换时创建新的空库并只修改该 URL。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2` 和 `dashboard_v2`；配置值不应写入 README、本文件或 Git 提交。
+
+Prefect Work Pool 统一为 `default-agent-pool`。`prefect.yaml`、部署文件、后端发布服务和 `runtime.work_pool` 必须保持一致；`scripts/run.ps1` 会在 Pool 不存在时创建它，再同步全部部署并启动 Worker。
+
+`pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
 
 ### 驾驶舱数据库约定
 
@@ -137,3 +141,12 @@ pwsh -File scripts/run.ps1
 - 配置或迁移：使用 `alembic -c alembic_dashboard_v2.ini upgrade head`；本地运行配置中的驾驶舱数据库为 `dashboard_v2`。
 - 验证：`PYTHONPATH=. pytest tests/test_status_router.py -q`，预期通过。
 - 风险与回滚：该变更移除了 V1 兼容运行路径；如需恢复，必须从 V1 删除前的提交整体回退，不能混用两套迁移链。
+
+### 2026-07-12 - Prefect 统一测试数据库与运行依赖修复
+
+- 原因：合并项目后需要使用独立的 Prefect 测试库；旧启动逻辑固定派生 `prefect_dev`，且 Prefect 3.7 在过新的 FastAPI/Starlette 组合下创建 Work Pool 会返回 HTTP 500。
+- 修改内容：Prefect 直接使用 `prefect.postgres.url` 指向的数据库；运行配置和部署统一使用 `default-agent-pool`；FastAPI 限制为 0.115 系列并重建锁文件。
+- 涉及文件：`scripts/lib/prefect_start.ps1`、`scripts/lib/prefect_env_prod.ps1`、`scripts/dev/env.ps1`、`pyproject.toml`、锁文件、`prefect.yaml`、部署配置和测试。
+- 配置或迁移：在被忽略的 `config/runtime.local.json` 中配置目标 PostgreSQL 测试库；不迁移旧 Prefect 数据；移除遗留的 Work Pool。
+- 验证：环境契约测试 19 项通过；Prefect API health 为 200；`default-agent-pool` 为 READY 且 Worker ONLINE。
+- 风险与回滚：切换回旧库只需恢复本地 URL 并重启；正式环境应新建独立空库，不能合并旧 Prefect 内部表。
