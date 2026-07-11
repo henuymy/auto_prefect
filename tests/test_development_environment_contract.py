@@ -245,3 +245,40 @@ def test_prefect_and_web_entry_points_preserve_runtime_json_defaults():
     assert '"lib\\runtime_config.ps1"' in start_web
     assert "Import-ProjectRuntimeConfig" in start_web
     assert "$PrefectApiUrl = $env:PREFECT_API_URL" in start_web
+
+
+def test_unified_runtime_entry_points_start_services_without_running_flows():
+    run_script = ROOT / "scripts" / "run.ps1"
+    stop_script = ROOT / "scripts" / "stop.ps1"
+    status_script = ROOT / "scripts" / "status.ps1"
+
+    for script in (run_script, stop_script, status_script):
+        assert script.is_file(), f"missing unified entry point: {script.name}"
+
+    source = run_script.read_text(encoding="utf-8").lower()
+    assert "lib\\runtime_config.ps1" in source
+    assert "import-projectruntimeconfig" in source
+    assert "prefect_start.ps1" in source
+    assert "-mode server" in source
+    assert "prefect deploy --all" in source
+    assert "-mode worker" in source
+    assert "start_web.ps1" in source
+    assert "prefect flow run" not in source
+    assert "flow run" not in source
+
+    assert source.index("-mode server") < source.index("prefect deploy --all")
+    assert source.index("prefect deploy --all") < source.index("-mode worker")
+
+
+def test_legacy_dev_entry_points_only_forward_to_unified_scripts():
+    expected_targets = {
+        "scripts/dev/start.ps1": "run.ps1",
+        "scripts/dev/stop.ps1": "stop.ps1",
+        "scripts/dev/status.ps1": "status.ps1",
+    }
+
+    for relative_path, target in expected_targets.items():
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert target in source
+        assert "prefect deploy --all" not in source.lower()
+        assert "prefect flow run" not in source.lower()
