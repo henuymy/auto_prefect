@@ -70,7 +70,7 @@
 - 前端：NVM 管理 Node.js 20 LTS，React、Vite、TypeScript。
 - 任务调度：Prefect 3.7。
 - API：FastAPI、Uvicorn。
-- 数据库：Prefect PostgreSQL；驾驶舱 MySQL。
+- 数据库：Prefect PostgreSQL；驾驶舱 MySQL V2（`dashboard_v2`）。
 - 本机组件：Microsoft Edge 用于自动登录与采集；Microsoft Excel 用于 COM 比对、模板更新和截图。
 
 ### 统一运行配置
@@ -87,7 +87,13 @@ config/runtime.local.json
 config/runtime.local.example.json
 ```
 
-其中维护 Prefect PostgreSQL 与驾驶舱 MySQL 的地址、端口、数据库、账号和密码。配置值不应写入 README、本文件或 Git 提交。
+其中维护 Prefect PostgreSQL 与驾驶舱 MySQL V2 的地址、端口、数据库、账号和密码。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2` 和 `dashboard_v2`；配置值不应写入 README、本文件或 Git 提交。
+
+### 驾驶舱数据库约定
+
+- 驾驶舱只保留 V2 数据模型、服务、运行记录与迁移链路，不支持 V1 运行时分派。
+- 数据库迁移唯一入口为：`alembic -c alembic_dashboard_v2.ini upgrade head`。
+- 运行状态使用 V2 collection-run 存储；状态接口和任务入口不得导入 V1 run store 或 V1 trigger 路径。
 
 ### 运行入口
 
@@ -122,3 +128,12 @@ pwsh -File scripts/run.ps1
 - 配置或迁移：填写被忽略的 `config/runtime.local.json`，不提交密码。
 - 验证：`python -m pytest -p no:cacheprovider tests/test_development_environment_contract.py -q`。
 - 风险与回滚：删除统一文件即可恢复旧 `.local.ps1` 回退逻辑。
+
+### 2026-07-12 - 驾驶舱数据库收敛为 V2
+
+- 原因：V1 与 V2 链路并存，增加运行配置、迁移和状态检查的维护成本。
+- 修改内容：驾驶舱触发器、运行记录和状态检查迁移至 V2 命名空间；项目约定仅支持 `schema_version: 2` 与 `dashboard_v2`。
+- 涉及文件：`services/dashboard_v2_trigger.py`、`infrastructure/dashboard_v2_run_store.py`、`backend/routers/status.py`、`models/dashboard_v2_base.py`、`config/dashboard/session.json`。
+- 配置或迁移：使用 `alembic -c alembic_dashboard_v2.ini upgrade head`；本地运行配置中的驾驶舱数据库为 `dashboard_v2`。
+- 验证：`PYTHONPATH=. pytest tests/test_status_router.py -q`，预期通过。
+- 风险与回滚：该变更移除了 V1 兼容运行路径；如需恢复，必须从 V1 删除前的提交整体回退，不能混用两套迁移链。
