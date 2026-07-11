@@ -42,32 +42,50 @@ Prefect Flow
 ## 环境要求
 
 - Windows 10/11
-- Python 3.11
-- Node.js 20 或更高版本
-- MySQL 8（驾驶舱）
-- Prefect Server 3.7
-- Microsoft Edge；涉及 Excel COM 时还需 Microsoft Excel
+- Conda `base` 环境，Python 3.13
+- NVM 管理的 Node.js 20 LTS
+- MySQL 8（仅驾驶舱功能需要）
+- Prefect Server 3.7（仅本地运行 Prefect 服务与调度需要）
+- Microsoft Edge（自动登录与网页采集需要）；涉及 Excel COM 的比对、模板更新和截图功能还需 Microsoft Excel
 
 ## 安装
 
-推荐使用项目初始化脚本：
+在 Conda `base` 环境安装锁定的 Python 开发依赖：
+
+```powershell
+conda activate base
+python -m pip install -r requirements-dev.lock
+```
+
+通过 NVM 安装并启用前端所需的 Node.js 20 LTS，再安装前端依赖：
+
+```powershell
+nvm install 20.20.1
+nvm use 20.20.1
+cd frontend
+npm install
+```
+
+也可以使用项目初始化脚本完成 Python 依赖、运行目录和本机组件检查：
 
 ```powershell
 pwsh -File scripts/setup_windows_env.ps1
-cd frontend
-npm install
-cd ..
-```
-
-手动安装 Python 依赖：
-
-```powershell
-conda create -n auto-notify python=3.11 -y
-conda activate auto-notify
-pip install -r requirements.txt
 ```
 
 私密配置使用同名 `.local.json` 或 `.local.ps1` 文件覆盖，切勿把账号、Cookie、Webhook、数据库密码写入受版本控制的文件。
+
+## 依赖文件职责
+
+| 文件 | 职责 |
+| --- | --- |
+| `pyproject.toml` | Python 项目的直接运行依赖、开发可选依赖和工具配置的唯一声明来源。 |
+| `requirements.txt` | Python 运行时安装入口，引用 `requirements.lock`。 |
+| `requirements.lock` | 由 `pyproject.toml` 解析生成的 Python 运行时精确版本清单。 |
+| `requirements-dev.lock` | 由 `pyproject.toml` 的开发额外依赖解析生成，供开发、测试和质量检查安装。 |
+| `frontend/package.json` | 前端的直接依赖、开发依赖与 npm 脚本声明。 |
+| `frontend/package-lock.json` | npm 解析出的前端精确版本清单，保证不同机器安装结果一致。 |
+
+锁文件会记录直接依赖及其传递依赖，因此行数通常远多于 `pyproject.toml` 和 `frontend/package.json` 中列出的直接依赖；不要手动逐项编辑锁文件。
 
 ## 配置
 

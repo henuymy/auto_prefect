@@ -57,3 +57,12 @@ def test_readme_explains_dependency_file_roles():
         "requirements-dev.lock",
     ):
         assert filename in source
+
+
+def test_readme_declares_base_python_and_nvm_node_20():
+    source = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "Conda `base`" in source
+    assert "Python 3.13" in source
+    assert "NVM" in source
+    assert "Node.js 20 LTS" in source
