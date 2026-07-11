@@ -55,8 +55,13 @@ def test_readme_explains_dependency_file_roles():
         "requirements.txt",
         "requirements.lock",
         "requirements-dev.lock",
+        "frontend/package.json",
+        "frontend/package-lock.json",
     ):
         assert filename in source
+
+    assert "传递依赖" in source
+    assert "行数通常远多于" in source
 
 
 def test_readme_declares_base_python_and_nvm_node_20():
@@ -66,3 +71,25 @@ def test_readme_declares_base_python_and_nvm_node_20():
     assert "Python 3.13" in source
     assert "NVM" in source
     assert "Node.js 20 LTS" in source
+
+
+def test_readme_declares_install_commands_and_feature_prerequisites():
+    source = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    for command in (
+        "conda activate base",
+        "python -m pip install -r requirements-dev.lock",
+        "nvm install 20.20.1",
+        "nvm use 20.20.1",
+        "cd frontend",
+        "npm install",
+    ):
+        assert command in source
+
+    for prerequisite in (
+        "Microsoft Edge",
+        "Microsoft Excel",
+        "MySQL 8",
+        "Prefect Server 3.7",
+    ):
+        assert prerequisite in source
