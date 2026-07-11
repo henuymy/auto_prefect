@@ -28,6 +28,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--basetemp=runtime/test-tmp"
 markers = [
   "mysql_integration: requires an explicitly configured disposable MySQL test database",
 ]
