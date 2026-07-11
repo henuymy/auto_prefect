@@ -1,5 +1,16 @@
 __pycache__/
+**/__pycache__/
 *.py[cod]
+.venv/
+venv/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
 
 # Local credentials and session artifacts
 legacy_modules/modules/*/config.json

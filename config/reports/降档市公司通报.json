@@ -2,7 +2,7 @@
   "id": "降档市公司通报",
   "name": "降档市公司通报",
   "template_path": "templates/降档市公司通报.xlsx",
-  "enabled": false,
+  "enabled": true,
   "description": "",
   "downloads": [
     {
@@ -30,7 +30,7 @@
         "sheetIndex": "-1",
         "sheetName": "存量-套餐细分",
         "type": "excel",
-        "versionName": "${day_before_yesterday_yyyymmdd}",
+        "versionName": "${yesterday_yyyymmdd}",
         "resId": "505042",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
@@ -151,7 +151,7 @@
         "sheetIndex": "-1",
         "sheetName": "降档日数据",
         "type": "excel",
-        "versionName": "${date:day_before_yesterday-1M|yyyyMMdd}",
+        "versionName": "${date:today-3d|yyyyMMdd}",
         "resId": "512686",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
@@ -258,7 +258,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-08 11:41:50",
-  "source": "draft",
-  "has_draft": true
+  "updatedAt": "2026-07-09 17:30:05",
+  "source": "published",
+  "has_draft": false
 }

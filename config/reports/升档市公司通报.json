@@ -1,8 +1,8 @@
 {
   "id": "升档市公司通报",
   "name": "升档市公司通报",
-  "template_path": "templates/升档市公司通报_新手模板_20260708_143339.xlsx",
-  "enabled": false,
+  "template_path": "templates/升档市公司通报.xlsx",
+  "enabled": true,
   "description": "",
   "downloads": [
     {
@@ -71,7 +71,7 @@
         "sheetIndex": "-1",
         "sheetName": "1.拍照客户本月在网情况",
         "type": "excel",
-        "versionName": "20260706",
+        "versionName": "${yesterday_yyyymmdd}",
         "resId": "519190",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
@@ -111,7 +111,127 @@
         "sheetIndex": "-1",
         "sheetName": "看存量-月",
         "type": "excel",
-        "versionName": "20260706",
+        "versionName": "${yesterday_yyyymmdd}",
+        "resId": "519353",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
+    },
+    {
+      "source": "http_api",
+      "name": "512005",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=512005&ticket=ST-322494-bbteQVC0yfbnigbXbgWpxSPfgnaBuamEGVA-sso",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "69928",
+        "sheetIndex": "-1",
+        "sheetName": "全球通客户",
+        "type": "excel",
+        "versionName": "${yesterday_yyyymmdd}",
+        "resId": "512005",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
+    },
+    {
+      "source": "http_api",
+      "name": "512005_1",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=512005&ticket=ST-322494-bbteQVC0yfbnigbXbgWpxSPfgnaBuamEGVA-sso",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "69928",
+        "sheetIndex": "-1",
+        "sheetName": "全球通客户",
+        "type": "excel",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
+        "resId": "512005",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
+    },
+    {
+      "source": "http_api",
+      "name": "519353_1",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=519353&ticket=ST-322864-F9ytGmbCeEAduEW6RuuneEidspmdiecqxJc-sso",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "87893",
+        "sheetIndex": "-1",
+        "sheetName": "看存量-月",
+        "type": "excel",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
         "resId": "519353",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
@@ -126,7 +246,114 @@
       }
     }
   ],
-  "compare_sources": [],
+  "compare_sources": [
+    {
+      "download_name": "505042",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "505042_存量-全省套餐",
+          "new_sheet_name": "存量-全省套餐",
+          "template_sheet_name": "505042_存量-全省套餐",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "519190",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "519190_1.拍照客户本月在网情况",
+          "new_sheet_name": "1.拍照客户本月在网情况",
+          "template_sheet_name": "519190_1.拍照客户本月在网情况",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        },
+        {
+          "name": "519190_2.拍照上月底客户本月运营情况",
+          "new_sheet_name": "2.拍照上月底客户本月运营情况",
+          "template_sheet_name": "519190_2.拍照上月底客户本月运营情况",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        },
+        {
+          "name": "519190_3.本月超套用户情况",
+          "new_sheet_name": "3.本月超套用户情况",
+          "template_sheet_name": "519190_3.本月超套用户情况",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "519353",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "519353_看存量-年",
+          "new_sheet_name": "看存量-年",
+          "template_sheet_name": "519353_看存量-年",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "519353_1",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "519353_1_看存量-年",
+          "new_sheet_name": "看存量-年",
+          "template_sheet_name": "519353_1_看存量-年",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "512005",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "512005_全球通客户",
+          "new_sheet_name": "全球通客户",
+          "template_sheet_name": "512005_全球通客户",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "512005_1",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "512005_1_全球通客户",
+          "new_sheet_name": "全球通客户",
+          "template_sheet_name": "512005_1_全球通客户",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    }
+  ],
   "send": {
     "webhook_url": "",
     "workbook_name": "新建通报配置",
@@ -157,7 +384,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-07 23:39:51",
-  "source": "draft",
-  "has_draft": true
+  "updatedAt": "2026-07-10 17:43:54",
+  "source": "published",
+  "has_draft": false
 }

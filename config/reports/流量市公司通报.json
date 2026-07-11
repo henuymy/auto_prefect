@@ -1,8 +1,8 @@
 {
   "id": "流量市公司通报",
   "name": "流量市公司通报",
-  "template_path": "templates/流量市公司通报_新手模板_20260708_231908.xlsx",
-  "enabled": false,
+  "template_path": "templates/流量市公司通报.xlsx",
+  "enabled": true,
   "description": "",
   "downloads": [
     {
@@ -84,9 +84,95 @@
       "headers_from_cookies": {
         "Ssr-token": "ssr-token"
       }
+    },
+    {
+      "source": "http_api",
+      "name": "340159",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=340159&ticket=ST-302851-9fWPcHv0xLyRaqFQXJEXYLyQcKnfr7vHgwK-sso",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "84592",
+        "sheetIndex": "-1",
+        "sheetName": "流量",
+        "type": "excel",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
+        "resId": "340159",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
     }
   ],
-  "compare_sources": [],
+  "compare_sources": [
+    {
+      "download_name": "512508",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "512508_分地市订购情况",
+          "new_sheet_name": "分地市订购情况",
+          "template_sheet_name": "512508_分地市订购情况",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "512509",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "512509_分地市订购情况",
+          "new_sheet_name": "分地市订购情况",
+          "template_sheet_name": "512509_分地市订购情况",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "340159",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "340159_流量",
+          "new_sheet_name": "流量",
+          "template_sheet_name": "340159_流量",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    }
+  ],
   "send": {
     "webhook_url": "",
     "workbook_name": "新建通报配置",
@@ -117,7 +203,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-08 17:26:55",
-  "source": "draft",
-  "has_draft": true
+  "updatedAt": "2026-07-09 17:21:54",
+  "source": "published",
+  "has_draft": false
 }
