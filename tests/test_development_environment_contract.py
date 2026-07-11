@@ -13,8 +13,13 @@ SCRIPTS = [
 
 def test_runtime_scripts_do_not_require_auto_notify_or_disable_user_site():
     source = "\n".join(path.read_text(encoding="utf-8") for path in SCRIPTS)
+    environment_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in SCRIPTS
+        if path.name != "prefect_stop.ps1"
+    )
 
-    assert "auto-notify" not in source
+    assert "auto-notify" not in environment_source
     assert "PYTHONNOUSERSITE" not in source
 
 
@@ -29,6 +34,17 @@ def test_runtime_scripts_use_shared_python_resolver():
         "scripts/dev/env.ps1",
     ):
         assert "python_env.ps1" in (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def test_prefect_stop_keeps_legacy_kill_switch_and_public_callers_forward_it():
+    stop_source = (ROOT / "scripts" / "prefect_stop.ps1").read_text(encoding="utf-8")
+    public_source = (ROOT / "scripts" / "public_stack.ps1").read_text(encoding="utf-8")
+    wrapper_source = (ROOT / "scripts" / "stop_public_stack.ps1").read_text(encoding="utf-8")
+
+    assert "[switch]$KillAutoNotifyPython = $true" in stop_source
+    assert "if ($KillAutoNotifyPython)" in stop_source
+    assert "-KillAutoNotifyPython:$KillAutoNotifyPython" in public_source
+    assert "-KillAutoNotifyPython:$KillAutoNotifyPython" in wrapper_source
 
 
 def test_readme_explains_dependency_file_roles():

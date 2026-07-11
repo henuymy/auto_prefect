@@ -1,7 +1,7 @@
 param(
     [int[]]$Ports = @(4200),
     [string]$PrefectHome = "",
-    [switch]$KillPython = $true
+    [switch]$KillAutoNotifyPython = $true
 )
 
 $ErrorActionPreference = "Continue"
@@ -30,7 +30,7 @@ foreach ($port in $Ports) {
 }
 
 $killedPython = @()
-if ($KillPython) {
+if ($KillAutoNotifyPython) {
     $py = Get-Process -Name "python" -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and ($_.Path -ieq $ProjectPython) }
     foreach ($proc in $py) {
