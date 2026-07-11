@@ -1,5 +1,20 @@
 __pycache__/
+**/__pycache__/
 *.py[cod]
+
+# Python environments and build artifacts
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Node.js dependencies and build output
+node_modules/
+dist/
 
 # Local credentials and session artifacts
 .claude/settings.local.json
@@ -18,6 +33,20 @@ cache/
 ~$*
 .env
 .env.*
+
+# Local credentials, tokens, cookies, sessions, and keys
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+credentials*.json
+secrets.json
+secrets*.json
+cookie*.json
+**/cookie_dump.json
+**/Cookies
+**/Cookies-journal
 config/tasks/local.json
 config/tasks/*.local.json
 config/modules/*.local.json
