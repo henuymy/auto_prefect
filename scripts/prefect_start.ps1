@@ -14,6 +14,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "python_env.ps1")
 $LocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
 if (Test-Path -LiteralPath $LocalEnvPath) {
     . $LocalEnvPath
@@ -23,30 +24,7 @@ if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 }
 if (-not $PythonExe) {
-    $activeEnvName = if ($env:CONDA_PREFIX) { Split-Path -Leaf $env:CONDA_PREFIX } else { "" }
-    if (
-        $activeEnvName -eq "auto-notify" -and
-        (Test-Path -LiteralPath (Join-Path $env:CONDA_PREFIX "python.exe"))
-    ) {
-        $PythonExe = Join-Path $env:CONDA_PREFIX "python.exe"
-    } else {
-        $condaPython = $null
-        $condaCmd = Get-Command conda -ErrorAction SilentlyContinue
-        if ($condaCmd) {
-            $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(?:\*\s+)?(.+)$" | Select-Object -First 1
-            if ($envInfo) {
-                $condaPython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
-            }
-        }
-        if ($condaPython -and (Test-Path -LiteralPath $condaPython)) {
-            $PythonExe = $condaPython
-        } else {
-            $PythonExe = Join-Path $env:USERPROFILE ".conda\envs\auto-notify\python.exe"
-        }
-    }
-}
-if (-not (Test-Path -LiteralPath $PythonExe)) {
-    $PythonExe = "python"
+    $PythonExe = Get-ProjectPython
 }
 
 if ($UseSqliteDebug) {
@@ -89,7 +67,6 @@ $env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = "False"
 $env:PREFECT_SERVER_ANALYTICS_ENABLED = "False"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
-$env:PYTHONNOUSERSITE = "1"
 
 Write-Host "RepoRoot       : $RepoRoot"
 Write-Host "PythonExe      : $PythonExe"
@@ -190,7 +167,6 @@ function Get-EnvBootstrap {
 `$env:PREFECT_SERVER_ANALYTICS_ENABLED = 'False'
 `$env:PYTHONUTF8 = '1'
 `$env:PYTHONIOENCODING = 'utf-8'
-`$env:PYTHONNOUSERSITE = '1'
 `$env:DASHBOARD_MYSQL_HOST = '$($env:DASHBOARD_MYSQL_HOST)'
 `$env:DASHBOARD_MYSQL_PORT = '$($env:DASHBOARD_MYSQL_PORT)'
 `$env:DASHBOARD_MYSQL_DATABASE = '$($env:DASHBOARD_MYSQL_DATABASE)'

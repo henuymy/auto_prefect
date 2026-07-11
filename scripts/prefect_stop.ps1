@@ -1,30 +1,21 @@
 param(
     [int[]]$Ports = @(4200),
     [string]$PrefectHome = "",
-    [switch]$KillAutoNotifyPython = $true
+    [switch]$KillPython = $true
 )
 
 $ErrorActionPreference = "Continue"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "python_env.ps1")
 if (-not $PrefectHome) {
     $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
 }
-$AutoNotifyPython = Join-Path $env:USERPROFILE ".conda\envs\auto-notify\python.exe"
-$condaCmd = Get-Command conda -ErrorAction SilentlyContinue
-if ($condaCmd) {
-    $envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*auto-notify\s+(?:\*\s+)?(.+)$" | Select-Object -First 1
-    if ($envInfo) {
-        $candidatePython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
-        if (Test-Path -LiteralPath $candidatePython) {
-            $AutoNotifyPython = $candidatePython
-        }
-    }
-}
+$ProjectPython = Get-ProjectPython
 
 Write-Host "RepoRoot        : $RepoRoot"
 Write-Host "PREFECT_HOME    : $PrefectHome"
-Write-Host "AutoNotifyPython: $AutoNotifyPython"
+Write-Host "Python          : $ProjectPython"
 Write-Host ""
 
 $killedByPort = @()
@@ -39,9 +30,9 @@ foreach ($port in $Ports) {
 }
 
 $killedPython = @()
-if ($KillAutoNotifyPython) {
+if ($KillPython) {
     $py = Get-Process -Name "python" -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and ($_.Path -ieq $AutoNotifyPython) }
+        Where-Object { $_.Path -and ($_.Path -ieq $ProjectPython) }
     foreach ($proc in $py) {
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
         $killedPython += $proc.Id
@@ -76,7 +67,7 @@ foreach ($homePath in @($PrefectHome, (Join-Path $env:USERPROFILE ".prefect"))) 
 
 Remove-Item -LiteralPath (Join-Path $RepoRoot "runtime\locks\excel_com.lock") -Force -ErrorAction SilentlyContinue
 
-$CleanupPython = if (Test-Path -LiteralPath $AutoNotifyPython) { $AutoNotifyPython } else { "python" }
+$CleanupPython = $ProjectPython
 Push-Location $RepoRoot
 try {
     & $CleanupPython -c "from services.browser_session import close_recorded_browser_session; print(close_recorded_browser_session())" 2>$null

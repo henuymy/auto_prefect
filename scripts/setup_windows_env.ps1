@@ -1,16 +1,13 @@
 param(
-    [string]$EnvName = "auto-notify",
-    [string]$PythonVersion = "3.11",
     [string]$PipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple",
     [string]$PipTrustedHost = "pypi.tuna.tsinghua.edu.cn",
-    [switch]$SkipCondaMirror,
-    [switch]$SkipCondaCreate,
     [switch]$SkipSmokeTest
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "python_env.ps1")
 $RuntimeDirs = @(
     "runtime",
     "runtime\cookies",
@@ -28,55 +25,6 @@ function Write-Step {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
-function Require-Command {
-    param(
-        [string]$Name,
-        [string]$HelpMessage
-    )
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    if (-not $cmd) {
-        throw $HelpMessage
-    }
-    return $cmd
-}
-
-function Test-CondaEnvExists {
-    param([string]$Name)
-    $envList = & conda env list 2>$null
-    if (-not $envList) {
-        return $false
-    }
-    return [bool]($envList | Select-String -Pattern "^\s*$([regex]::Escape($Name))\s")
-}
-
-function Ensure-CondaMirror {
-    if ($SkipCondaMirror) {
-        Write-Host "已跳过 conda 镜像配置。"
-        return
-    }
-
-    $mirrorCommands = @(
-        "config --remove-key channels",
-        "config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main",
-        "config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free",
-        "config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r",
-        "config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge",
-        "config --set show_channel_urls yes"
-    )
-
-    foreach ($cmd in $mirrorCommands) {
-        try {
-            & conda ($cmd -split " ")
-        } catch {
-            if ($cmd -ne "config --remove-key channels") {
-                throw
-            }
-        }
-    }
-
-    Write-Host "已写入 conda 清华镜像。"
-}
-
 function Find-EdgeExecutable {
     $candidates = @(
         "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -90,34 +38,11 @@ function Find-EdgeExecutable {
     return $null
 }
 
-Require-Command -Name "conda" -HelpMessage "未找到 conda，请先安装 Anaconda 或 Miniconda。"
-
-Write-Step "配置 Conda 国内镜像"
-Ensure-CondaMirror
-
-Write-Step "准备 Conda 环境"
-if (-not $SkipCondaCreate) {
-    if (Test-CondaEnvExists -Name $EnvName) {
-        Write-Host "Conda 环境已存在：$EnvName"
-    } else {
-        & conda create -n $EnvName "python=$PythonVersion" -y
-    }
-} else {
-    Write-Host "已跳过 conda create。"
-}
-
-$CondaPython = Join-Path $env:USERPROFILE ".conda\envs\$EnvName\python.exe"
-$envInfo = (& conda env list 2>$null) | Select-String -Pattern "^\s*$([regex]::Escape($EnvName))\s+(?:\*\s+)?(.+)$" | Select-Object -First 1
-if ($envInfo) {
-    $CondaPython = Join-Path $envInfo.Matches[0].Groups[1].Value.Trim() "python.exe"
-}
-if (-not (Test-Path -LiteralPath $CondaPython)) {
-    throw "未找到环境 Python：$CondaPython。请确认 Conda 环境 '$EnvName' 已正确创建。"
-}
+$PythonExe = Get-ProjectPython
 
 Write-Step "安装 Python 依赖"
-& $CondaPython -m pip install --upgrade pip setuptools wheel -i $PipIndexUrl --trusted-host $PipTrustedHost
-& $CondaPython -m pip install -r (Join-Path $RepoRoot "requirements.txt") -i $PipIndexUrl --trusted-host $PipTrustedHost
+& $PythonExe -m pip install --upgrade pip setuptools wheel -i $PipIndexUrl --trusted-host $PipTrustedHost
+& $PythonExe -m pip install -r (Join-Path $RepoRoot "requirements-dev.lock") -i $PipIndexUrl --trusted-host $PipTrustedHost
 
 Write-Step "初始化运行目录"
 foreach ($dir in $RuntimeDirs) {
@@ -142,30 +67,18 @@ try {
     Write-Warning "未检测到可用的 Excel COM。比对/模板更新/截图相关功能将无法使用。"
 }
 
-Write-Step "写入 autologin Python 路径"
-$autologinPath = Join-Path $RepoRoot "config\modules\autologin.json"
-if (Test-Path -LiteralPath $autologinPath) {
-    $json = Get-Content -Raw $autologinPath | ConvertFrom-Json
-    $json.login_command = "`"$CondaPython`" -c `"from services.login_service import run_login; run_login('config/modules/login_config.json')`""
-    $json | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $autologinPath -Encoding UTF8
-    Write-Host "已更新 autologin.json 中的 login_command。"
-}
-
 if (-not $SkipSmokeTest) {
     Write-Step "执行基础自检"
-    & $CondaPython -c "import prefect, requests, selenium, fastapi, uvicorn, asyncpg, sqlalchemy, pymysql, alembic; import services.login_service; import services.session_manager; import infrastructure.dashboard_mysql; print('smoke_ok')"
+    & $PythonExe -c "import prefect, requests, selenium, fastapi, uvicorn, asyncpg, sqlalchemy, pymysql, alembic; import services.login_service; import services.session_manager; import infrastructure.dashboard_mysql; print('smoke_ok')"
 }
 
 Write-Step "完成"
-Write-Host "环境名称      : $EnvName"
-Write-Host "Python 路径    : $CondaPython"
+Write-Host "Python 路径    : $PythonExe"
 Write-Host "项目目录      : $RepoRoot"
 Write-Host "PIP 镜像源    : $PipIndexUrl"
-Write-Host "Conda 镜像    : $(if ($SkipCondaMirror) { '保持现状' } else { '清华镜像' })"
 Write-Host ""
 Write-Host "后续常用命令：" -ForegroundColor Green
-Write-Host "1. conda activate $EnvName"
-Write-Host "2. 本地调试:  . .\scripts\prefect_env_debug.ps1"
-Write-Host "3. 正式调度:  . .\scripts\prefect_env_prod.ps1"
-Write-Host "4. 启动系统: pwsh -File scripts/start_web.ps1 -Mode both"
-Write-Host "5. 单条运行:  python -c `"from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow('config/tasks/日通报.json'))`""
+Write-Host "1. 本地调试:  . .\scripts\prefect_env_debug.ps1"
+Write-Host "2. 正式调度:  . .\scripts\prefect_env_prod.ps1"
+Write-Host "3. 启动系统: pwsh -File scripts/start_web.ps1 -Mode both"
+Write-Host "4. 单条运行:  python -c `"from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow('config/tasks/日通报.json'))`""
