@@ -55,11 +55,11 @@ def test_readme_explains_dependency_file_roles():
         "requirements.txt",
         "requirements.lock",
         "requirements-dev.lock",
-        "frontend/package.json",
-        "frontend/package-lock.json",
     ):
         assert filename in source
 
+    assert "| `frontend/package.json` | 前端的直接依赖、开发依赖与 npm 脚本声明。 |" in source
+    assert "| `frontend/package-lock.json` | npm 解析出的前端精确版本清单，保证不同机器安装结果一致。 |" in source
     assert "传递依赖" in source
     assert "行数通常远多于" in source
 
@@ -86,10 +86,7 @@ def test_readme_declares_install_commands_and_feature_prerequisites():
     ):
         assert command in source
 
-    for prerequisite in (
-        "Microsoft Edge",
-        "Microsoft Excel",
-        "MySQL 8",
-        "Prefect Server 3.7",
-    ):
-        assert prerequisite in source
+    assert "MySQL 8（仅驾驶舱功能需要）" in source
+    assert "Prefect Server 3.7（仅本地运行 Prefect 服务与调度需要）" in source
+    assert "Microsoft Edge（自动登录与网页采集需要）" in source
+    assert "涉及 Excel COM 的比对、模板更新和截图功能还需 Microsoft Excel" in source
