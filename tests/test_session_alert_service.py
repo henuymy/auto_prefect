@@ -1,4 +1,6 @@
 import json
+import multiprocessing
+import time
 from pathlib import Path
 
 from services.session_alert_service import (
@@ -13,6 +15,46 @@ def alert_config(tmp_path: Path):
         "incident_state_path": str(tmp_path / "incident_state.json"),
         "host_name": "windows-worker-1",
     }
+
+
+def _failure_worker(config, incident, messages, results, start_event):
+    start_event.wait(timeout=10)
+
+    def sender(_url, text, timeout=30):
+        messages.append(text)
+        time.sleep(0.2)
+        return {"errcode": 0}
+
+    results.append(notify_session_failure(config, incident, sender=sender))
+
+
+def _recovery_worker(config, recovery, messages, results, start_event):
+    start_event.wait(timeout=10)
+
+    def sender(_url, text, timeout=30):
+        messages.append(text)
+        time.sleep(0.2)
+        return {"errcode": 0}
+
+    results.append(notify_session_recovery(config, recovery, sender=sender))
+
+
+def _run_concurrently(worker, config, payload, messages, results):
+    context = multiprocessing.get_context("spawn")
+    start_event = context.Event()
+    processes = [
+        context.Process(
+            target=worker,
+            args=(config, payload, messages, results, start_event),
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    start_event.set()
+    for process in processes:
+        process.join(timeout=15)
+        assert process.exitcode == 0
 
 
 def test_failure_alert_is_sent_once_for_same_incident(tmp_path):
@@ -46,6 +88,29 @@ def test_failure_alert_is_sent_once_for_same_incident(tmp_path):
     assert "flow-123" in messages[0]
 
 
+def test_concurrent_failure_alert_is_one_cross_process_transaction(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    with context.Manager() as manager:
+        messages = manager.list()
+        results = manager.list()
+        config = alert_config(tmp_path)
+        incident = {
+            "incident_key": "authentication:city_ops",
+            "trigger_source": "session-keeper",
+            "failure_category": "authentication",
+            "failed_stages": ["city_ops"],
+            "attempt_count": 2,
+            "errors": ["failure"],
+            "flow_run_id": "flow-concurrent",
+            "next_scheduled_at": "2026-07-12T16:30:00+08:00",
+        }
+
+        _run_concurrently(_failure_worker, config, incident, messages, results)
+
+        assert len(messages) == 1
+        assert sorted(result["sent"] for result in results) == [False, True]
+
+
 def test_alert_text_never_contains_authentication_secrets(tmp_path):
     messages = []
     config = alert_config(tmp_path)
@@ -74,6 +139,50 @@ def test_alert_text_never_contains_authentication_secrets(tmp_path):
     assert "raw-cookie" not in serialized_state
     assert "raw-token" not in serialized_state
     assert "raw-password" not in serialized_state
+
+
+def test_alert_redacts_storage_credentials_and_bare_wecom_webhook(tmp_path):
+    messages = []
+    config = alert_config(tmp_path)
+    bare_webhook = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=raw-wecom-key"
+    incident = {
+        "incident_key": "authentication:report_analysis",
+        "trigger_source": "business-flow",
+        "failure_category": "authentication",
+        "failed_stages": ["report_analysis"],
+        "attempt_count": 2,
+        "errors": [
+            "Storage=raw-storage sessionStorage=raw-session-storage "
+            "localStorage=raw-local-storage username=raw-user "
+            "credentials=raw-credentials secret=raw-secret "
+            "Authorization=Bearer raw-authorization "
+            "JSESSIONID=raw-jsession accessToken=raw-access-token "
+            f"uapToken=raw-uap-token {bare_webhook}"
+        ],
+        "flow_run_id": "flow-credentials",
+        "next_scheduled_at": "2026-07-12T16:45:00+08:00",
+    }
+
+    notify_session_failure(
+        config,
+        incident,
+        sender=lambda _url, text, timeout=30: messages.append(text) or {"errcode": 0},
+    )
+
+    for sentinel in (
+        "raw-storage",
+        "raw-session-storage",
+        "raw-local-storage",
+        "raw-user",
+        "raw-credentials",
+        "raw-secret",
+        "raw-authorization",
+        "raw-jsession",
+        "raw-access-token",
+        "raw-uap-token",
+        "raw-wecom-key",
+    ):
+        assert sentinel not in messages[0]
 
 
 def test_recovery_message_is_sent_once_and_clears_active_incident(tmp_path):
@@ -106,3 +215,67 @@ def test_recovery_message_is_sent_once_and_clears_active_incident(tmp_path):
     assert first["sent"] is True
     assert second["suppressed"] is True
     assert len(messages) == 2
+
+
+def test_concurrent_recovery_is_one_cross_process_transaction(tmp_path):
+    config = alert_config(tmp_path)
+    incident = {
+        "incident_key": "authentication:city_ops",
+        "trigger_source": "session-keeper",
+        "failure_category": "authentication",
+        "failed_stages": ["city_ops"],
+        "attempt_count": 2,
+        "errors": ["failure"],
+        "flow_run_id": "flow-123",
+        "next_scheduled_at": "2026-07-12T16:30:00+08:00",
+    }
+    notify_session_failure(config, incident, sender=lambda *_args, **_kwargs: {"errcode": 0})
+
+    context = multiprocessing.get_context("spawn")
+    with context.Manager() as manager:
+        messages = manager.list()
+        results = manager.list()
+        _run_concurrently(
+            _recovery_worker,
+            config,
+            {"incident_key": incident["incident_key"], "flow_run_id": "flow-recovery"},
+            messages,
+            results,
+        )
+
+        assert len(messages) == 1
+        assert sorted(result["sent"] for result in results) == [False, True]
+
+
+def test_sender_failure_does_not_persist_suppression_state(tmp_path):
+    messages = []
+    config = alert_config(tmp_path)
+    incident = {
+        "incident_key": "authentication:city_ops",
+        "trigger_source": "session-keeper",
+        "failure_category": "authentication",
+        "failed_stages": ["city_ops"],
+        "attempt_count": 2,
+        "errors": ["failure"],
+        "flow_run_id": "flow-failure",
+        "next_scheduled_at": "2026-07-12T16:30:00+08:00",
+    }
+
+    def failing_sender(_url, _text, timeout=30):
+        raise RuntimeError("send failed")
+
+    try:
+        notify_session_failure(config, incident, sender=failing_sender)
+    except RuntimeError as exc:
+        assert str(exc) == "send failed"
+    else:
+        raise AssertionError("sender failure must propagate")
+
+    assert not Path(config["incident_state_path"]).exists()
+    result = notify_session_failure(
+        config,
+        incident,
+        sender=lambda _url, text, timeout=30: messages.append(text) or {"errcode": 0},
+    )
+    assert result["sent"] is True
+    assert len(messages) == 1
