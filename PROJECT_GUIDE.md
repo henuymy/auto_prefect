@@ -177,5 +177,5 @@ pwsh -File scripts/stop.ps1
 - 修改内容：记录手工启动、`1 / 4 / 6` Pool 拓扑、积压取消、Worker 监督、Server 手工恢复、共享 Excel/登录锁及受管进程停止边界。
 - 涉及文件：`README.md`、`PROJECT_GUIDE.md`、`scripts/setup_windows_env.ps1`、`tests/test_development_environment_contract.py`。
 - 配置或迁移：在被忽略的 `config/runtime.local.json` 中维护 `C:\AutoNotifyRuntime` 与三 Pool 配置；正式 Notify 上限为 6。
-- 验证：运行全量 Pytest、PowerShell 语法解析、`prefect.yaml` 解析及受控 Windows 验收。
+- 验证：全量 Pytest 为 `620 passed, 14 skipped`；聚焦积压策略、锁和受管进程模拟为 `98 passed, 21 deselected`；PowerShell 语法解析、`prefect.yaml` YAML 解析、Ruff 和 `git diff --check` 均通过。由于被 Git 忽略的 `config/runtime.local.json`、数据库配置和凭据均缺失，未执行真实 Windows 启动、三个在线 Worker、Notify 排队、Excel 串行和单登录所有者验收。
 - 风险与回滚：回滚文档和 setup 变更不会停止已运行服务；运行进程只通过当前 Worktree 的注册记录管理。

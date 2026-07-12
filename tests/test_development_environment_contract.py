@@ -838,6 +838,27 @@ def test_docs_describe_three_pool_windows_operations():
             assert marker in source
 
 
+def test_docs_distinguish_automated_checks_from_unrun_live_acceptance():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "PROJECT_GUIDE.md").read_text(encoding="utf-8")
+
+    for source in (readme, guide):
+        assert "受控 Windows 验收" not in source
+
+    for marker in (
+        "620 passed",
+        "98 passed",
+        "PowerShell",
+        "YAML",
+        "Ruff",
+        "git diff --check",
+        "未执行",
+        "config/runtime.local.json",
+        "凭据",
+    ):
+        assert marker in guide
+
+
 def test_script_root_contains_only_public_entry_points_or_compatibility_wrappers():
     root = ROOT / "scripts"
     for name in (
