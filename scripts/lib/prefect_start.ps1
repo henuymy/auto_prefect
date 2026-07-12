@@ -17,6 +17,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot "python_env.ps1")
+. (Join-Path $PSScriptRoot "process_registry.ps1")
 $ScriptsRoot = Split-Path -Parent $PSScriptRoot
 $UnifiedLocalEnvPath = Join-Path $ScriptsRoot "environment.local.ps1"
 $LegacyLocalEnvPath = Join-Path $ScriptsRoot "prefect_env_prod.local.ps1"
@@ -93,15 +94,32 @@ $PrefectHealthUrl = $ApiUrl.TrimEnd("/") + "/health"
 
 function Start-DetachedWindow {
     param(
-        [string]$Title,
-        [string]$Command
+        [string]$Name,
+        [string]$Command,
+        [string]$RegisteredCommand
     )
-    $escaped = $Command.Replace('"', '\"')
-    Start-Process -FilePath "pwsh" -ArgumentList @(
-        "-NoExit",
-        "-Command",
-        "`$Host.UI.RawUI.WindowTitle='$Title'; $escaped"
-    ) | Out-Null
+    Assert-ManagedProcessAvailable -Name $Name
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command))
+    $process = Start-Process -FilePath "pwsh" -ArgumentList @(
+        "-NoProfile",
+        "-EncodedCommand",
+        $encodedCommand
+    ) -PassThru -WindowStyle Hidden
+    try {
+        Register-ManagedProcess -Name $Name -Process $process -Command $RegisteredCommand | Out-Null
+    } catch {
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+        throw
+    }
+}
+
+function Get-WorkerManagedProcessName {
+    if ($WorkPool -eq $env:PREFECT_SESSION_POOL_NAME) { return "prefect-worker-session" }
+    if ($WorkPool -eq $env:PREFECT_DASHBOARD_POOL_NAME) { return "prefect-worker-dashboard" }
+    if ($WorkPool -eq $env:PREFECT_NOTIFY_POOL_NAME) { return "prefect-worker-notify" }
+    throw "No managed process name is defined for Work Pool: $WorkPool"
 }
 
 function Wait-ForPrefectServer {
@@ -250,11 +268,15 @@ Test-PrefectDatabase
 $serverArgs = if ($UseSqliteDebug) { "server start --no-services --workers 1" } else { "server start --workers 1" }
 $serverCommand = (Get-EnvBootstrap) + "`n& '$PythonExe' -m prefect $serverArgs"
 $workerCommand = Get-WorkerCommand -Restart ($Detached -and -not $NoWorkerRestart)
+$workerManagedName = if ($Mode -in @("worker", "both")) { Get-WorkerManagedProcessName } else { $null }
 
 switch ($Mode) {
     "server" {
         if ($Detached) {
-            Start-DetachedWindow -Title "Prefect Server" -Command $serverCommand
+            Start-DetachedWindow `
+                -Name "prefect-server" `
+                -Command $serverCommand `
+                -RegisteredCommand "prefect $serverArgs"
             Write-Host "Started Prefect Server in a new window."
         } else {
             & $PythonExe -m prefect @($serverArgs -split ' ')
@@ -267,20 +289,29 @@ switch ($Mode) {
         }
         Assert-NoOnlineWorker
         if ($Detached) {
-            Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
+            Start-DetachedWindow `
+                -Name $workerManagedName `
+                -Command $workerCommand `
+                -RegisteredCommand "prefect worker start --pool $WorkPool --limit $WorkerLimit"
             Write-Host "Started Prefect Worker in a new window."
         } else {
             & $PythonExe -m prefect @workerArgs
         }
     }
     "both" {
-        Start-DetachedWindow -Title "Prefect Server" -Command $serverCommand
+        Start-DetachedWindow `
+            -Name "prefect-server" `
+            -Command $serverCommand `
+            -RegisteredCommand "prefect $serverArgs"
         $serverReady = Wait-ForPrefectServer -Url $PrefectHealthUrl
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 300 seconds. Check the Prefect Server window logs."
         }
         Assert-NoOnlineWorker
-        Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
+        Start-DetachedWindow `
+            -Name $workerManagedName `
+            -Command $workerCommand `
+            -RegisteredCommand "prefect worker start --pool $WorkPool --limit $WorkerLimit"
         Write-Host "Started Server + Worker in two new windows."
         Write-Host "Open UI: http://127.0.0.1:4200"
         if ($UseSqliteDebug) {

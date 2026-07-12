@@ -13,6 +13,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "lib\python_env.ps1")
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
+. (Join-Path $PSScriptRoot "lib\process_registry.ps1")
 $UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
 $LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
 if (-not (Import-ProjectRuntimeConfig)) {

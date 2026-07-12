@@ -555,6 +555,152 @@ $ast.FindAll({{
     assert "Assert-NoOnlineWorker" in completed.stdout.splitlines()
 
 
+def test_lifecycle_scripts_use_project_process_registry():
+    registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").read_text(
+        encoding="utf-8"
+    )
+    run = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+    status = (ROOT / "scripts" / "status.ps1").read_text(encoding="utf-8")
+    stop = (ROOT / "scripts" / "stop.ps1").read_text(encoding="utf-8")
+
+    assert "Register-ManagedProcess" in registry
+    assert "process_started_at" in registry
+    assert "Test-ManagedProcessRecord" in registry
+    assert "process_registry.ps1" in run
+    assert "process_registry.ps1" in status
+    assert "process_registry.ps1" in stop
+    assert "KillAutoNotifyPython" not in stop
+
+
+def test_process_registry_requires_exact_process_start_time(tmp_path):
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    assert powershell is not None
+    registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").as_posix()
+    runtime_root = tmp_path.as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+$env:AUTO_NOTIFY_RUNTIME_ROOT = '{runtime_root}'
+. '{registry}'
+$process = Get-Process -Id $PID
+Register-ManagedProcess -Name 'ownership-test' -Process $process -Command 'test command'
+$record = Get-ManagedProcessRecord -Name 'ownership-test'
+$validBefore = Test-ManagedProcessRecord -Record $record
+$duplicateRejected = $false
+try {{
+  Register-ManagedProcess -Name 'ownership-test' -Process $process -Command 'duplicate'
+}} catch {{
+  $duplicateRejected = $true
+}}
+$record.process_started_at = '2000-01-01T00:00:00.0000000+00:00'
+$validAfter = Test-ManagedProcessRecord -Record $record
+$record | ConvertTo-Json | Set-Content -LiteralPath (
+  Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT 'processes\\ownership-test.json'
+) -Encoding UTF8
+$stopResult = Stop-ManagedProcessTree -Name 'ownership-test'
+$currentProcessSurvived = $null -ne (Get-Process -Id $PID -ErrorAction SilentlyContinue)
+[pscustomobject]@{{
+  valid_before = $validBefore
+  valid_after = $validAfter
+  duplicate_rejected = $duplicateRejected
+  stop_result = $stopResult
+  current_process_survived = $currentProcessSurvived
+  record_path = (Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT 'processes\\ownership-test.json')
+}} | ConvertTo-Json -Compress
+"""
+
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-Command", command],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(completed.stdout.splitlines()[-1])
+    assert payload["valid_before"] is True
+    assert payload["valid_after"] is False
+    assert payload["duplicate_rejected"] is True
+    assert payload["stop_result"] is False
+    assert payload["current_process_survived"] is True
+    assert not Path(payload["record_path"]).exists()
+
+
+def test_managed_components_are_registered_and_stopped_in_fixed_order():
+    prefect_start = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(
+        encoding="utf-8"
+    )
+    start_web = (ROOT / "scripts" / "lib" / "start_web.ps1").read_text(
+        encoding="utf-8"
+    )
+    stop = (ROOT / "scripts" / "stop.ps1").read_text(encoding="utf-8")
+
+    for source in (prefect_start, start_web):
+        assert "-PassThru" in source
+        assert "-WindowStyle Hidden" in source
+        assert "Register-ManagedProcess" in source
+
+    for name in (
+        "prefect-server",
+        "prefect-worker-session",
+        "prefect-worker-dashboard",
+        "prefect-worker-notify",
+        "web-backend",
+        "web-frontend",
+    ):
+        assert name in prefect_start + start_web + stop
+
+    expected_order = [
+        "prefect-worker-notify",
+        "prefect-worker-dashboard",
+        "prefect-worker-session",
+        "web-frontend",
+        "web-backend",
+        "prefect-server",
+    ]
+    positions = [stop.index(f'"{name}"') for name in expected_order]
+    assert positions == sorted(positions)
+    assert "Stop-ManagedProcessTree -Name $_" in stop
+    registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "taskkill.exe /PID $pidValue /T /F" in registry
+    assert "Get-NetTCPConnection" not in stop
+    assert "prefect_stop.ps1" not in stop
+
+
+def test_status_reports_runtime_health_without_secret_values():
+    source = (ROOT / "scripts" / "status.ps1").read_text(encoding="utf-8")
+
+    for marker in (
+        "Prefect API",
+        "PostgreSQL",
+        "MySQL",
+        "windows-session-pool",
+        "windows-dashboard-pool",
+        "windows-notify-pool",
+        "online workers",
+        "running",
+        "queued",
+        "limit=1",
+        "limit=4",
+        "limit=6",
+        "Session state",
+        "verified_at",
+        "age_seconds",
+        "login.lock",
+        "excel_com.lock",
+        "owner PID",
+        "held seconds",
+        "Disk free",
+    ):
+        assert marker in source
+
+    assert 'Write-Host "$env:DASHBOARD_MYSQL_PASSWORD' not in source
+    assert 'Write-Host "$env:AUTO_NOTIFY_PREFECT_DATABASE_URL' not in source
+
+
 def test_unified_runtime_entry_points_start_services_without_running_flows():
     run_script = ROOT / "scripts" / "run.ps1"
     stop_script = ROOT / "scripts" / "stop.ps1"

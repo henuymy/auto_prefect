@@ -11,6 +11,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot "python_env.ps1")
 . (Join-Path $PSScriptRoot "runtime_config.ps1")
+. (Join-Path $PSScriptRoot "process_registry.ps1")
 Import-ProjectRuntimeConfig | Out-Null
 . (Join-Path (Split-Path -Parent $PSScriptRoot) "tools\dashboard\mysql_env.ps1")
 if (-not $PrefectApiUrl) {
@@ -43,6 +44,30 @@ function Start-Frontend {
     npm run dev -- --host 127.0.0.1 --port $FrontendPort
 }
 
+function Start-ManagedWebProcess {
+    param(
+        [string]$Name,
+        [string]$Command,
+        [string]$RegisteredCommand
+    )
+
+    Assert-ManagedProcessAvailable -Name $Name
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Command))
+    $process = Start-Process -FilePath "powershell" -ArgumentList @(
+        "-NoProfile",
+        "-EncodedCommand",
+        $encodedCommand
+    ) -PassThru -WindowStyle Hidden
+    try {
+        Register-ManagedProcess -Name $Name -Process $process -Command $RegisteredCommand | Out-Null
+    } catch {
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+        throw
+    }
+}
+
 switch ($Mode) {
     "backend" { Start-Backend }
     "frontend" { Start-Frontend }
@@ -52,8 +77,14 @@ switch ($Mode) {
         $frontendDir = Join-Path $RepoRoot "frontend"
         $frontendCommand = "cd '$frontendDir'; npm run dev -- --host 127.0.0.1 --port $FrontendPort"
 
-        Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCommand
-        Start-Process powershell -ArgumentList "-NoExit", "-Command", $frontendCommand
+        Start-ManagedWebProcess `
+            -Name "web-backend" `
+            -Command $backendCommand `
+            -RegisteredCommand "uvicorn backend.app:app --host 127.0.0.1 --port $BackendPort"
+        Start-ManagedWebProcess `
+            -Name "web-frontend" `
+            -Command $frontendCommand `
+            -RegisteredCommand "npm run dev -- --host 127.0.0.1 --port $FrontendPort"
         Write-Host "已启动后端和前端窗口。"
         Write-Host "后端: http://127.0.0.1:$BackendPort/api/health"
         Write-Host "前端: http://127.0.0.1:$FrontendPort"
