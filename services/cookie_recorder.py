@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from services.runtime_paths import resolve_runtime_path
+
 
 def capture_web_storage(driver):
     try:
@@ -113,7 +115,4 @@ def resolve_cookie_dump_path(base_dir, config):
         return Path(override).resolve()
     cookie_dump_config = config.get("cookie_dump", {})
     output_file = cookie_dump_config.get("output_file", "runtime/cookie_dump.json")
-    output_path = Path(output_file)
-    if not output_path.is_absolute():
-        output_path = Path(base_dir) / output_path
-    return output_path
+    return resolve_runtime_path(output_file, project_dir=Path(base_dir))

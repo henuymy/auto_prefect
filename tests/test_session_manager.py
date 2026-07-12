@@ -140,11 +140,11 @@ def test_prepare_session_from_config_keeps_project_base_dir():
     work_dir = make_work_dir()
     try:
         config_path = work_dir / "config" / "modules" / "autologin.json"
-        cookie_dump_path = work_dir / "runtime" / "cookies" / "cookie_dump.json"
+        cookie_dump_path = work_dir / "state" / "cookies" / "cookie_dump.json"
         write_json(
             config_path,
             {
-                "cookie_dump_path": "runtime/cookies/cookie_dump.json",
+                "cookie_dump_path": "state/cookies/cookie_dump.json",
                 "required_stages": ["report_analysis"],
                 "allow_login": False,
             },
@@ -163,6 +163,38 @@ def test_prepare_session_from_config_keeps_project_base_dir():
         assert result["cookie_dump_path"] == str(cookie_dump_path.resolve())
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_prepare_session_from_config_rebases_runtime_state(monkeypatch, tmp_path):
+    config_path = tmp_path / "config" / "modules" / "autologin.json"
+    shared_cookie_path = tmp_path / "shared" / "cookies" / "cookie_dump.json"
+    write_json(
+        config_path,
+        {
+            "cookie_dump_path": "runtime/cookies/cookie_dump.json",
+            "required_stages": ["report_analysis"],
+            "allow_login": False,
+        },
+    )
+    write_json(
+        shared_cookie_path,
+        {
+            "stages": [
+                {
+                    "stage": "report_analysis",
+                    "cookies": [{"name": "sid", "value": "x"}],
+                }
+            ]
+        },
+    )
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+
+    result = prepare_session_from_config(
+        "config/modules/autologin.json", base_dir=tmp_path
+    )
+
+    assert result["status"] == "reused"
+    assert result["cookie_dump_path"] == str(shared_cookie_path.resolve())
 
 
 def test_prepare_session_syncs_legacy_cookie_dump():

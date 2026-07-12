@@ -25,6 +25,7 @@ from services.method_service import (
     build_headers,
     resolve_storage_references,
 )
+from services.runtime_paths import resolve_runtime_path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -50,12 +51,7 @@ def _local_file_lock(path: Path) -> threading.Lock:
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
-    if not value:
-        return None
-    path = Path(value)
-    if path.is_absolute():
-        return path
-    return (base_dir / path).resolve()
+    return resolve_runtime_path(value, project_dir=Path(base_dir))
 
 
 def load_json(path):
