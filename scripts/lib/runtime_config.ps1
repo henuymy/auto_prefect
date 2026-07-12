@@ -30,12 +30,34 @@ function Get-RuntimeConfigPositiveInt {
         [string]$Path
     )
 
-    $value = [int](Get-RuntimeConfigValue -Config $Config -Path $Path)
-    if ($value -le 0) {
+    $value = Get-RuntimeConfigValue -Config $Config -Path $Path
+    $numericTypeCodes = @(
+        [System.TypeCode]::Byte,
+        [System.TypeCode]::SByte,
+        [System.TypeCode]::UInt16,
+        [System.TypeCode]::UInt32,
+        [System.TypeCode]::UInt64,
+        [System.TypeCode]::Int16,
+        [System.TypeCode]::Int32,
+        [System.TypeCode]::Int64,
+        [System.TypeCode]::Decimal,
+        [System.TypeCode]::Double,
+        [System.TypeCode]::Single
+    )
+    if ([System.Type]::GetTypeCode($value.GetType()) -notin $numericTypeCodes) {
         throw "运行配置必须为正整数: $Path"
     }
 
-    return $value
+    $numericValue = [double]$value
+    if ([double]::IsNaN($numericValue) -or
+        [double]::IsInfinity($numericValue) -or
+        $numericValue -le 0 -or
+        $numericValue -ne [math]::Truncate($numericValue) -or
+        $numericValue -gt [int]::MaxValue) {
+        throw "运行配置必须为正整数: $Path"
+    }
+
+    return [int]$numericValue
 }
 
 function Import-RuntimeConfig {

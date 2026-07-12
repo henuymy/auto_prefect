@@ -174,6 +174,59 @@ def test_runtime_loader_exports_three_pool_environment_contract():
         assert variable in source
 
 
+def _run_runtime_config_import(config_path):
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if not powershell:
+        raise AssertionError("PowerShell is required to verify runtime configuration validation")
+
+    loader = (ROOT / "scripts" / "lib" / "runtime_config.ps1").as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+. '{loader}'
+Import-RuntimeConfig -ConfigPath '{config_path.as_posix()}' | Out-Null
+"""
+    return subprocess.run(
+        [powershell, "-NoProfile", "-Command", command],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def test_runtime_loader_rejects_fractional_positive_integer_value(tmp_path):
+    config = json.loads(
+        (ROOT / "config" / "runtime.local.example.json").read_text(encoding="utf-8")
+    )
+    config["runtime"]["work_pools"]["session"]["limit"] = 1.5
+    config_path = tmp_path / "runtime.fractional.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    result = _run_runtime_config_import(config_path)
+
+    assert result.returncode != 0
+    assert "运行配置必须为正整数: runtime.work_pools.session.limit" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_runtime_loader_rejects_nonnumeric_positive_integer_value(tmp_path):
+    config = json.loads(
+        (ROOT / "config" / "runtime.local.example.json").read_text(encoding="utf-8")
+    )
+    config["runtime"]["work_pools"]["session"]["limit"] = "one"
+    config_path = tmp_path / "runtime.nonnumeric.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    result = _run_runtime_config_import(config_path)
+
+    assert result.returncode != 0
+    assert "运行配置必须为正整数: runtime.work_pools.session.limit" in (
+        result.stdout + result.stderr
+    )
+
+
 def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
     powershell = shutil.which("pwsh") or shutil.which("powershell")
     if not powershell:
