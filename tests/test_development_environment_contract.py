@@ -124,7 +124,6 @@ def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment(
 
     assert config["prefect"]["postgres"]["url"]
     assert config["dashboard"]["mysql"]["host"]
-    assert config["runtime"]["work_pool"]
 
     assert "config/runtime.local.json" in gitignore
     assert "function Import-RuntimeConfig" in loader_source
@@ -139,6 +138,40 @@ def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment(
         "PREFECT_WORK_POOL_NAME",
     ):
         assert variable in loader_source
+
+
+def test_runtime_json_template_exports_three_pool_topology_and_runtime_root():
+    template = json.loads(
+        (ROOT / "config" / "runtime.local.example.json").read_text(encoding="utf-8")
+    )
+    runtime = template["runtime"]
+
+    assert runtime["root"] == r"C:\AutoNotifyRuntime"
+    assert runtime["scheduled_notify_grace_seconds"] == 600
+    assert runtime["session_freshness_seconds"] == 180
+    assert runtime["work_pools"] == {
+        "session": {"name": "windows-session-pool", "limit": 1},
+        "dashboard": {"name": "windows-dashboard-pool", "limit": 4},
+        "notify": {"name": "windows-notify-pool", "limit": 6},
+    }
+
+
+def test_runtime_loader_exports_three_pool_environment_contract():
+    source = (ROOT / "scripts" / "lib" / "runtime_config.ps1").read_text(
+        encoding="utf-8"
+    )
+    for variable in (
+        "AUTO_NOTIFY_RUNTIME_ROOT",
+        "PREFECT_SESSION_POOL_NAME",
+        "PREFECT_SESSION_POOL_LIMIT",
+        "PREFECT_DASHBOARD_POOL_NAME",
+        "PREFECT_DASHBOARD_POOL_LIMIT",
+        "PREFECT_NOTIFY_POOL_NAME",
+        "PREFECT_NOTIFY_POOL_LIMIT",
+        "AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS",
+        "AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS",
+    ):
+        assert variable in source
 
 
 def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
@@ -168,7 +201,16 @@ def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
                 "password": "json_password",
             }
         },
-        "runtime": {"work_pool": "json-pool"},
+        "runtime": {
+            "root": r"C:\JsonRuntime",
+            "scheduled_notify_grace_seconds": 601,
+            "session_freshness_seconds": 181,
+            "work_pools": {
+                "session": {"name": "windows-session-pool", "limit": 2},
+                "dashboard": {"name": "windows-dashboard-pool", "limit": 5},
+                "notify": {"name": "windows-notify-pool", "limit": 7},
+            },
+        },
     }
     unified_source = """\
 $env:AUTO_NOTIFY_PREFECT_DATABASE_URL = 'postgresql+asyncpg://unified:unified@db.example:5432/prefect'
@@ -188,6 +230,15 @@ $ErrorActionPreference = 'Stop'
   mysql_user = $env:DASHBOARD_MYSQL_USER
   mysql_password = $env:DASHBOARD_MYSQL_PASSWORD
   prefect_api_url = $env:PREFECT_API_URL
+  runtime_root = $env:AUTO_NOTIFY_RUNTIME_ROOT
+  session_pool = $env:PREFECT_SESSION_POOL_NAME
+  session_pool_limit = $env:PREFECT_SESSION_POOL_LIMIT
+  dashboard_pool = $env:PREFECT_DASHBOARD_POOL_NAME
+  dashboard_pool_limit = $env:PREFECT_DASHBOARD_POOL_LIMIT
+  notify_pool = $env:PREFECT_NOTIFY_POOL_NAME
+  notify_pool_limit = $env:PREFECT_NOTIFY_POOL_LIMIT
+  scheduled_notify_grace_seconds = $env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS
+  session_freshness_seconds = $env:AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS
   work_pool = $env:PREFECT_WORK_POOL_NAME
 }} | ConvertTo-Json -Compress
 """.format(script=(ROOT / "scripts" / "dev" / "env.ps1").as_posix())
@@ -220,7 +271,26 @@ $ErrorActionPreference = 'Stop'
             "mysql_user": json_config["dashboard"]["mysql"]["user"],
             "mysql_password": json_config["dashboard"]["mysql"]["password"],
             "prefect_api_url": json_config["prefect"]["api_url"],
-            "work_pool": json_config["runtime"]["work_pool"],
+            "runtime_root": json_config["runtime"]["root"],
+            "session_pool": json_config["runtime"]["work_pools"]["session"]["name"],
+            "session_pool_limit": str(
+                json_config["runtime"]["work_pools"]["session"]["limit"]
+            ),
+            "dashboard_pool": json_config["runtime"]["work_pools"]["dashboard"]["name"],
+            "dashboard_pool_limit": str(
+                json_config["runtime"]["work_pools"]["dashboard"]["limit"]
+            ),
+            "notify_pool": json_config["runtime"]["work_pools"]["notify"]["name"],
+            "notify_pool_limit": str(
+                json_config["runtime"]["work_pools"]["notify"]["limit"]
+            ),
+            "scheduled_notify_grace_seconds": str(
+                json_config["runtime"]["scheduled_notify_grace_seconds"]
+            ),
+            "session_freshness_seconds": str(
+                json_config["runtime"]["session_freshness_seconds"]
+            ),
+            "work_pool": json_config["runtime"]["work_pools"]["notify"]["name"],
         }
 
         config_path.unlink()

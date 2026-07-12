@@ -22,6 +22,22 @@ function Get-RuntimeConfigValue {
     return $value
 }
 
+function Get-RuntimeConfigPositiveInt {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Config,
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $value = [int](Get-RuntimeConfigValue -Config $Config -Path $Path)
+    if ($value -le 0) {
+        throw "运行配置必须为正整数: $Path"
+    }
+
+    return $value
+}
+
 function Import-RuntimeConfig {
     param(
         [string]$ConfigPath = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "config\runtime.local.json")
@@ -44,7 +60,37 @@ function Import-RuntimeConfig {
     $env:DASHBOARD_MYSQL_DATABASE = Get-RuntimeConfigValue -Config $config -Path "dashboard.mysql.database"
     $env:DASHBOARD_MYSQL_USER = Get-RuntimeConfigValue -Config $config -Path "dashboard.mysql.user"
     $env:DASHBOARD_MYSQL_PASSWORD = Get-RuntimeConfigValue -Config $config -Path "dashboard.mysql.password"
-    $env:PREFECT_WORK_POOL_NAME = Get-RuntimeConfigValue -Config $config -Path "runtime.work_pool"
+    $env:AUTO_NOTIFY_RUNTIME_ROOT = Get-RuntimeConfigValue -Config $config -Path "runtime.root"
+    $env:PREFECT_SESSION_POOL_NAME = Get-RuntimeConfigValue -Config $config -Path "runtime.work_pools.session.name"
+    $env:PREFECT_SESSION_POOL_LIMIT = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.work_pools.session.limit"
+    $env:PREFECT_DASHBOARD_POOL_NAME = Get-RuntimeConfigValue -Config $config -Path "runtime.work_pools.dashboard.name"
+    $env:PREFECT_DASHBOARD_POOL_LIMIT = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.work_pools.dashboard.limit"
+    $env:PREFECT_NOTIFY_POOL_NAME = Get-RuntimeConfigValue -Config $config -Path "runtime.work_pools.notify.name"
+    $env:PREFECT_NOTIFY_POOL_LIMIT = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.work_pools.notify.limit"
+    $env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.scheduled_notify_grace_seconds"
+    $env:AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.session_freshness_seconds"
+
+    $poolNames = @(
+        $env:PREFECT_SESSION_POOL_NAME,
+        $env:PREFECT_DASHBOARD_POOL_NAME,
+        $env:PREFECT_NOTIFY_POOL_NAME
+    )
+    if (($poolNames | Select-Object -Unique).Count -ne 3) {
+        throw "三个 Prefect Work Pool 名称必须互不相同"
+    }
+
+    $expectedPools = @{
+        session = "windows-session-pool"
+        dashboard = "windows-dashboard-pool"
+        notify = "windows-notify-pool"
+    }
+    if ($env:PREFECT_SESSION_POOL_NAME -ne $expectedPools.session -or
+        $env:PREFECT_DASHBOARD_POOL_NAME -ne $expectedPools.dashboard -or
+        $env:PREFECT_NOTIFY_POOL_NAME -ne $expectedPools.notify) {
+        throw "runtime.local.json 的 Work Pool 名称必须与 prefect.yaml 的三 Pool 拓扑一致"
+    }
+
+    $env:PREFECT_WORK_POOL_NAME = $env:PREFECT_NOTIFY_POOL_NAME
 
     return $config
 }
