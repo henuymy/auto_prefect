@@ -327,13 +327,18 @@ def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():
     worker_command = """\
 & (Join-Path $PSScriptRoot "lib\\prefect_start.ps1") `
     -Mode worker `
+    -Detached `
+    -ApiUrl $ApiUrl `
+    -WorkPool $WorkPool `
+    -UseSqliteDebug:$UseSqliteDebug
 """
     keeper_command = 'prefect deployment run "session-keeper-flow/session-keeper"'
     web_marker = "if (-not $SkipWeb)"
     keeper_line = next(line for line in source.splitlines() if keeper_command in line)
+    worker_command_end = source.index(worker_command) + len(worker_command)
 
     assert source.count(keeper_command) == 1
-    assert source.index(worker_command) < source.index(keeper_command)
+    assert worker_command_end <= source.index(keeper_command)
     assert source.index(keeper_command) < source.index(web_marker)
     assert "--watch" not in keeper_line
 
