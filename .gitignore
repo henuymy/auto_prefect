@@ -70,6 +70,11 @@ scripts/environment.local.ps1
 /templates/
 docs/prefect启动环境本地说明.md
 
+# Local standalone Session lifetime experiment contains plaintext credentials
+/session_lifetime_runner.py
+/session_lifetime_results/
+/.session-lifetime-runner-tests/
+
 # Local FRP binaries and credentials
 frp/frpc.exe
 frp/frps.exe
