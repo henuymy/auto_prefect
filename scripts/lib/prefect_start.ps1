@@ -6,6 +6,8 @@ param(
     [string]$PrefectHome = "",
     [string]$PythonExe = "",
     [string]$DatabaseUrl = "",
+    [ValidateRange(1, 128)]
+    [int]$WorkerLimit = 1,
     [switch]$UseSqliteDebug,
     [switch]$NoWorkerRestart,
     [switch]$Detached
@@ -83,6 +85,7 @@ Write-Host "DatabaseUrl    : $databaseSource"
 Write-Host "DebugSqlite    : $UseSqliteDebug"
 Write-Host "LateRuns       : $($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)"
 Write-Host "Mode           : $Mode"
+Write-Host "WorkerLimit    : $WorkerLimit"
 Write-Host "WorkerRestart  : $($Detached -and -not $NoWorkerRestart)"
 Write-Host ""
 
@@ -187,12 +190,14 @@ function Get-EnvBootstrap {
 "@
 }
 
+$workerArgs = @("worker", "start", "--pool", $WorkPool, "--type", "process", "--limit", $WorkerLimit)
+
 function Get-WorkerCommand {
     param(
         [bool]$Restart
     )
 
-    $startWorker = "& '$PythonExe' -m prefect worker start --pool '$WorkPool' --type process"
+    $startWorker = "& '$PythonExe' -m prefect " + (($workerArgs | ForEach-Object { "'$_'" }) -join " ")
     if (-not $Restart) {
         return (Get-EnvBootstrap) + "`n$startWorker"
     }
@@ -207,6 +212,37 @@ while (`$true) {
     Start-Sleep -Seconds 30
 }
 "@
+}
+
+function Assert-NoOnlineWorker {
+    $checkScript = @'
+import asyncio
+import sys
+
+from prefect.client.orchestration import get_client
+
+
+async def has_online_worker(work_pool_name: str) -> bool:
+    async with get_client() as client:
+        workers = await client.read_workers_for_work_pool(work_pool_name)
+    return any(
+        getattr(worker.status, "value", worker.status) == "ONLINE"
+        for worker in workers
+    )
+
+
+if asyncio.run(has_online_worker(sys.argv[1])):
+    raise SystemExit(3)
+'@
+
+    $checkScript | & $PythonExe - $WorkPool
+    $checkExitCode = $LASTEXITCODE
+    if ($checkExitCode -eq 3) {
+        throw "Work Pool 已有在线 Worker，拒绝重复启动: $WorkPool"
+    }
+    if ($checkExitCode -ne 0) {
+        throw "检查 Work Pool Worker 状态失败: $WorkPool"
+    }
 }
 
 Test-PrefectDatabase
@@ -229,11 +265,12 @@ switch ($Mode) {
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 90 seconds. Refusing to start Worker."
         }
+        Assert-NoOnlineWorker
         if ($Detached) {
             Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
             Write-Host "Started Prefect Worker in a new window."
         } else {
-            & $PythonExe -m prefect worker start --pool $WorkPool --type process
+            & $PythonExe -m prefect @workerArgs
         }
     }
     "both" {
@@ -242,6 +279,7 @@ switch ($Mode) {
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 300 seconds. Check the Prefect Server window logs."
         }
+        Assert-NoOnlineWorker
         Start-DetachedWindow -Title "Prefect Worker" -Command $workerCommand
         Write-Host "Started Server + Worker in two new windows."
         Write-Host "Open UI: http://127.0.0.1:4200"

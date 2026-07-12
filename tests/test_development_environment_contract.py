@@ -464,23 +464,84 @@ def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
 def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():
     source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
 
-    worker_command = """\
-& (Join-Path $PSScriptRoot "lib\\prefect_start.ps1") `
-    -Mode worker `
-    -Detached `
-    -ApiUrl $ApiUrl `
-    -WorkPool $WorkPool `
-    -UseSqliteDebug:$UseSqliteDebug
-"""
+    session_worker = "-WorkPool $env:PREFECT_SESSION_POOL_NAME"
+    online_wait = "Wait-WorkerOnline -WorkPool $env:PREFECT_SESSION_POOL_NAME"
     keeper_command = 'prefect deployment run "session-keeper-flow/session-keeper"'
     web_marker = "if (-not $SkipWeb)"
     keeper_line = next(line for line in source.splitlines() if keeper_command in line)
-    worker_command_end = source.index(worker_command) + len(worker_command)
 
     assert source.count(keeper_command) == 1
-    assert worker_command_end <= source.index(keeper_command)
+    assert source.index(session_worker) < source.index(online_wait)
+    assert source.index(online_wait) < source.index(keeper_command)
     assert source.index(keeper_command) < source.index(web_marker)
     assert "--watch" not in keeper_line
+
+
+def test_run_script_reconciles_then_starts_three_bounded_workers():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+    lowered = source.lower()
+
+    reconcile = "prefect_startup_reconcile.py"
+    assert source.count("-Mode worker") == 3
+    assert "$env:PREFECT_SESSION_POOL_LIMIT" in source
+    assert "$env:PREFECT_DASHBOARD_POOL_LIMIT" in source
+    assert "$env:PREFECT_NOTIFY_POOL_LIMIT" in source
+    assert lowered.count(reconcile) == 1
+    assert lowered.index(reconcile) < lowered.index("-mode worker")
+    assert "prefect deploy --all --pool" not in lowered
+    assert "prefect deploy --all" in lowered
+
+
+def test_run_script_configures_each_pool_concurrency_limit():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    for pool_name, pool_limit in (
+        ("PREFECT_SESSION_POOL_NAME", "PREFECT_SESSION_POOL_LIMIT"),
+        ("PREFECT_DASHBOARD_POOL_NAME", "PREFECT_DASHBOARD_POOL_LIMIT"),
+        ("PREFECT_NOTIFY_POOL_NAME", "PREFECT_NOTIFY_POOL_LIMIT"),
+    ):
+        assert f"$env:{pool_name}" in source
+        assert f"[int]$env:{pool_limit}" in source
+
+    assert "work-pool set-concurrency-limit $pool.Name $pool.Limit" in source
+
+
+def test_prefect_worker_command_applies_limit():
+    source = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[int]$WorkerLimit" in source
+    assert '"--limit", $WorkerLimit' in source or "--limit '$WorkerLimit'" in source
+
+
+def test_prefect_worker_start_rejects_online_worker_for_same_pool():
+    script = ROOT / "scripts" / "lib" / "prefect_start.ps1"
+    source = script.read_text(encoding="utf-8")
+
+    assert "read_workers" in source
+    assert "Work Pool 已有在线 Worker，拒绝重复启动: $WorkPool" in source
+
+    pwsh = shutil.which("pwsh")
+    assert pwsh is not None
+    ast_query = f"""
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    '{script}', [ref]$tokens, [ref]$errors
+)
+$ast.FindAll({{
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+}}, $true).Name
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", ast_query],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Assert-NoOnlineWorker" in completed.stdout.splitlines()
 
 
 def test_unified_runtime_entry_points_start_services_without_running_flows():
