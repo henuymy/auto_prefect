@@ -223,6 +223,46 @@ def test_alert_removes_compound_cookie_and_structured_storage_details(tmp_path):
         assert leaked_fragment not in messages[0]
 
 
+def test_alert_redacts_snake_case_and_hyphenated_sensitive_labels(tmp_path):
+    messages = []
+    config = alert_config(tmp_path)
+    sensitive_details = [
+        "access_token=raw-access-underscore",
+        "refresh_token=raw-refresh-underscore",
+        "storage_state=raw-storage-state",
+        "session_storage=raw-session-storage-state",
+        "cookie_header=foo=one; raw-cookie-header=two",
+        "refresh-token=raw-refresh-hyphen",
+    ]
+    incident = {
+        "incident_key": "authentication:report_analysis",
+        "trigger_source": "business-flow",
+        "failure_category": "authentication",
+        "failed_stages": ["report_analysis"],
+        "attempt_count": 2,
+        "errors": sensitive_details,
+        "flow_run_id": "flow-label-variants",
+        "next_scheduled_at": "2026-07-12T16:45:00+08:00",
+    }
+
+    notify_session_failure(
+        config,
+        incident,
+        sender=lambda _url, text, timeout=30: messages.append(text) or {"errcode": 0},
+    )
+
+    assert messages[0].count("<redacted sensitive detail>") == len(sensitive_details)
+    for secret_value in (
+        "raw-access-underscore",
+        "raw-refresh-underscore",
+        "raw-storage-state",
+        "raw-session-storage-state",
+        "raw-cookie-header",
+        "raw-refresh-hyphen",
+    ):
+        assert secret_value not in messages[0]
+
+
 def test_recovery_message_is_sent_once_and_clears_active_incident(tmp_path):
     messages = []
     config = alert_config(tmp_path)

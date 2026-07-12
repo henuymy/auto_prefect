@@ -15,10 +15,19 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 WECOM_WEBHOOK_PATTERN = re.compile(
     r"(?i)https?://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?[^\s<>'\"]+"
 )
-SENSITIVE_DETAIL_PATTERN = re.compile(
-    r"(?i)\b(?:sessionstorage|localstorage|storage|credentials?|usernames?|"
-    r"passwords?|authorization|jsessionid|accesstoken|uaptoken|cookies?|"
-    r"tokens?|secrets?|webhook(?:_?url)?)\b"
+SENSITIVE_KEYWORDS = (
+    "cookie",
+    "token",
+    "storage",
+    "password",
+    "credential",
+    "authorization",
+    "secret",
+    "username",
+    "webhook",
+    "jsessionid",
+    "accesstoken",
+    "uaptoken",
 )
 REDACTED_SENSITIVE_DETAIL = "<redacted sensitive detail>"
 
@@ -49,7 +58,8 @@ def _write_state(path, payload):
 
 def _redact(value):
     text = str(value)
-    if WECOM_WEBHOOK_PATTERN.search(text) or SENSITIVE_DETAIL_PATTERN.search(text):
+    normalized = text.casefold()
+    if WECOM_WEBHOOK_PATTERN.search(text) or any(keyword in normalized for keyword in SENSITIVE_KEYWORDS):
         return REDACTED_SENSITIVE_DETAIL
     return text
 
