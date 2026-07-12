@@ -6,6 +6,48 @@ function Get-ManagedProcessRegistryRoot {
     return (Join-Path $runtimeRoot "processes")
 }
 
+function Get-StartupMutexName {
+    $runtimeRoot = [System.IO.Path]::GetFullPath(
+        $(if ($env:AUTO_NOTIFY_RUNTIME_ROOT) {
+            $env:AUTO_NOTIFY_RUNTIME_ROOT
+        } else {
+            "C:\AutoNotifyRuntime"
+        })
+    ).ToUpperInvariant()
+    $bytes = [Text.Encoding]::UTF8.GetBytes($runtimeRoot)
+    $hash = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData($bytes)
+    ).Substring(0, 24)
+    return "Global\AutoNotifyStartup-$hash"
+}
+
+function Enter-StartupClaim {
+    $mutex = [Threading.Mutex]::new($false, (Get-StartupMutexName))
+    try {
+        try {
+            $acquired = $mutex.WaitOne(0)
+        } catch [Threading.AbandonedMutexException] {
+            $acquired = $true
+        }
+        if (-not $acquired) {
+            throw "Another scripts\run.ps1 startup is already in progress"
+        }
+        return [pscustomobject]@{ Mutex = $mutex; Acquired = $true }
+    } catch {
+        $mutex.Dispose()
+        throw
+    }
+}
+
+function Exit-StartupClaim {
+    param([Parameter(Mandatory = $true)][object]$Claim)
+    if ($Claim.Acquired) {
+        $Claim.Mutex.ReleaseMutex()
+        $Claim.Acquired = $false
+    }
+    $Claim.Mutex.Dispose()
+}
+
 function Get-ManagedProcessRecordPath {
     param(
         [Parameter(Mandatory = $true)]

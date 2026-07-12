@@ -43,7 +43,12 @@ if (-not $WorkPool) {
     }
 }
 if (-not $PrefectHome) {
-    $PrefectHome = Join-Path $RepoRoot "runtime\prefect_home"
+    $runtimeRoot = if ($env:AUTO_NOTIFY_RUNTIME_ROOT) {
+        $env:AUTO_NOTIFY_RUNTIME_ROOT
+    } else {
+        "C:\AutoNotifyRuntime"
+    }
+    $PrefectHome = Join-Path $runtimeRoot "prefect\prefect_home"
 }
 if (-not $PythonExe) {
     $PythonExe = Get-ProjectPython
@@ -181,31 +186,9 @@ print("postgres_ok")
     }
 }
 
-function Get-EnvBootstrap {
-@"
-`$env:PREFECT_HOME = '$($env:PREFECT_HOME)'
-`$env:PREFECT_API_URL = '$($env:PREFECT_API_URL)'
-`$env:PREFECT_API_DATABASE_CONNECTION_URL = '$($env:PREFECT_API_DATABASE_CONNECTION_URL)'
-`$env:PREFECT_SERVER_DATABASE_CONNECTION_URL = '$($env:PREFECT_SERVER_DATABASE_CONNECTION_URL)'
-`$env:PREFECT_API_DATABASE_TIMEOUT = '$($env:PREFECT_API_DATABASE_TIMEOUT)'
-`$env:PREFECT_SERVER_DATABASE_TIMEOUT = '$($env:PREFECT_SERVER_DATABASE_TIMEOUT)'
-`$env:PREFECT_API_SERVICES_SCHEDULER_ENABLED = '$($env:PREFECT_API_SERVICES_SCHEDULER_ENABLED)'
-`$env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED = '$($env:PREFECT_API_SERVICES_LATE_RUNS_ENABLED)'
-`$env:PREFECT_SERVER_ANALYTICS_ENABLED = 'False'
-`$env:PYTHONUTF8 = '1'
-`$env:PYTHONIOENCODING = 'utf-8'
-`$env:DASHBOARD_MYSQL_HOST = '$($env:DASHBOARD_MYSQL_HOST)'
-`$env:DASHBOARD_MYSQL_PORT = '$($env:DASHBOARD_MYSQL_PORT)'
-`$env:DASHBOARD_MYSQL_DATABASE = '$($env:DASHBOARD_MYSQL_DATABASE)'
-`$env:DASHBOARD_MYSQL_USER = '$($env:DASHBOARD_MYSQL_USER)'
-`$env:DASHBOARD_MYSQL_PASSWORD = '$($env:DASHBOARD_MYSQL_PASSWORD)'
-`$env:DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS = '$($env:DASHBOARD_MYSQL_CONNECT_TIMEOUT_SECONDS)'
-`$env:DASHBOARD_MYSQL_IO_TIMEOUT_SECONDS = '$($env:DASHBOARD_MYSQL_IO_TIMEOUT_SECONDS)'
-`$env:DASHBOARD_MYSQL_POOL_RECYCLE_SECONDS = '$($env:DASHBOARD_MYSQL_POOL_RECYCLE_SECONDS)'
-`$env:DASHBOARD_MYSQL_POOL_SIZE = '$($env:DASHBOARD_MYSQL_POOL_SIZE)'
-`$env:DASHBOARD_MYSQL_MAX_OVERFLOW = '$($env:DASHBOARD_MYSQL_MAX_OVERFLOW)'
-`$env:DASHBOARD_MYSQL_CHARSET = '$($env:DASHBOARD_MYSQL_CHARSET)'
-"@
+function ConvertTo-PowerShellLiteral {
+    param([string]$Value)
+    return "'" + $Value.Replace("'", "''") + "'"
 }
 
 $workerArgs = @("worker", "start", "--pool", $WorkPool, "--type", "process", "--limit", $WorkerLimit)
@@ -215,12 +198,13 @@ function Get-WorkerCommand {
         [bool]$Restart
     )
 
-    $startWorker = "& '$PythonExe' -m prefect " + (($workerArgs | ForEach-Object { "'$_'" }) -join " ")
+    $pythonLiteral = ConvertTo-PowerShellLiteral $PythonExe
+    $startWorker = "& $pythonLiteral -m prefect " + (($workerArgs | ForEach-Object { ConvertTo-PowerShellLiteral ([string]$_) }) -join " ")
     if (-not $Restart) {
-        return (Get-EnvBootstrap) + "`n$startWorker"
+        return $startWorker
     }
 
-    return (Get-EnvBootstrap) + @"
+    return @"
 
 while (`$true) {
     Write-Host "[worker-supervisor] starting Prefect worker at `$(Get-Date -Format o)"
@@ -235,7 +219,7 @@ while (`$true) {
 Test-PrefectDatabase
 
 $serverArgs = if ($UseSqliteDebug) { "server start --no-services --workers 1" } else { "server start --workers 1" }
-$serverCommand = (Get-EnvBootstrap) + "`n& '$PythonExe' -m prefect $serverArgs"
+$serverCommand = "& $(ConvertTo-PowerShellLiteral $PythonExe) -m prefect $serverArgs"
 $workerCommand = Get-WorkerCommand -Restart ($Detached -and -not $NoWorkerRestart)
 $workerManagedName = if ($Mode -in @("worker", "both")) { Get-WorkerManagedProcessName } else { $null }
 

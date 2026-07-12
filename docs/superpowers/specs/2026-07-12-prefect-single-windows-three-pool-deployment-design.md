@@ -45,11 +45,12 @@ C:\AutoNotifyRuntime\
 ├── locks\
 │   ├── login.lock
 │   └── excel_com.lock
+├── cookies\
+│   └── cookie_dump.json
 ├── session\
-│   ├── cookies.json
 │   └── session_state.json
-├── browser\
-│   └── edge-profile\
+├── browser_session\
+│   └── edge_profile_auto_login\
 ├── prefect\
 │   └── prefect_home\
 ├── logs\
@@ -137,7 +138,7 @@ Flow 等待 Excel 锁期间继续占用通报并发槽。系统记录锁等待�
 - Prefect Server/API、PostgreSQL 和 MySQL 状态。
 - 三个 Work Pool、在线 Worker、并发上限、运行数和排队数。
 - 最近一次 Session Keeper 结果、Cookie 更新时间和会话新鲜度。
-- 登录锁和 Excel 锁的持有者、持有时间与等待情况。
+- 登录锁和 Excel 锁的持有者、持有时间；当前锁格式不记录等待者，状态必须明确显示等待者不可用。
 - 超过十分钟的异常排队任务。
 - 管理端端口和磁盘剩余空间。
 

@@ -120,7 +120,9 @@ scripts/prefect_env_prod.local.ps1
 | `windows-dashboard-pool` | 4 | 驾驶舱采集、同步和维护 Flow |
 | `windows-notify-pool` | 6 | 完整通报 Flow |
 
-首次执行 `scripts/run.ps1` 会初始化 Prefect 元数据、创建三个 Work Pool、清理无执行价值的积压并同步仓库中的 Deployment；不会迁移旧项目的 Prefect 历史数据。共享目录保存 Cookie、Edge Profile、锁、Prefect Home、日志、临时文件和受管进程注册，不随代码升级、分支或 Worktree 切换。
+首次执行 `scripts/setup_windows_env.ps1` 或 `scripts/run.ps1` 时，会在共享目标不存在的前提下，将仓库旧 `runtime/cookies/cookie_dump.json` 和 `runtime/browser_session/edge_profile_auto_login` 复制到 `C:\AutoNotifyRuntime`；已有共享状态绝不覆盖。源文件保留用于审计和回退；如果旧状态不存在或不可用，按正常自动登录流程重新登录。启动还会初始化 Prefect 元数据、创建三个 Work Pool、把现有 `notify-*` Deployment 迁移到 Notify Pool、清理无执行价值的积压并同步仓库 Deployment，但不会迁移旧 Prefect 历史数据库。
+
+共享 Cookie 位于 `C:\AutoNotifyRuntime\cookies\cookie_dump.json`，保留的 Edge Profile 位于 `C:\AutoNotifyRuntime\browser_session\edge_profile_auto_login`，Prefect Home 位于 `C:\AutoNotifyRuntime\prefect\prefect_home`。这些状态不随代码升级、分支或 Worktree 切换。
 
 项目固定 `Prefect 3.7.0`，并将 FastAPI 限制在 `0.115` 系列以避免与较新
 Starlette 路由接口不兼容。安装或更新依赖时请使用 `requirements.lock`。
@@ -138,7 +140,9 @@ pwsh -File scripts/status.ps1
 pwsh -File scripts/stop.ps1
 ```
 
-`scripts/run.ps1` 只启动服务、同步 Prefect Deployment 并主动提交一次 Session Keeper 检查；通报和驾驶舱采集仍由既有 Cron 调度执行，不会自动触发全部通报。`scripts/status.ps1` 检查 Server、数据库、三个 Pool、Worker、队列、共享锁和磁盘，`scripts/stop.ps1` 仅停止 `C:\AutoNotifyRuntime\processes` 中登记且进程身份匹配的本项目进程。
+`scripts/run.ps1` 只启动服务、同步 Prefect Deployment 并主动提交一次 Session Keeper 检查；通报和驾驶舱采集仍由既有 Cron 调度执行，不会自动触发全部通报。`scripts/status.ps1` 从 Prefect API 读取配置中的三个 Pool 名称和实际并发上限，因此验收期 Notify 上限为 2 时会显示 2；它也逐条标识排队超过 10 分钟的自动调度 Run。锁文件当前不记录等待者，状态只显示所有者和持有时长，并明确显示 `waiters=unavailable`。`scripts/stop.ps1` 仅停止 `C:\AutoNotifyRuntime\processes` 中登记且进程身份匹配的本项目进程。
+
+升级时若旧 Notify Pool 仍有保留的手工 Run、十分钟宽限内 Run 或 PENDING Run，启动脚本会列出 Deployment、Run ID、状态和旧 Pool 并拒绝启动。Prefect 3.7 不支持安全改派单个已排队 Run，且启动旧 Pool Worker 可能执行同 Pool 的无关工作；运维人员应先在受控条件下用旧 Pool Worker 处理列出的 Run，再重新执行 `scripts/run.ps1`。不得删除历史 Run 或把它们静默遗留在无 Worker 的 Pool。
 
 一键启动本地 Prefect、API 和前端：
 
@@ -229,7 +233,7 @@ npm run build
 - 真实试跑会发送企业微信消息，执行前检查接收范围和 Webhook。
 - 正式模板仅在通知发送成功后提交；不要绕过提交门禁。
 - 修改数据库结构必须新增 Alembic 迁移，不直接改生产表。
-- Cookie、Edge Profile、共享锁、Prefect Home、日志和临时运行数据统一写入 `C:\AutoNotifyRuntime`；仓库内 `runtime/` 只保留仍由现有业务配置使用的项目局部数据。
+- Cookie、Edge Profile、共享锁、Prefect Home、日志和临时运行数据统一写入 `C:\AutoNotifyRuntime`；仓库内旧 Cookie/Profile 只作为首次安全迁移的来源，目标已存在时绝不覆盖。
 - 前端构建产物和依赖目录可随时重新生成，不纳入版本控制。
 
 ## 故障定位

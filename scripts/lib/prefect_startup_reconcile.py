@@ -9,6 +9,7 @@ import sys
 from typing import Any, Iterable, Mapping, Sequence
 
 from prefect.client.orchestration import get_client
+from prefect.client.schemas.actions import DeploymentUpdate
 from prefect.client.schemas.filters import (
     FlowRunFilter,
     FlowRunFilterDeploymentId,
@@ -41,6 +42,9 @@ class DeploymentPolicy(Enum):
 class ReconcileResult:
     cancelled: list[str]
     blockers: list[str]
+    migrated: list[str]
+    legacy_notify_pools: list[str]
+    legacy_notify_runs: list[str]
 
 
 def classify_deployment(name: str) -> DeploymentPolicy | None:
@@ -186,6 +190,7 @@ async def reconcile_client(
     client: Any,
     now: datetime,
     notify_grace_seconds: int,
+    notify_work_pool: str = "windows-notify-pool",
 ) -> ReconcileResult:
     deployments = await _read_deployments(client)
     managed = {
@@ -195,6 +200,7 @@ async def reconcile_client(
     }
     paused_by_invocation: list[Any] = []
     cancelled: list[str] = []
+    migrated: list[str] = []
     result: ReconcileResult | None = None
     primary_error: BaseException | None = None
     primary_traceback = None
@@ -205,6 +211,20 @@ async def reconcile_client(
                 await client.pause_deployment(deployment.id)
                 paused_by_invocation.append(deployment)
 
+        for deployment, policy in managed.values():
+            if policy is not DeploymentPolicy.NOTIFY:
+                continue
+            current_pool = getattr(deployment, "work_pool_name", None)
+            if current_pool == notify_work_pool:
+                continue
+            await client.update_deployment(
+                deployment.id,
+                DeploymentUpdate(work_pool_name=notify_work_pool),
+            )
+            migrated.append(
+                f"{deployment.name}:{current_pool or 'unassigned'}->{notify_work_pool}"
+            )
+
         queued = await _read_runs(
             client,
             list(managed),
@@ -214,9 +234,11 @@ async def reconcile_client(
             deployment_id: policy
             for deployment_id, (_, policy) in managed.items()
         }
-        for run, reason in select_runs_to_cancel(
+        selected = select_runs_to_cancel(
             queued, policies, now, notify_grace_seconds
-        ):
+        )
+        selected_ids = {run.id for run, _ in selected}
+        for run, reason in selected:
             await client.set_flow_run_state(
                 run.id,
                 Cancelled(message=reason),
@@ -234,7 +256,32 @@ async def reconcile_client(
             f"{managed[run.deployment_id][0].name}:{run.id}:{_state_type(run)}"
             for run in in_flight
         ]
-        result = ReconcileResult(cancelled=cancelled, blockers=blockers)
+        legacy_notify_pools = sorted(
+            {
+                str(run.work_pool_name)
+                for run in queued
+                if policies.get(run.deployment_id) is DeploymentPolicy.NOTIFY
+                and run.id not in selected_ids
+                and getattr(run, "work_pool_name", None)
+                and run.work_pool_name != notify_work_pool
+            }
+        )
+        legacy_notify_runs = sorted(
+            f"{managed[run.deployment_id][0].name}:{run.id}:"
+            f"{_state_type(run)}:{run.work_pool_name}"
+            for run in queued
+            if policies.get(run.deployment_id) is DeploymentPolicy.NOTIFY
+            and run.id not in selected_ids
+            and getattr(run, "work_pool_name", None)
+            and run.work_pool_name != notify_work_pool
+        )
+        result = ReconcileResult(
+            cancelled=cancelled,
+            blockers=blockers,
+            migrated=migrated,
+            legacy_notify_pools=legacy_notify_pools,
+            legacy_notify_runs=legacy_notify_runs,
+        )
     except BaseException as exc:
         primary_error = exc
         primary_traceback = exc.__traceback__
@@ -286,17 +333,28 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=_positive_int,
         default=600,
     )
+    parser.add_argument(
+        "--notify-work-pool",
+        default="windows-notify-pool",
+    )
     return parser.parse_args(argv)
 
 
-async def _run_cli(notify_grace_seconds: int) -> int:
+async def _run_cli(notify_grace_seconds: int, notify_work_pool: str) -> int:
     async with get_client() as client:
         result = await reconcile_client(
             client,
             datetime.now(timezone.utc),
             notify_grace_seconds,
+            notify_work_pool,
         )
 
+    for migrated in result.migrated:
+        print(f"migrated:{migrated}")
+    for pool_name in result.legacy_notify_pools:
+        print(f"legacy_notify_pool:{pool_name}")
+    for run in result.legacy_notify_runs:
+        print(f"legacy_notify_run:{run}")
     for cancelled in result.cancelled:
         print(f"cancelled:{cancelled}")
     if result.blockers:
@@ -309,7 +367,9 @@ async def _run_cli(notify_grace_seconds: int) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        return asyncio.run(_run_cli(args.notify_grace_seconds))
+        return asyncio.run(
+            _run_cli(args.notify_grace_seconds, args.notify_work_pool)
+        )
     except Exception as exc:
         print(f"reconciliation_failed:{type(exc).__name__}:{exc}", file=sys.stderr)
         for restoration_error in getattr(exc, "restoration_errors", ()):

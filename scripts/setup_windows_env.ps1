@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "lib\python_env.ps1")
+. (Join-Path $PSScriptRoot "lib\runtime_state_migration.ps1")
 $SharedRuntimeRoot = "C:\AutoNotifyRuntime"
 $RuntimeDirs = @(
     "runtime",
@@ -22,7 +23,8 @@ $RuntimeDirs = @(
 $SharedRuntimeDirs = @(
     "locks",
     "session",
-    "browser\edge-profile",
+    "cookies",
+    "browser_session\edge_profile_auto_login",
     "prefect\prefect_home",
     "logs",
     "temp",
@@ -55,6 +57,10 @@ Write-Step "安装 Python 依赖"
 & $PythonExe -m pip install -r (Join-Path $RepoRoot "requirements-dev.lock") -i $PipIndexUrl --trusted-host $PipTrustedHost
 
 Write-Step "初始化运行目录"
+$migrationResults = @(Invoke-RuntimeStateMigration -RepoRoot $RepoRoot -RuntimeRoot $SharedRuntimeRoot)
+foreach ($migration in $migrationResults) {
+    Write-Host "Runtime migration: $($migration.name) / $($migration.status) / $($migration.target)"
+}
 foreach ($dir in $RuntimeDirs) {
     New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot $dir) | Out-Null
 }

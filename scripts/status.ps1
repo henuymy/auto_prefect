@@ -64,72 +64,9 @@ function Write-ManagedProcessStatus {
 function Get-PrefectPoolStatuses {
     param([string[]]$Names)
 
-    $statusScript = @'
-import asyncio
-import json
-import sys
-
-from prefect.client.orchestration import get_client
-from prefect.client.schemas.filters import (
-    FlowRunFilter,
-    FlowRunFilterState,
-    FlowRunFilterStateType,
-    WorkPoolFilter,
-    WorkPoolFilterName,
-    WorkerFilter,
-    WorkerFilterStatus,
-)
-from prefect.states import StateType
-
-
-async def count_runs(client, pool_name, state_types):
-    count = 0
-    offset = 0
-    while True:
-        runs = await client.read_flow_runs(
-            flow_run_filter=FlowRunFilter(
-                state=FlowRunFilterState(
-                    type=FlowRunFilterStateType(any_=state_types)
-                )
-            ),
-            work_pool_filter=WorkPoolFilter(
-                name=WorkPoolFilterName(any_=[pool_name])
-            ),
-            limit=200,
-            offset=offset,
-        )
-        count += len(runs)
-        if len(runs) < 200:
-            return count
-        offset += len(runs)
-
-
-async def main(pool_names):
-    result = {}
-    async with get_client() as client:
-        for pool_name in pool_names:
-            workers = await client.read_workers_for_work_pool(
-                pool_name,
-                worker_filter=WorkerFilter(
-                    status=WorkerFilterStatus(any_=["ONLINE"])
-                ),
-                limit=200,
-            )
-            result[pool_name] = {
-                "online_workers": len(workers),
-                "running": await count_runs(client, pool_name, [StateType.RUNNING]),
-                "queued": await count_runs(
-                    client, pool_name, [StateType.SCHEDULED, StateType.PENDING]
-                ),
-            }
-    return result
-
-
-print(json.dumps(asyncio.run(main(sys.argv[1:])), ensure_ascii=True))
-'@
-
     try {
-        $output = $statusScript | & $PythonExe - @Names 2>$null
+        $statusScript = Join-Path $PSScriptRoot "lib\prefect_status.py"
+        $output = & $PythonExe $statusScript --overdue-seconds 600 @Names 2>$null
         if ($LASTEXITCODE -ne 0) {
             return $null
         }
@@ -166,9 +103,9 @@ function Write-LockStatus {
             throw "Lock timestamp is missing"
         }
         $heldSeconds = [math]::Max(0, [math]::Floor(([DateTimeOffset]::Now - $lockStartedAt).TotalSeconds))
-        Write-Host "${FileName}: owner PID=$ownerPid / held seconds=$heldSeconds"
+        Write-Host "${FileName}: owner PID=$ownerPid / held seconds=$heldSeconds / waiters=unavailable (locks do not record waiters)"
     } catch {
-        Write-Host "${FileName}: not held / owner PID=none / held seconds=0"
+        Write-Host "${FileName}: not held / owner PID=none / held seconds=0 / waiters=unavailable (locks do not record waiters)"
     }
 }
 
@@ -201,17 +138,20 @@ foreach ($port in @(4200, $BackendPort, $FrontendPort) | Select-Object -Unique) 
 }
 
 $pools = @(
-    [pscustomobject]@{ Name = "windows-session-pool"; Limit = 1; LimitText = "limit=1" },
-    [pscustomobject]@{ Name = "windows-dashboard-pool"; Limit = 4; LimitText = "limit=4" },
-    [pscustomobject]@{ Name = "windows-notify-pool"; Limit = 6; LimitText = "limit=6" }
+    [pscustomobject]@{ Name = $env:PREFECT_SESSION_POOL_NAME },
+    [pscustomobject]@{ Name = $env:PREFECT_DASHBOARD_POOL_NAME },
+    [pscustomobject]@{ Name = $env:PREFECT_NOTIFY_POOL_NAME }
 )
 $poolStatuses = Get-PrefectPoolStatuses -Names @($pools.Name)
 foreach ($pool in $pools) {
     $counts = if ($null -ne $poolStatuses) { $poolStatuses.($pool.Name) } else { $null }
     if ($null -eq $counts) {
-        Write-Host "$($pool.Name): online workers=unavailable / running=unavailable / queued=unavailable / $($pool.LimitText)"
+        Write-Host "$($pool.Name): online workers=unavailable / running=unavailable / queued=unavailable / concurrency_limit=unavailable"
     } else {
-        Write-Host "$($pool.Name): online workers=$($counts.online_workers) / running=$($counts.running) / queued=$($counts.queued) / $($pool.LimitText)"
+        Write-Host "$($pool.Name): online workers=$($counts.online_workers) / running=$($counts.running) / queued=$($counts.queued) / concurrency_limit=$($counts.concurrency_limit)"
+        foreach ($overdue in @($counts.overdue_scheduled)) {
+            Write-Host "  overdue scheduled run: deployment=$($overdue.deployment) / flow_run_id=$($overdue.flow_run_id) / expected_start_time=$($overdue.expected_start_time) / lateness_seconds=$($overdue.lateness_seconds)"
+        }
     }
 }
 

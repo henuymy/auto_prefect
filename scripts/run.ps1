@@ -14,6 +14,7 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "lib\python_env.ps1")
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 . (Join-Path $PSScriptRoot "lib\process_registry.ps1")
+. (Join-Path $PSScriptRoot "lib\runtime_state_migration.ps1")
 $UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
 $LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
 if (-not (Import-ProjectRuntimeConfig)) {
@@ -34,6 +35,14 @@ if (-not $WorkPool) {
     $WorkPool = $env:PREFECT_WORK_POOL_NAME
 }
 $PythonExe = Get-ProjectPython
+$PrefectHome = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "prefect\prefect_home"
+$StartupClaim = Enter-StartupClaim
+
+try {
+$migrationResults = @(Invoke-RuntimeStateMigration -RepoRoot $RepoRoot -RuntimeRoot $env:AUTO_NOTIFY_RUNTIME_ROOT)
+foreach ($migration in $migrationResults) {
+    Write-Host "Runtime migration: $($migration.name) / $($migration.status) / $($migration.target)"
+}
 
 function Test-RuntimeDatabaseConnections {
     $checkScript = @'
@@ -149,6 +158,7 @@ Write-Host "启动 Prefect Server..."
     -Detached `
     -ApiUrl $ApiUrl `
     -WorkPool $WorkPool `
+    -PrefectHome $PrefectHome `
     -UseSqliteDebug:$UseSqliteDebug
 
 if (-not (Wait-HttpOk -Url "$($ApiUrl.TrimEnd('/'))/health")) {
@@ -179,10 +189,28 @@ foreach ($pool in $Pools) {
 
 Write-Host "清理 Prefect 启动队列..."
 $ReconcileScript = Join-Path $PSScriptRoot "lib\prefect_startup_reconcile.py"
-& $PythonExe $ReconcileScript `
-    --notify-grace-seconds ([int]$env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS)
-if ($LASTEXITCODE -ne 0) {
+$reconcileOutput = @(& $PythonExe $ReconcileScript `
+    --notify-grace-seconds ([int]$env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS) `
+    --notify-work-pool $env:PREFECT_NOTIFY_POOL_NAME)
+$reconcileExitCode = $LASTEXITCODE
+$reconcileOutput | ForEach-Object { Write-Host $_ }
+if ($reconcileExitCode -ne 0) {
     throw "Prefect 启动队列清理失败，未启动 Worker"
+}
+$LegacyNotifyPools = @(
+    $reconcileOutput |
+        Where-Object { $_ -like "legacy_notify_pool:*" } |
+        ForEach-Object { $_.Substring("legacy_notify_pool:".Length) } |
+        Select-Object -Unique
+)
+$LegacyNotifyRuns = @(
+    $reconcileOutput |
+        Where-Object { $_ -like "legacy_notify_run:*" } |
+        ForEach-Object { $_.Substring("legacy_notify_run:".Length) }
+)
+if ($LegacyNotifyRuns.Count -gt 0) {
+    $runSummary = $LegacyNotifyRuns -join "; "
+    throw "旧 Notify Pool 仍有保留 Run，Prefect 3.7 不支持安全改派单个排队 Run，已拒绝启动避免遗漏或执行无关工作。请先用旧 Pool Worker 处理这些 Run，再重新运行 scripts\run.ps1。Runs: $runSummary"
 }
 
 Write-Host "同步 Prefect deployments（仅同步 Cron，不运行 flow）..."
@@ -197,6 +225,7 @@ Write-Host "启动 Session Prefect Worker..."
     -Detached `
     -ApiUrl $ApiUrl `
     -WorkPool $env:PREFECT_SESSION_POOL_NAME `
+    -PrefectHome $PrefectHome `
     -WorkerLimit ([int]$env:PREFECT_SESSION_POOL_LIMIT) `
     -UseSqliteDebug:$UseSqliteDebug
 
@@ -206,6 +235,7 @@ Write-Host "启动 Dashboard Prefect Worker..."
     -Detached `
     -ApiUrl $ApiUrl `
     -WorkPool $env:PREFECT_DASHBOARD_POOL_NAME `
+    -PrefectHome $PrefectHome `
     -WorkerLimit ([int]$env:PREFECT_DASHBOARD_POOL_LIMIT) `
     -UseSqliteDebug:$UseSqliteDebug
 
@@ -215,6 +245,7 @@ Write-Host "启动 Notify Prefect Worker..."
     -Detached `
     -ApiUrl $ApiUrl `
     -WorkPool $env:PREFECT_NOTIFY_POOL_NAME `
+    -PrefectHome $PrefectHome `
     -WorkerLimit ([int]$env:PREFECT_NOTIFY_POOL_LIMIT) `
     -UseSqliteDebug:$UseSqliteDebug
 
@@ -236,3 +267,6 @@ if (-not $SkipWeb) {
 }
 
 Write-Host "运行栈已启动。Prefect: $ApiUrl; Work Pools: $($Pools.Name -join ', ')"
+} finally {
+    Exit-StartupClaim -Claim $StartupClaim
+}

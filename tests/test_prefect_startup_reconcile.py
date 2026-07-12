@@ -32,6 +32,7 @@ def scheduled_run(
     minutes_late=1,
     auto_scheduled=True,
     state="SCHEDULED",
+    work_pool_name="windows-notify-pool",
 ):
     return SimpleNamespace(
         id=run_id,
@@ -39,6 +40,7 @@ def scheduled_run(
         state=SimpleNamespace(type=SimpleNamespace(value=state)),
         expected_start_time=NOW - timedelta(minutes=minutes_late),
         auto_scheduled=auto_scheduled,
+        work_pool_name=work_pool_name,
     )
 
 
@@ -177,6 +179,7 @@ class FakePrefectClient:
         self.paused = []
         self.resumed = []
         self.cancelled = []
+        self.updated = []
         self.read_flow_run_offsets = []
         self.resume_failures = resume_failures or {}
 
@@ -208,9 +211,120 @@ class FakePrefectClient:
     async def set_flow_run_state(self, flow_run_id, state, force):
         self.cancelled.append((flow_run_id, state.message, force))
 
+    async def update_deployment(self, deployment_id, deployment):
+        self.updated.append((deployment_id, deployment))
 
-def deployment(deployment_id, name, *, paused=False):
-    return SimpleNamespace(id=deployment_id, name=name, paused=paused)
+
+def deployment(
+    deployment_id,
+    name,
+    *,
+    paused=False,
+    work_pool_name="windows-notify-pool",
+):
+    return SimpleNamespace(
+        id=deployment_id,
+        name=name,
+        paused=paused,
+        work_pool_name=work_pool_name,
+    )
+
+
+def test_reconcile_migrates_existing_dynamic_notify_deployments_to_target_pool():
+    client = FakePrefectClient(
+        deployments=[
+            deployment(
+                NOTIFY_ID,
+                "notify-regional",
+                work_pool_name="default-agent-pool",
+            ),
+            deployment(ACTIVE_ID, "session-keeper", work_pool_name="windows-session-pool"),
+        ]
+    )
+
+    result = asyncio.run(
+        reconcile_client(client, NOW, 600, notify_work_pool="windows-notify-pool")
+    )
+
+    assert result.migrated == [
+        "notify-regional:default-agent-pool->windows-notify-pool"
+    ]
+    assert len(client.updated) == 1
+    deployment_id, update = client.updated[0]
+    assert deployment_id == NOTIFY_ID
+    assert update.work_pool_name == "windows-notify-pool"
+
+
+def test_reconcile_does_not_rewrite_notify_deployment_already_on_target_pool():
+    client = FakePrefectClient(
+        deployments=[deployment(NOTIFY_ID, "notify-regional")]
+    )
+
+    result = asyncio.run(
+        reconcile_client(client, NOW, 600, notify_work_pool="windows-notify-pool")
+    )
+
+    assert result.migrated == []
+    assert client.updated == []
+
+
+def test_reconcile_reports_legacy_pool_needed_for_preserved_manual_notify_run():
+    manual = scheduled_run(
+        run_id="manual-run",
+        deployment_id=NOTIFY_ID,
+        minutes_late=120,
+        auto_scheduled=False,
+        work_pool_name="default-agent-pool",
+    )
+    client = FakePrefectClient(
+        deployments=[
+            deployment(
+                NOTIFY_ID,
+                "notify-regional",
+                work_pool_name="default-agent-pool",
+            )
+        ],
+        queued=[manual],
+    )
+
+    result = asyncio.run(
+        reconcile_client(client, NOW, 600, notify_work_pool="windows-notify-pool")
+    )
+
+    assert client.cancelled == []
+    assert result.legacy_notify_pools == ["default-agent-pool"]
+    assert result.legacy_notify_runs == [
+        "notify-regional:manual-run:SCHEDULED:default-agent-pool"
+    ]
+
+
+def test_reconcile_reports_legacy_pending_notify_as_explicit_startup_blocker():
+    pending = scheduled_run(
+        run_id="pending-run",
+        deployment_id=NOTIFY_ID,
+        minutes_late=1,
+        auto_scheduled=False,
+        state="PENDING",
+        work_pool_name="default-agent-pool",
+    )
+    client = FakePrefectClient(
+        deployments=[
+            deployment(
+                NOTIFY_ID,
+                "notify-regional",
+                work_pool_name="default-agent-pool",
+            )
+        ],
+        queued=[pending],
+    )
+
+    result = asyncio.run(
+        reconcile_client(client, NOW, 600, notify_work_pool="windows-notify-pool")
+    )
+
+    assert result.legacy_notify_runs == [
+        "notify-regional:pending-run:PENDING:default-agent-pool"
+    ]
 
 
 def test_reconcile_pauses_only_active_managed_deployments_and_restores_them():
@@ -352,10 +466,17 @@ class FakeClientContext:
 
 
 def test_cli_returns_two_and_lists_blockers(monkeypatch, capsys):
-    async def fake_reconcile(client, now, notify_grace_seconds):
+    async def fake_reconcile(client, now, notify_grace_seconds, notify_work_pool):
         assert notify_grace_seconds == 600
+        assert notify_work_pool == "windows-notify-pool"
         return ReconcileResult(
-            cancelled=[], blockers=["session-keeper:run-1:RUNNING"]
+            cancelled=[],
+            blockers=["session-keeper:run-1:RUNNING"],
+            migrated=["notify-regional:default-agent-pool->windows-notify-pool"],
+            legacy_notify_pools=["default-agent-pool"],
+            legacy_notify_runs=[
+                "notify-regional:manual-run:SCHEDULED:default-agent-pool"
+            ],
         )
 
     monkeypatch.setattr(
@@ -365,14 +486,24 @@ def test_cli_returns_two_and_lists_blockers(monkeypatch, capsys):
         prefect_startup_reconcile, "reconcile_client", fake_reconcile
     )
 
-    exit_code = asyncio.run(prefect_startup_reconcile._run_cli(600))
+    exit_code = asyncio.run(
+        prefect_startup_reconcile._run_cli(600, "windows-notify-pool")
+    )
 
     assert exit_code == 2
-    assert "blocker:session-keeper:run-1:RUNNING" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert "migrated:notify-regional:default-agent-pool->windows-notify-pool" in captured.out
+    assert "legacy_notify_pool:default-agent-pool" in captured.out
+    assert (
+        "legacy_notify_run:notify-regional:manual-run:SCHEDULED:default-agent-pool"
+        in captured.out
+    )
+    assert "blocker:session-keeper:run-1:RUNNING" in captured.err
 
 
 def test_main_returns_one_when_reconciliation_fails(monkeypatch, capsys):
-    async def fail_reconciliation(notify_grace_seconds):
+    async def fail_reconciliation(notify_grace_seconds, notify_work_pool):
+        assert notify_work_pool == "windows-notify-pool"
         primary_error = RuntimeError("api unavailable")
         restoration_error = RuntimeError("resume deployment failed")
         restoration_error.add_note(

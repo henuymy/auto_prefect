@@ -91,6 +91,8 @@ config/runtime.local.example.json
 
 Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
 
+共享 Cookie、Edge Profile 和 Prefect Home 的实际路径分别为 `C:\AutoNotifyRuntime\cookies\cookie_dump.json`、`C:\AutoNotifyRuntime\browser_session\edge_profile_auto_login` 和 `C:\AutoNotifyRuntime\prefect\prefect_home`。初始化/启动只在共享目标不存在时复制仓库旧运行状态，绝不覆盖已有共享状态；无法迁移时回退为重新登录。
+
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
 
 ### 驾驶舱数据库约定
@@ -117,6 +119,10 @@ pwsh -File scripts/stop.ps1
 系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。该脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`，并主动提交一次 Session Keeper；通报与驾驶舱采集仍由 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
 
 自动调度的 Notify Run 比预计时间晚超过 10 分钟时取消，手工 Notify Run 保留。过期 Session Keeper 和高频 Dashboard Run 不补跑。处于 `RUNNING`、`CANCELLING` 或 `PAUSED` 的本项目 Run 会阻止替代 Worker 启动，必须人工处理。Worker 监督进程在崩溃 30 秒后重启 Worker；Prefect Server 需要手工执行 `scripts/run.ps1` 恢复。`scripts/stop.ps1` 只能停止 `C:\AutoNotifyRuntime\processes` 中已登记且身份匹配的进程。
+
+`scripts/status.ps1` 从 Prefect API 读取配置中的 Pool 名称和实际并发上限，并列出排队超过 10 分钟的自动调度 Run。锁协议当前不记录等待者，状态输出必须明确显示 `waiters=unavailable`，不得声称能展示等待数量。
+
+旧 Notify Pool 上若仍有保留的手工、宽限期或 PENDING Run，启动必须列出 Run 身份并失败关闭。Prefect 3.7 无法安全改派单个已排队 Run，也不能为共享旧 Pool 自动启动不受 Run ID 约束的 Worker；运维人员应先受控处理列出的旧 Run，再重新启动。禁止删除 Run 强行完成切换。
 
 所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\locks\excel_com.lock` 串行，登录刷新通过 `login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
 

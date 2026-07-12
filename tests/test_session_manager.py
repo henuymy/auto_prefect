@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1223,3 +1224,121 @@ def test_lock_is_not_stale_while_recorded_pid_is_alive(monkeypatch):
         assert lock_is_stale(lock_path, stale_seconds=1) is False
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_login_lock_stale_eviction_does_not_remove_replacement_owner(monkeypatch, tmp_path):
+    lock_path = tmp_path / "login.lock"
+    write_json(
+        lock_path,
+        {
+            "pid": 100,
+            "process_started_at": "2026-07-12T00:00:00+00:00",
+            "owner_token": "stale-owner",
+            "acquired_at": "2026-07-12T00:00:00+00:00",
+        },
+    )
+    monkeypatch.setattr(session_manager, "process_is_running", lambda *_args: False)
+    original_snapshot = session_manager._read_lock_snapshot(lock_path)
+    write_json(
+        lock_path,
+        {
+            "pid": 200,
+            "process_started_at": "2026-07-12T00:01:00+00:00",
+            "owner_token": "replacement-owner",
+            "acquired_at": "2026-07-12T00:01:00+00:00",
+        },
+    )
+
+    assert (
+        session_manager._remove_stale_lock(lock_path, original_snapshot["identity"])
+        == "retry"
+    )
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["owner_token"] == "replacement-owner"
+
+
+def test_login_lock_release_does_not_remove_replacement_owner(monkeypatch, tmp_path):
+    lock_path = tmp_path / "login.lock"
+    monkeypatch.setattr(
+        session_manager,
+        "current_process_started_at",
+        lambda: "2026-07-12T00:00:00+00:00",
+    )
+    lock = session_manager.LoginFileLock(
+        lock_path,
+        wait_seconds=1,
+        poll_seconds=0.01,
+        stale_seconds=600,
+    ).acquire()
+    write_json(
+        lock_path,
+        {
+            "pid": 200,
+            "process_started_at": "2026-07-12T00:01:00+00:00",
+            "owner_token": "replacement-owner",
+            "acquired_at": "2026-07-12T00:01:00+00:00",
+        },
+    )
+
+    lock.release()
+
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["owner_token"] == "replacement-owner"
+
+
+def test_login_lock_os_guard_blocks_second_owner_when_metadata_is_replaced(
+    monkeypatch, tmp_path
+):
+    lock_path = tmp_path / "login.lock"
+    monkeypatch.setattr(
+        session_manager,
+        "current_process_started_at",
+        lambda: "2026-07-12T00:00:00+00:00",
+    )
+    first = session_manager.LoginFileLock(
+        lock_path,
+        wait_seconds=1,
+        poll_seconds=0.01,
+        stale_seconds=600,
+    ).acquire()
+    write_json(
+        lock_path,
+        {
+            "pid": os.getpid(),
+            "process_started_at": "2026-07-12T00:01:00+00:00",
+            "owner_token": "replacement-owner",
+            "acquired_at": "2026-07-12T00:01:00+00:00",
+        },
+    )
+    second = session_manager.LoginFileLock(
+        lock_path,
+        wait_seconds=0.05,
+        poll_seconds=0.01,
+        stale_seconds=0,
+    )
+
+    with pytest.raises(TimeoutError):
+        second.acquire()
+
+    first.release()
+    assert json.loads(lock_path.read_text(encoding="utf-8"))["owner_token"] == "replacement-owner"
+
+
+def test_login_lock_permission_denied_still_honors_wait_deadline(
+    monkeypatch, tmp_path
+):
+    lock_path = tmp_path / "login.lock"
+    write_json(lock_path, {"pid": 999999, "owner_token": "stale"})
+    monkeypatch.setattr(session_manager, "process_is_running", lambda *_args: False)
+    monkeypatch.setattr(
+        session_manager,
+        "_remove_stale_lock",
+        lambda *_args: "permission_denied",
+    )
+    lock = session_manager.LoginFileLock(
+        lock_path,
+        wait_seconds=0.05,
+        poll_seconds=0.01,
+        stale_seconds=0,
+    )
+
+    with pytest.raises(TimeoutError):
+        lock.acquire()

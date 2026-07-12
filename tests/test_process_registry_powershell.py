@@ -10,6 +10,32 @@ REGISTRY = (ROOT / "scripts" / "lib" / "process_registry.ps1").as_posix()
 STATUS = (ROOT / "scripts" / "status.ps1").as_posix()
 
 
+def test_startup_claim_rejects_second_process_before_release(tmp_path):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    assert pwsh is not None
+    registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").as_posix()
+    runtime_root = tmp_path.as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+$env:AUTO_NOTIFY_RUNTIME_ROOT = '{runtime_root}'
+. '{registry}'
+$claim = Enter-StartupClaim
+try {{
+  $child = @'
+$ErrorActionPreference = "Stop"
+$env:AUTO_NOTIFY_RUNTIME_ROOT = "{runtime_root}"
+. "{registry}"
+try {{ Enter-StartupClaim | Out-Null; exit 0 }} catch {{ exit 23 }}
+'@ | & '{pwsh}' -NoProfile -Command -
+  if ($LASTEXITCODE -ne 23) {{ throw "second startup claim was not rejected" }}
+}} finally {{
+  Exit-StartupClaim -Claim $claim
+}}
+"""
+
+    subprocess.run([pwsh, "-NoProfile", "-Command", command], check=True)
+
+
 def _run_powershell(command: str) -> subprocess.CompletedProcess[str]:
     assert POWERSHELL is not None
     return subprocess.run(
