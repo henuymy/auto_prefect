@@ -148,6 +148,16 @@ pwsh -File scripts/start_web.ps1 -Mode both
 - 后端健康检查：`http://127.0.0.1:8000/api/health`
 - Prefect UI：`http://127.0.0.1:4200`
 
+## Session Keeper
+
+Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每小时 `00/15/30/45` 分运行。
+
+- 认证失效时立即在全局登录锁内执行登录；首次失败后等待 60 秒，仅再试一次。
+- 基础设施探活失败不触发登录，由 Prefect 重试后发送企业微信故障通知。
+- 业务 Flow 仅在明确的会话失效时强刷新一次会话，并仅重试失败的业务步骤一次。
+- 故障去重状态保存在 `runtime/session_keeper/incident_state.json`。在 Prefect UI 中打开上述 Deployment 查看最新运行，或执行 `python -m prefect flow-run ls --flow-name session-keeper-flow --limit 1`。
+- 支持日志不得复制账号密码、Cookie、Token、Webhook 值或其他认证材料。
+
 ## 主要入口
 
 ```text
