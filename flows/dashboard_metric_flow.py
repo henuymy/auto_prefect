@@ -12,10 +12,32 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from prefect import flow, get_run_logger
 
+from services.session_retry_service import is_session_expired_error
 from tasks.dashboard_tasks import run_dashboard_metric_task
 
 
 DEFAULT_CONFIG_PATH = "config/dashboard/session.json"
+
+
+def run_dashboard_metric_with_session_refresh(
+    *,
+    mode,
+    config_path,
+    trigger_type,
+    force_refresh,
+):
+    parameters = {
+        "mode": mode,
+        "config_path": config_path,
+        "trigger_type": trigger_type,
+        "force_refresh": force_refresh,
+    }
+    try:
+        return run_dashboard_metric_task(**parameters)
+    except RuntimeError as exc:
+        if force_refresh or not is_session_expired_error(exc):
+            raise
+        return run_dashboard_metric_task(**{**parameters, "force_refresh": True})
 
 
 @flow(name="dashboard-metric-flow")
@@ -33,7 +55,7 @@ def dashboard_metric_flow(
         trigger_type,
         force_refresh,
     )
-    result = run_dashboard_metric_task(
+    result = run_dashboard_metric_with_session_refresh(
         mode=normalized_mode,
         config_path=config_path,
         trigger_type=trigger_type,

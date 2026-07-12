@@ -21,6 +21,10 @@ from tasks.session_tasks import prepare_session_task
 from tasks.template_tasks import update_template_task
 from services.compare_service import find_empty_download_sheet_mappings
 from services.method_service import EmptyReportDataError
+from services.session_retry_service import (
+    is_session_expired_error,  # noqa: F401 - backward-compatible flow export
+    run_with_session_refresh_once,
+)
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
 
@@ -71,18 +75,6 @@ def deep_merge(base, override):
         else:
             result[key] = copy.deepcopy(value)
     return result
-
-
-def is_session_expired_error(exc):
-    message = str(exc)
-    markers = (
-        "session 已过期",
-        "session_expired",
-        "reCode=1101",
-        "单点登录超时",
-        "登录页",
-    )
-    return any(marker in message for marker in markers)
 
 
 def assert_report_schema_contract(report_cfg):
@@ -371,27 +363,25 @@ def auto_notify_flow(config_path=None):
         if not steps.get("download", {}).get("enabled", True):
             return None
         download_config = build_download_config(read_json(steps["download"]["config_path"]), report_cfg)
-        try:
+
+        def download_operation():
             return download_reports_task(
                 download_config,
                 dry_run=bool(steps["download"].get("dry_run", False)),
                 debug=bool(steps["download"].get("debug", False)),
             )
-        except RuntimeError as exc:
-            if not is_session_expired_error(exc) or not steps.get("login", {}).get("enabled", False):
-                raise
+
+        if not steps.get("login", {}).get("enabled", False):
+            return download_operation()
+
+        def refresh_session():
             logger.warning("下载失败（session 过期），强制重新登录后重试")
-            session_result = prepare_session_task(
-                login_config,
-                force_refresh=True,
-            )
-            if session_result.get("status") == "invalid":
-                raise RuntimeError(f"重新登录失败: {session_result.get('reason')}") from exc
-            return download_reports_task(
-                download_config,
-                dry_run=bool(steps["download"].get("dry_run", False)),
-                debug=bool(steps["download"].get("debug", False)),
-            )
+            return prepare_session_task(login_config, force_refresh=True)
+
+        return run_with_session_refresh_once(
+            download_operation,
+            refresh_session,
+        )
 
     attempt = 0
     compare_result = None
