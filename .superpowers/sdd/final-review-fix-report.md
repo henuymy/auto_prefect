@@ -136,3 +136,37 @@ All six Important final-review findings were resolved without conflict with the 
 
 - The full suite still emits 718 pre-existing SQLAlchemy adapter deprecation warnings under Python 3.13.
 - Live credentialed login and WeCom delivery were not executed; isolated tests cover notification state, deduplication, recovery, and exception preservation.
+
+## Invalid Preparation Recovery Guard
+
+### Finding Mapping
+
+- Notify session preparation now rejects `status=invalid` inside the operation passed to the shared business wrapper, preserving the existing `RuntimeError("会话不可用: <reason>")` behavior before recovery can run.
+- Recovery eligibility is centralized through `notify_session_result_is_healthy` and is limited to explicit healthy Session Manager statuses: `reused`, `reused_after_lock`, and `refreshed`.
+- Unknown/non-healthy statuses are returned without recovery and without being reclassified as failures.
+- A stateful regression seeds an active authentication incident, returns `status=invalid`, and proves no recovery message is sent and the incident key remains active.
+
+### TDD Evidence
+
+- RED: `python -m pytest tests/test_notify_flow_session.py::test_notify_invalid_preparation_does_not_recover_or_clear_active_incident -q`
+  - Failed because no `RuntimeError` was raised; the invalid result returned normally after recovery had run.
+- GREEN: `python -m pytest tests/test_notify_flow_session.py tests/test_session_business_failure_service.py tests/test_session_alert_service.py tests/test_notify_service.py -q`
+  - Result: 31 passed in 8.42s.
+
+### Final Verification
+
+- `python -m pytest -q`
+  - Result: 533 passed, 14 skipped, 718 existing SQLAlchemy/Python 3.13 deprecation warnings in 19.05s.
+- Scoped Ruff over the changed service, Notify Flow, and regression test
+  - Result: all checks passed.
+- Production secret scan
+  - Result: clean.
+- `git diff --check`
+  - Result: no whitespace errors; only expected LF-to-CRLF working-copy warnings.
+- Experiment/session-lifetime runner path check against `b70671e..HEAD`
+  - Result: unchanged.
+
+### Remaining Concerns
+
+- The full suite still emits the same 718 pre-existing SQLAlchemy adapter deprecation warnings under Python 3.13.
+- No live credentialed login or WeCom delivery was executed.

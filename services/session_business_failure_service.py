@@ -135,6 +135,7 @@ def run_with_business_session_reporting(
     reporter=None,
     recover_on_success=False,
     recoverer=None,
+    recovery_predicate=None,
 ) -> T:
     try:
         result = operation()
@@ -151,7 +152,8 @@ def run_with_business_session_reporting(
             failure_type="失败",
         )
         raise
-    if recover_on_success:
+    should_recover = recovery_predicate(result) if recovery_predicate else True
+    if recover_on_success and should_recover:
         active_recoverer = recoverer or report_business_session_recovery
         _run_notification_safely(
             lambda: active_recoverer(trigger_source=trigger_source),

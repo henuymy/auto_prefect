@@ -38,14 +38,26 @@ except ImportError as exc:  # pragma: no cover - runtime dependency guard
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "local.json"
 EXAMPLE_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "example.json"
+HEALTHY_SESSION_STATUSES = {"reused", "reused_after_lock", "refreshed"}
+
+
+def notify_session_result_is_healthy(result):
+    return isinstance(result, dict) and result.get("status") in HEALTHY_SESSION_STATUSES
 
 
 def run_notify_session_preparation(operation, recoverer=None):
+    def validate_preparation_result():
+        result = operation()
+        if result.get("status") == "invalid":
+            raise RuntimeError(f"会话不可用: {result.get('reason')}")
+        return result
+
     return run_with_business_session_reporting(
-        operation,
+        validate_preparation_result,
         trigger_source="auto-notify-flow",
         recover_on_success=True,
         recoverer=recoverer,
+        recovery_predicate=notify_session_result_is_healthy,
     )
 
 
@@ -378,14 +390,12 @@ def auto_notify_flow(config_path=None):
 
     if steps.get("login", {}).get("enabled", False):
         initial_force_refresh = bool(steps["login"].get("force_refresh", False))
-        session_result = run_notify_session_preparation(
+        run_notify_session_preparation(
             lambda: prepare_session_task(
                 login_config,
                 force_refresh=initial_force_refresh,
             ),
         )
-        if session_result.get("status") == "invalid":
-            raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
     else:
         initial_force_refresh = False
 

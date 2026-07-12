@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from flows.notify_single_flow import (
@@ -5,6 +7,8 @@ from flows.notify_single_flow import (
     run_notify_session_preparation,
 )
 from services.session_retry_service import RefreshBudget
+from services.session_alert_service import notify_session_failure, notify_session_recovery
+from services.session_business_failure_service import recover_business_session_incidents
 
 
 def test_notify_poll_iterations_share_one_refresh_budget():
@@ -89,3 +93,64 @@ def test_notify_successful_preparation_runs_shared_recovery():
 
     assert result == {"status": "refreshed"}
     assert recoveries == [{"trigger_source": "auto-notify-flow"}]
+
+
+def test_notify_invalid_preparation_does_not_recover_or_clear_active_incident(tmp_path):
+    alert_config = {
+        "webhook_url": "https://example.invalid/webhook",
+        "incident_state_path": str(tmp_path / "incident.json"),
+    }
+    messages = []
+
+    def sender(_url, text, timeout=30):
+        messages.append(text)
+        return {"errcode": 0}
+
+    notify_session_failure(
+        alert_config,
+        {
+            "incident_key": "authentication:shared-session",
+            "trigger_source": "auto-notify-flow",
+            "failure_category": "authentication",
+            "failed_stages": ["shared-session"],
+            "attempt_count": 2,
+            "errors": ["login failed"],
+            "flow_run_id": "failure-flow",
+            "next_scheduled_at": "later",
+        },
+        sender=sender,
+    )
+
+    def recoverer(**_kwargs):
+        return recover_business_session_incidents(
+            alert_config,
+            flow_run_id="invalid-flow",
+            notifier=lambda config, recovery, **kwargs: notify_session_recovery(
+                config,
+                recovery,
+                sender=sender,
+                **kwargs,
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="会话不可用: login_disabled"):
+        run_notify_session_preparation(
+            lambda: {"status": "invalid", "reason": "login_disabled"},
+            recoverer=recoverer,
+        )
+
+    state = json.loads((tmp_path / "incident.json").read_text(encoding="utf-8"))
+    assert state["active_incident_key"] == "authentication:shared-session"
+    assert not any(message.startswith("[自动登录恢复]") for message in messages)
+
+
+def test_notify_unknown_preparation_status_does_not_send_recovery():
+    recoveries = []
+
+    result = run_notify_session_preparation(
+        lambda: {"status": "pending"},
+        recoverer=lambda **kwargs: recoveries.append(kwargs),
+    )
+
+    assert result == {"status": "pending"}
+    assert recoveries == []
