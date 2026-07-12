@@ -77,3 +77,62 @@ All six Important final-review findings were resolved without conflict with the 
 
 - The full suite continues to emit 718 pre-existing SQLAlchemy adapter deprecation warnings under Python 3.13. No test failures are associated with them.
 - No live operational login or WeCom alert was executed because verification must not expose or exercise production credentials; behavior is covered by isolated regressions.
+
+## Second Final Review Fix Wave
+
+### Finding Mapping
+
+1. Exhausted business authentication `RuntimeError` reporting
+   - The shared business adapter now recognizes marker-bearing authentication `RuntimeError` values in addition to `SessionLoginError` and `SessionInfrastructureError`.
+   - Notify reports the second authentication failure after a successful refresh, and reports authentication failures when the Flow refresh budget was already consumed by initial forced mode.
+   - Dashboard reports the second authentication failure after its forced retry and reports initial `force_refresh=True` authentication failures without another retry.
+   - The original exception object and traceback are preserved; no additional refresh is attempted.
+   - All incidents use `authentication:shared-session` and the existing Flow-specific trigger source.
+
+2. Business-originated shared recovery
+   - Added shared recovery handling for both `authentication:shared-session` and `infrastructure:shared-session` through the existing locked `notify_session_recovery` service.
+   - Successful Notify preparation and forced refresh invoke recovery.
+   - Successful Dashboard completion invokes recovery after either direct reuse or the forced retry path.
+   - Suppressed recovery remains a no-op when no matching incident is active.
+   - A focused state regression proves failure -> business recovery -> later failure sends a new alert instead of remaining permanently suppressed.
+
+3. Alert delivery must not replace the primary failure
+   - Failure and recovery notification calls are isolated behind a safe adapter.
+   - Notification exceptions are logged using only the notification exception type; their message is not logged.
+   - The original classified or authentication-marked business exception is re-raised unchanged.
+
+4. Integrated second-login-attempt coverage
+   - Added focused `prepare_session` coverage where the first private snapshot fails static validation, the fixed 60-second retry substep is observed without sleeping, the second attempt uses a distinct private path, and only the second valid snapshot is atomically published.
+
+### TDD Evidence
+
+- RED: `python -m pytest tests/test_session_business_failure_service.py tests/test_notify_flow_session.py tests/test_dashboard_metric_flow_session.py -q`
+  - Collection failed because `recover_business_session_incidents` did not exist.
+- RED: `python -m pytest tests/test_notify_flow_session.py::test_notify_successful_preparation_runs_shared_recovery -q`
+  - Collection failed because `run_notify_session_preparation` did not exist.
+- GREEN after implementation:
+  - Primary second-wave regressions: 18 passed.
+  - Integrated second-login-attempt regression: 1 passed.
+  - Final focused business/session/alert set: 90 passed in 9.15s.
+
+### Final Verification
+
+- `python -m pytest -q`
+  - Result: 531 passed, 14 skipped, 718 existing SQLAlchemy/Python 3.13 deprecation warnings in 18.77s.
+- Scoped `python -m ruff check` over all second-wave changed Python files
+  - Result: all checks passed.
+- JSON parsing for `config/modules/autologin.json` and `config/modules/session_keeper.json`
+  - Result: `json_ok`.
+- YAML parsing for `prefect.yaml`
+  - Result: `yaml_ok`.
+- Production secret scan over second-wave production files
+  - Result: clean.
+- `git diff --check`
+  - Result: no whitespace errors; only expected LF-to-CRLF working-copy warnings.
+- Experiment/session-lifetime runner path check against `b70671e..HEAD`
+  - Result: unchanged.
+
+### Remaining Concerns
+
+- The full suite still emits 718 pre-existing SQLAlchemy adapter deprecation warnings under Python 3.13.
+- Live credentialed login and WeCom delivery were not executed; isolated tests cover notification state, deduplication, recovery, and exception preservation.

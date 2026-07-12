@@ -40,10 +40,20 @@ DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "local.json"
 EXAMPLE_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "example.json"
 
 
+def run_notify_session_preparation(operation, recoverer=None):
+    return run_with_business_session_reporting(
+        operation,
+        trigger_source="auto-notify-flow",
+        recover_on_success=True,
+        recoverer=recoverer,
+    )
+
+
 def run_notify_download_with_session_refresh(
     operation,
     refresh_session,
     refresh_budget,
+    reporter=None,
 ):
     return run_with_business_session_reporting(
         lambda: run_with_session_refresh_once(
@@ -52,6 +62,7 @@ def run_notify_download_with_session_refresh(
             refresh_budget=refresh_budget,
         ),
         trigger_source="auto-notify-flow",
+        reporter=reporter,
     )
 
 
@@ -367,12 +378,11 @@ def auto_notify_flow(config_path=None):
 
     if steps.get("login", {}).get("enabled", False):
         initial_force_refresh = bool(steps["login"].get("force_refresh", False))
-        session_result = run_with_business_session_reporting(
+        session_result = run_notify_session_preparation(
             lambda: prepare_session_task(
                 login_config,
                 force_refresh=initial_force_refresh,
             ),
-            trigger_source="auto-notify-flow",
         )
         if session_result.get("status") == "invalid":
             raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
@@ -401,7 +411,9 @@ def auto_notify_flow(config_path=None):
 
         def refresh_session():
             logger.warning("下载失败（session 过期），强制重新登录后重试")
-            return prepare_session_task(login_config, force_refresh=True)
+            return run_notify_session_preparation(
+                lambda: prepare_session_task(login_config, force_refresh=True)
+            )
 
         return run_notify_download_with_session_refresh(
             download_operation,

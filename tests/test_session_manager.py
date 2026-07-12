@@ -711,6 +711,57 @@ def test_login_publishes_private_snapshot_only_after_probe_success(monkeypatch):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def test_prepare_session_second_login_attempt_publishes_only_successful_snapshot(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        shared_path = work_dir / "cookie_dump.json"
+        original = valid_city_ops_cookie_dump()
+        original["generated_at"] = "original"
+        refreshed = valid_city_ops_cookie_dump()
+        refreshed["generated_at"] = "second-attempt"
+        write_json(shared_path, original)
+        probe_results = iter(
+            [
+                {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]},
+                {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]},
+                {"valid": True, "results": [{"stage": "city_ops", "ok": True}]},
+            ]
+        )
+        monkeypatch.setattr(session_manager, "validate_stage_probes", lambda *_args, **_kwargs: next(probe_results))
+        monkeypatch.setattr(session_manager, "close_browser_session", lambda *_args, **_kwargs: {"stopped_pids": []})
+        attempt_paths = []
+
+        def fake_login(_command, **kwargs):
+            attempt_path = Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"])
+            attempt_paths.append(attempt_path)
+            write_json(attempt_path, {"stages": []} if len(attempt_paths) == 1 else refreshed)
+            assert json.loads(shared_path.read_text(encoding="utf-8"))["generated_at"] == "original"
+            return {"returncode": 0}
+
+        monkeypatch.setattr(session_manager, "run_login_command", fake_login)
+        original_retry = session_manager.run_login_with_retry
+        sleeps = []
+        monkeypatch.setattr(
+            session_manager,
+            "run_login_with_retry",
+            lambda login_attempt, **kwargs: original_retry(
+                login_attempt,
+                **kwargs,
+                sleeper=sleeps.append,
+            ),
+        )
+
+        result = prepare_session(session_config(shared_path))
+
+        assert result["login_attempt_count"] == 2
+        assert sleeps == [60]
+        assert len(set(attempt_paths)) == 2
+        assert all(not path.exists() for path in attempt_paths)
+        assert json.loads(shared_path.read_text(encoding="utf-8"))["generated_at"] == "second-attempt"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def test_prepare_session_converts_login_lock_timeout_to_infrastructure(monkeypatch):
     config = session_config(Path("runtime/unused-cookie-dump.json"))
     monkeypatch.setattr(session_manager, "file_lock", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("busy")))
