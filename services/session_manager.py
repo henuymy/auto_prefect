@@ -390,6 +390,35 @@ def validate_stage_probes(cookie_dump, required_stages=None, stage_probes=None):
     }
 
 
+PROBE_HEALTHY = "healthy"
+PROBE_AUTHENTICATION_FAILURE = "authentication"
+PROBE_INFRASTRUCTURE_FAILURE = "infrastructure"
+AUTHENTICATION_STATUS_CODES = {302, 401, 403}
+AUTHENTICATION_FAILURE_REASONS = {"session_expired", "missing_stage"}
+
+
+class SessionInfrastructureError(RuntimeError):
+    pass
+
+
+def classify_probe_validation(probe_validation):
+    if probe_validation and probe_validation.get("valid"):
+        return PROBE_HEALTHY
+
+    failures = [
+        item
+        for item in (probe_validation or {}).get("results", [])
+        if not item.get("ok")
+    ]
+    if any(
+        item.get("status_code") in AUTHENTICATION_STATUS_CODES
+        or item.get("reason") in AUTHENTICATION_FAILURE_REASONS
+        for item in failures
+    ):
+        return PROBE_AUTHENTICATION_FAILURE
+    return PROBE_INFRASTRUCTURE_FAILURE
+
+
 def format_probe_failure(item):
     stage = item.get("stage") or "unknown"
     reason = item.get("reason") or "unknown"

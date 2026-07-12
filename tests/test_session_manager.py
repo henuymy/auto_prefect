@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from services import session_manager
 from services.session_manager import (
+    SessionInfrastructureError,
+    classify_probe_validation,
     format_probe_validation_error,
     lock_is_stale,
     prepare_session,
@@ -384,6 +386,69 @@ def test_format_probe_validation_error_is_human_readable():
     assert "city_ops 探活失败" in message
     assert "原因=session_expired" in message
     assert "HTTP=401" in message
+
+
+def test_probe_classification_marks_redirect_as_authentication_failure():
+    result = classify_probe_validation(
+        {
+            "valid": False,
+            "results": [
+                {
+                    "stage": "report_analysis",
+                    "ok": False,
+                    "reason": "status_not_allowed",
+                    "status_code": 302,
+                }
+            ],
+        }
+    )
+
+    assert result == "authentication"
+
+
+def test_probe_classification_marks_explicit_expiry_as_authentication_failure():
+    result = classify_probe_validation(
+        {
+            "valid": False,
+            "results": [
+                {"stage": "city_ops", "ok": False, "reason": "session_expired"}
+            ],
+        }
+    )
+
+    assert result == "authentication"
+
+
+def test_probe_classification_marks_request_exception_as_infrastructure_failure():
+    result = classify_probe_validation(
+        {
+            "valid": False,
+            "results": [
+                {
+                    "stage": "smart_ops",
+                    "ok": False,
+                    "reason": "probe_error",
+                    "error": "ConnectTimeout",
+                }
+            ],
+        }
+    )
+
+    assert result == "infrastructure"
+
+
+def test_probe_classification_prioritizes_authentication_when_failures_are_mixed():
+    result = classify_probe_validation(
+        {
+            "valid": False,
+            "results": [
+                {"stage": "report_analysis", "ok": False, "status_code": 401},
+                {"stage": "smart_ops", "ok": False, "reason": "probe_error"},
+            ],
+        }
+    )
+
+    assert result == "authentication"
 
 
 def test_lock_is_stale_when_recorded_pid_is_gone(monkeypatch):
