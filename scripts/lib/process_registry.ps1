@@ -30,7 +30,7 @@ function Enter-StartupClaim {
             $acquired = $true
         }
         if (-not $acquired) {
-            throw "Another scripts\run.ps1 startup is already in progress"
+            throw "Another runtime setup or startup is already in progress"
         }
         return [pscustomobject]@{ Mutex = $mutex; Acquired = $true }
     } catch {

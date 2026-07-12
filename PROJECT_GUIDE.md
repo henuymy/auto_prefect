@@ -93,7 +93,9 @@ Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分�
 
 共享 Cookie、Edge Profile 和 Prefect Home 的实际路径分别为 `C:\AutoNotifyRuntime\cookies\cookie_dump.json`、`C:\AutoNotifyRuntime\browser_session\edge_profile_auto_login` 和 `C:\AutoNotifyRuntime\prefect\prefect_home`。初始化/启动只在共享目标不存在时复制仓库旧运行状态，绝不覆盖已有共享状态；无法迁移时回退为重新登录。
 
-Cookie 与 Edge Profile 的迁移必须逐项隔离。单项失败只能输出包含项目/源/目标路径的 `migration_failed_fresh_login_required`，不得输出异常或认证内容，也不得阻断另一项迁移或后续启动；失败项的 staging 必须清理且最终目标保持不存在，由 Session Manager 触发新登录。
+Cookie 与 Edge Profile 的迁移必须逐项隔离。单项失败只能输出包含项目/源/目标路径的 `migration_failed_fresh_login_required`，不得输出异常或认证内容，也不得阻断另一项迁移或后续启动；失败项的 staging 必须清理且最终目标保持不存在，由 Session Manager 触发新登录。若 staging 重试后仍存在，必须输出 `migration_failed_sensitive_staging_cleanup_required` 并要求人工清理，不得声称 clean fallback。目录发布必须使用 exact-target `Directory.Move`，目标竞争者胜出时清理本方 staging 并报告 `target_exists_race`，禁止嵌套复制。
+
+`setup_windows_env.ps1` 和 `run.ps1` 必须使用同一个机器级运行时互斥锁保护迁移与共享目录初始化。setup 只预建 `browser_session` 父目录，不能预建 `edge_profile_auto_login` 最终目标；迁移失败后由 Session Manager 新登录创建最终 Profile。
 
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
 

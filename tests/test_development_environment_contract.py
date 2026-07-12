@@ -165,13 +165,14 @@ def test_windows_setup_prepares_shared_runtime_and_lifecycle_commands():
     for directory in (
         '"locks"',
         '"session"',
-        '"browser_session\\edge_profile_auto_login"',
+        '"browser_session"',
         '"prefect\\prefect_home"',
         '"logs"',
         '"temp"',
         '"processes"',
     ):
         assert directory in source
+    assert '"browser_session\\edge_profile_auto_login"' not in source
     for command in (
         "pwsh -File scripts/setup_windows_env.ps1",
         "pwsh -File scripts/run.ps1",
@@ -179,6 +180,22 @@ def test_windows_setup_prepares_shared_runtime_and_lifecycle_commands():
         "pwsh -File scripts/stop.ps1",
     ):
         assert command in source
+
+
+def test_windows_setup_serializes_shared_initialization_with_runtime_startup():
+    source = (ROOT / "scripts" / "setup_windows_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "process_registry.ps1" in source
+    assert "$env:AUTO_NOTIFY_RUNTIME_ROOT = $SharedRuntimeRoot" in source
+    assert source.count("Enter-StartupClaim") == 1
+    assert source.count("Exit-StartupClaim") == 1
+    claim = source.index("Enter-StartupClaim")
+    migration = source.index("Invoke-RuntimeStateMigration")
+    shared_init = source.index("foreach ($dir in $SharedRuntimeDirs)")
+    release = source.rindex("Exit-StartupClaim")
+    assert claim < migration < shared_init < release
 
 
 def test_runtime_loader_exports_three_pool_environment_contract():

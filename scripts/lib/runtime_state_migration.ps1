@@ -55,11 +55,15 @@ function Invoke-RuntimeStateMigration {
                 Copy-Item -LiteralPath $item.Source -Destination $stagingPath
             }
             try {
-                Move-Item -LiteralPath $stagingPath -Destination $item.Target -ErrorAction Stop
+                if ($item.Kind -eq "directory") {
+                    [IO.Directory]::Move($stagingPath, $item.Target)
+                } else {
+                    [IO.File]::Move($stagingPath, $item.Target)
+                }
                 $status = "copied"
             } catch {
                 if (Test-Path -LiteralPath $item.Target) {
-                    $status = "target_exists"
+                    $status = "target_exists_race"
                 } else {
                     throw
                 }
@@ -82,6 +86,9 @@ function Invoke-RuntimeStateMigration {
                         }
                     }
                 } while ((Test-Path -LiteralPath $stagingPath) -and (Get-Date) -lt $cleanupDeadline)
+                if (Test-Path -LiteralPath $stagingPath) {
+                    $status = "migration_failed_sensitive_staging_cleanup_required"
+                }
             }
         }
         [pscustomobject]@{

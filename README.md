@@ -122,9 +122,11 @@ scripts/prefect_env_prod.local.ps1
 
 首次执行 `scripts/setup_windows_env.ps1` 或 `scripts/run.ps1` 时，会在共享目标不存在的前提下，将仓库旧 `runtime/cookies/cookie_dump.json` 和 `runtime/browser_session/edge_profile_auto_login` 复制到 `C:\AutoNotifyRuntime`；已有共享状态绝不覆盖。源文件保留用于审计和回退；如果旧状态不存在或不可用，按正常自动登录流程重新登录。启动还会初始化 Prefect 元数据、创建三个 Work Pool、把现有 `notify-*` Deployment 迁移到 Notify Pool、清理无执行价值的积压并同步仓库 Deployment，但不会迁移旧 Prefect 历史数据库。
 
-Cookie 与 Edge Profile 独立迁移。任一项因权限、占用或复制错误失败时，脚本清理该项临时目录、保持最终目标不存在并报告 `migration_failed_fresh_login_required`，随后继续处理另一项和启动流程；报告只包含项目、源路径和目标路径，不包含认证内容。
+Cookie 与 Edge Profile 独立迁移。任一项因权限、占用或复制错误失败时，脚本清理该项临时目录、保持最终目标不存在并报告 `migration_failed_fresh_login_required`，随后继续处理另一项和启动流程；报告只包含项目、源路径和目标路径，不包含认证内容。如果敏感 staging 在重试后仍无法删除，则改报 `migration_failed_sensitive_staging_cleanup_required`，不得声称可直接新登录，需先人工清理报告目标父目录中的 `.migration-*`。
 
 共享 Cookie 位于 `C:\AutoNotifyRuntime\cookies\cookie_dump.json`，保留的 Edge Profile 位于 `C:\AutoNotifyRuntime\browser_session\edge_profile_auto_login`，Prefect Home 位于 `C:\AutoNotifyRuntime\prefect\prefect_home`。这些状态不随代码升级、分支或 Worktree 切换。
+
+环境初始化只预建 `C:\AutoNotifyRuntime\browser_session` 父目录，不预建最终 Edge Profile。迁移失败时由后续 Session Manager 新登录创建 `edge_profile_auto_login`。`setup_windows_env.ps1` 与 `run.ps1` 使用同一个机器级运行时互斥锁，禁止 setup/setup 或 setup/startup 并发修改共享目录。
 
 项目固定 `Prefect 3.7.0`，并将 FastAPI 限制在 `0.115` 系列以避免与较新
 Starlette 路由接口不兼容。安装或更新依赖时请使用 `requirements.lock`。
