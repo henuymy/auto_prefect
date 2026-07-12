@@ -1,5 +1,9 @@
 # Standalone Session Lifetime Runner Implementation Plan
 
+> **Superseded:** Do not execute this plan. The approved design was simplified
+> after Task 2 review. A replacement plan will be written from
+> `docs/superpowers/specs/2026-07-12-standalone-session-lifetime-runner-design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build one local-only Python file that independently logs in, runs the four sequential session lifetime experiments, survives runner restarts, and supports foreground, background, status, validation, and graceful-stop commands.

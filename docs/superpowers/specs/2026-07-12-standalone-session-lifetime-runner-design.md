@@ -1,174 +1,144 @@
-# Standalone Session Lifetime Runner Design
+# Simple Standalone Session Lifetime Runner Design
 
 ## Goal
 
-Create one self-contained Python file that can run the session lifetime
-experiments unattended on a Windows machine. The file must not import modules
-from this repository. It may depend on Python, Microsoft Edge, `selenium`, and
-`requests` being installed.
+Create one independent Python file whose only purpose is to measure how long
+the service Session remains valid under four browser/session usage modes.
 
-The existing experiment runner and existing experiment output are out of
-scope and must not be modified or resumed automatically.
+The program runs the experiments sequentially, requires no Codex supervision,
+and records enough evidence to compare the Session lifetime of each mode.
 
-## Deliverable
+## Scope
 
-The deliverable is a single file:
+The deliverable is one local file:
 
-`session_lifetime_runner_standalone.py`
+`session_lifetime_runner.py`
 
-All runner behavior, login automation, browser lifecycle handling, Cookie
-capture, session probes, state persistence, recovery, status reporting, and
-background-process commands live in this file.
+It contains the login configuration, Selenium login steps, Cookie and Session
+Storage capture, HTTP probes, experiment loop, and result writing. It does not
+import modules from the current project.
 
-Runtime data is created beside the script under:
-
-`session_lifetime_runtime/`
-
-The runtime directory contains the active run directory, state, events, logs,
-browser profiles, Cookie snapshots, process metadata, and the singleton lock.
-
-## Embedded Configuration
-
-The top of the file contains one clearly marked configuration block with:
-
-- Login username and password.
-- Login URL and application-entry selectors.
-- Three stage probe definitions: `report_analysis`, `smart_ops`, and
-  `city_ops`.
-- Edge executable path and browser options.
-- Probe interval: 15 minutes.
-- Failed-probe retry interval: 3 minutes.
-- Consecutive failure threshold: 2.
-- Request and login timeouts.
-
-Credentials are intentionally stored directly in the Python file at the
-user's request. They must never be included in logs, state files, exception
-messages, command output, Cookie snapshots intended for inspection, or Git.
-The standalone file must be ignored by Git before credentials are populated.
+The existing project experiment runner and all existing experiment output are
+not modified or resumed.
 
 ## Experiment Cases
 
-The runner executes the following cases sequentially:
+The runner executes exactly these cases in order:
 
-1. `headless_retained_idle`
-2. `headed_closed_idle`
-3. `headed_retained_idle`
-4. `headless_closed_heartbeat`
+1. `headless_retained_idle`: headless Edge remains open; no heartbeat.
+2. `headed_closed_idle`: visible Edge closes after login; no heartbeat.
+3. `headed_retained_idle`: visible Edge remains open; no heartbeat.
+4. `headless_closed_heartbeat`: headless Edge closes after login; one
+   heartbeat request runs every 5 minutes.
 
-Each case receives an isolated Edge user-data directory and isolated Cookie
-snapshot. The complete Cookie snapshot is stored only in that protected case
-directory and is never printed. A case remains active indefinitely while its
-session is valid.
+Only one case runs at a time. The next case starts only after the current case
+has been confirmed invalid.
 
-At each fixed probe time, all enabled stages are checked. When a probe fails,
-the runner waits 3 minutes and probes once more. Two consecutive failed probes
-end the current case, record its final result, clean up its browser processes,
-and start the next case. Any successful probe resets the consecutive failure
-count to zero.
+## Case Lifecycle
 
-The heartbeat case performs its configured heartbeat independently of the
-15-minute observation probes.
+Each case performs this fixed sequence:
 
-## Login and Browser Lifecycle
+1. Create a new isolated Edge user-data directory for the case.
+2. Log in once with the username and password embedded at the top of the file.
+3. Open the required applications and capture Cookies and Session Storage for
+   `report_analysis`, `smart_ops`, and `city_ops`.
+4. Keep or close Edge according to the case definition.
+5. Run an initial three-stage probe.
+6. Probe all three stages every 15 minutes.
+7. On the first authentication failure, wait 3 minutes and probe again.
+8. If the retry is also an authentication failure, record the case lifetime,
+   clean up its browser, and start the next case.
+9. Any successful probe resets the authentication-failure count to zero.
 
-The standalone file contains the required Selenium login sequence and stage
-navigation. Login produces one Cookie snapshot covering the three probe
-stages. The runner records only redacted Cookie metadata for diagnostics.
+A valid case continues indefinitely. There is no maximum case duration.
 
-Cases that retain the browser keep their isolated Edge process alive between
-probes. Cases that close the browser persist the Cookie snapshot and close the
-isolated Edge process after login. Browser cleanup is restricted to processes
-whose command line references the case's own user-data directory.
+## Failure Classification
 
-The runner must never terminate unrelated Edge processes.
+Authentication failure includes HTTP 401 or 403, login-page redirects, known
+single-sign-on timeout responses, and application responses that explicitly
+report an expired Session.
 
-## Persistence and Recovery
+DNS, VPN, TLS, connection, and request-timeout failures are infrastructure
+failures. They do not count as Session expiry and do not start the next case.
+The runner waits 3 minutes and retries until connectivity returns.
 
-State is written atomically through a temporary file and replacement.
-Append-only events are written as JSON Lines and flushed after every record.
+For retained-browser cases, an unexpectedly exited owned Edge process is
+recorded separately. It does not silently become evidence that the Session
+expired.
 
-The active state records at least:
+## Lifetime Result
 
-- Runner PID and process start time.
-- Current case and phase.
-- Case baseline and last successful probe.
-- Consecutive failure count.
-- Next scheduled action.
-- Browser process status.
-- Completed cases.
-- Last error or graceful-stop reason.
+For each case, the runner records:
 
-On normal startup, the runner finds the most recent standalone run:
+- Login completion time.
+- Last successful probe time and elapsed seconds.
+- First confirmed authentication-failure time and elapsed seconds.
+- Retry authentication-failure time and elapsed seconds.
+- Lower lifetime bound: elapsed time of the last successful probe.
+- Upper lifetime bound: elapsed time of the first authentication failure.
+- Browser mode and heartbeat mode.
+- Per-stage status codes and sanitized failure reasons.
 
-- If no resumable run exists, it creates a new timestamped run.
-- If the previous runner PID is dead and the current case has usable state,
-  it resumes that case without a new login when its Cookie snapshot exists
-  and the required retained browser is alive.
-- If the browser is required but no longer alive, or required state is
-  incomplete, it records the interrupted case and starts that case again with
-  a fresh login.
-- It never imports or resumes runs created by the existing project runner.
+The Session lifetime is therefore reported as an interval rather than an
+invented exact expiry time.
 
-A singleton lock prevents two standalone runners from managing the same
-runtime directory. The lock records PID, process start time, and an owner
-token. A lock is removable only when its recorded owner process is no longer
-the same live process.
+## Output
 
-## Commands
+The script creates a timestamped directory beside itself:
 
-The file supports:
-
-```powershell
-python session_lifetime_runner_standalone.py
-python session_lifetime_runner_standalone.py --background
-python session_lifetime_runner_standalone.py --status
-python session_lifetime_runner_standalone.py --stop
+```text
+session_lifetime_results/<run timestamp>/
+├── events.jsonl
+├── results.json
+├── runner.log
+├── headless_retained_idle/
+├── headed_closed_idle/
+├── headed_retained_idle/
+└── headless_closed_heartbeat/
 ```
 
-Default execution runs in the foreground. `--background` starts a detached,
-hidden Python process using the same interpreter and returns after verifying
-that the child acquired the singleton lock. It must not open a persistent
-console window.
+`events.jsonl` contains append-only login, probe, heartbeat, cleanup, and case
+completion events. `results.json` contains the current summary and is updated
+atomically after every case transition.
 
-`--status` reads process and state information without probing or changing the
-session. It reports stale state explicitly when the recorded PID is dead.
+Complete Cookie values, storage tokens, the password, and OTP values are never
+written to events, results, or logs. The case directory may contain the private
+Cookie snapshot required for probes.
 
-`--stop` writes a stop request. The runner observes it during interruptible
-waits, records a graceful stop, cleans up only experiment-owned browser
-processes, releases the singleton lock, and exits. It does not force-kill the
-runner by default.
+## Running
 
-## Logging and Failure Handling
+Foreground execution is the only program mode:
 
-Foreground and background modes write structured operational logs to the
-active run directory. Console output remains concise. Secrets and complete
-Cookie values are redacted.
+```powershell
+python session_lifetime_runner.py
+```
 
-Expected session invalidation follows the two-probe case transition rule.
-Infrastructure errors such as DNS failure, VPN loss, connection timeout, or
-temporarily unavailable probe endpoints do not count as authentication
-failure. They are recorded separately and retried every 3 minutes without
-performing a new login or switching cases. Infrastructure retries continue
-until connectivity recovers or the operator stops the runner. A missing Edge
-process in a retained-browser case is recorded as a browser failure and ends
-that case after the same two-observation confirmation rule.
+Windows may launch the same command in the background with `Start-Process` and
+redirect standard output and error to files. Background process management is
+outside the Python program.
 
-An unhandled exception sets state to `failed`, records a sanitized error,
-cleans up experiment-owned browser processes, and exits nonzero. A later
-launch may recover from the persisted state according to the recovery rules.
+Stopping the Python process stops the experiment. A later launch creates a new
+run and begins again from the first case. There is no internal background
+launcher, stop command, status command, lock file, PID recovery, singleton
+enforcement, automatic restart, or interrupted-run recovery.
 
-## Safety and Validation
+## Dependencies and Security
 
-The implementation must provide a local validation command that checks:
+The Windows machine must provide Python, Microsoft Edge, `selenium`, and
+`requests`.
 
-- Required third-party modules are importable.
-- The configured Edge executable exists.
-- Required configuration values are present.
-- Runtime directories are writable.
-- Probe definitions are structurally valid.
-- Credentials are not emitted by formatting, status, or error paths.
+The username, password, and any configured OTP access values are stored
+directly in the Python file at the user's request. The file and generated
+results must be ignored by Git and kept only on the controlled Windows host.
+Secrets and complete authentication values must not be printed.
 
-Unit-testable scheduling, failure counting, locking, atomic state, recovery,
-and redaction logic must be exercised without performing a real login. A real
-login is an explicit manual acceptance test and must not run as part of the
-automated test suite.
+## Validation
+
+Pure logic for scheduling, two-failure confirmation, failure classification,
+result bounds, atomic JSON writing, and redaction is tested without a real
+login or production HTTP request.
+
+The manual acceptance check runs one real login, verifies the initial
+three-stage probe, confirms the expected browser-retention behavior, and then
+stops the process. Full four-case execution is the experiment itself and is
+not required before the file is considered ready.
