@@ -116,6 +116,111 @@ function Register-ManagedProcess {
     return [pscustomobject]$record
 }
 
+function Test-ManagedProcessIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Identity
+    )
+
+    return (Test-ManagedProcessRecord -Record $Identity)
+}
+
+function Get-ManagedProcessTreeSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RootRecord
+    )
+
+    if (-not (Test-ManagedProcessIdentity -Identity $RootRecord)) {
+        throw "Managed root process identity changed before tree capture"
+    }
+
+    $rootProcessId = [int]$RootRecord.pid
+    $ownedProcessIds = @{}
+    $ownedProcessIds[$rootProcessId] = $true
+
+    if ($env:OS -eq "Windows_NT") {
+        $systemProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+        do {
+            $added = $false
+            foreach ($systemProcess in $systemProcesses) {
+                $processId = [int]$systemProcess.ProcessId
+                $parentProcessId = [int]$systemProcess.ParentProcessId
+                if (-not $ownedProcessIds.ContainsKey($processId) -and
+                    $ownedProcessIds.ContainsKey($parentProcessId)) {
+                    $ownedProcessIds[$processId] = $true
+                    $added = $true
+                }
+            }
+        } while ($added)
+    }
+
+    $snapshot = @()
+    foreach ($processId in @($ownedProcessIds.Keys)) {
+        try {
+            $process = Get-Process -Id $processId -ErrorAction Stop
+            $process.Refresh()
+            $snapshot += [pscustomobject]@{
+                pid = $process.Id
+                process_started_at = $process.StartTime.ToString("o")
+            }
+        } catch {
+            if ($processId -eq $rootProcessId) {
+                throw "Managed root process exited during tree capture: PID $rootProcessId"
+            }
+        }
+    }
+
+    $capturedRoot = $snapshot | Where-Object { [int]$_.pid -eq $rootProcessId } | Select-Object -First 1
+    if ($null -eq $capturedRoot -or -not (Test-ManagedProcessIdentity -Identity $capturedRoot) -or
+        ([DateTimeOffset]$capturedRoot.process_started_at).UtcTicks -ne
+        ([DateTimeOffset]$RootRecord.process_started_at).UtcTicks) {
+        throw "Managed root process identity changed during tree capture: PID $rootProcessId"
+    }
+
+    return @($snapshot)
+}
+
+function Invoke-ManagedTaskkill {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ProcessId
+    )
+
+    if ($env:OS -eq "Windows_NT") {
+        & taskkill.exe /PID $ProcessId /T /F *> $null
+        return $LASTEXITCODE -eq 0
+    }
+
+    try {
+        Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Wait-ManagedProcessTreeExit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$Snapshot,
+        [int]$TimeoutSeconds = 15
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $remaining = @($Snapshot | Where-Object {
+            Test-ManagedProcessIdentity -Identity $_
+        })
+        if ($remaining.Count -eq 0) {
+            return @()
+        }
+        Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
+
+    return @($remaining)
+}
+
 function Stop-ManagedProcessTree {
     param(
         [Parameter(Mandatory = $true)]
@@ -135,23 +240,22 @@ function Stop-ManagedProcessTree {
         return $false
     }
 
-    $pidValue = [int]$record.pid
-    if ($env:OS -eq "Windows_NT") {
-        & taskkill.exe /PID $pidValue /T /F *> $null
-    } else {
-        Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+    $processId = [int]$record.pid
+    $snapshot = @(Get-ManagedProcessTreeSnapshot -RootRecord $record)
+    if ($snapshot.Count -eq 0) {
+        throw "Managed process tree capture was empty: $Name"
+    }
+    if (-not (Invoke-ManagedTaskkill -ProcessId $processId)) {
+        throw "taskkill failed for managed component: $Name (PID $processId)"
     }
 
-    $deadline = (Get-Date).AddSeconds(15)
-    while ((Get-Date) -lt $deadline -and (Get-Process -Id $pidValue -ErrorAction SilentlyContinue)) {
-        Start-Sleep -Milliseconds 200
-    }
-    if (Get-Process -Id $pidValue -ErrorAction SilentlyContinue) {
-        Write-Warning "Managed component did not exit: $Name (PID $pidValue)"
-        return $false
+    $remaining = @(Wait-ManagedProcessTreeExit -Snapshot $snapshot)
+    if ($remaining.Count -gt 0) {
+        $remainingIds = @($remaining | ForEach-Object { [int]$_.pid }) -join ","
+        throw "Managed process tree did not fully exit: $Name; remaining PIDs: $remainingIds"
     }
 
-    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-    Write-Host "[STOPPED] $Name (PID $pidValue)"
+    Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+    Write-Host "[STOPPED] $Name (PID $processId)"
     return $true
 }

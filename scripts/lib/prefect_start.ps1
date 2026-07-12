@@ -232,37 +232,6 @@ while (`$true) {
 "@
 }
 
-function Assert-NoOnlineWorker {
-    $checkScript = @'
-import asyncio
-import sys
-
-from prefect.client.orchestration import get_client
-
-
-async def has_online_worker(work_pool_name: str) -> bool:
-    async with get_client() as client:
-        workers = await client.read_workers_for_work_pool(work_pool_name)
-    return any(
-        getattr(worker.status, "value", worker.status) == "ONLINE"
-        for worker in workers
-    )
-
-
-if asyncio.run(has_online_worker(sys.argv[1])):
-    raise SystemExit(3)
-'@
-
-    $checkScript | & $PythonExe - $WorkPool
-    $checkExitCode = $LASTEXITCODE
-    if ($checkExitCode -eq 3) {
-        throw "Work Pool 已有在线 Worker，拒绝重复启动: $WorkPool"
-    }
-    if ($checkExitCode -ne 0) {
-        throw "检查 Work Pool Worker 状态失败: $WorkPool"
-    }
-}
-
 Test-PrefectDatabase
 
 $serverArgs = if ($UseSqliteDebug) { "server start --no-services --workers 1" } else { "server start --workers 1" }
@@ -287,7 +256,6 @@ switch ($Mode) {
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 90 seconds. Refusing to start Worker."
         }
-        Assert-NoOnlineWorker
         if ($Detached) {
             Start-DetachedWindow `
                 -Name $workerManagedName `
@@ -307,7 +275,6 @@ switch ($Mode) {
         if (-not $serverReady) {
             throw "Prefect Server was not ready within 300 seconds. Check the Prefect Server window logs."
         }
-        Assert-NoOnlineWorker
         Start-DetachedWindow `
             -Name $workerManagedName `
             -Command $workerCommand `

@@ -526,12 +526,13 @@ def test_prefect_worker_command_applies_limit():
     assert '"--limit", $WorkerLimit' in source or "--limit '$WorkerLimit'" in source
 
 
-def test_prefect_worker_start_rejects_online_worker_for_same_pool():
+def test_prefect_worker_start_uses_registry_as_the_only_duplicate_authority():
     script = ROOT / "scripts" / "lib" / "prefect_start.ps1"
     source = script.read_text(encoding="utf-8")
 
-    assert "read_workers" in source
-    assert "Work Pool 已有在线 Worker，拒绝重复启动: $WorkPool" in source
+    assert "Assert-ManagedProcessAvailable" in source
+    assert "Assert-NoOnlineWorker" not in source
+    assert "read_workers_for_work_pool" not in source
 
     pwsh = shutil.which("pwsh")
     assert pwsh is not None
@@ -552,7 +553,7 @@ $ast.FindAll({{
         capture_output=True,
         text=True,
     )
-    assert "Assert-NoOnlineWorker" in completed.stdout.splitlines()
+    assert "Assert-NoOnlineWorker" not in completed.stdout.splitlines()
 
 
 def test_lifecycle_scripts_use_project_process_registry():
@@ -662,10 +663,14 @@ def test_managed_components_are_registered_and_stopped_in_fixed_order():
     positions = [stop.index(f'"{name}"') for name in expected_order]
     assert positions == sorted(positions)
     assert "Stop-ManagedProcessTree -Name $_" in stop
+    assert '$ErrorActionPreference = "Stop"' in stop
     registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").read_text(
         encoding="utf-8"
     )
-    assert "taskkill.exe /PID $pidValue /T /F" in registry
+    assert "Get-ManagedProcessTreeSnapshot" in registry
+    assert "Test-ManagedProcessIdentity" in registry
+    assert "Invoke-ManagedTaskkill" in registry
+    assert "Wait-ManagedProcessTreeExit" in registry
     assert "Get-NetTCPConnection" not in stop
     assert "prefect_stop.ps1" not in stop
 

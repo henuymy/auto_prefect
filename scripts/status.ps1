@@ -158,8 +158,14 @@ function Write-LockStatus {
     try {
         $metadata = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
         $ownerPid = [int]$metadata.pid
-        $acquiredAt = [DateTimeOffset]::Parse([string]$metadata.acquired_at)
-        $heldSeconds = [math]::Max(0, [math]::Floor(([DateTimeOffset]::Now - $acquiredAt).TotalSeconds))
+        $lockStartedAt = if (-not [string]::IsNullOrWhiteSpace([string]$metadata.created_at)) {
+            [DateTimeOffset]::Parse([string]$metadata.created_at)
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$metadata.acquired_at)) {
+            [DateTimeOffset]::Parse([string]$metadata.acquired_at)
+        } else {
+            throw "Lock timestamp is missing"
+        }
+        $heldSeconds = [math]::Max(0, [math]::Floor(([DateTimeOffset]::Now - $lockStartedAt).TotalSeconds))
         Write-Host "${FileName}: owner PID=$ownerPid / held seconds=$heldSeconds"
     } catch {
         Write-Host "${FileName}: not held / owner PID=none / held seconds=0"

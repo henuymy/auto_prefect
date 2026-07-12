@@ -3,7 +3,7 @@ param(
     [int]$FrontendPort = 5173
 )
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 Import-ProjectRuntimeConfig | Out-Null
