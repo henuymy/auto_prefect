@@ -17,7 +17,12 @@ import requests
 
 from services.browser_session import close_browser_session
 from services.json_excel_service import get_by_path
-from services.method_service import build_cookie_jar, build_headers, resolve_storage_references
+from services.method_service import (
+    AuthenticationMaterialMissingError,
+    build_cookie_jar,
+    build_headers,
+    resolve_storage_references,
+)
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -382,6 +387,15 @@ def validate_stage_probes(cookie_dump, required_stages=None, stage_probes=None):
             continue
         try:
             results.append(execute_stage_probe(stage_name, probe, stage))
+        except AuthenticationMaterialMissingError:
+            results.append(
+                {
+                    "stage": stage_name,
+                    "enabled": True,
+                    "ok": False,
+                    "reason": "missing_authentication_material",
+                }
+            )
         except Exception as exc:
             results.append({"stage": stage_name, "enabled": True, "ok": False, "reason": "probe_error", "error": str(exc)})
     return {
@@ -394,7 +408,11 @@ PROBE_HEALTHY = "healthy"
 PROBE_AUTHENTICATION_FAILURE = "authentication"
 PROBE_INFRASTRUCTURE_FAILURE = "infrastructure"
 AUTHENTICATION_STATUS_CODES = {302, 401, 403}
-AUTHENTICATION_FAILURE_REASONS = {"session_expired", "missing_stage"}
+AUTHENTICATION_FAILURE_REASONS = {
+    "session_expired",
+    "missing_stage",
+    "missing_authentication_material",
+}
 
 
 class SessionInfrastructureError(RuntimeError):

@@ -52,6 +52,12 @@ class EmptyReportDataError(RuntimeError):
             f"下载接口返回业务空数据: report={report_name}, "
             f"returncode={returncode}, returnmsg={returnmsg}, url={url}"
         )
+
+
+class AuthenticationMaterialMissingError(RuntimeError):
+    """Raised when a configured request authentication source has no value."""
+
+
 XL_OPENXML_WORKBOOK = 51
 
 
@@ -196,12 +202,15 @@ def build_headers(report, stage):
     headers = resolve_storage_references(dict(report.get("headers") or {}), stage)
     for header_name, cookie_name in (report.get("headers_from_cookies") or {}).items():
         cookie_value = find_cookie_value(stage, cookie_name)
-        if cookie_value:
-            headers[header_name] = cookie_value
+        if not cookie_value:
+            raise AuthenticationMaterialMissingError(
+                f"动态请求头 {header_name} 未能从 Cookie {cookie_name} 取到值，session 已过期或 Cookie 为空"
+            )
+        headers[header_name] = cookie_value
     for header_name, storage_path in (report.get("headers_from_session_storage") or {}).items():
         storage_value = find_storage_value(stage, storage_path, storage_type="session_storage")
         if not storage_value:
-            raise RuntimeError(
+            raise AuthenticationMaterialMissingError(
                 f"动态请求头 {header_name} 未能从 sessionStorage.{storage_path} 取到值，"
                 "session 已过期或页面尚未写入 Storage"
             )
@@ -209,7 +218,7 @@ def build_headers(report, stage):
     for header_name, storage_path in (report.get("headers_from_local_storage") or {}).items():
         storage_value = find_storage_value(stage, storage_path, storage_type="local_storage")
         if not storage_value:
-            raise RuntimeError(
+            raise AuthenticationMaterialMissingError(
                 f"动态请求头 {header_name} 未能从 localStorage.{storage_path} 取到值，"
                 "session 已过期或页面尚未写入 Storage"
             )
@@ -220,7 +229,9 @@ def build_headers(report, stage):
             selected_names = [item.strip() for item in selected_names.split(",") if item.strip()]
         cookie_string = build_cookie_string(stage, selected_names)
         if not cookie_string:
-            raise RuntimeError(f"动态请求头 {header_name} 未能从 Cookie 生成，session 已过期或 Cookie 为空")
+            raise AuthenticationMaterialMissingError(
+                f"动态请求头 {header_name} 未能从 Cookie 生成，session 已过期或 Cookie 为空"
+            )
         headers[header_name] = cookie_string
     return headers
 

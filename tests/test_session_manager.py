@@ -3,6 +3,8 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from services import session_manager
 from services.session_manager import (
     SessionInfrastructureError,
@@ -449,6 +451,57 @@ def test_probe_classification_prioritizes_authentication_when_failures_are_mixed
     )
 
     assert result == "authentication"
+
+
+@pytest.mark.parametrize(
+    ("stage_authentication_material", "probe_authentication_source"),
+    [
+        ({"cookies": []}, {"headers_from_cookies": {"Authorization": "access_token"}}),
+        (
+            {"cookies": [], "session_storage": {}},
+            {"headers_from_session_storage": {"Authorization": "access_token"}},
+        ),
+        (
+            {"cookies": [], "local_storage": {}},
+            {"headers_from_local_storage": {"Authorization": "access_token"}},
+        ),
+    ],
+)
+def test_probe_classification_marks_missing_authentication_material_as_authentication(
+    monkeypatch,
+    stage_authentication_material,
+    probe_authentication_source,
+):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.responses = []
+    result = validate_stage_probes(
+        {
+            "stages": [
+                {
+                    "stage": "smart_ops",
+                    **stage_authentication_material,
+                }
+            ]
+        },
+        ["smart_ops"],
+        {
+            "smart_ops": {
+                "method": "GET",
+                "url": "https://example/refresh",
+                **probe_authentication_source,
+            }
+        },
+    )
+
+    assert result["results"] == [
+        {
+            "stage": "smart_ops",
+            "enabled": True,
+            "ok": False,
+            "reason": "missing_authentication_material",
+        }
+    ]
+    assert classify_probe_validation(result) == "authentication"
 
 
 def test_lock_is_stale_when_recorded_pid_is_gone(monkeypatch):
