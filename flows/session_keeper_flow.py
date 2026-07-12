@@ -82,10 +82,12 @@ def notify_recovery(alert_config, recovery):
 def run_session_keeper(config_path="config/modules/session_keeper.json"):
     config, _ = load_keeper_config(config_path)
     run_id = current_flow_run_id()
-    now = datetime.now().astimezone()
     try:
         result = run_prepare_session(config["session"])
     except SessionLoginError as exc:
+        next_scheduled_at = next_quarter_hour(
+            datetime.now().astimezone()
+        ).isoformat()
         notify_failure(
             config["alert"],
             {
@@ -96,11 +98,14 @@ def run_session_keeper(config_path="config/modules/session_keeper.json"):
                 "attempt_count": exc.attempt_count,
                 "errors": exc.errors,
                 "flow_run_id": run_id,
-                "next_scheduled_at": next_quarter_hour(now).isoformat(),
+                "next_scheduled_at": next_scheduled_at,
             },
         )
         raise
     except SessionInfrastructureError as exc:
+        next_scheduled_at = next_quarter_hour(
+            datetime.now().astimezone()
+        ).isoformat()
         notify_failure(
             config["alert"],
             {
@@ -111,7 +116,7 @@ def run_session_keeper(config_path="config/modules/session_keeper.json"):
                 "attempt_count": 0,
                 "errors": [str(exc)],
                 "flow_run_id": run_id,
-                "next_scheduled_at": next_quarter_hour(now).isoformat(),
+                "next_scheduled_at": next_scheduled_at,
             },
         )
         raise
