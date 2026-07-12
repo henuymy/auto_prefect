@@ -1,8 +1,10 @@
 """Utilities for writing staged Selenium cookies to JSON."""
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 
 def capture_web_storage(driver):
@@ -92,11 +94,23 @@ class CookieRecorder:
             "config_path": self.config_path,
             "stages": self.stages,
         }
-        with self.output_path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, ensure_ascii=False)
+        temporary = self.output_path.with_name(
+            f".{self.output_path.name}.{uuid4().hex}.tmp"
+        )
+        try:
+            with temporary.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, self.output_path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def resolve_cookie_dump_path(base_dir, config):
+    override = os.environ.get("AUTO_NOTIFY_COOKIE_DUMP_PATH")
+    if override:
+        return Path(override).resolve()
     cookie_dump_config = config.get("cookie_dump", {})
     output_file = cookie_dump_config.get("output_file", "runtime/cookie_dump.json")
     output_path = Path(output_file)

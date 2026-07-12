@@ -181,7 +181,7 @@ git commit -m "feat: classify session probe failures"
 
 **Interfaces:**
 - Consumes: `classify_probe_validation(...)` from Task 1.
-- Produces: `SessionLoginError(RuntimeError)` with `attempt_count: int` and redacted `errors: list[str]`.
+- Produces: `SessionLoginError(RuntimeError)` with `attempt_count: int` and internal `errors: list[str]`; callers must pass those strings through the Task 3 redactor before external logging or alerting.
 - Produces: `run_login_with_retry(login_attempt: Callable[[], dict], *, max_attempts: int = 2, retry_delay_seconds: int = 60, sleeper=time.sleep) -> dict`, where one attempt includes browser cleanup, login, Cookie synchronization, static validation, and three-stage post-login probes.
 - Preserves: `prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None) -> dict`.
 
@@ -779,6 +779,26 @@ def test_keeper_infrastructure_failure_never_requests_login(monkeypatch):
         keeper_module.run_session_keeper("config/modules/session_keeper.json")
 
     assert alert_calls == [True]
+
+
+def test_prefect_retry_condition_retries_only_infrastructure_failures():
+    class FakeState:
+        def __init__(self, error):
+            self.error = error
+
+        def result(self):
+            raise self.error
+
+    assert keeper_module.retry_infrastructure_only(
+        None,
+        None,
+        FakeState(SessionInfrastructureError("ConnectTimeout")),
+    ) is True
+    assert keeper_module.retry_infrastructure_only(
+        None,
+        None,
+        FakeState(SessionLoginError([RuntimeError("one"), RuntimeError("two")])),
+    ) is False
 ```
 
 - [ ] **Step 2: Run Keeper tests and verify RED**
@@ -805,7 +825,7 @@ def prepare_session_task(config, force_refresh=False):
     )
 ```
 
-Do not embed alerting, retries, or Keeper-specific policy in the task. Keeper uses `.with_options(retries=1, retry_delay_seconds=60)` so infrastructure exceptions receive one Prefect retry. Authentication login retry remains internal to Session Manager and is not duplicated by Prefect.
+Do not embed alerting or Keeper-specific policy in the shared task. Keeper applies `.with_options(retries=1, retry_delay_seconds=60, retry_condition_fn=retry_infrastructure_only)` so only infrastructure exceptions receive one Prefect retry. `SessionLoginError` must return `False` from the retry condition because its two login attempts already occurred inside Session Manager.
 
 - [ ] **Step 4: Implement the Keeper Flow and testable core**
 
@@ -856,10 +876,21 @@ def current_flow_run_id():
     return str(flow_run.id or "manual")
 
 
+def retry_infrastructure_only(_task, _task_run, state):
+    try:
+        state.result()
+    except SessionInfrastructureError:
+        return True
+    except Exception:
+        return False
+    return False
+
+
 def run_prepare_session(config):
     return prepare_session_task.with_options(
         retries=1,
         retry_delay_seconds=60,
+        retry_condition_fn=retry_infrastructure_only,
     )(config, force_refresh=False)
 
 

@@ -83,6 +83,29 @@ def make_login(tmp_path: Path, **browser_overrides) -> login_service.AutoLogin:
     return instance
 
 
+def test_login_source_does_not_print_actual_username():
+    source = (PROJECT_ROOT / "services" / "login_service.py").read_text(encoding="utf-8")
+
+    assert 'print(f"[INFO] 输入用户名: {username}")' not in source
+
+
+def test_auto_login_accepts_in_memory_config_without_reading_disk(monkeypatch):
+    monkeypatch.setattr(
+        login_service,
+        "load_json_with_local_override",
+        lambda path: (_ for _ in ()).throw(AssertionError(f"unexpected read: {path}")),
+    )
+    config = {
+        "credentials": {"username": "memory-user", "password": "memory-password"},
+        "cookie_dump": {"enabled": False},
+    }
+
+    login = login_service.AutoLogin(config=config, config_label="session-experiment")
+
+    assert login.config == config
+    assert str(login.config_path) == "session-experiment"
+
+
 def test_init_driver_enables_headless_edge(monkeypatch, tmp_path):
     captured = {}
     fake_driver = FakeDriver()
@@ -109,13 +132,48 @@ def test_init_driver_enables_headless_edge(monkeypatch, tmp_path):
     assert login.driver.implicit_wait_seconds == 0
 
 
-def test_headless_switch_controls_browser_retention():
-    assert browser_config(
-        {"browser": {"headless": True, "keep_open_after_login": True}}
-    )["keep_open_after_login"] is False
-    assert browser_config(
-        {"browser": {"headless": False, "keep_open_after_login": False}}
-    )["keep_open_after_login"] is True
+def test_init_driver_detaches_explicitly_retained_headless_edge(monkeypatch, tmp_path):
+    captured = {}
+    fake_driver = FakeDriver()
+    monkeypatch.setattr(
+        login_service,
+        "close_browser_session",
+        lambda *args, **kwargs: {"stopped_pids": [], "remaining_pids": []},
+    )
+
+    def create_driver(*, options):
+        captured["options"] = options
+        return fake_driver
+
+    monkeypatch.setattr(login_service.webdriver, "Edge", create_driver)
+
+    login = make_login(tmp_path, retain_after_login=True)
+    login.init_driver()
+
+    options = captured["options"]
+    assert "--headless=new" in options.arguments
+    assert options.experimental_options["detach"] is True
+
+
+def test_headless_browser_is_ephemeral_by_default():
+    config = browser_config({"browser": {"headless": True}})
+
+    assert config["retain_after_login"] is False
+
+
+def test_headless_browser_can_be_explicitly_retained():
+    config = browser_config(
+        {"browser": {"headless": True, "retain_after_login": True}}
+    )
+
+    assert config["headless"] is True
+    assert config["retain_after_login"] is True
+
+
+def test_headed_browser_keeps_legacy_retained_default():
+    config = browser_config({"browser": {"headless": False}})
+
+    assert config["retain_after_login"] is True
 
 
 def test_init_driver_uses_original_retained_mode_when_headed(monkeypatch, tmp_path):

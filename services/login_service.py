@@ -1,5 +1,6 @@
 """Selenium login flow for capturing NGBOSS/USM cookies."""
 import json
+import copy
 import shutil
 import time
 from datetime import datetime
@@ -48,9 +49,13 @@ def popup_input(prompt: str, title: str = "输入") -> str:
 
 
 class AutoLogin:
-    def __init__(self, config_path=None):
-        self.config_path = Path(config_path).resolve() if config_path else PROJECT_DIR / "config/modules/login_config.json"
-        self.config, _ = load_json_with_local_override(self.config_path)
+    def __init__(self, config_path=None, *, config=None, config_label=None):
+        if config is not None:
+            self.config_path = Path(config_label or "in-memory-login-config")
+            self.config = copy.deepcopy(config)
+        else:
+            self.config_path = Path(config_path).resolve() if config_path else PROJECT_DIR / "config/modules/login_config.json"
+            self.config, _ = load_json_with_local_override(self.config_path)
         self.driver = None
         self.pending_otp_message_id = None
         self.otp_wait_context = None
@@ -307,7 +312,7 @@ class AutoLogin:
             options.add_argument(f"--user-data-dir={browser['user_data_dir']}")
         if browser["headless"]:
             options.add_argument("--headless=new")
-        elif browser["keep_open_after_login"]:
+        if browser["retain_after_login"]:
             options.add_experimental_option("detach", True)
         options.add_argument('--ignore-certificate-errors')
         options.add_argument('--allow-insecure-localhost')
@@ -337,7 +342,7 @@ class AutoLogin:
         print(f"[INFO] Edge浏览器已启动（{browser_mode}，已忽略SSL证书错误）")
 
     def keep_open_after_login(self):
-        return browser_config(self.config)["keep_open_after_login"]
+        return browser_config(self.config)["retain_after_login"]
 
     def record_browser_session(self):
         if not self.driver:
@@ -360,7 +365,7 @@ class AutoLogin:
     def fill_login_credentials(self):
         wait = WebDriverWait(self.driver, 30)
         username = self.config['credentials']['username']
-        print(f"[INFO] 输入用户名: {username}")
+        print("[INFO] 输入用户名: <configured>")
         login_name = wait.until(EC.presence_of_element_located((By.ID, "loginName")))
         self.set_input_value(login_name, username)
         self.confirm_terminal_tool_dialog_if_present()
@@ -1034,4 +1039,9 @@ class AutoLogin:
 
 def run_login(config_path):
     login = AutoLogin(config_path)
+    login.run()
+
+
+def run_login_config(config, config_label="in-memory-login-config"):
+    login = AutoLogin(config=config, config_label=config_label)
     login.run()

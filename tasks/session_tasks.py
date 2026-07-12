@@ -8,5 +8,9 @@ from services.session_manager import prepare_session
 
 
 @task
-def prepare_session_task(config, force_refresh=False):
-    return prepare_session(config, force_refresh=force_refresh, event_logger=get_run_logger())
+def prepare_session_task(config: dict, force_refresh: bool = False) -> dict:
+    return prepare_session(
+        config,
+        force_refresh=force_refresh,
+        event_logger=get_run_logger(),
+    )

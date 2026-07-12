@@ -139,6 +139,12 @@ Write-Host "启动 Prefect Worker..."
     -WorkPool $WorkPool `
     -UseSqliteDebug:$UseSqliteDebug
 
+Write-Host "触发首次 Session Keeper 检查..."
+& $PythonExe -m prefect deployment run "session-keeper-flow/session-keeper"
+if ($LASTEXITCODE -ne 0) {
+    throw "首次 Session Keeper Flow 提交失败"
+}
+
 if (-not $SkipWeb) {
     Write-Host "启动管理端..."
     & (Join-Path $PSScriptRoot "lib\start_web.ps1") `

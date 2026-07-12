@@ -21,6 +21,12 @@ from tasks.session_tasks import prepare_session_task
 from tasks.template_tasks import update_template_task
 from services.compare_service import find_empty_download_sheet_mappings
 from services.method_service import EmptyReportDataError
+from services.session_retry_service import (
+    RefreshBudget,
+    is_session_expired_error,  # noqa: F401 - backward-compatible flow export
+    run_with_session_refresh_once,
+)
+from services.session_business_failure_service import run_with_business_session_reporting
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
 
@@ -32,6 +38,44 @@ except ImportError as exc:  # pragma: no cover - runtime dependency guard
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "local.json"
 EXAMPLE_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "example.json"
+HEALTHY_SESSION_STATUSES = {"reused", "reused_after_lock", "refreshed"}
+
+
+def notify_session_result_is_healthy(result):
+    return isinstance(result, dict) and result.get("status") in HEALTHY_SESSION_STATUSES
+
+
+def run_notify_session_preparation(operation, recoverer=None):
+    def validate_preparation_result():
+        result = operation()
+        if result.get("status") == "invalid":
+            raise RuntimeError(f"会话不可用: {result.get('reason')}")
+        return result
+
+    return run_with_business_session_reporting(
+        validate_preparation_result,
+        trigger_source="auto-notify-flow",
+        recover_on_success=True,
+        recoverer=recoverer,
+        recovery_predicate=notify_session_result_is_healthy,
+    )
+
+
+def run_notify_download_with_session_refresh(
+    operation,
+    refresh_session,
+    refresh_budget,
+    reporter=None,
+):
+    return run_with_business_session_reporting(
+        lambda: run_with_session_refresh_once(
+            operation,
+            refresh_session,
+            refresh_budget=refresh_budget,
+        ),
+        trigger_source="auto-notify-flow",
+        reporter=reporter,
+    )
 
 
 def load_config(config_path=None):
@@ -71,18 +115,6 @@ def deep_merge(base, override):
         else:
             result[key] = copy.deepcopy(value)
     return result
-
-
-def is_session_expired_error(exc):
-    message = str(exc)
-    markers = (
-        "session 已过期",
-        "session_expired",
-        "reCode=1101",
-        "单点登录超时",
-        "登录页",
-    )
-    return any(marker in message for marker in markers)
 
 
 def assert_report_schema_contract(report_cfg):
@@ -357,12 +389,17 @@ def auto_notify_flow(config_path=None):
         login_config = build_login_config(read_json(steps["login"]["config_path"]), report_cfg)
 
     if steps.get("login", {}).get("enabled", False):
-        session_result = prepare_session_task(
-            login_config,
-            force_refresh=bool(steps["login"].get("force_refresh", False)),
+        initial_force_refresh = bool(steps["login"].get("force_refresh", False))
+        run_notify_session_preparation(
+            lambda: prepare_session_task(
+                login_config,
+                force_refresh=initial_force_refresh,
+            ),
         )
-        if session_result.get("status") == "invalid":
-            raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
+    else:
+        initial_force_refresh = False
+
+    refresh_budget = RefreshBudget(consumed=initial_force_refresh)
 
     wait_cfg = parse_wait_for_change_config(config)
     wait_started_at = monotonic()
@@ -371,27 +408,28 @@ def auto_notify_flow(config_path=None):
         if not steps.get("download", {}).get("enabled", True):
             return None
         download_config = build_download_config(read_json(steps["download"]["config_path"]), report_cfg)
-        try:
+
+        def download_operation():
             return download_reports_task(
                 download_config,
                 dry_run=bool(steps["download"].get("dry_run", False)),
                 debug=bool(steps["download"].get("debug", False)),
             )
-        except RuntimeError as exc:
-            if not is_session_expired_error(exc) or not steps.get("login", {}).get("enabled", False):
-                raise
+
+        if not steps.get("login", {}).get("enabled", False):
+            return download_operation()
+
+        def refresh_session():
             logger.warning("下载失败（session 过期），强制重新登录后重试")
-            session_result = prepare_session_task(
-                login_config,
-                force_refresh=True,
+            return run_notify_session_preparation(
+                lambda: prepare_session_task(login_config, force_refresh=True)
             )
-            if session_result.get("status") == "invalid":
-                raise RuntimeError(f"重新登录失败: {session_result.get('reason')}") from exc
-            return download_reports_task(
-                download_config,
-                dry_run=bool(steps["download"].get("dry_run", False)),
-                debug=bool(steps["download"].get("debug", False)),
-            )
+
+        return run_notify_download_with_session_refresh(
+            download_operation,
+            refresh_session,
+            refresh_budget,
+        )
 
     attempt = 0
     compare_result = None

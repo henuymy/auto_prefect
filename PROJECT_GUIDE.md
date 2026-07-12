@@ -99,6 +99,10 @@ Prefect Work Pool 统一为 `default-agent-pool`。`prefect.yaml`、部署文件
 - 数据库迁移唯一入口为：`alembic -c alembic_dashboard_v2.ini upgrade head`。
 - 运行状态使用 V2 collection-run 存储；状态接口和任务入口不得导入 V1 run store 或 V1 trigger 路径。
 
+### 会话生命周期约定
+
+Session Keeper 和所有业务 Flow 必须复用共享 Session Manager 与全局登录锁。不得新增绕过该管理器或锁的直接登录入口；Windows 运行时应保留 Edge 用户会话，业务重试仅允许在明确的会话失效后强刷新一次并重试失败步骤一次。
+
 ### 运行入口
 
 当前开发环境总入口为：
@@ -150,3 +154,12 @@ pwsh -File scripts/run.ps1
 - 配置或迁移：在被忽略的 `config/runtime.local.json` 中配置目标 PostgreSQL 测试库；不迁移旧 Prefect 数据；移除遗留的 Work Pool。
 - 验证：环境契约测试 19 项通过；Prefect API health 为 200；`default-agent-pool` 为 READY 且 Worker ONLINE。
 - 风险与回滚：切换回旧库只需恢复本地 URL 并重启；正式环境应新建独立空库，不能合并旧 Prefect 内部表。
+
+### 2026-07-12 - Session Keeper 运维约定
+
+- 原因：共享会话保活、故障分类和业务刷新需要统一的 Windows 运维边界。
+- 修改内容：记录保留 Edge、固定十五分钟调度、登录重试、基础设施失败处理，以及共享 Session Manager 和全局登录锁约束。
+- 涉及文件：`README.md`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无；运行时私密覆盖仍不得纳入版本控制。
+- 验证：执行 Session Keeper 聚焦测试、全量测试、JSON/YAML 解析、敏感信息扫描和 `git diff --check`。
+- 风险与回滚：本次仅修改文档；回滚相应文档提交即可。
