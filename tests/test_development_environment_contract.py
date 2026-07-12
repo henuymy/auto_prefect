@@ -289,6 +289,24 @@ def test_prefect_deployments_use_the_runtime_default_work_pool():
         assert "default-agent-pool" in source
 
 
+def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
+    prefect_config = (ROOT / "prefect.yaml").read_text(encoding="utf-8")
+
+    assert "name: session-keeper" in prefect_config
+    assert "flows/session_keeper_flow.py:session_keeper_flow" in prefect_config
+    assert 'cron: "*/15 * * * *"' in prefect_config
+    assert "timezone: Asia/Shanghai" in prefect_config
+
+
+def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    worker_marker = 'Write-Host "启动 Prefect Worker..."'
+    keeper_command = 'prefect deployment run "session-keeper-flow/session-keeper"'
+    assert keeper_command in source
+    assert source.index(worker_marker) < source.index(keeper_command)
+
+
 def test_unified_runtime_entry_points_start_services_without_running_flows():
     run_script = ROOT / "scripts" / "run.ps1"
     stop_script = ROOT / "scripts" / "stop.ps1"
