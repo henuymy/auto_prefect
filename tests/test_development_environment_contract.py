@@ -4,6 +4,8 @@ import shutil
 import subprocess
 import tomllib
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = [
@@ -290,21 +292,50 @@ def test_prefect_deployments_use_the_runtime_default_work_pool():
 
 
 def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
-    prefect_config = (ROOT / "prefect.yaml").read_text(encoding="utf-8")
+    prefect_config = yaml.safe_load(
+        (ROOT / "prefect.yaml").read_text(encoding="utf-8")
+    )
+    keeper_deployments = [
+        deployment
+        for deployment in prefect_config["deployments"]
+        if deployment["name"] == "session-keeper"
+    ]
 
-    assert "name: session-keeper" in prefect_config
-    assert "flows/session_keeper_flow.py:session_keeper_flow" in prefect_config
-    assert 'cron: "*/15 * * * *"' in prefect_config
-    assert "timezone: Asia/Shanghai" in prefect_config
+    assert keeper_deployments == [
+        {
+            "name": "session-keeper",
+            "entrypoint": "flows/session_keeper_flow.py:session_keeper_flow",
+            "parameters": {"config_path": "config/modules/session_keeper.json"},
+            "schedules": [
+                {
+                    "cron": "*/15 * * * *",
+                    "timezone": "Asia/Shanghai",
+                    "active": True,
+                }
+            ],
+            "work_pool": {
+                "name": "default-agent-pool",
+                "work_queue_name": "default",
+            },
+        }
+    ]
 
 
 def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():
     source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
 
-    worker_marker = 'Write-Host "启动 Prefect Worker..."'
+    worker_command = """\
+& (Join-Path $PSScriptRoot "lib\\prefect_start.ps1") `
+    -Mode worker `
+"""
     keeper_command = 'prefect deployment run "session-keeper-flow/session-keeper"'
-    assert keeper_command in source
-    assert source.index(worker_marker) < source.index(keeper_command)
+    web_marker = "if (-not $SkipWeb)"
+    keeper_line = next(line for line in source.splitlines() if keeper_command in line)
+
+    assert source.count(keeper_command) == 1
+    assert source.index(worker_command) < source.index(keeper_command)
+    assert source.index(keeper_command) < source.index(web_marker)
+    assert "--watch" not in keeper_line
 
 
 def test_unified_runtime_entry_points_start_services_without_running_flows():
