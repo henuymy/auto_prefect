@@ -89,7 +89,7 @@ config/runtime.local.example.json
 
 其中维护 Prefect PostgreSQL 与驾驶舱 MySQL V2 的地址、端口、数据库、账号和密码。`prefect.postgres.url` 直接指定 Prefect 使用的数据库，不再从 `/prefect` 派生 `/prefect_dev`。当前测试库名为 `prefect_test`；后续正式切换时创建新的空库并只修改该 URL。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2` 和 `dashboard_v2`；配置值不应写入 README、本文件或 Git 提交。
 
-Prefect Work Pool 统一为 `default-agent-pool`。`prefect.yaml`、部署文件、后端发布服务和 `runtime.work_pool` 必须保持一致；`scripts/run.ps1` 会在 Pool 不存在时创建它，再同步全部部署并启动 Worker。
+Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
 
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
 
@@ -105,13 +105,20 @@ Session Keeper 和所有业务 Flow 必须复用共享 Session Manager 与全局
 
 ### 运行入口
 
-当前开发环境总入口为：
+环境初始化、启动、状态和停止入口为：
 
 ```powershell
+pwsh -File scripts/setup_windows_env.ps1
 pwsh -File scripts/run.ps1
+pwsh -File scripts/status.ps1
+pwsh -File scripts/stop.ps1
 ```
 
-它启动 Prefect Server、Worker、FastAPI 和 React 前端。通报与驾驶舱采集通过 Prefect deployment 的 Cron 执行；启动服务不会自动触发全部通报，避免重复发送通知。停止和状态检查分别使用 `scripts/stop.ps1` 与 `scripts/status.ps1`。
+系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。该脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`，并主动提交一次 Session Keeper；通报与驾驶舱采集仍由 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
+
+自动调度的 Notify Run 比预计时间晚超过 10 分钟时取消，手工 Notify Run 保留。过期 Session Keeper 和高频 Dashboard Run 不补跑。处于 `RUNNING`、`CANCELLING` 或 `PAUSED` 的本项目 Run 会阻止替代 Worker 启动，必须人工处理。Worker 监督进程在崩溃 30 秒后重启 Worker；Prefect Server 需要手工执行 `scripts/run.ps1` 恢复。`scripts/stop.ps1` 只能停止 `C:\AutoNotifyRuntime\processes` 中已登记且身份匹配的进程。
+
+所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\locks\excel_com.lock` 串行，登录刷新通过 `login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
 
 ## 四、变更记录
 
@@ -163,3 +170,12 @@ pwsh -File scripts/run.ps1
 - 配置或迁移：无；运行时私密覆盖仍不得纳入版本控制。
 - 验证：执行 Session Keeper 聚焦测试、全量测试、JSON/YAML 解析、敏感信息扫描和 `git diff --check`。
 - 风险与回滚：本次仅修改文档；回滚相应文档提交即可。
+
+### 2026-07-13 - 三 Work Pool Windows 运维流程
+
+- 原因：单 Pool 说明已不符合 Session、Dashboard、Notify 分池部署和统一共享运行目录。
+- 修改内容：记录手工启动、`1 / 4 / 6` Pool 拓扑、积压取消、Worker 监督、Server 手工恢复、共享 Excel/登录锁及受管进程停止边界。
+- 涉及文件：`README.md`、`PROJECT_GUIDE.md`、`scripts/setup_windows_env.ps1`、`tests/test_development_environment_contract.py`。
+- 配置或迁移：在被忽略的 `config/runtime.local.json` 中维护 `C:\AutoNotifyRuntime` 与三 Pool 配置；正式 Notify 上限为 6。
+- 验证：运行全量 Pytest、PowerShell 语法解析、`prefect.yaml` 解析及受控 Windows 验收。
+- 风险与回滚：回滚文档和 setup 变更不会停止已运行服务；运行进程只通过当前 Worktree 的注册记录管理。

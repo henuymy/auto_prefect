@@ -112,16 +112,33 @@ scripts/prefect_env_prod.local.ps1
 `scripts/environment.local.ps1` 和旧的 `scripts/prefect_env_prod.local.ps1`。
 `prefect.postgres.url` 指定 Prefect 直接使用的 PostgreSQL 数据库；测试环境可使用
 `prefect_test`，正式环境可切换为新的干净数据库。
-当前测试配置使用 `49.233.78.70:5432/prefect_test`，默认 Work Pool 为
-`default-agent-pool`。首次执行 `scripts/run.ps1` 会初始化 Prefect 元数据、创建
-Work Pool 并同步仓库中的部署；不会迁移旧项目的 Prefect 历史数据。
+运行配置必须声明固定共享目录 `C:\AutoNotifyRuntime` 和三个 Process Work Pool：
+
+| Work Pool | 并发上限 | 运行内容 |
+| --- | ---: | --- |
+| `windows-session-pool` | 1 | Session Keeper |
+| `windows-dashboard-pool` | 4 | 驾驶舱采集、同步和维护 Flow |
+| `windows-notify-pool` | 6 | 完整通报 Flow |
+
+首次执行 `scripts/run.ps1` 会初始化 Prefect 元数据、创建三个 Work Pool、清理无执行价值的积压并同步仓库中的 Deployment；不会迁移旧项目的 Prefect 历史数据。共享目录保存 Cookie、Edge Profile、锁、Prefect Home、日志、临时文件和受管进程注册，不随代码升级、分支或 Worktree 切换。
 
 项目固定 `Prefect 3.7.0`，并将 FastAPI 限制在 `0.115` 系列以避免与较新
 Starlette 路由接口不兼容。安装或更新依赖时请使用 `requirements.lock`。
 
 ## 启动
 
-`scripts/run.ps1` 只启动服务并同步 Prefect deployment；通报和驾驶舱采集仍由既有 Cron 调度执行，不会自动触发全部通报。
+启动必须由专用 Windows 用户手工执行。该用户需要保持登录和交互式桌面会话；主机重启或用户重新登录后，必须再次执行 `scripts/run.ps1`。Prefect Server 停止后也不会自动恢复，需要人工重新运行启动脚本。
+
+标准操作顺序：
+
+```powershell
+pwsh -File scripts/setup_windows_env.ps1
+pwsh -File scripts/run.ps1
+pwsh -File scripts/status.ps1
+pwsh -File scripts/stop.ps1
+```
+
+`scripts/run.ps1` 只启动服务、同步 Prefect Deployment 并主动提交一次 Session Keeper 检查；通报和驾驶舱采集仍由既有 Cron 调度执行，不会自动触发全部通报。`scripts/status.ps1` 检查 Server、数据库、三个 Pool、Worker、队列、共享锁和磁盘，`scripts/stop.ps1` 仅停止 `C:\AutoNotifyRuntime\processes` 中登记且进程身份匹配的本项目进程。
 
 一键启动本地 Prefect、API 和前端：
 
@@ -157,6 +174,14 @@ Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge �
 - 业务 Flow 仅在明确的会话失效时强刷新一次会话，并仅重试失败的业务步骤一次。
 - 故障去重状态保存在 `runtime/session_keeper/incident_state.json`。在 Prefect UI 中打开上述 Deployment 查看最新运行，或执行 `python -m prefect flow-run ls --flow-name session-keeper-flow --limit 1`。
 - 支持日志不得复制账号密码、Cookie、Token、Webhook 值或其他认证材料。
+
+## 积压与故障恢复
+
+- 自动调度的 Notify Run 比预计开始时间晚超过 10 分钟时取消并记录过期跳过；10 分钟内的 Run 保留，手工触发的 Notify Run 不应用该规则。
+- 过期的 Session Keeper 和高频 Dashboard Run 不补跑；日/月累计和维护任务只保留仍有业务价值的批次。
+- `RUNNING`、`CANCELLING` 或 `PAUSED` 的本项目 Run 不会被自动清理，并会阻止启动替代 Worker，必须先由运维人员确认处理。
+- Worker 崩溃后由各自的监督进程等待 30 秒再重启；Prefect Server 停止后不自动重启，使用 `scripts/run.ps1` 手工恢复。
+- `windows-notify-pool` 允许通报并行，但所有 Excel COM 阶段必须通过 `C:\AutoNotifyRuntime\locks\excel_com.lock` 串行；所有会话刷新通过 `login.lock` 保证只有一个登录所有者。
 
 ## 主要入口
 
@@ -204,15 +229,15 @@ npm run build
 - 真实试跑会发送企业微信消息，执行前检查接收范围和 Webhook。
 - 正式模板仅在通知发送成功后提交；不要绕过提交门禁。
 - 修改数据库结构必须新增 Alembic 迁移，不直接改生产表。
-- 日志、下载文件、截图和会话数据统一写入 `runtime/`。
+- Cookie、Edge Profile、共享锁、Prefect Home、日志和临时运行数据统一写入 `C:\AutoNotifyRuntime`；仓库内 `runtime/` 只保留仍由现有业务配置使用的项目局部数据。
 - 前端构建产物和依赖目录可随时重新生成，不纳入版本控制。
 
 ## 故障定位
 
 1. 运行 `scripts/status.ps1` 检查进程和端口。
 2. 请求 `/api/live` 判断 API 进程是否存活，再请求 `/api/health` 检查依赖。
-3. 查看 `runtime/logs/` 和 Prefect Flow Run 日志。
-4. 登录失败时检查 `runtime/browser_session/`、Cookie 有效期和本地登录配置。
+3. 查看 `C:\AutoNotifyRuntime\logs` 和 Prefect Flow Run 日志。
+4. 登录失败时检查共享会话状态、Cookie 有效期和被忽略的本地登录配置，不输出认证材料。
 5. 驾驶舱异常时检查 MySQL 连接、Alembic 版本和最近一次采集运行状态。
 
 ## 安全边界

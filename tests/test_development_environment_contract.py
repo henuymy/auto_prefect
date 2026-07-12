@@ -156,6 +156,31 @@ def test_runtime_json_template_exports_three_pool_topology_and_runtime_root():
     }
 
 
+def test_windows_setup_prepares_shared_runtime_and_lifecycle_commands():
+    source = (ROOT / "scripts" / "setup_windows_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert r'C:\AutoNotifyRuntime' in source
+    for directory in (
+        '"locks"',
+        '"session"',
+        '"browser\\edge-profile"',
+        '"prefect\\prefect_home"',
+        '"logs"',
+        '"temp"',
+        '"processes"',
+    ):
+        assert directory in source
+    for command in (
+        "pwsh -File scripts/setup_windows_env.ps1",
+        "pwsh -File scripts/run.ps1",
+        "pwsh -File scripts/status.ps1",
+        "pwsh -File scripts/stop.ps1",
+    ):
+        assert command in source
+
+
 def test_runtime_loader_exports_three_pool_environment_contract():
     source = (ROOT / "scripts" / "lib" / "runtime_config.ps1").read_text(
         encoding="utf-8"
@@ -795,6 +820,22 @@ def test_docs_describe_json_lifecycle_entry_points_and_cron_safety():
         assert "scripts/status.ps1" in document
         assert "Cron" in document
         assert "不会自动" in document
+
+
+def test_docs_describe_three_pool_windows_operations():
+    for path in (ROOT / "README.md", ROOT / "PROJECT_GUIDE.md"):
+        source = path.read_text(encoding="utf-8")
+        for marker in (
+            "windows-session-pool",
+            "windows-dashboard-pool",
+            "windows-notify-pool",
+            r"C:\AutoNotifyRuntime",
+            "10 分钟",
+            "scripts/run.ps1",
+            "scripts/status.ps1",
+            "scripts/stop.ps1",
+        ):
+            assert marker in source
 
 
 def test_script_root_contains_only_public_entry_points_or_compatibility_wrappers():
