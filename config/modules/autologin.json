@@ -15,6 +15,8 @@
   "login_lock_wait_seconds": 1440,
   "login_lock_poll_seconds": 5,
   "login_lock_stale_seconds": 900,
+  "session_health_state_path": "runtime/session/session_state.json",
+  "session_freshness_seconds": 180,
   "browser_session_state_path": "runtime/browser_session/session.json",
   "browser": {
     "user_data_dir": "runtime/browser_session/edge_profile_auto_login"

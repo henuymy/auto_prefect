@@ -26,6 +26,12 @@ from services.method_service import (
     resolve_storage_references,
 )
 from services.runtime_paths import resolve_runtime_path
+from services.session_health_state import (
+    cookie_snapshot_hash,
+    read_session_health,
+    session_health_is_fresh,
+    write_session_health_atomic,
+)
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -593,6 +599,14 @@ def session_login_lock(lock_path, *, wait_seconds, poll_seconds, stale_seconds):
 
 def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None):
     cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/cookies/cookie_dump.json"), base_dir)
+    session_health_state_path = resolve_runtime_path(
+        config.get("session_health_state_path", "runtime/session/session_state.json"),
+        project_dir=Path(base_dir),
+    )
+    freshness_seconds = int(
+        os.environ.get("AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS")
+        or config.get("session_freshness_seconds", 180)
+    )
     legacy_cookie_dump_path = resolve_path(config.get("legacy_cookie_dump_path"), base_dir)
     required_stages = config.get("required_stages") or []
     stage_probes = config.get("stage_probes") or {}
@@ -612,6 +626,29 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         if event_logger:
             event_logger.warning(message, *args)
 
+    def write_healthy_state(cookie_hash=None):
+        return write_session_health_atomic(
+            session_health_state_path,
+            {
+                "healthy": True,
+                "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
+                "cookie_hash": cookie_hash or cookie_snapshot_hash(cookie_dump_path),
+                "healthy_stages": sorted(required_stages),
+            },
+        )
+
+    def write_authentication_failure_state(cookie_hash=None):
+        return write_session_health_atomic(
+            session_health_state_path,
+            {
+                "healthy": False,
+                "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
+                "cookie_hash": cookie_hash or cookie_snapshot_hash(cookie_dump_path),
+                "healthy_stages": [],
+                "failure_classification": PROBE_AUTHENTICATION_FAILURE,
+            },
+        )
+
     cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
     if not cookie_dump and legacy_cookie_dump_path and legacy_cookie_dump_path.exists():
         sync_cookie_dump(legacy_cookie_dump_path, cookie_dump_path)
@@ -620,10 +657,22 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
     if cookie_dump and not force_refresh:
         validation = validate_cookie_dump(cookie_dump, required_stages, min_ttl_seconds=min_ttl_seconds, max_age_seconds=max_age_seconds)
         if validation["valid"]:
+            cookie_hash = cookie_snapshot_hash(cookie_dump_path)
+            if session_health_is_fresh(
+                read_session_health(session_health_state_path),
+                cookie_hash=cookie_hash,
+                required_stages=required_stages,
+                freshness_seconds=freshness_seconds,
+            ):
+                return {
+                    "status": "reused_fresh",
+                    "cookie_dump_path": str(cookie_dump_path),
+                    "validation": validation,
+                }
             probe_validation = validate_stage_probes(cookie_dump, required_stages, stage_probes)
             validation["probe_validation"] = probe_validation
             if probe_validation["valid"]:
-                validation["probe_validation"] = probe_validation
+                write_healthy_state(cookie_hash)
                 return {
                     "status": "reused",
                     "cookie_dump_path": str(cookie_dump_path),
@@ -632,6 +681,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             failure_kind = classify_probe_validation(probe_validation)
             if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
                 raise SessionInfrastructureError(format_probe_validation_error(probe_validation))
+            write_authentication_failure_state(cookie_hash)
             warn("已有 Cookie 探活失败，将进入登录锁并在锁内复检: %s", format_probe_validation_error(probe_validation))
         else:
             warn("已有 Cookie 静态检查失败，将重新登录: %s", validation)
@@ -689,6 +739,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         # Re-check under the login lock. Parallel flow runs may have refreshed
         # cookies between this run's first probe/download failure and lock acquisition.
         locked_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+        locked_cookie_hash = (
+            cookie_snapshot_hash(cookie_dump_path) if locked_cookie_dump else None
+        )
         locked_validation, locked_probe_validation = validate_existing_session(
             locked_cookie_dump,
             required_stages,
@@ -697,6 +750,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             max_age_seconds=max_age_seconds,
         )
         if locked_validation["valid"] and locked_probe_validation and locked_probe_validation["valid"]:
+            write_healthy_state(locked_cookie_hash)
             return {
                 "status": "reused_after_lock",
                 "cookie_dump_path": str(cookie_dump_path),
@@ -707,6 +761,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             failure_kind = classify_probe_validation(locked_probe_validation)
             if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
                 raise SessionInfrastructureError(format_probe_validation_error(locked_probe_validation))
+            write_authentication_failure_state(locked_cookie_hash)
             warn("登录锁内 Cookie 探活仍失败，将自行重新登录: %s", format_probe_validation_error(locked_probe_validation))
         else:
             warn("登录锁内 Cookie 静态检查仍失败，将自行重新登录: %s", locked_validation)
@@ -751,6 +806,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                     )
                 refreshed_validation["probe_validation"] = refreshed_probe_validation
                 publish_cookie_dump(attempt_snapshot_path, cookie_dump_path)
+                write_healthy_state()
                 return {
                     "command": command_result,
                     "close": close_result,

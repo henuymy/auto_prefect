@@ -1,11 +1,14 @@
 import json
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
 
 from services import session_manager
+from services.session_health_state import cookie_snapshot_hash
 from services.session_manager import (
     SessionInfrastructureError,
     classify_probe_validation,
@@ -71,15 +74,130 @@ def valid_city_ops_cookie_dump():
     }
 
 
-def session_config(cookie_dump_path):
-    return {
+def session_config(cookie_dump_path, **overrides):
+    config = {
         "cookie_dump_path": str(cookie_dump_path),
+        "session_health_state_path": str(Path(cookie_dump_path).with_name("session_state.json")),
         "required_stages": ["city_ops"],
         "login_command": "fake-login",
         "login_max_attempts": 2,
         "login_retry_delay_seconds": 60,
         "stage_probes": {"city_ops": {"method": "POST", "url": "https://example/getUserInfo"}},
     }
+    config.update(overrides)
+    return config
+
+
+def write_fresh_health_state(state_path, cookie_path):
+    write_json(
+        state_path,
+        {
+            "healthy": True,
+            "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
+            "cookie_hash": cookie_snapshot_hash(cookie_path),
+            "healthy_stages": ["city_ops"],
+        },
+    )
+
+
+def test_prepare_session_skips_probes_when_keeper_state_is_fresh(monkeypatch, tmp_path):
+    cookie_path = tmp_path / "cookie.json"
+    state_path = tmp_path / "session_state.json"
+    write_json(cookie_path, valid_city_ops_cookie_dump())
+    write_fresh_health_state(state_path, cookie_path)
+    probes = Mock(side_effect=AssertionError("fresh state must skip probes"))
+
+    monkeypatch.setattr(session_manager, "validate_stage_probes", probes)
+    result = session_manager.prepare_session(
+        session_config(
+            cookie_path,
+            session_health_state_path=str(state_path),
+            session_freshness_seconds=180,
+        )
+    )
+
+    assert result["status"] == "reused_fresh"
+
+
+def test_prepare_session_probes_stale_state_and_refreshes_health_file(monkeypatch, tmp_path):
+    cookie_path = tmp_path / "cookie.json"
+    state_path = tmp_path / "session_state.json"
+    write_json(cookie_path, valid_city_ops_cookie_dump())
+    probes = Mock(
+        return_value={
+            "valid": True,
+            "results": [{"stage": "city_ops", "ok": True}],
+        }
+    )
+
+    monkeypatch.setattr(session_manager, "validate_stage_probes", probes)
+    result = session_manager.prepare_session(
+        session_config(
+            cookie_path,
+            session_health_state_path=str(state_path),
+            session_freshness_seconds=180,
+        )
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert result["status"] == "reused"
+    assert state["healthy"] is True
+    assert state["healthy_stages"] == ["city_ops"]
+    assert "Cookie" not in state_path.read_text(encoding="utf-8")
+
+
+def test_health_state_hash_covers_the_cookie_snapshot_that_was_probed(monkeypatch, tmp_path):
+    cookie_path = tmp_path / "cookie.json"
+    state_path = tmp_path / "session_state.json"
+    write_json(cookie_path, valid_city_ops_cookie_dump())
+    probed_cookie_hash = cookie_snapshot_hash(cookie_path)
+
+    def probes(*_args, **_kwargs):
+        replacement = valid_city_ops_cookie_dump()
+        replacement["generated_at"] = "concurrent-replacement"
+        write_json(cookie_path, replacement)
+        return {"valid": True, "results": [{"stage": "city_ops", "ok": True}]}
+
+    monkeypatch.setattr(session_manager, "validate_stage_probes", probes)
+    session_manager.prepare_session(
+        session_config(cookie_path, session_health_state_path=str(state_path))
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["cookie_hash"] == probed_cookie_hash
+    assert state["cookie_hash"] != cookie_snapshot_hash(cookie_path)
+
+
+def test_prepare_session_records_sanitized_authentication_failure(monkeypatch, tmp_path):
+    cookie_path = tmp_path / "cookie.json"
+    state_path = tmp_path / "session_state.json"
+    cookie_dump = valid_city_ops_cookie_dump()
+    cookie_dump["stages"][0]["cookies"][0]["value"] = "sentinel-cookie-secret"
+    write_json(cookie_path, cookie_dump)
+    monkeypatch.setattr(
+        session_manager,
+        "validate_stage_probes",
+        lambda *_args, **_kwargs: {
+            "valid": False,
+            "results": [{"stage": "city_ops", "ok": False, "status_code": 401}],
+        },
+    )
+    monkeypatch.setattr(
+        session_manager,
+        "file_lock",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("stop after classification")),
+    )
+
+    with pytest.raises(SessionInfrastructureError):
+        session_manager.prepare_session(
+            session_config(cookie_path, session_health_state_path=str(state_path))
+        )
+
+    serialized = state_path.read_text(encoding="utf-8")
+    state = json.loads(serialized)
+    assert state["healthy"] is False
+    assert state["failure_classification"] == "authentication"
+    assert "sentinel-cookie-secret" not in serialized
 
 
 def test_validate_cookie_dump_requires_stage():
