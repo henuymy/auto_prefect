@@ -3,6 +3,8 @@ import multiprocessing
 import time
 from pathlib import Path
 
+import pytest
+
 from services.session_alert_service import (
     notify_session_failure,
     notify_session_recovery,
@@ -185,6 +187,42 @@ def test_alert_redacts_storage_credentials_and_bare_wecom_webhook(tmp_path):
         assert sentinel not in messages[0]
 
 
+def test_alert_removes_compound_cookie_and_structured_storage_details(tmp_path):
+    messages = []
+    config = alert_config(tmp_path)
+    incident = {
+        "incident_key": "authentication:report_analysis",
+        "trigger_source": "business-flow",
+        "failure_category": "authentication",
+        "failed_stages": ["report_analysis"],
+        "attempt_count": 2,
+        "errors": [
+            "Cookie: foo=one; bar=raw-two",
+            'localStorage={"profile":"raw-storage-value"}',
+        ],
+        "flow_run_id": "flow-structured-secret",
+        "next_scheduled_at": "2026-07-12T16:45:00+08:00",
+    }
+
+    notify_session_failure(
+        config,
+        incident,
+        sender=lambda _url, text, timeout=30: messages.append(text) or {"errcode": 0},
+    )
+
+    assert messages[0].count("<redacted sensitive detail>") >= 2
+    for leaked_fragment in (
+        "Cookie",
+        "foo=one",
+        "bar=raw-two",
+        "localStorage",
+        "profile",
+        "raw-storage-value",
+        '{"profile"',
+    ):
+        assert leaked_fragment not in messages[0]
+
+
 def test_recovery_message_is_sent_once_and_clears_active_incident(tmp_path):
     messages = []
     config = alert_config(tmp_path)
@@ -279,3 +317,64 @@ def test_sender_failure_does_not_persist_suppression_state(tmp_path):
     )
     assert result["sent"] is True
     assert len(messages) == 1
+
+
+def test_nonzero_wecom_response_does_not_suppress_failure_retry(tmp_path):
+    config = alert_config(tmp_path)
+    incident = {
+        "incident_key": "authentication:city_ops",
+        "trigger_source": "session-keeper",
+        "failure_category": "authentication",
+        "failed_stages": ["city_ops"],
+        "attempt_count": 2,
+        "errors": ["failure"],
+        "flow_run_id": "flow-wecom-error",
+        "next_scheduled_at": "2026-07-12T16:30:00+08:00",
+    }
+
+    with pytest.raises(RuntimeError, match="WeCom session alert send failed"):
+        notify_session_failure(
+            config,
+            incident,
+            sender=lambda *_args, **_kwargs: {"errcode": 93000, "errmsg": "sensitive detail"},
+        )
+
+    assert not Path(config["incident_state_path"]).exists()
+    retry = notify_session_failure(
+        config,
+        incident,
+        sender=lambda *_args, **_kwargs: {"errcode": 0},
+    )
+    assert retry["sent"] is True
+
+
+def test_nonzero_wecom_response_does_not_suppress_recovery_retry(tmp_path):
+    config = alert_config(tmp_path)
+    incident = {
+        "incident_key": "authentication:city_ops",
+        "trigger_source": "session-keeper",
+        "failure_category": "authentication",
+        "failed_stages": ["city_ops"],
+        "attempt_count": 2,
+        "errors": ["failure"],
+        "flow_run_id": "flow-123",
+        "next_scheduled_at": "2026-07-12T16:30:00+08:00",
+    }
+    notify_session_failure(config, incident, sender=lambda *_args, **_kwargs: {"errcode": 0})
+    recovery = {"incident_key": incident["incident_key"], "flow_run_id": "flow-recovery"}
+
+    with pytest.raises(RuntimeError, match="WeCom session alert send failed"):
+        notify_session_recovery(
+            config,
+            recovery,
+            sender=lambda *_args, **_kwargs: {"errcode": 93000, "errmsg": "sensitive detail"},
+        )
+
+    state = json.loads(Path(config["incident_state_path"]).read_text(encoding="utf-8"))
+    assert state["active_incident_key"] == incident["incident_key"]
+    retry = notify_session_recovery(
+        config,
+        recovery,
+        sender=lambda *_args, **_kwargs: {"errcode": 0},
+    )
+    assert retry["sent"] is True

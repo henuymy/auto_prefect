@@ -15,14 +15,12 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 WECOM_WEBHOOK_PATTERN = re.compile(
     r"(?i)https?://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?[^\s<>'\"]+"
 )
-AUTHORIZATION_PATTERN = re.compile(
-    r"(?i)(\bauthorization\b[\"']?\s*[=:]\s*[\"']?)(?:bearer\s+)?[^\s,;}\]\"']+"
+SENSITIVE_DETAIL_PATTERN = re.compile(
+    r"(?i)\b(?:sessionstorage|localstorage|storage|credentials?|usernames?|"
+    r"passwords?|authorization|jsessionid|accesstoken|uaptoken|cookies?|"
+    r"tokens?|secrets?|webhook(?:_?url)?)\b"
 )
-SECRET_PATTERN = re.compile(
-    r"(?i)(\b(?:sessionstorage|localstorage|storage|credentials?|usernames?|"
-    r"secrets?|jsessionid|accesstoken|uaptoken|cookies?|tokens?|passwords?|"
-    r"webhook(?:_?url)?)\b[\"']?\s*[=:]\s*[\"']?)[^\s,;}\]\"']+"
-)
+REDACTED_SENSITIVE_DETAIL = "<redacted sensitive detail>"
 
 
 def _resolve(path_value, base_dir):
@@ -50,9 +48,16 @@ def _write_state(path, payload):
 
 
 def _redact(value):
-    redacted = WECOM_WEBHOOK_PATTERN.sub("<redacted-wecom-webhook>", str(value))
-    redacted = AUTHORIZATION_PATTERN.sub(r"\1<redacted>", redacted)
-    return SECRET_PATTERN.sub(r"\1<redacted>", redacted)
+    text = str(value)
+    if WECOM_WEBHOOK_PATTERN.search(text) or SENSITIVE_DETAIL_PATTERN.search(text):
+        return REDACTED_SENSITIVE_DETAIL
+    return text
+
+
+def _require_send_success(result):
+    if isinstance(result, dict) and result.get("errcode") not in (None, 0, "0"):
+        raise RuntimeError("WeCom session alert send failed")
+    return result
 
 
 def _incident_lock_path(config, state_path, base_dir):
@@ -93,7 +98,7 @@ def notify_session_failure(config, incident, *, base_dir=PROJECT_DIR, sender=sen
             f"Flow Run ID: {_redact(incident.get('flow_run_id'))}\n"
             f"下次调度: {_redact(incident.get('next_scheduled_at'))}"
         )
-        result = sender(config["webhook_url"], message, timeout=30)
+        result = _require_send_success(sender(config["webhook_url"], message, timeout=30))
         _write_state(
             state_path,
             {
@@ -118,7 +123,7 @@ def notify_session_recovery(config, recovery, *, base_dir=PROJECT_DIR, sender=se
             f"[自动登录恢复]\n故障: {incident_key}\n"
             f"Flow Run ID: {_redact(recovery.get('flow_run_id'))}"
         )
-        result = sender(config["webhook_url"], message, timeout=30)
+        result = _require_send_success(sender(config["webhook_url"], message, timeout=30))
         _write_state(
             state_path,
             {
