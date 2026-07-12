@@ -177,7 +177,8 @@ foreach ($pool in $Pools) {
 }
 
 Write-Host "清理 Prefect 启动队列..."
-& $PythonExe scripts/lib/prefect_startup_reconcile.py `
+$ReconcileScript = Join-Path $PSScriptRoot "lib\prefect_startup_reconcile.py"
+& $PythonExe $ReconcileScript `
     --notify-grace-seconds ([int]$env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS)
 if ($LASTEXITCODE -ne 0) {
     throw "Prefect 启动队列清理失败，未启动 Worker"

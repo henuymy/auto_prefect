@@ -492,6 +492,17 @@ def test_run_script_reconciles_then_starts_three_bounded_workers():
     assert "prefect deploy --all" in lowered
 
 
+def test_run_script_resolves_reconcile_cli_from_script_root():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    assert (
+        'Join-Path $PSScriptRoot "lib\\prefect_startup_reconcile.py"'
+        in source
+    )
+    assert "& $PythonExe $ReconcileScript `" in source
+    assert "& $PythonExe scripts/lib/prefect_startup_reconcile.py" not in source
+
+
 def test_run_script_configures_each_pool_concurrency_limit():
     source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
 
