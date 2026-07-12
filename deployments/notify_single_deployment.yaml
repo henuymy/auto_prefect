@@ -3,5 +3,5 @@ entrypoint: flows/notify_single_flow.py:auto_notify_flow
 parameters:
   config_path: config/tasks/爱家V网.json
 work_pool:
-  name: default-agent-pool
+  name: windows-notify-pool
   work_queue_name: default

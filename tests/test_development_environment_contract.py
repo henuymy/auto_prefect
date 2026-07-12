@@ -404,14 +404,31 @@ def test_prefect_runtime_uses_a_fastapi_release_compatible_with_prefect_3_7():
     assert "fastapi>=0.110.0,<0.116" in dependencies
 
 
-def test_prefect_deployments_use_the_runtime_default_work_pool():
-    prefect_config = (ROOT / "prefect.yaml").read_text(encoding="utf-8")
-    deployment_config = (ROOT / "deployments" / "notify_single_deployment.yaml").read_text(encoding="utf-8")
-    runner = (ROOT / "backend" / "services" / "prefect_runner.py").read_text(encoding="utf-8")
+def test_prefect_deployments_are_partitioned_across_three_pools():
+    config = yaml.safe_load((ROOT / "prefect.yaml").read_text(encoding="utf-8"))
+    pools = {row["name"]: row["work_pool"]["name"] for row in config["deployments"]}
 
-    for source in (prefect_config, deployment_config, runner):
-        assert "auto-notify-pool" not in source
-        assert "default-agent-pool" in source
+    assert pools["session-keeper"] == "windows-session-pool"
+    assert pools["notify-daily"] == "windows-notify-pool"
+    for name in (
+        "dashboard-collection",
+        "dashboard-daily-acc",
+        "dashboard-monthly",
+        "dashboard-indicator-sync",
+        "dashboard-v2-partition-maintenance",
+    ):
+        assert pools[name] == "windows-dashboard-pool"
+
+
+def test_notify_single_deployment_uses_notify_pool():
+    config = yaml.safe_load(
+        (ROOT / "deployments" / "notify_single_deployment.yaml").read_text(encoding="utf-8")
+    )
+
+    assert config["work_pool"] == {
+        "name": "windows-notify-pool",
+        "work_queue_name": "default",
+    }
 
 
 def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
@@ -437,7 +454,7 @@ def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
                 }
             ],
             "work_pool": {
-                "name": "default-agent-pool",
+                "name": "windows-session-pool",
                 "work_queue_name": "default",
             },
         }

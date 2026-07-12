@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-WORK_POOL = "default-agent-pool"
+DEFAULT_NOTIFY_WORK_POOL = "windows-notify-pool"
 FLOW_ENTRYPOINT = "flows/notify_single_flow.py:auto_notify_flow"
 FLOW_NAME = "auto-notify-flow"
 
@@ -32,6 +32,10 @@ def _write_json(path: Path, payload: dict[str, Any]) -> Path:
 
 def get_prefect_api_url() -> str:
     return os.environ.get("PREFECT_API_URL") or "http://127.0.0.1:4200/api"
+
+
+def get_notify_work_pool() -> str:
+    return os.environ.get("PREFECT_NOTIFY_POOL_NAME") or DEFAULT_NOTIFY_WORK_POOL
 
 
 def check_prefect_status(timeout: float = 2.0) -> dict[str, Any]:
@@ -545,6 +549,7 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
     deployment_name = f"notify-{report_name}"
     crons = _deployment_crons(deployment)
     schedule_enabled = config.get("enabled", True) is not False
+    work_pool = get_notify_work_pool()
     command = [
         sys.executable,
         "-m",
@@ -554,7 +559,7 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
         "--name",
         deployment_name,
         "--pool",
-        WORK_POOL,
+        work_pool,
         "--param",
         f"config_path={task_config_path.as_posix()}",
     ]
@@ -764,5 +769,6 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
         "crons": crons,
         "timezone": deployment.get("timezone", "Asia/Shanghai"),
         "scheduleStatus": schedule_status,
+        "workPool": work_pool,
         "output": output[-4000:],
     }
