@@ -23,21 +23,32 @@ function Invoke-RuntimeStateMigration {
 
     foreach ($item in $items) {
         if (Test-Path -LiteralPath $item.Target) {
-            [pscustomobject]@{ name = $item.Name; status = "target_exists"; target = $item.Target }
+            [pscustomobject]@{
+                name = $item.Name
+                status = "target_exists"
+                source = $item.Source
+                target = $item.Target
+            }
             continue
         }
         if (-not (Test-Path -LiteralPath $item.Source)) {
-            [pscustomobject]@{ name = $item.Name; status = "source_absent"; target = $item.Target }
+            [pscustomobject]@{
+                name = $item.Name
+                status = "source_absent"
+                source = $item.Source
+                target = $item.Target
+            }
             continue
         }
 
-        $parent = Split-Path -Parent $item.Target
-        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-        $stagingPath = Join-Path $parent (
-            ".migration-{0}-{1}" -f $item.Name, [guid]::NewGuid().ToString("N")
-        )
-        $published = $false
+        $stagingPath = $null
+        $status = "migration_failed_fresh_login_required"
         try {
+            $parent = Split-Path -Parent $item.Target
+            New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            $stagingPath = Join-Path $parent (
+                ".migration-{0}-{1}" -f $item.Name, [guid]::NewGuid().ToString("N")
+            )
             if ($item.Kind -eq "directory") {
                 Copy-Item -LiteralPath $item.Source -Destination $stagingPath -Recurse
             } else {
@@ -45,23 +56,39 @@ function Invoke-RuntimeStateMigration {
             }
             try {
                 Move-Item -LiteralPath $stagingPath -Destination $item.Target -ErrorAction Stop
-                $published = $true
+                $status = "copied"
             } catch {
-                if (-not (Test-Path -LiteralPath $item.Target)) {
+                if (Test-Path -LiteralPath $item.Target) {
+                    $status = "target_exists"
+                } else {
                     throw
                 }
             }
+        } catch {
+            $status = "migration_failed_fresh_login_required"
         } finally {
-            if (Test-Path -LiteralPath $stagingPath -PathType Container) {
-                [IO.Directory]::Delete($stagingPath, $true)
-            } elseif (Test-Path -LiteralPath $stagingPath -PathType Leaf) {
-                [IO.File]::Delete($stagingPath)
+            if ($stagingPath) {
+                $cleanupDeadline = (Get-Date).AddSeconds(2)
+                do {
+                    try {
+                        if (Test-Path -LiteralPath $stagingPath -PathType Container) {
+                            [IO.Directory]::Delete($stagingPath, $true)
+                        } elseif (Test-Path -LiteralPath $stagingPath -PathType Leaf) {
+                            [IO.File]::Delete($stagingPath)
+                        }
+                    } catch {
+                        if ((Get-Date) -lt $cleanupDeadline) {
+                            Start-Sleep -Milliseconds 50
+                        }
+                    }
+                } while ((Test-Path -LiteralPath $stagingPath) -and (Get-Date) -lt $cleanupDeadline)
             }
         }
-        if ($published) {
-            [pscustomobject]@{ name = $item.Name; status = "copied"; target = $item.Target }
-        } else {
-            [pscustomobject]@{ name = $item.Name; status = "target_exists"; target = $item.Target }
+        [pscustomobject]@{
+            name = $item.Name
+            status = $status
+            source = $item.Source
+            target = $item.Target
         }
     }
 }

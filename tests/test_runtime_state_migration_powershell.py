@@ -54,33 +54,62 @@ def test_migration_copies_legacy_cookie_and_profile_only_when_targets_absent(tmp
     assert {item["status"] for item in second} == {"target_exists"}
 
 
-def test_migration_does_not_publish_partial_profile_when_copy_fails(tmp_path):
+def test_migration_failure_isolated_and_other_item_continues(tmp_path):
     pwsh = shutil.which("pwsh") or shutil.which("powershell")
     assert pwsh is not None
     repo_root = tmp_path / "repo"
     runtime_root = tmp_path / "shared"
+    legacy_cookie = repo_root / "runtime" / "cookies" / "cookie_dump.json"
     legacy_profile = repo_root / "runtime" / "browser_session" / "edge_profile_auto_login"
+    legacy_cookie.parent.mkdir(parents=True)
     legacy_profile.mkdir(parents=True)
+    legacy_cookie.write_text('{"secret":"must-not-appear"}', encoding="utf-8")
     (legacy_profile / "marker.txt").write_text("legacy-profile", encoding="utf-8")
     script = (ROOT / "scripts" / "lib" / "runtime_state_migration.ps1").as_posix()
     command = f"""
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
 . '{script}'
 function Copy-Item {{
   param([string]$LiteralPath, [string]$Destination, [switch]$Recurse)
-  [IO.Directory]::CreateDirectory($Destination) | Out-Null
-  [IO.File]::WriteAllText((Join-Path $Destination 'partial.txt'), 'partial')
-  throw 'injected copy failure'
+  if ($LiteralPath -like '*cookie_dump.json') {{
+    [IO.File]::WriteAllText($Destination, 'partial-secret-material')
+    throw 'injected locked cookie copy failure with secret details'
+  }}
+  Microsoft.PowerShell.Management\\Copy-Item @PSBoundParameters
 }}
-try {{
-  Invoke-RuntimeStateMigration -RepoRoot '{repo_root.as_posix()}' -RuntimeRoot '{runtime_root.as_posix()}' | Out-Null
-}} catch {{
-  exit 23
-}}
-exit 0
+Invoke-RuntimeStateMigration -RepoRoot '{repo_root.as_posix()}' -RuntimeRoot '{runtime_root.as_posix()}' | ConvertTo-Json -Compress
 """
 
-    completed = subprocess.run([pwsh, "-NoProfile", "-Command", command])
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    results = json.loads(completed.stdout.splitlines()[-1])
 
-    assert completed.returncode == 23
-    assert not (runtime_root / "browser_session" / "edge_profile_auto_login").exists()
+    assert results == [
+        {
+            "name": "cookie_dump",
+            "status": "migration_failed_fresh_login_required",
+            "source": str(legacy_cookie),
+            "target": str(runtime_root / "cookies" / "cookie_dump.json"),
+        },
+        {
+            "name": "edge_profile",
+            "status": "copied",
+            "source": str(legacy_profile),
+            "target": str(
+                runtime_root / "browser_session" / "edge_profile_auto_login"
+            ),
+        },
+    ]
+    assert "must-not-appear" not in completed.stdout
+    assert "secret details" not in completed.stdout
+    assert not (runtime_root / "cookies" / "cookie_dump.json").exists()
+    assert not list(runtime_root.rglob(".migration-*"))
+    assert (
+        runtime_root / "browser_session" / "edge_profile_auto_login" / "marker.txt"
+    ).read_text(encoding="utf-8") == "legacy-profile"

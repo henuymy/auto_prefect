@@ -773,14 +773,22 @@ def test_startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed():
     )
     run = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
     assert 'return "Global\\AutoNotifyStartup-$hash"' in registry
-    assert "legacy_notify_pool:" in run
     assert "legacy_notify_run:" in run
     assert "旧 Notify Pool 仍有保留 Run" in run
+    assert "scripts\\stop.ps1" in run
+    assert "scripts\\run.ps1 -ForceRestart" in run
+    assert "$LegacyNotifyPools" not in run
     assert "prefect-worker-notify-legacy" not in run
     assert "prefect_legacy_drain.py" not in run
     blocker_index = run.index("旧 Notify Pool 仍有保留 Run")
     assert blocker_index < run.index("prefect deploy --all")
     assert blocker_index < run.index("-Mode worker")
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "PROJECT_GUIDE.md").read_text(encoding="utf-8")
+    for document in (readme, guide):
+        assert "scripts/stop.ps1" in document
+        assert "scripts/run.ps1 -ForceRestart" in document
 
 
 def test_runtime_state_migration_is_invoked_before_services_start():

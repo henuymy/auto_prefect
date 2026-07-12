@@ -93,6 +93,8 @@ Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分�
 
 共享 Cookie、Edge Profile 和 Prefect Home 的实际路径分别为 `C:\AutoNotifyRuntime\cookies\cookie_dump.json`、`C:\AutoNotifyRuntime\browser_session\edge_profile_auto_login` 和 `C:\AutoNotifyRuntime\prefect\prefect_home`。初始化/启动只在共享目标不存在时复制仓库旧运行状态，绝不覆盖已有共享状态；无法迁移时回退为重新登录。
 
+Cookie 与 Edge Profile 的迁移必须逐项隔离。单项失败只能输出包含项目/源/目标路径的 `migration_failed_fresh_login_required`，不得输出异常或认证内容，也不得阻断另一项迁移或后续启动；失败项的 staging 必须清理且最终目标保持不存在，由 Session Manager 触发新登录。
+
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
 
 ### 驾驶舱数据库约定
@@ -122,7 +124,7 @@ pwsh -File scripts/stop.ps1
 
 `scripts/status.ps1` 从 Prefect API 读取配置中的 Pool 名称和实际并发上限，并列出排队超过 10 分钟的自动调度 Run。锁协议当前不记录等待者，状态输出必须明确显示 `waiters=unavailable`，不得声称能展示等待数量。
 
-旧 Notify Pool 上若仍有保留的手工、宽限期或 PENDING Run，启动必须列出 Run 身份并失败关闭。Prefect 3.7 无法安全改派单个已排队 Run，也不能为共享旧 Pool 自动启动不受 Run ID 约束的 Worker；运维人员应先受控处理列出的旧 Run，再重新启动。禁止删除 Run 强行完成切换。
+旧 Notify Pool 上若仍有保留的手工、宽限期或 PENDING Run，启动必须列出 Run 身份并失败关闭。Prefect 3.7 无法安全改派单个已排队 Run，也不能为共享旧 Pool 自动启动不受 Run ID 约束的 Worker；运维人员应先受控排空或取消列出的旧 Run。由于 Prefect Server 已注册，随后必须执行 `scripts/stop.ps1` 再运行 `scripts/run.ps1`，或直接执行 `scripts/run.ps1 -ForceRestart`。禁止删除 Run 强行完成切换。
 
 所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\locks\excel_com.lock` 串行，登录刷新通过 `login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
 

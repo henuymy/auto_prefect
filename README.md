@@ -122,6 +122,8 @@ scripts/prefect_env_prod.local.ps1
 
 首次执行 `scripts/setup_windows_env.ps1` 或 `scripts/run.ps1` 时，会在共享目标不存在的前提下，将仓库旧 `runtime/cookies/cookie_dump.json` 和 `runtime/browser_session/edge_profile_auto_login` 复制到 `C:\AutoNotifyRuntime`；已有共享状态绝不覆盖。源文件保留用于审计和回退；如果旧状态不存在或不可用，按正常自动登录流程重新登录。启动还会初始化 Prefect 元数据、创建三个 Work Pool、把现有 `notify-*` Deployment 迁移到 Notify Pool、清理无执行价值的积压并同步仓库 Deployment，但不会迁移旧 Prefect 历史数据库。
 
+Cookie 与 Edge Profile 独立迁移。任一项因权限、占用或复制错误失败时，脚本清理该项临时目录、保持最终目标不存在并报告 `migration_failed_fresh_login_required`，随后继续处理另一项和启动流程；报告只包含项目、源路径和目标路径，不包含认证内容。
+
 共享 Cookie 位于 `C:\AutoNotifyRuntime\cookies\cookie_dump.json`，保留的 Edge Profile 位于 `C:\AutoNotifyRuntime\browser_session\edge_profile_auto_login`，Prefect Home 位于 `C:\AutoNotifyRuntime\prefect\prefect_home`。这些状态不随代码升级、分支或 Worktree 切换。
 
 项目固定 `Prefect 3.7.0`，并将 FastAPI 限制在 `0.115` 系列以避免与较新
@@ -142,7 +144,7 @@ pwsh -File scripts/stop.ps1
 
 `scripts/run.ps1` 只启动服务、同步 Prefect Deployment 并主动提交一次 Session Keeper 检查；通报和驾驶舱采集仍由既有 Cron 调度执行，不会自动触发全部通报。`scripts/status.ps1` 从 Prefect API 读取配置中的三个 Pool 名称和实际并发上限，因此验收期 Notify 上限为 2 时会显示 2；它也逐条标识排队超过 10 分钟的自动调度 Run。锁文件当前不记录等待者，状态只显示所有者和持有时长，并明确显示 `waiters=unavailable`。`scripts/stop.ps1` 仅停止 `C:\AutoNotifyRuntime\processes` 中登记且进程身份匹配的本项目进程。
 
-升级时若旧 Notify Pool 仍有保留的手工 Run、十分钟宽限内 Run 或 PENDING Run，启动脚本会列出 Deployment、Run ID、状态和旧 Pool 并拒绝启动。Prefect 3.7 不支持安全改派单个已排队 Run，且启动旧 Pool Worker 可能执行同 Pool 的无关工作；运维人员应先在受控条件下用旧 Pool Worker 处理列出的 Run，再重新执行 `scripts/run.ps1`。不得删除历史 Run 或把它们静默遗留在无 Worker 的 Pool。
+升级时若旧 Notify Pool 仍有保留的手工 Run、十分钟宽限内 Run 或 PENDING Run，启动脚本会列出 Deployment、Run ID、状态和旧 Pool 并拒绝启动。Prefect 3.7 不支持安全改派单个已排队 Run，且启动旧 Pool Worker 可能执行同 Pool 的无关工作；运维人员应先在受控条件下用旧 Pool Worker 排空或取消列出的 Run。此时 Prefect Server 已注册，处理后先执行 `scripts/stop.ps1` 再运行 `scripts/run.ps1`，或直接运行 `scripts/run.ps1 -ForceRestart`。不得删除历史 Run 或把它们静默遗留在无 Worker 的 Pool。
 
 一键启动本地 Prefect、API 和前端：
 

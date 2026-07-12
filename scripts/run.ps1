@@ -197,12 +197,6 @@ $reconcileOutput | ForEach-Object { Write-Host $_ }
 if ($reconcileExitCode -ne 0) {
     throw "Prefect 启动队列清理失败，未启动 Worker"
 }
-$LegacyNotifyPools = @(
-    $reconcileOutput |
-        Where-Object { $_ -like "legacy_notify_pool:*" } |
-        ForEach-Object { $_.Substring("legacy_notify_pool:".Length) } |
-        Select-Object -Unique
-)
 $LegacyNotifyRuns = @(
     $reconcileOutput |
         Where-Object { $_ -like "legacy_notify_run:*" } |
@@ -210,7 +204,7 @@ $LegacyNotifyRuns = @(
 )
 if ($LegacyNotifyRuns.Count -gt 0) {
     $runSummary = $LegacyNotifyRuns -join "; "
-    throw "旧 Notify Pool 仍有保留 Run，Prefect 3.7 不支持安全改派单个排队 Run，已拒绝启动避免遗漏或执行无关工作。请先用旧 Pool Worker 处理这些 Run，再重新运行 scripts\run.ps1。Runs: $runSummary"
+    throw "旧 Notify Pool 仍有保留 Run，Prefect 3.7 不支持安全改派单个排队 Run，已拒绝启动避免遗漏或执行无关工作。请先用旧 Pool Worker 排空或取消这些 Run。Prefect Server 已注册；处理后请执行 scripts\stop.ps1 再重新运行 scripts\run.ps1，或直接执行 scripts\run.ps1 -ForceRestart。Runs: $runSummary"
 }
 
 Write-Host "同步 Prefect deployments（仅同步 Cron，不运行 flow）..."
