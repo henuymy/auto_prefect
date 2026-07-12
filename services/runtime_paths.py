@@ -8,6 +8,7 @@ from typing import Mapping
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_RUNTIME_ROOT = Path(r"C:\AutoNotifyRuntime")
 
 
 def runtime_root(env: Mapping[str, str] | None = None) -> Path:
@@ -15,7 +16,7 @@ def runtime_root(env: Mapping[str, str] | None = None) -> Path:
     configured = values.get("AUTO_NOTIFY_RUNTIME_ROOT")
     if configured:
         return Path(configured).expanduser().resolve()
-    return (PROJECT_DIR / "runtime").resolve()
+    return DEFAULT_RUNTIME_ROOT.resolve()
 
 
 def runtime_path(relative: str | Path) -> Path:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -148,19 +149,65 @@ class FileLock:
         self.handle = None
         self.owner_token = None
 
-    def is_stale(self):
+    @staticmethod
+    def _owner_identity(payload, raw_content):
+        if isinstance(payload, dict) and payload.get("owner_token"):
+            return ("owner_token", str(payload["owner_token"]))
+        metadata = payload if isinstance(payload, dict) else {}
+        return (
+            "fingerprint",
+            metadata.get("pid"),
+            metadata.get("process_started_at"),
+            metadata.get("acquired_at"),
+            metadata.get("created_at"),
+            hashlib.sha256(raw_content).hexdigest(),
+        )
+
+    def _read_lock_snapshot(self):
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
+            stat_before = self.path.stat()
+            raw_content = self.path.read_bytes()
+            stat_after = self.path.stat()
+        except FileNotFoundError:
+            return None
+        if (
+            stat_before.st_mtime_ns != stat_after.st_mtime_ns
+            or stat_before.st_size != stat_after.st_size
+        ):
+            return None
+        try:
+            payload = json.loads(raw_content.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, TypeError):
             payload = {}
+        return {
+            "identity": self._owner_identity(payload, raw_content),
+            "payload": payload,
+            "mtime": stat_after.st_mtime,
+        }
+
+    def _snapshot_is_stale(self, snapshot):
+        payload = snapshot["payload"]
         if isinstance(payload, dict) and payload.get("pid"):
             return not process_is_running(
                 payload["pid"], payload.get("process_started_at")
             )
+        return time.time() - snapshot["mtime"] > self.stale_seconds
+
+    def is_stale(self):
+        snapshot = self._read_lock_snapshot()
+        return bool(snapshot and self._snapshot_is_stale(snapshot))
+
+    def _remove_stale_lock(self, inspected_identity):
+        current = self._read_lock_snapshot()
+        if current is None or current["identity"] != inspected_identity:
+            return "retry"
         try:
-            return time.time() - self.path.stat().st_mtime > self.stale_seconds
+            self.path.unlink()
+            return "removed"
         except FileNotFoundError:
-            return False
+            return "retry"
+        except PermissionError:
+            return "permission_denied"
 
     def acquire(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -190,11 +237,10 @@ class FileLock:
                     raise
                 return self
             except FileExistsError:
-                if self.is_stale():
-                    try:
-                        self.path.unlink()
-                        continue
-                    except FileNotFoundError:
+                snapshot = self._read_lock_snapshot()
+                if snapshot and self._snapshot_is_stale(snapshot):
+                    removal = self._remove_stale_lock(snapshot["identity"])
+                    if removal in {"removed", "retry"}:
                         continue
                 if time.monotonic() >= deadline:
                     lock_info = ""

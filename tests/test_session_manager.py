@@ -54,7 +54,7 @@ def write_json(path, payload):
 
 
 def make_work_dir():
-    work_dir = Path("runtime/test_work") / uuid4().hex
+    work_dir = (Path("runtime/test_work") / uuid4().hex).resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
     return work_dir
 

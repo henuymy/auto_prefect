@@ -1,5 +1,6 @@
 import inspect
 import json
+from pathlib import Path
 
 import pytest
 
@@ -121,3 +122,76 @@ def test_excel_lock_acquire_failure_removes_partial_lock(monkeypatch, tmp_path):
         excel_client.FileLock(lock_path).acquire()
 
     assert lock_path.exists() is False
+
+
+def test_tokenless_stale_eviction_preserves_owner_replaced_after_inspection(
+    monkeypatch, tmp_path
+):
+    lock_path = tmp_path / "excel.lock"
+    lock_path.write_text(
+        json.dumps(
+                {
+                    "pid": 321,
+                    "process_started_at": "old-start",
+                    "acquired_at": "old-acquired",
+            }
+        ),
+        encoding="utf-8",
+    )
+    replacement = {
+        "pid": 999,
+        "process_started_at": "new-start",
+        "acquired_at": "new-acquired",
+    }
+    process_checks = []
+
+    def process_is_running(pid, started_at=None):
+        process_checks.append((pid, started_at))
+        return pid == 999 and started_at == "new-start"
+
+    monkeypatch.setattr(
+        excel_client,
+        "process_is_running",
+        process_is_running,
+    )
+    lock = excel_client.FileLock(lock_path, timeout_seconds=0, poll_seconds=0)
+    original_remove = lock._remove_stale_lock
+
+    def replace_then_remove(inspected_identity):
+        lock_path.write_text(json.dumps(replacement), encoding="utf-8")
+        return original_remove(inspected_identity)
+
+    monkeypatch.setattr(lock, "_remove_stale_lock", replace_then_remove)
+
+    with pytest.raises(excel_client.ExcelComLockTimeout):
+        lock.acquire()
+
+    assert json.loads(lock_path.read_text(encoding="utf-8")) == replacement
+    assert process_checks == [(321, "old-start"), (999, "new-start")]
+
+
+def test_stale_eviction_retries_windows_permission_error(monkeypatch, tmp_path):
+    lock_path = tmp_path / "excel.lock"
+    lock_path.write_text(json.dumps({"pid": 321}), encoding="utf-8")
+    monkeypatch.setattr(excel_client, "process_is_running", lambda *_args: False)
+    monkeypatch.setattr(excel_client, "current_process_started_at", lambda: "start")
+    original_unlink = Path.unlink
+    permission_failures = 0
+
+    def unlink_once_with_permission_error(path, *args, **kwargs):
+        nonlocal permission_failures
+        if path == lock_path and permission_failures == 0:
+            permission_failures += 1
+            raise PermissionError("temporarily retained by Windows")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink_once_with_permission_error)
+    lock = excel_client.FileLock(
+        lock_path, timeout_seconds=1, poll_seconds=0, stale_seconds=9999
+    ).acquire()
+    try:
+        assert permission_failures == 1
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        assert payload["owner_token"] == lock.owner_token
+    finally:
+        lock.release()
