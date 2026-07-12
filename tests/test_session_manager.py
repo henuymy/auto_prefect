@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 from datetime import datetime, timezone
@@ -144,6 +145,60 @@ def test_prepare_session_probes_stale_state_and_refreshes_health_file(monkeypatc
     assert state["healthy"] is True
     assert state["healthy_stages"] == ["city_ops"]
     assert "Cookie" not in state_path.read_text(encoding="utf-8")
+
+
+def test_cookie_snapshot_payload_and_hash_come_from_one_read(monkeypatch, tmp_path):
+    cookie_path = tmp_path / "cookie.json"
+    original = valid_city_ops_cookie_dump()
+    original["generated_at"] = "original"
+    replacement = valid_city_ops_cookie_dump()
+    replacement["generated_at"] = "replacement"
+    write_json(cookie_path, original)
+    original_bytes = cookie_path.read_bytes()
+    original_read_bytes = Path.read_bytes
+
+    def replace_after_read(path):
+        content = original_read_bytes(path)
+        if path.resolve() == cookie_path.resolve():
+            write_json(cookie_path, replacement)
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", replace_after_read)
+
+    payload, cookie_hash = session_manager.load_cookie_snapshot_if_exists(cookie_path)
+
+    assert payload["generated_at"] == "original"
+    assert cookie_hash == hashlib.sha256(original_bytes).hexdigest()
+    assert json.loads(cookie_path.read_text(encoding="utf-8"))["generated_at"] == "replacement"
+
+
+def test_malformed_health_schema_falls_back_to_probes(monkeypatch, tmp_path):
+    cookie_path = tmp_path / "cookie.json"
+    state_path = tmp_path / "session_state.json"
+    write_json(cookie_path, valid_city_ops_cookie_dump())
+    write_json(
+        state_path,
+        {
+            "healthy": True,
+            "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
+            "cookie_hash": cookie_snapshot_hash(cookie_path),
+            "healthy_stages": {"city_ops": True},
+        },
+    )
+    probes = Mock(
+        return_value={
+            "valid": True,
+            "results": [{"stage": "city_ops", "ok": True}],
+        }
+    )
+    monkeypatch.setattr(session_manager, "validate_stage_probes", probes)
+
+    result = session_manager.prepare_session(
+        session_config(cookie_path, session_health_state_path=str(state_path))
+    )
+
+    assert result["status"] == "reused"
+    probes.assert_called_once()
 
 
 def test_health_state_hash_covers_the_cookie_snapshot_that_was_probed(monkeypatch, tmp_path):
@@ -910,6 +965,110 @@ def test_prepare_session_second_login_attempt_publishes_only_successful_snapshot
         assert json.loads(shared_path.read_text(encoding="utf-8"))["generated_at"] == "second-attempt"
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_post_login_authentication_failure_writes_unhealthy_state_and_retries(monkeypatch, tmp_path):
+    shared_path = tmp_path / "cookie_dump.json"
+    state_path = tmp_path / "session_state.json"
+    probe_results = iter(
+        [
+            {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]},
+            {"valid": True, "results": [{"stage": "city_ops", "ok": True}]},
+        ]
+    )
+    monkeypatch.setattr(
+        session_manager,
+        "validate_stage_probes",
+        lambda *_args, **_kwargs: next(probe_results),
+    )
+    monkeypatch.setattr(
+        session_manager,
+        "close_browser_session",
+        lambda *_args, **_kwargs: {"stopped_pids": []},
+    )
+    login_calls = []
+    attempt_hashes = []
+
+    def fake_login(_command, **kwargs):
+        attempt_path = Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"])
+        login_calls.append(attempt_path)
+        if len(login_calls) == 2:
+            failed_state = json.loads(state_path.read_text(encoding="utf-8"))
+            assert failed_state["healthy"] is False
+            assert failed_state["failure_classification"] == "authentication"
+            assert failed_state["cookie_hash"] == attempt_hashes[0]
+            assert "sentinel-cookie-secret" not in state_path.read_text(encoding="utf-8")
+        snapshot = valid_city_ops_cookie_dump()
+        snapshot["stages"][0]["cookies"][0]["value"] = "sentinel-cookie-secret"
+        snapshot["generated_at"] = f"attempt-{len(login_calls)}"
+        write_json(attempt_path, snapshot)
+        attempt_hashes.append(cookie_snapshot_hash(attempt_path))
+        return {"returncode": 0}
+
+    monkeypatch.setattr(session_manager, "run_login_command", fake_login)
+    original_retry = session_manager.run_login_with_retry
+    monkeypatch.setattr(
+        session_manager,
+        "run_login_with_retry",
+        lambda login_attempt, **kwargs: original_retry(
+            login_attempt, **kwargs, sleeper=lambda _seconds: None
+        ),
+    )
+
+    result = prepare_session(
+        session_config(shared_path, session_health_state_path=str(state_path)),
+        force_refresh=True,
+    )
+
+    assert result["status"] == "refreshed"
+    assert result["login_attempt_count"] == 2
+    assert len(login_calls) == 2
+    assert json.loads(state_path.read_text(encoding="utf-8"))["healthy"] is True
+
+
+def test_post_login_infrastructure_failure_aborts_without_retry_or_unhealthy_write(monkeypatch, tmp_path):
+    shared_path = tmp_path / "cookie_dump.json"
+    state_path = tmp_path / "session_state.json"
+    monkeypatch.setattr(
+        session_manager,
+        "validate_stage_probes",
+        lambda *_args, **_kwargs: {
+            "valid": False,
+            "results": [
+                {
+                    "stage": "city_ops",
+                    "ok": False,
+                    "reason": "probe_error",
+                    "error": "ConnectTimeout",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        session_manager,
+        "close_browser_session",
+        lambda *_args, **_kwargs: {"stopped_pids": []},
+    )
+    login_calls = []
+
+    def fake_login(_command, **kwargs):
+        login_calls.append(True)
+        write_json(
+            Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"]),
+            valid_city_ops_cookie_dump(),
+        )
+        return {"returncode": 0}
+
+    monkeypatch.setattr(session_manager, "run_login_command", fake_login)
+
+    with pytest.raises(SessionInfrastructureError, match="ConnectTimeout"):
+        prepare_session(
+            session_config(shared_path, session_health_state_path=str(state_path)),
+            force_refresh=True,
+        )
+
+    assert login_calls == [True]
+    assert not state_path.exists()
 
 
 def test_prepare_session_converts_login_lock_timeout_to_infrastructure(monkeypatch):

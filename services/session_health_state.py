@@ -60,9 +60,14 @@ def session_health_is_fresh(
     freshness_seconds: int,
     now: datetime | None = None,
 ) -> bool:
-    if not state.get("healthy") or state.get("cookie_hash") != cookie_hash:
+    if state.get("healthy") is not True or state.get("cookie_hash") != cookie_hash:
         return False
-    if not set(required_stages).issubset(set(state.get("healthy_stages") or [])):
+    healthy_stages = state.get("healthy_stages")
+    if not isinstance(healthy_stages, list) or not all(
+        isinstance(stage, str) for stage in healthy_stages
+    ):
+        return False
+    if not set(required_stages).issubset(set(healthy_stages)):
         return False
     try:
         verified_at = datetime.fromisoformat(state["verified_at"])

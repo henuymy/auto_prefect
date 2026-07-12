@@ -1,5 +1,8 @@
 import json
+from copy import deepcopy
 from datetime import datetime
+
+import pytest
 
 from services.session_health_state import (
     cookie_snapshot_hash,
@@ -74,6 +77,62 @@ def test_fresh_health_state_with_matching_cookie_hash_is_reusable():
         freshness_seconds=180,
         now=datetime.fromisoformat("2026-07-12T20:02:59+08:00"),
     ) is True
+
+
+def test_health_state_is_fresh_at_exact_boundary():
+    state = {
+        "healthy": True,
+        "verified_at": "2026-07-12T20:00:00+08:00",
+        "cookie_hash": "abc",
+        "healthy_stages": ["city_ops"],
+    }
+
+    assert session_health_is_fresh(
+        state,
+        cookie_hash="abc",
+        required_stages=["city_ops"],
+        freshness_seconds=180,
+        now=datetime.fromisoformat("2026-07-12T20:03:00+08:00"),
+    ) is True
+
+
+@pytest.mark.parametrize("healthy", [1, "true", {}, []])
+def test_health_state_requires_boolean_true(healthy):
+    state = {
+        "healthy": healthy,
+        "verified_at": "2026-07-12T20:00:00+08:00",
+        "cookie_hash": "abc",
+        "healthy_stages": ["city_ops"],
+    }
+
+    assert session_health_is_fresh(
+        state,
+        cookie_hash="abc",
+        required_stages=["city_ops"],
+        freshness_seconds=180,
+        now=datetime.fromisoformat("2026-07-12T20:01:00+08:00"),
+    ) is False
+
+
+@pytest.mark.parametrize(
+    "healthy_stages",
+    ["city_ops", {"city_ops": True}, [1], 1, None],
+)
+def test_health_state_requires_stage_name_list(healthy_stages):
+    state = {
+        "healthy": True,
+        "verified_at": "2026-07-12T20:00:00+08:00",
+        "cookie_hash": "abc",
+        "healthy_stages": deepcopy(healthy_stages),
+    }
+
+    assert session_health_is_fresh(
+        state,
+        cookie_hash="abc",
+        required_stages=["city_ops"],
+        freshness_seconds=180,
+        now=datetime.fromisoformat("2026-07-12T20:01:00+08:00"),
+    ) is False
 
 
 def test_health_state_is_stale_on_age_hash_or_stage_mismatch():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,7 +28,6 @@ from services.method_service import (
 )
 from services.runtime_paths import resolve_runtime_path
 from services.session_health_state import (
-    cookie_snapshot_hash,
     read_session_health,
     session_health_is_fresh,
     write_session_health_atomic,
@@ -549,6 +549,8 @@ def run_login_with_retry(
         try:
             result = login_attempt()
             return {**result, "attempt_count": attempt}
+        except SessionInfrastructureError:
+            raise
         except Exception as exc:
             errors.append(summarize_login_failure(exc))
             if attempt == max_attempts:
@@ -557,11 +559,19 @@ def run_login_with_retry(
     raise AssertionError("unreachable")
 
 
-def load_cookie_dump_if_exists(path):
+def load_cookie_snapshot_if_exists(path):
     resolved = Path(path).resolve()
-    if not resolved.exists():
-        return None
-    payload, _ = load_json(resolved)
+    try:
+        raw_payload = resolved.read_bytes()
+    except FileNotFoundError:
+        return None, None
+    cookie_hash = hashlib.sha256(raw_payload).hexdigest()
+    payload = json.loads(raw_payload.decode("utf-8"))
+    return payload, cookie_hash
+
+
+def load_cookie_dump_if_exists(path):
+    payload, _ = load_cookie_snapshot_if_exists(path)
     return payload
 
 
@@ -626,38 +636,37 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         if event_logger:
             event_logger.warning(message, *args)
 
-    def write_healthy_state(cookie_hash=None):
+    def write_healthy_state(cookie_hash):
         return write_session_health_atomic(
             session_health_state_path,
             {
                 "healthy": True,
                 "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
-                "cookie_hash": cookie_hash or cookie_snapshot_hash(cookie_dump_path),
+                "cookie_hash": cookie_hash,
                 "healthy_stages": sorted(required_stages),
             },
         )
 
-    def write_authentication_failure_state(cookie_hash=None):
+    def write_authentication_failure_state(cookie_hash):
         return write_session_health_atomic(
             session_health_state_path,
             {
                 "healthy": False,
                 "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
-                "cookie_hash": cookie_hash or cookie_snapshot_hash(cookie_dump_path),
+                "cookie_hash": cookie_hash,
                 "healthy_stages": [],
                 "failure_classification": PROBE_AUTHENTICATION_FAILURE,
             },
         )
 
-    cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+    cookie_dump, cookie_hash = load_cookie_snapshot_if_exists(cookie_dump_path)
     if not cookie_dump and legacy_cookie_dump_path and legacy_cookie_dump_path.exists():
         sync_cookie_dump(legacy_cookie_dump_path, cookie_dump_path)
-        cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+        cookie_dump, cookie_hash = load_cookie_snapshot_if_exists(cookie_dump_path)
 
     if cookie_dump and not force_refresh:
         validation = validate_cookie_dump(cookie_dump, required_stages, min_ttl_seconds=min_ttl_seconds, max_age_seconds=max_age_seconds)
         if validation["valid"]:
-            cookie_hash = cookie_snapshot_hash(cookie_dump_path)
             if session_health_is_fresh(
                 read_session_health(session_health_state_path),
                 cookie_hash=cookie_hash,
@@ -738,9 +747,8 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
     ) as lock_result:
         # Re-check under the login lock. Parallel flow runs may have refreshed
         # cookies between this run's first probe/download failure and lock acquisition.
-        locked_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
-        locked_cookie_hash = (
-            cookie_snapshot_hash(cookie_dump_path) if locked_cookie_dump else None
+        locked_cookie_dump, locked_cookie_hash = load_cookie_snapshot_if_exists(
+            cookie_dump_path
         )
         locked_validation, locked_probe_validation = validate_existing_session(
             locked_cookie_dump,
@@ -786,7 +794,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                     timeout_seconds=login_timeout_seconds,
                     env={"AUTO_NOTIFY_COOKIE_DUMP_PATH": str(attempt_snapshot_path)},
                 )
-                refreshed_cookie_dump = load_cookie_dump_if_exists(attempt_snapshot_path)
+                refreshed_cookie_dump, refreshed_cookie_hash = (
+                    load_cookie_snapshot_if_exists(attempt_snapshot_path)
+                )
                 refreshed_validation = validate_cookie_dump(
                     refreshed_cookie_dump or {},
                     required_stages,
@@ -800,13 +810,23 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                     stage_probes,
                 )
                 if not refreshed_probe_validation["valid"]:
+                    failure_kind = classify_probe_validation(
+                        refreshed_probe_validation
+                    )
+                    if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
+                        raise SessionInfrastructureError(
+                            format_probe_validation_error(
+                                refreshed_probe_validation
+                            )
+                        )
+                    write_authentication_failure_state(refreshed_cookie_hash)
                     raise RuntimeError(
                         "登录后 session 探活仍不可用: "
                         + format_probe_validation_error(refreshed_probe_validation)
                     )
                 refreshed_validation["probe_validation"] = refreshed_probe_validation
                 publish_cookie_dump(attempt_snapshot_path, cookie_dump_path)
-                write_healthy_state()
+                write_healthy_state(refreshed_cookie_hash)
                 return {
                     "command": command_result,
                     "close": close_result,
