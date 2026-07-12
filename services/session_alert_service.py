@@ -28,6 +28,9 @@ SENSITIVE_KEYWORDS = (
     "jsessionid",
     "accesstoken",
     "uaptoken",
+    "用户名",
+    "stdout",
+    "stderr",
 )
 REDACTED_SENSITIVE_DETAIL = "<redacted sensitive detail>"
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -12,6 +13,7 @@ import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import requests
 
@@ -28,7 +30,11 @@ from services.method_service import (
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 LOGGER = logging.getLogger(__name__)
 DEFAULT_LOCK_STALE_SECONDS = 30 * 60
-DEFAULT_LOCK_WAIT_SECONDS = 20 * 60
+DEFAULT_LOGIN_TIMEOUT_SECONDS = 10 * 60
+LOGIN_ENVELOPE_OVERHEAD_SECONDS = 2 * 60
+DEFAULT_LOCK_WAIT_SECONDS = (
+    2 * DEFAULT_LOGIN_TIMEOUT_SECONDS + 60 + LOGIN_ENVELOPE_OVERHEAD_SECONDS + 60
+)
 DEFAULT_LOCK_POLL_SECONDS = 5
 SESSION_EXPIRED_RE_CODES = {"1101", "401", "403"}
 SESSION_EXPIRED_URL_KEYWORDS = ("login.jsp", "logout.action", "kickedout")
@@ -412,6 +418,7 @@ AUTHENTICATION_FAILURE_REASONS = {
     "session_expired",
     "missing_stage",
     "missing_authentication_material",
+    "json_value_mismatch",
 }
 
 
@@ -419,9 +426,22 @@ class SessionInfrastructureError(RuntimeError):
     pass
 
 
+LOGIN_ERROR_SENSITIVE_PATTERN = re.compile(
+    r"(?i)(用户名|username|password|cookie|token|storage|authorization|secret|stdout|stderr)"
+)
+MAX_LOGIN_ERROR_SUMMARY_LENGTH = 500
+
+
+def summarize_login_failure(error):
+    summary = " ".join(str(error).split())
+    if LOGIN_ERROR_SENSITIVE_PATTERN.search(summary):
+        return "<redacted login failure detail>"
+    return summary[:MAX_LOGIN_ERROR_SUMMARY_LENGTH]
+
+
 class SessionLoginError(RuntimeError):
     def __init__(self, errors):
-        self.errors = [str(error) for error in errors]
+        self.errors = [summarize_login_failure(error) for error in errors]
         self.attempt_count = len(self.errors)
         super().__init__(f"自动登录累计失败 {self.attempt_count} 次")
 
@@ -482,7 +502,19 @@ def sync_cookie_dump(source_path, target_path):
     return target
 
 
-def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None):
+def publish_cookie_dump(source_path, target_path):
+    source = Path(source_path).resolve()
+    target = Path(target_path).resolve()
+    if not source.exists():
+        raise FileNotFoundError(f"登录完成后仍未找到 Cookie 文件: {source}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(source, target)
+    return target
+
+
+def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
+    process_env = os.environ.copy()
+    process_env.update(env or {})
     completed = subprocess.run(
         command,
         cwd=str(cwd),
@@ -493,12 +525,10 @@ def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None):
         capture_output=True,
         check=False,
         timeout=timeout_seconds,
+        env=process_env,
     )
     if completed.returncode != 0:
-        raise RuntimeError(
-            f"登录命令执行失败({completed.returncode}): {command}\n"
-            f"STDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}"
-        )
+        raise RuntimeError(f"登录命令执行失败，退出码={completed.returncode}")
     return {
         "command": command,
         "returncode": completed.returncode,
@@ -518,7 +548,7 @@ def run_login_with_retry(
             result = login_attempt()
             return {**result, "attempt_count": attempt}
         except Exception as exc:
-            errors.append(exc)
+            errors.append(summarize_login_failure(exc))
             if attempt == max_attempts:
                 raise SessionLoginError(errors) from exc
             sleeper(retry_delay_seconds)
@@ -545,6 +575,24 @@ def validate_existing_session(cookie_dump, required_stages, stage_probes, min_tt
     probe_validation = validate_stage_probes(cookie_dump or {}, required_stages, stage_probes)
     validation["probe_validation"] = probe_validation
     return validation, probe_validation
+
+
+@contextmanager
+def session_login_lock(lock_path, *, wait_seconds, poll_seconds, stale_seconds):
+    acquired = False
+    try:
+        with file_lock(
+            lock_path,
+            wait_seconds=wait_seconds,
+            poll_seconds=poll_seconds,
+            stale_seconds=stale_seconds,
+        ) as lock_result:
+            acquired = True
+            yield lock_result
+    except TimeoutError as exc:
+        if acquired:
+            raise
+        raise SessionInfrastructureError(str(exc)) from exc
 
 
 def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None):
@@ -617,15 +665,26 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
     browser_config = config.get("browser") or {}
     browser_user_data_dir = resolve_path(browser_config.get("user_data_dir"), base_dir)
 
-    login_timeout_seconds = config.get("login_timeout_seconds")
-    if login_timeout_seconds is not None:
-        login_timeout_seconds = int(login_timeout_seconds)
+    login_timeout_seconds = int(
+        config.get("login_timeout_seconds", DEFAULT_LOGIN_TIMEOUT_SECONDS)
+        or DEFAULT_LOGIN_TIMEOUT_SECONDS
+    )
     lock_path = resolve_path(config.get("login_lock_path", "runtime/locks/login.lock"), base_dir)
     lock_wait_seconds = int(config.get("login_lock_wait_seconds", DEFAULT_LOCK_WAIT_SECONDS) or DEFAULT_LOCK_WAIT_SECONDS)
     lock_poll_seconds = int(config.get("login_lock_poll_seconds", DEFAULT_LOCK_POLL_SECONDS) or DEFAULT_LOCK_POLL_SECONDS)
     lock_stale_seconds = int(config.get("login_lock_stale_seconds", DEFAULT_LOCK_STALE_SECONDS) or DEFAULT_LOCK_STALE_SECONDS)
+    minimum_lock_wait_seconds = (
+        login_max_attempts * login_timeout_seconds
+        + login_retry_delay_seconds
+        + LOGIN_ENVELOPE_OVERHEAD_SECONDS
+    )
+    if lock_wait_seconds <= minimum_lock_wait_seconds:
+        raise ValueError(
+            "login_lock_wait_seconds 必须大于完整登录重试包络 "
+            f"({minimum_lock_wait_seconds} 秒)"
+        )
 
-    with file_lock(
+    with session_login_lock(
         lock_path,
         wait_seconds=lock_wait_seconds,
         poll_seconds=lock_poll_seconds,
@@ -657,6 +716,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             warn("登录锁内 Cookie 静态检查仍失败，将自行重新登录: %s", locked_validation)
 
         def login_attempt():
+            attempt_snapshot_path = cookie_dump_path.with_name(
+                f".{cookie_dump_path.name}.{uuid4().hex}.attempt"
+            )
             close_result = close_browser_session(
                 browser_session_state_path,
                 user_data_dir=browser_user_data_dir,
@@ -666,37 +728,40 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                 warn("重新登录前已关闭旧自动登录浏览器: %s", close_result)
             if close_result.get("remaining_pids"):
                 warn("旧自动登录浏览器仍有残留进程，继续尝试登录: %s", close_result)
-            command_result = run_login_command(
-                command,
-                cwd=base_dir,
-                timeout_seconds=login_timeout_seconds,
-            )
-            source_path = legacy_cookie_dump_path or cookie_dump_path
-            sync_cookie_dump(source_path, cookie_dump_path)
-            refreshed_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
-            refreshed_validation = validate_cookie_dump(
-                refreshed_cookie_dump or {},
-                required_stages,
-                min_ttl_seconds=min_ttl_seconds,
-            )
-            if not refreshed_validation["valid"]:
-                raise RuntimeError(f"登录后 Cookie 仍不可用: {refreshed_validation}")
-            refreshed_probe_validation = validate_stage_probes(
-                refreshed_cookie_dump or {},
-                required_stages,
-                stage_probes,
-            )
-            if not refreshed_probe_validation["valid"]:
-                raise RuntimeError(
-                    "登录后 session 探活仍不可用: "
-                    + format_probe_validation_error(refreshed_probe_validation)
+            try:
+                command_result = run_login_command(
+                    command,
+                    cwd=base_dir,
+                    timeout_seconds=login_timeout_seconds,
+                    env={"AUTO_NOTIFY_COOKIE_DUMP_PATH": str(attempt_snapshot_path)},
                 )
-            refreshed_validation["probe_validation"] = refreshed_probe_validation
-            return {
-                "command": command_result,
-                "close": close_result,
-                "validation": refreshed_validation,
-            }
+                refreshed_cookie_dump = load_cookie_dump_if_exists(attempt_snapshot_path)
+                refreshed_validation = validate_cookie_dump(
+                    refreshed_cookie_dump or {},
+                    required_stages,
+                    min_ttl_seconds=min_ttl_seconds,
+                )
+                if not refreshed_validation["valid"]:
+                    raise RuntimeError(f"登录后 Cookie 仍不可用: {refreshed_validation}")
+                refreshed_probe_validation = validate_stage_probes(
+                    refreshed_cookie_dump or {},
+                    required_stages,
+                    stage_probes,
+                )
+                if not refreshed_probe_validation["valid"]:
+                    raise RuntimeError(
+                        "登录后 session 探活仍不可用: "
+                        + format_probe_validation_error(refreshed_probe_validation)
+                    )
+                refreshed_validation["probe_validation"] = refreshed_probe_validation
+                publish_cookie_dump(attempt_snapshot_path, cookie_dump_path)
+                return {
+                    "command": command_result,
+                    "close": close_result,
+                    "validation": refreshed_validation,
+                }
+            finally:
+                attempt_snapshot_path.unlink(missing_ok=True)
 
         login_result = run_login_with_retry(
             login_attempt,

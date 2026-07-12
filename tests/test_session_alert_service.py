@@ -263,6 +263,30 @@ def test_alert_redacts_snake_case_and_hyphenated_sensitive_labels(tmp_path):
         assert secret_value not in messages[0]
 
 
+def test_alert_redacts_chinese_username_label_and_raw_stdout_secret(tmp_path):
+    messages = []
+    config = alert_config(tmp_path)
+    incident = {
+        "incident_key": "authentication:shared-session",
+        "trigger_source": "auto-notify-flow",
+        "failure_category": "authentication",
+        "failed_stages": ["city_ops"],
+        "attempt_count": 2,
+        "errors": ["用户名: sentinel-user", "STDOUT: raw-stdout-secret"],
+        "flow_run_id": "flow-secret",
+        "next_scheduled_at": "later",
+    }
+
+    notify_session_failure(
+        config,
+        incident,
+        sender=lambda _url, text, timeout=30: messages.append(text) or {"errcode": 0},
+    )
+
+    assert "sentinel-user" not in messages[0]
+    assert "raw-stdout-secret" not in messages[0]
+
+
 def test_recovery_message_is_sent_once_and_clears_active_incident(tmp_path):
     messages = []
     config = alert_config(tmp_path)
@@ -276,7 +300,9 @@ def test_recovery_message_is_sent_once_and_clears_active_incident(tmp_path):
         "flow_run_id": "flow-123",
         "next_scheduled_at": "2026-07-12T16:30:00+08:00",
     }
-    sender = lambda _url, text, timeout=30: messages.append(text) or {"errcode": 0}
+    def sender(_url, text, timeout=30):
+        messages.append(text)
+        return {"errcode": 0}
     notify_session_failure(config, incident, sender=sender)
 
     first = notify_session_recovery(

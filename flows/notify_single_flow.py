@@ -22,9 +22,11 @@ from tasks.template_tasks import update_template_task
 from services.compare_service import find_empty_download_sheet_mappings
 from services.method_service import EmptyReportDataError
 from services.session_retry_service import (
+    RefreshBudget,
     is_session_expired_error,  # noqa: F401 - backward-compatible flow export
     run_with_session_refresh_once,
 )
+from services.session_business_failure_service import run_with_business_session_reporting
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
 
@@ -36,6 +38,21 @@ except ImportError as exc:  # pragma: no cover - runtime dependency guard
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "local.json"
 EXAMPLE_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "example.json"
+
+
+def run_notify_download_with_session_refresh(
+    operation,
+    refresh_session,
+    refresh_budget,
+):
+    return run_with_business_session_reporting(
+        lambda: run_with_session_refresh_once(
+            operation,
+            refresh_session,
+            refresh_budget=refresh_budget,
+        ),
+        trigger_source="auto-notify-flow",
+    )
 
 
 def load_config(config_path=None):
@@ -349,12 +366,20 @@ def auto_notify_flow(config_path=None):
         login_config = build_login_config(read_json(steps["login"]["config_path"]), report_cfg)
 
     if steps.get("login", {}).get("enabled", False):
-        session_result = prepare_session_task(
-            login_config,
-            force_refresh=bool(steps["login"].get("force_refresh", False)),
+        initial_force_refresh = bool(steps["login"].get("force_refresh", False))
+        session_result = run_with_business_session_reporting(
+            lambda: prepare_session_task(
+                login_config,
+                force_refresh=initial_force_refresh,
+            ),
+            trigger_source="auto-notify-flow",
         )
         if session_result.get("status") == "invalid":
             raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
+    else:
+        initial_force_refresh = False
+
+    refresh_budget = RefreshBudget(consumed=initial_force_refresh)
 
     wait_cfg = parse_wait_for_change_config(config)
     wait_started_at = monotonic()
@@ -378,9 +403,10 @@ def auto_notify_flow(config_path=None):
             logger.warning("下载失败（session 过期），强制重新登录后重试")
             return prepare_session_task(login_config, force_refresh=True)
 
-        return run_with_session_refresh_once(
+        return run_notify_download_with_session_refresh(
             download_operation,
             refresh_session,
+            refresh_budget,
         )
 
     attempt = 0

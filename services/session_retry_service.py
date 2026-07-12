@@ -3,10 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TypeVar
 
 
 T = TypeVar("T")
+
+
+@dataclass
+class RefreshBudget:
+    consumed: bool = False
+
+    def consume(self) -> bool:
+        if self.consumed:
+            return False
+        self.consumed = True
+        return True
 
 SESSION_EXPIRED_MARKERS = (
     "session expired",
@@ -30,11 +42,15 @@ def is_session_expired_error(exc: Exception) -> bool:
 def run_with_session_refresh_once(
     operation: Callable[[], T],
     refresh_session: Callable[[], dict],
+    *,
+    refresh_budget: RefreshBudget | None = None,
 ) -> T:
     try:
         return operation()
     except RuntimeError as exc:
         if not is_session_expired_error(exc):
+            raise
+        if refresh_budget is not None and not refresh_budget.consume():
             raise
         refresh_result = refresh_session()
         if refresh_result.get("status") == "invalid":

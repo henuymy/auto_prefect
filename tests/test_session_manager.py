@@ -440,9 +440,13 @@ def test_prepare_session_authentication_failure_logs_in_immediately(monkeypatch)
         )
         monkeypatch.setattr(session_manager, "validate_stage_probes", lambda *_args, **_kwargs: next(probe_results))
         login_calls = []
-        monkeypatch.setattr(session_manager, "run_login_command", lambda *args, **kwargs: login_calls.append(args) or {"returncode": 0})
+        def fake_login(*args, **kwargs):
+            login_calls.append(args)
+            write_json(Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"]), valid_city_ops_cookie_dump())
+            return {"returncode": 0}
+
+        monkeypatch.setattr(session_manager, "run_login_command", fake_login)
         monkeypatch.setattr(session_manager, "close_browser_session", lambda *_args, **_kwargs: {"stopped_pids": []})
-        monkeypatch.setattr(session_manager, "sync_cookie_dump", lambda *_args, **_kwargs: cookie_dump_path)
 
         result = prepare_session(session_config(cookie_dump_path))
 
@@ -607,6 +611,150 @@ def test_probe_classification_marks_explicit_expiry_as_authentication_failure():
     )
 
     assert result == "authentication"
+
+
+def test_probe_classification_marks_json_value_mismatch_as_authentication_failure():
+    result = classify_probe_validation(
+        {"valid": False, "results": [{"stage": "city_ops", "ok": False, "reason": "json_value_mismatch"}]}
+    )
+
+    assert result == "authentication"
+
+
+def test_prepare_session_logs_in_for_json_value_mismatch(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        write_json(cookie_dump_path, valid_city_ops_cookie_dump())
+        probe_results = iter([
+            {"valid": False, "results": [{"stage": "city_ops", "ok": False, "reason": "json_value_mismatch"}]},
+            {"valid": False, "results": [{"stage": "city_ops", "ok": False, "reason": "json_value_mismatch"}]},
+            {"valid": True, "results": [{"stage": "city_ops", "ok": True}]},
+        ])
+        monkeypatch.setattr(session_manager, "validate_stage_probes", lambda *_args, **_kwargs: next(probe_results))
+        monkeypatch.setattr(session_manager, "close_browser_session", lambda *_args, **_kwargs: {"stopped_pids": []})
+
+        def fake_login(_command, **kwargs):
+            write_json(Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"]), valid_city_ops_cookie_dump())
+            return {"returncode": 0}
+
+        monkeypatch.setattr(session_manager, "run_login_command", fake_login)
+        assert prepare_session(session_config(cookie_dump_path))["status"] == "refreshed"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_failed_login_attempt_never_replaces_shared_snapshot(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        shared_path = work_dir / "cookie_dump.json"
+        original = valid_city_ops_cookie_dump()
+        original["generated_at"] = "original"
+        write_json(shared_path, original)
+        monkeypatch.setattr(session_manager, "validate_stage_probes", lambda *_args, **_kwargs: {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]})
+        monkeypatch.setattr(session_manager, "close_browser_session", lambda *_args, **_kwargs: {"stopped_pids": []})
+
+        def fake_login(_command, **kwargs):
+            write_json(Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"]), {"stages": []})
+            return {"returncode": 0}
+
+        monkeypatch.setattr(session_manager, "run_login_command", fake_login)
+        original_retry = session_manager.run_login_with_retry
+        monkeypatch.setattr(
+            session_manager,
+            "run_login_with_retry",
+            lambda login_attempt, **kwargs: original_retry(
+                login_attempt,
+                **kwargs,
+                sleeper=lambda _seconds: None,
+            ),
+        )
+        with pytest.raises(session_manager.SessionLoginError):
+            prepare_session(session_config(shared_path))
+
+        assert json.loads(shared_path.read_text(encoding="utf-8"))["generated_at"] == "original"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_login_publishes_private_snapshot_only_after_probe_success(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        shared_path = work_dir / "cookie_dump.json"
+        original = valid_city_ops_cookie_dump()
+        original["generated_at"] = "original"
+        refreshed = valid_city_ops_cookie_dump()
+        refreshed["generated_at"] = "refreshed"
+        write_json(shared_path, original)
+        probe_calls = 0
+
+        def probes(cookie_dump, *_args, **_kwargs):
+            nonlocal probe_calls
+            probe_calls += 1
+            if probe_calls <= 2:
+                return {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]}
+            assert json.loads(shared_path.read_text(encoding="utf-8"))["generated_at"] == "original"
+            assert cookie_dump["generated_at"] == "refreshed"
+            return {"valid": True, "results": [{"stage": "city_ops", "ok": True}]}
+
+        monkeypatch.setattr(session_manager, "validate_stage_probes", probes)
+        monkeypatch.setattr(session_manager, "close_browser_session", lambda *_args, **_kwargs: {"stopped_pids": []})
+
+        def fake_login(_command, **kwargs):
+            write_json(Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"]), refreshed)
+            return {"returncode": 0}
+
+        monkeypatch.setattr(session_manager, "run_login_command", fake_login)
+        assert prepare_session(session_config(shared_path))["status"] == "refreshed"
+        assert json.loads(shared_path.read_text(encoding="utf-8"))["generated_at"] == "refreshed"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_prepare_session_converts_login_lock_timeout_to_infrastructure(monkeypatch):
+    config = session_config(Path("runtime/unused-cookie-dump.json"))
+    monkeypatch.setattr(session_manager, "file_lock", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("busy")))
+
+    with pytest.raises(SessionInfrastructureError, match="busy"):
+        prepare_session(config, force_refresh=True)
+
+
+def test_lock_wait_must_cover_complete_login_retry_envelope():
+    config = session_config(Path("runtime/unused-cookie-dump.json"))
+    config.update({"login_timeout_seconds": 600, "login_lock_wait_seconds": 1200})
+
+    with pytest.raises(ValueError, match="login_lock_wait_seconds"):
+        prepare_session(config, force_refresh=True)
+
+
+def test_login_error_does_not_transport_raw_command_output(monkeypatch):
+    completed = type("Completed", (), {"returncode": 1, "stdout": "raw-stdout-secret", "stderr": "raw-stderr-secret"})()
+    monkeypatch.setattr(session_manager.subprocess, "run", lambda *_args, **_kwargs: completed)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session_manager.run_login_command("sensitive command")
+
+    message = str(exc_info.value)
+    assert "raw-stdout-secret" not in message
+    assert "raw-stderr-secret" not in message
+    assert "sensitive command" not in message
+
+
+def test_session_login_error_contains_only_bounded_sanitized_summaries():
+    def fail():
+        raise RuntimeError("用户名: sentinel-user STDOUT: raw-stdout-secret " + "x" * 1000)
+
+    with pytest.raises(session_manager.SessionLoginError) as exc_info:
+        session_manager.run_login_with_retry(
+            fail,
+            max_attempts=1,
+            retry_delay_seconds=60,
+        )
+
+    summary = exc_info.value.errors[0]
+    assert "sentinel-user" not in summary
+    assert "raw-stdout-secret" not in summary
+    assert len(summary) <= 500
 
 
 def test_probe_classification_marks_request_exception_as_infrastructure_failure():

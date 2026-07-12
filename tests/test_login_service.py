@@ -83,6 +83,12 @@ def make_login(tmp_path: Path, **browser_overrides) -> login_service.AutoLogin:
     return instance
 
 
+def test_login_source_does_not_print_actual_username():
+    source = (PROJECT_ROOT / "services" / "login_service.py").read_text(encoding="utf-8")
+
+    assert 'print(f"[INFO] 输入用户名: {username}")' not in source
+
+
 def test_auto_login_accepts_in_memory_config_without_reading_disk(monkeypatch):
     monkeypatch.setattr(
         login_service,

@@ -365,7 +365,7 @@ class AutoLogin:
     def fill_login_credentials(self):
         wait = WebDriverWait(self.driver, 30)
         username = self.config['credentials']['username']
-        print(f"[INFO] 输入用户名: {username}")
+        print("[INFO] 输入用户名: <configured>")
         login_name = wait.until(EC.presence_of_element_located((By.ID, "loginName")))
         self.set_input_value(login_name, username)
         self.confirm_terminal_tool_dialog_if_present()
