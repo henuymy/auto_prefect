@@ -59,6 +59,29 @@ def make_work_dir():
     return work_dir
 
 
+def valid_city_ops_cookie_dump():
+    return {
+        "stages": [
+            {
+                "stage": "city_ops",
+                "cookies": [{"name": "JSESSIONID", "value": "sid", "domain": "example.com"}],
+                "session_storage": {"uapToken": "token"},
+            }
+        ]
+    }
+
+
+def session_config(cookie_dump_path):
+    return {
+        "cookie_dump_path": str(cookie_dump_path),
+        "required_stages": ["city_ops"],
+        "login_command": "fake-login",
+        "login_max_attempts": 2,
+        "login_retry_delay_seconds": 60,
+        "stage_probes": {"city_ops": {"method": "POST", "url": "https://example/getUserInfo"}},
+    }
+
+
 def test_validate_cookie_dump_requires_stage():
     cookie_dump = {
         "stages": [
@@ -367,6 +390,171 @@ def test_prepare_session_force_refresh_rechecks_under_lock(monkeypatch):
         assert close_calls == []
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_prepare_session_does_not_login_for_infrastructure_probe_failure(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        write_json(cookie_dump_path, valid_city_ops_cookie_dump())
+        monkeypatch.setattr(
+            session_manager,
+            "validate_stage_probes",
+            lambda *_args, **_kwargs: {
+                "valid": False,
+                "results": [
+                    {
+                        "stage": "city_ops",
+                        "ok": False,
+                        "reason": "probe_error",
+                        "error": "ConnectTimeout",
+                    }
+                ],
+            },
+        )
+        login_calls = []
+        monkeypatch.setattr(
+            session_manager,
+            "run_login_command",
+            lambda *args, **kwargs: login_calls.append(args) or {},
+        )
+        with pytest.raises(SessionInfrastructureError, match="city_ops"):
+            prepare_session(session_config(cookie_dump_path))
+
+        assert login_calls == []
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_prepare_session_authentication_failure_logs_in_immediately(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        write_json(cookie_dump_path, valid_city_ops_cookie_dump())
+        probe_results = iter(
+            [
+                {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]},
+                {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]},
+                {"valid": True, "results": [{"stage": "city_ops", "ok": True}]},
+            ]
+        )
+        monkeypatch.setattr(session_manager, "validate_stage_probes", lambda *_args, **_kwargs: next(probe_results))
+        login_calls = []
+        monkeypatch.setattr(session_manager, "run_login_command", lambda *args, **kwargs: login_calls.append(args) or {"returncode": 0})
+        monkeypatch.setattr(session_manager, "close_browser_session", lambda *_args, **_kwargs: {"stopped_pids": []})
+        monkeypatch.setattr(session_manager, "sync_cookie_dump", lambda *_args, **_kwargs: cookie_dump_path)
+
+        result = prepare_session(session_config(cookie_dump_path))
+
+        assert result["status"] == "refreshed"
+        assert len(login_calls) == 1
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_prepare_session_does_not_login_when_lock_recheck_finds_infrastructure_failure(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        write_json(cookie_dump_path, valid_city_ops_cookie_dump())
+        probe_results = iter(
+            [
+                {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]},
+                {
+                    "valid": False,
+                    "results": [
+                        {
+                            "stage": "city_ops",
+                            "ok": False,
+                            "reason": "probe_error",
+                            "error": "ConnectTimeout",
+                        }
+                    ],
+                },
+            ]
+        )
+        monkeypatch.setattr(session_manager, "validate_stage_probes", lambda *_args, **_kwargs: next(probe_results))
+        login_calls = []
+        monkeypatch.setattr(
+            session_manager,
+            "run_login_command",
+            lambda *args, **kwargs: login_calls.append(args) or {},
+        )
+        monkeypatch.setattr(
+            session_manager,
+            "run_login_with_retry",
+            lambda login_attempt, **_kwargs: login_attempt(),
+        )
+
+        with pytest.raises(SessionInfrastructureError, match="city_ops"):
+            prepare_session(session_config(cookie_dump_path))
+
+        assert login_calls == []
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("login_max_attempts", 3),
+        ("login_max_attempts", 0),
+        ("login_retry_delay_seconds", 30),
+        ("login_retry_delay_seconds", 0),
+    ],
+)
+def test_prepare_session_rejects_non_production_retry_configuration(key, value):
+    config = session_config(Path("runtime/unused-cookie-dump.json"))
+    config[key] = value
+    config["allow_login"] = False
+
+    with pytest.raises(ValueError, match=key):
+        prepare_session(config)
+
+
+def test_login_failure_waits_sixty_seconds_and_retries_once(monkeypatch):
+    calls = []
+    sleeps = []
+    outcomes = iter([RuntimeError("first failure"), {"returncode": 0}])
+
+    def login_attempt():
+        calls.append("login")
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    result = session_manager.run_login_with_retry(
+        login_attempt,
+        max_attempts=2,
+        retry_delay_seconds=60,
+        sleeper=sleeps.append,
+    )
+
+    assert calls == ["login", "login"]
+    assert sleeps == [60]
+    assert result["attempt_count"] == 2
+
+
+def test_login_stops_after_two_failed_attempts(monkeypatch):
+    calls = []
+    sleeps = []
+
+    def login_attempt():
+        calls.append("login")
+        raise RuntimeError("login failed")
+
+    with pytest.raises(session_manager.SessionLoginError) as exc_info:
+        session_manager.run_login_with_retry(
+            login_attempt,
+            max_attempts=2,
+            retry_delay_seconds=60,
+            sleeper=sleeps.append,
+        )
+
+    assert calls == ["login", "login"]
+    assert sleeps == [60]
+    assert exc_info.value.attempt_count == 2
 
 
 def test_format_probe_validation_error_is_human_readable():

@@ -419,6 +419,13 @@ class SessionInfrastructureError(RuntimeError):
     pass
 
 
+class SessionLoginError(RuntimeError):
+    def __init__(self, errors):
+        self.errors = [str(error) for error in errors]
+        self.attempt_count = len(self.errors)
+        super().__init__(f"自动登录累计失败 {self.attempt_count} 次")
+
+
 def classify_probe_validation(probe_validation):
     if probe_validation and probe_validation.get("valid"):
         return PROBE_HEALTHY
@@ -498,6 +505,26 @@ def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None):
     }
 
 
+def run_login_with_retry(
+    login_attempt,
+    *,
+    max_attempts=2,
+    retry_delay_seconds=60,
+    sleeper=time.sleep,
+):
+    errors = []
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = login_attempt()
+            return {**result, "attempt_count": attempt}
+        except Exception as exc:
+            errors.append(exc)
+            if attempt == max_attempts:
+                raise SessionLoginError(errors) from exc
+            sleeper(retry_delay_seconds)
+    raise AssertionError("unreachable")
+
+
 def load_cookie_dump_if_exists(path):
     resolved = Path(path).resolve()
     if not resolved.exists():
@@ -529,6 +556,12 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
     max_age_seconds = config.get("max_age_seconds")
     if max_age_seconds is not None:
         max_age_seconds = int(max_age_seconds)
+    login_max_attempts = config.get("login_max_attempts", 2)
+    login_retry_delay_seconds = config.get("login_retry_delay_seconds", 60)
+    if login_max_attempts != 2:
+        raise ValueError("login_max_attempts 必须固定为 2")
+    if login_retry_delay_seconds != 60:
+        raise ValueError("login_retry_delay_seconds 必须固定为 60")
 
     def warn(message, *args):
         LOGGER.warning(message, *args)
@@ -552,6 +585,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                     "cookie_dump_path": str(cookie_dump_path),
                     "validation": validation,
                 }
+            failure_kind = classify_probe_validation(probe_validation)
+            if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
+                raise SessionInfrastructureError(format_probe_validation_error(probe_validation))
             warn("已有 Cookie 探活失败，将进入登录锁并在锁内复检: %s", format_probe_validation_error(probe_validation))
         else:
             warn("已有 Cookie 静态检查失败，将重新登录: %s", validation)
@@ -613,40 +649,68 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                 "lock": lock_result,
             }
         if locked_validation["valid"]:
+            failure_kind = classify_probe_validation(locked_probe_validation)
+            if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
+                raise SessionInfrastructureError(format_probe_validation_error(locked_probe_validation))
             warn("登录锁内 Cookie 探活仍失败，将自行重新登录: %s", format_probe_validation_error(locked_probe_validation))
         else:
             warn("登录锁内 Cookie 静态检查仍失败，将自行重新登录: %s", locked_validation)
 
-        close_result = close_browser_session(
-            browser_session_state_path,
-            user_data_dir=browser_user_data_dir,
-            wait_seconds=float(config.get("browser_close_wait_seconds", 10) or 10),
+        def login_attempt():
+            close_result = close_browser_session(
+                browser_session_state_path,
+                user_data_dir=browser_user_data_dir,
+                wait_seconds=float(config.get("browser_close_wait_seconds", 10) or 10),
+            )
+            if close_result.get("stopped_pids"):
+                warn("重新登录前已关闭旧自动登录浏览器: %s", close_result)
+            if close_result.get("remaining_pids"):
+                warn("旧自动登录浏览器仍有残留进程，继续尝试登录: %s", close_result)
+            command_result = run_login_command(
+                command,
+                cwd=base_dir,
+                timeout_seconds=login_timeout_seconds,
+            )
+            source_path = legacy_cookie_dump_path or cookie_dump_path
+            sync_cookie_dump(source_path, cookie_dump_path)
+            refreshed_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+            refreshed_validation = validate_cookie_dump(
+                refreshed_cookie_dump or {},
+                required_stages,
+                min_ttl_seconds=min_ttl_seconds,
+            )
+            if not refreshed_validation["valid"]:
+                raise RuntimeError(f"登录后 Cookie 仍不可用: {refreshed_validation}")
+            refreshed_probe_validation = validate_stage_probes(
+                refreshed_cookie_dump or {},
+                required_stages,
+                stage_probes,
+            )
+            if not refreshed_probe_validation["valid"]:
+                raise RuntimeError(
+                    "登录后 session 探活仍不可用: "
+                    + format_probe_validation_error(refreshed_probe_validation)
+                )
+            refreshed_validation["probe_validation"] = refreshed_probe_validation
+            return {
+                "command": command_result,
+                "close": close_result,
+                "validation": refreshed_validation,
+            }
+
+        login_result = run_login_with_retry(
+            login_attempt,
+            max_attempts=login_max_attempts,
+            retry_delay_seconds=login_retry_delay_seconds,
         )
-        if close_result.get("stopped_pids"):
-            warn("重新登录前已关闭旧自动登录浏览器: %s", close_result)
-        if close_result.get("remaining_pids"):
-            warn("旧自动登录浏览器仍有残留进程，继续尝试登录: %s", close_result)
-        command_result = run_login_command(command, cwd=base_dir, timeout_seconds=login_timeout_seconds)
-        source_path = legacy_cookie_dump_path or cookie_dump_path
-        sync_cookie_dump(source_path, cookie_dump_path)
-        refreshed_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
-        refreshed_validation = validate_cookie_dump(
-            refreshed_cookie_dump or {},
-            required_stages,
-            min_ttl_seconds=min_ttl_seconds,
-        )
-        if not refreshed_validation["valid"]:
-            raise RuntimeError(f"登录后 Cookie 仍不可用: {refreshed_validation}")
-        refreshed_probe_validation = validate_stage_probes(refreshed_cookie_dump or {}, required_stages, stage_probes)
-        refreshed_validation["probe_validation"] = refreshed_probe_validation
-        if not refreshed_probe_validation["valid"]:
-            raise RuntimeError(f"登录后 session 探活仍不可用: {format_probe_validation_error(refreshed_probe_validation)}")
 
     return {
         "status": "refreshed",
         "cookie_dump_path": str(cookie_dump_path),
-        "validation": refreshed_validation,
-        "login": command_result,
+        "validation": login_result["validation"],
+        "login": login_result["command"],
+        "close": login_result["close"],
+        "login_attempt_count": login_result["attempt_count"],
         "lock": lock_result,
     }
 
