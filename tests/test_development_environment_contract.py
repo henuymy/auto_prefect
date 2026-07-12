@@ -506,6 +506,26 @@ def test_unified_runtime_entry_points_start_services_without_running_flows():
     assert source.index("prefect deploy --all") < source.index("-mode worker")
 
 
+def test_prefect_worker_start_has_no_embedded_dashboard_cleanup():
+    source = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Prepare-DashboardWorkerStart" not in source
+    assert "set_flow_run_state" not in source
+
+
+def test_deprecated_scheduled_backlog_deletion_script_is_retired():
+    retired = ROOT / "scripts" / "dev" / "clear_scheduled_backlog.ps1"
+    assert not retired.exists()
+
+    public_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "scripts").rglob("*.ps1")
+    )
+    assert "clear_scheduled_backlog.ps1" not in public_sources
+
+
 def test_legacy_dev_entry_points_only_forward_to_unified_scripts():
     expected_targets = {
         "scripts/dev/start.ps1": "run.ps1",
