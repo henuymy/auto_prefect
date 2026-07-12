@@ -1,0 +1,12 @@
+{
+  "autologin_config_path": "config/modules/autologin.json",
+  "alert_config_path": "config/modules/wecom_sender.json",
+  "incident_state_path": "runtime/session_keeper/incident_state.json",
+  "login_max_attempts": 2,
+  "login_retry_delay_seconds": 60,
+  "required_stages": [
+    "report_analysis",
+    "smart_ops",
+    "city_ops"
+  ]
+}
