@@ -163,7 +163,14 @@ def test_singleton_selection_is_scoped_per_deployment():
 
 
 class FakePrefectClient:
-    def __init__(self, *, deployments, queued=(), blockers=()):
+    def __init__(
+        self,
+        *,
+        deployments,
+        queued=(),
+        blockers=(),
+        resume_failures=None,
+    ):
         self.deployments = list(deployments)
         self.queued = list(queued)
         self.blockers = list(blockers)
@@ -171,6 +178,7 @@ class FakePrefectClient:
         self.resumed = []
         self.cancelled = []
         self.read_flow_run_offsets = []
+        self.resume_failures = resume_failures or {}
 
     async def read_deployments(self, *, limit, offset):
         return self.deployments[offset : offset + limit]
@@ -180,6 +188,8 @@ class FakePrefectClient:
 
     async def resume_deployment(self, deployment_id):
         self.resumed.append(deployment_id)
+        if error := self.resume_failures.get(deployment_id):
+            raise error
 
     async def read_flow_runs(self, *, flow_run_filter, limit, offset):
         state_types = {
@@ -263,6 +273,57 @@ def test_reconcile_restores_deployments_when_cancellation_fails():
     assert client.resumed == [NOTIFY_ID]
 
 
+def test_reconcile_attempts_every_resume_then_raises_aggregate_error():
+    first_error = RuntimeError("first resume failed")
+    second_error = RuntimeError("second resume failed")
+    client = FakePrefectClient(
+        deployments=[
+            deployment(ACTIVE_ID, "session-keeper"),
+            deployment(NOTIFY_ID, "notify-daily"),
+        ],
+        resume_failures={
+            ACTIVE_ID: first_error,
+            NOTIFY_ID: second_error,
+        },
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        asyncio.run(reconcile_client(client, NOW, 600))
+
+    assert client.resumed == [ACTIVE_ID, NOTIFY_ID]
+    assert caught.value.message == "failed to restore Prefect deployments"
+    assert caught.value.exceptions == (first_error, second_error)
+
+
+def test_reconcile_preserves_primary_error_and_attaches_restoration_errors():
+    primary_error = RuntimeError("flow-run cancellation failed")
+    restoration_error = RuntimeError("first resume failed")
+    run = scheduled_run(deployment_id=NOTIFY_ID, minutes_late=11)
+    client = FakePrefectClient(
+        deployments=[
+            deployment(ACTIVE_ID, "session-keeper"),
+            deployment(NOTIFY_ID, "notify-daily"),
+        ],
+        queued=[run],
+        resume_failures={ACTIVE_ID: restoration_error},
+    )
+
+    async def fail_cancellation(flow_run_id, state, force):
+        raise primary_error
+
+    client.set_flow_run_state = fail_cancellation
+
+    with pytest.raises(RuntimeError) as caught:
+        asyncio.run(reconcile_client(client, NOW, 600))
+
+    assert caught.value is primary_error
+    assert client.resumed == [ACTIVE_ID, NOTIFY_ID]
+    assert primary_error.restoration_errors == (restoration_error,)
+    assert any(
+        "first resume failed" in note for note in primary_error.__notes__
+    )
+
+
 def test_reconcile_reads_queued_runs_in_pages_of_200():
     queued = [
         scheduled_run(run_id=f"run-{index}", deployment_id=NOTIFY_ID, minutes_late=11)
@@ -312,7 +373,13 @@ def test_cli_returns_two_and_lists_blockers(monkeypatch, capsys):
 
 def test_main_returns_one_when_reconciliation_fails(monkeypatch, capsys):
     async def fail_reconciliation(notify_grace_seconds):
-        raise RuntimeError("api unavailable")
+        primary_error = RuntimeError("api unavailable")
+        restoration_error = RuntimeError("resume deployment failed")
+        restoration_error.add_note(
+            "while resuming deployment notify-daily (deployment-id)"
+        )
+        primary_error.restoration_errors = (restoration_error,)
+        raise primary_error
 
     monkeypatch.setattr(
         prefect_startup_reconcile, "_run_cli", fail_reconciliation
@@ -323,6 +390,9 @@ def test_main_returns_one_when_reconciliation_fails(monkeypatch, capsys):
     )
 
     assert exit_code == 1
-    assert "reconciliation_failed:RuntimeError:api unavailable" in (
-        capsys.readouterr().err
+    stderr = capsys.readouterr().err
+    assert "reconciliation_failed:RuntimeError:api unavailable" in stderr
+    assert (
+        "restoration_failed:RuntimeError:resume deployment failed:"
+        "while resuming deployment notify-daily (deployment-id)" in stderr
     )

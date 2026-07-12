@@ -195,6 +195,9 @@ async def reconcile_client(
     }
     paused_by_invocation: list[Any] = []
     cancelled: list[str] = []
+    result: ReconcileResult | None = None
+    primary_error: BaseException | None = None
+    primary_traceback = None
 
     try:
         for deployment, _ in managed.values():
@@ -231,10 +234,40 @@ async def reconcile_client(
             f"{managed[run.deployment_id][0].name}:{run.id}:{_state_type(run)}"
             for run in in_flight
         ]
-        return ReconcileResult(cancelled=cancelled, blockers=blockers)
-    finally:
-        for deployment in paused_by_invocation:
+        result = ReconcileResult(cancelled=cancelled, blockers=blockers)
+    except BaseException as exc:
+        primary_error = exc
+        primary_traceback = exc.__traceback__
+
+    restoration_errors: list[BaseException] = []
+    for deployment in paused_by_invocation:
+        try:
             await client.resume_deployment(deployment.id)
+        except BaseException as exc:
+            exc.add_note(
+                f"while resuming deployment {deployment.name} ({deployment.id})"
+            )
+            restoration_errors.append(exc)
+
+    if restoration_errors:
+        if primary_error is not None:
+            primary_error.restoration_errors = tuple(restoration_errors)
+            for error in restoration_errors:
+                primary_error.add_note(
+                    f"deployment restoration failed: {type(error).__name__}: {error}"
+                )
+        else:
+            aggregate = BaseExceptionGroup(
+                "failed to restore Prefect deployments", restoration_errors
+            )
+            aggregate.restoration_errors = tuple(restoration_errors)
+            raise aggregate
+
+    if primary_error is not None:
+        raise primary_error.with_traceback(primary_traceback)
+
+    assert result is not None
+    return result
 
 
 def _positive_int(value: str) -> int:
@@ -279,6 +312,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(_run_cli(args.notify_grace_seconds))
     except Exception as exc:
         print(f"reconciliation_failed:{type(exc).__name__}:{exc}", file=sys.stderr)
+        for restoration_error in getattr(exc, "restoration_errors", ()):
+            notes = ":".join(getattr(restoration_error, "__notes__", ()))
+            context = f":{notes}" if notes else ""
+            print(
+                "restoration_failed:"
+                f"{type(restoration_error).__name__}:{restoration_error}"
+                f"{context}",
+                file=sys.stderr,
+            )
         return 1
 
 
