@@ -15,12 +15,13 @@ from services.session_manager import (
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text=None, url="https://example/probe"):
+    def __init__(self, status_code=200, payload=None, text=None, url="https://example/probe", headers=None):
         self.status_code = status_code
         self._payload = payload
         self.text = json.dumps(payload, ensure_ascii=False) if text is None and payload is not None else (text or "")
         self.content = self.text.encode("utf-8")
         self.url = url
+        self.headers = headers or {}
 
     def json(self):
         if self._payload is None:
@@ -68,6 +69,15 @@ def test_validate_cookie_dump_requires_stage():
 
     assert validation["valid"] is False
     assert validation["missing_stages"] == ["data_market"]
+
+
+def test_login_redirect_response_is_session_expired():
+    response = FakeResponse(
+        status_code=302,
+        headers={"Location": "/uac/web3/jsp/login/login.jsp"},
+    )
+
+    assert session_manager.response_has_session_expired(response) is True
 
 
 def test_prepare_session_reuses_existing_cookie_dump():

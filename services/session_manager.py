@@ -270,6 +270,10 @@ def response_has_session_expired(response, payload=None):
     lowered_url = str(getattr(response, "url", "") or "").lower()
     if any(keyword in lowered_url for keyword in SESSION_EXPIRED_URL_KEYWORDS):
         return True
+    headers = getattr(response, "headers", {}) or {}
+    lowered_location = str(headers.get("Location") or headers.get("location") or "").lower()
+    if any(keyword in lowered_location for keyword in SESSION_EXPIRED_URL_KEYWORDS):
+        return True
     if getattr(response, "status_code", None) in {401, 403}:
         return True
 
