@@ -77,7 +77,7 @@ function Get-PrefectPoolStatuses {
 }
 
 function Write-SessionState {
-    $path = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\session_state.json"
+    $path = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\session-health.json"
     try {
         $state = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
         $verifiedAt = [DateTimeOffset]::Parse([string]$state.verified_at)
@@ -91,7 +91,7 @@ function Write-SessionState {
 
 function Write-LockStatus {
     param([string]$FileName)
-    $path = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "locks\$FileName"
+    $path = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\locks\$FileName"
     try {
         $metadata = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
         $ownerPid = [int]$metadata.pid

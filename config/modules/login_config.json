@@ -84,6 +84,7 @@
   },
   "browser": {
     "headless": true,
+    "retain_after_login": true,
     "session_state_path": "runtime/session/browser-session.json",
     "user_data_dir": "runtime/session/browser-profile",
     "window_width": 1920,

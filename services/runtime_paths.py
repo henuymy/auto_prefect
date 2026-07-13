@@ -56,6 +56,8 @@ def resolve_runtime_path(
     if path.parts and path.parts[0].lower() == "runtime":
         logical_path = validate_runtime_path(value)
         return (runtime_root() / Path(*logical_path.parts[1:])).resolve()
-    if path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"不允许绝对路径或父目录路径: {value}")
+    if path.is_absolute():
+        return path.resolve()
+    if ".." in path.parts:
+        raise ValueError(f"不允许父目录路径: {value}")
     return (Path(project_dir) / path).resolve()

@@ -8,9 +8,12 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "lib\python_env.ps1")
+. (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 . (Join-Path $PSScriptRoot "lib\process_registry.ps1")
-$SharedRuntimeRoot = "C:\AutoNotifyRuntime"
-$env:AUTO_NOTIFY_RUNTIME_ROOT = $SharedRuntimeRoot
+if (-not (Import-ProjectRuntimeConfig)) {
+    throw "缺少运行配置。请从 config\runtime.local.example.json 创建 config\runtime.local.json，并设置 runtime.root。"
+}
+$SharedRuntimeRoot = $env:AUTO_NOTIFY_RUNTIME_ROOT
 $SharedRuntimeDirs = @(
     "session\locks",
     "modules",

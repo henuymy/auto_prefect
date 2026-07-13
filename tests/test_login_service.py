@@ -182,18 +182,18 @@ def test_browser_runtime_paths_rebase_to_external_root(monkeypatch, tmp_path):
     config = browser_config(
         {
             "browser": {
-                "session_state_path": "runtime/browser_session/session.json",
-                "user_data_dir": "runtime/browser_session/profile",
+                "session_state_path": "runtime/session/browser-session.json",
+                "user_data_dir": "runtime/session/browser-profile",
             }
         },
         base_dir=tmp_path,
     )
 
     assert config["session_state_path"] == (
-        tmp_path / "shared" / "browser_session" / "session.json"
+        tmp_path / "shared" / "session" / "browser-session.json"
     ).resolve()
     assert config["user_data_dir"] == (
-        tmp_path / "shared" / "browser_session" / "profile"
+        tmp_path / "shared" / "session" / "browser-profile"
     ).resolve()
 
 
@@ -204,14 +204,14 @@ def test_cookie_dump_runtime_path_rebases_to_external_root(monkeypatch, tmp_path
             "credentials": {},
             "cookie_dump": {
                 "enabled": True,
-                "output_file": "runtime/cookies/cookie_dump.json",
+                "output_file": "runtime/session/cookie_dump.json",
             },
         },
         config_label="runtime-path-test",
     )
 
     assert login.cookie_recorder.output_path == (
-        tmp_path / "shared" / "cookies" / "cookie_dump.json"
+        tmp_path / "shared" / "session" / "cookie_dump.json"
     ).resolve()
 
 
@@ -237,7 +237,7 @@ def test_init_driver_uses_original_retained_mode_when_headed(monkeypatch, tmp_pa
     assert options.experimental_options["detach"] is True
 
 
-def test_default_login_config_uses_headless_ephemeral_browser():
+def test_default_login_config_uses_retained_headless_browser():
     config = json.loads(
         (PROJECT_ROOT / "config" / "modules" / "login_config.json").read_text(
             encoding="utf-8"
@@ -245,6 +245,7 @@ def test_default_login_config_uses_headless_ephemeral_browser():
     )
 
     assert config["browser"]["headless"] is True
+    assert config["browser"]["retain_after_login"] is True
     assert "keep_open_after_login" not in config["browser"]
     assert config["browser"]["clear_profile_before_start"] is False
     assert config["browser"]["implicit_wait"] == 0

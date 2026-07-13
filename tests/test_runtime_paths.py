@@ -3,8 +3,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from services.runtime_paths import resolve_runtime_path, runtime_path, runtime_root
 
 
@@ -24,12 +22,11 @@ def test_non_runtime_relative_paths_remain_project_relative(monkeypatch, tmp_pat
     ).resolve()
 
 
-def test_absolute_paths_are_rejected(monkeypatch, tmp_path):
+def test_absolute_paths_are_preserved_for_internal_callers(monkeypatch, tmp_path):
     target = (tmp_path / "absolute.json").resolve()
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
 
-    with pytest.raises(ValueError, match="绝对路径"):
-        resolve_runtime_path(target, project_dir=tmp_path)
+    assert resolve_runtime_path(target, project_dir=tmp_path) == target
 
 
 def test_runtime_root_uses_machine_shared_default_without_override(monkeypatch):

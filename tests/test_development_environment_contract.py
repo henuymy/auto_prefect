@@ -161,11 +161,13 @@ def test_windows_setup_prepares_shared_runtime_and_lifecycle_commands():
         encoding="utf-8"
     )
 
-    assert r'C:\AutoNotifyRuntime' in source
+    assert "runtime_config.ps1" in source
+    assert "Import-ProjectRuntimeConfig" in source
+    assert "$SharedRuntimeRoot = $env:AUTO_NOTIFY_RUNTIME_ROOT" in source
     for directory in (
-        '"locks"',
-        '"session"',
-        '"browser_session"',
+        '"session\\locks"',
+        '"modules"',
+        '"flow"',
         '"prefect\\prefect_home"',
         '"logs"',
         '"temp"',
@@ -188,14 +190,13 @@ def test_windows_setup_serializes_shared_initialization_with_runtime_startup():
     )
 
     assert "process_registry.ps1" in source
-    assert "$env:AUTO_NOTIFY_RUNTIME_ROOT = $SharedRuntimeRoot" in source
+    assert "$SharedRuntimeRoot = $env:AUTO_NOTIFY_RUNTIME_ROOT" in source
     assert source.count("Enter-StartupClaim") == 1
     assert source.count("Exit-StartupClaim") == 1
     claim = source.index("Enter-StartupClaim")
-    migration = source.index("Invoke-RuntimeStateMigration")
     shared_init = source.index("foreach ($dir in $SharedRuntimeDirs)")
     release = source.rindex("Exit-StartupClaim")
-    assert claim < migration < shared_init < release
+    assert claim < shared_init < release
 
 
 def test_runtime_loader_exports_three_pool_environment_contract():
@@ -806,13 +807,12 @@ def test_startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed():
         assert "scripts/run.ps1 -ForceRestart" in document
 
 
-def test_runtime_state_migration_is_invoked_before_services_start():
+def test_runtime_state_migration_is_not_invoked_during_service_startup():
     source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
 
     migration = "Invoke-RuntimeStateMigration"
-    assert "runtime_state_migration.ps1" in source
-    assert source.count(migration) == 1
-    assert source.index(migration) < source.index('Write-Host "启动 Prefect Server')
+    assert "runtime_state_migration.ps1" not in source
+    assert migration not in source
 
 
 def test_unified_runtime_entry_points_start_services_without_running_flows():
