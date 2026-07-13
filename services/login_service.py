@@ -46,6 +46,35 @@ def popup_input(prompt: str, title: str = "输入") -> str:
         return input(prompt)
 
 
+def app_page_is_ready(driver, app_config, previous_url=None):
+    """Return whether a newly opened USM app is ready for session capture."""
+    current_url = str(getattr(driver, "current_url", "") or "")
+    if not current_url.lower().startswith(("http://", "https://")):
+        return False
+    if previous_url and current_url == previous_url:
+        return False
+
+    page_ready = app_config.get("page_ready") or {}
+    url_contains = page_ready.get("url_contains")
+    if url_contains and url_contains not in current_url:
+        return False
+
+    required_cookie_names = set(page_ready.get("cookie_names") or [])
+    if required_cookie_names:
+        available_cookie_names = {
+            cookie.get("name")
+            for cookie in (driver.get_cookies() or [])
+            if cookie.get("name") and cookie.get("value")
+        }
+        if not required_cookie_names.issubset(available_cookie_names):
+            return False
+
+    try:
+        return driver.execute_script("return document.readyState") == "complete"
+    except Exception:
+        return False
+
+
 class AutoLogin:
     def __init__(self, config_path=None):
         self.config_path = Path(config_path).resolve() if config_path else PROJECT_DIR / "legacy_modules/modules/autologin/config.json"
@@ -694,6 +723,7 @@ class AutoLogin:
             ))
         )
         old_handles = set(self.driver.window_handles)
+        previous_url = self.driver.current_url
         self.driver.execute_script("arguments[0].click();", app_div)
         try:
             WebDriverWait(self.driver, 15).until(lambda d: len(set(d.window_handles) - old_handles) > 0)
@@ -701,10 +731,7 @@ class AutoLogin:
             raise RuntimeError(f"点击 {app_name} 后未打开独立页面") from exc
         new_handle = list(set(self.driver.window_handles) - old_handles)[-1]
         self.driver.switch_to.window(new_handle)
-        try:
-            WebDriverWait(self.driver, 30).until(lambda d: d.execute_script("return document.readyState") == "complete")
-        except TimeoutException:
-            pass
+        self.wait_for_app_page_ready(app_config, previous_url=previous_url)
         return self.driver.current_window_handle
 
     def enter_usm_app_from_source(self, app_config):
@@ -729,6 +756,7 @@ class AutoLogin:
             f"{icon_xpath}/ancestor::li[contains(@class,'el-menu-item')][1]"
         )
         old_handles = set(self.driver.window_handles)
+        previous_url = self.driver.current_url
         element = None
         for locator in [
             (By.XPATH, menu_item_xpath),
@@ -753,11 +781,48 @@ class AutoLogin:
         except TimeoutException:
             self.driver.switch_to.window(source_handle)
 
-        try:
-            WebDriverWait(self.driver, 30).until(lambda d: d.execute_script("return document.readyState") == "complete")
-        except TimeoutException:
-            pass
+        self.wait_for_app_page_ready(app_config, previous_url=previous_url)
         return self.driver.current_window_handle
+
+    def wait_for_app_page_ready(self, app_config, previous_url=None):
+        app_name = app_config["name"]
+        page_ready = app_config.get("page_ready") or {}
+        timeout_seconds = int(page_ready.get("timeout_seconds", 60))
+        try:
+            WebDriverWait(self.driver, timeout_seconds).until(
+                lambda d: app_page_is_ready(d, app_config, previous_url=previous_url)
+            )
+        except TimeoutException as exc:
+            debug = self.dump_login_page_debug(
+                f"app_ready_timeout_{app_config.get('stage') or 'unknown'}"
+            )
+            expected_url = page_ready.get("url_contains")
+            required_cookies = page_ready.get("cookie_names") or []
+            available_cookies = [
+                cookie.get("name")
+                for cookie in (self.driver.get_cookies() or [])
+                if cookie.get("name") and cookie.get("value")
+            ]
+            raise RuntimeError(
+                f"{app_name} 页面未在 {timeout_seconds} 秒内就绪: "
+                f"当前URL={self.driver.current_url}, "
+                f"期望URL包含={expected_url!r}, 必需Cookie={required_cookies}, "
+                f"当前Cookie={available_cookies}, 截图={debug.get('screenshot_path')}, "
+                f"HTML={debug.get('page_source_path')}"
+            ) from exc
+        print(f"[INFO] 应用页面已就绪: {app_name} / {self.driver.current_url}")
+
+    def close_failed_app_windows(self, previous_handles):
+        for handle in list(self.driver.window_handles):
+            if handle in previous_handles:
+                continue
+            try:
+                self.driver.switch_to.window(handle)
+                self.driver.close()
+            except Exception as exc:
+                print(f"[WARN] 关闭失败应用窗口时出错: {exc}")
+        if self.usm_window_handle and self.usm_window_handle in self.driver.window_handles:
+            self.driver.switch_to.window(self.usm_window_handle)
 
     def wait_for_storage_ready(self, app_config):
         storage_ready = app_config.get("storage_ready")
@@ -810,13 +875,35 @@ class AutoLogin:
             app_name = app_config.get("name")
             if not stage or not app_name:
                 raise ValueError("usm_cookie_apps 每一项都必须包含 stage 和 name")
-            print(f"[INFO] 准备捕获 USM 应用 Cookie: {stage} / {app_name}")
-            if app_config.get("source_stage"):
-                self.opened_app_handles[stage] = self.enter_usm_app_from_source(app_config)
-            else:
-                self.opened_app_handles[stage] = self.enter_usm_app(app_config)
-            self.wait_for_storage_ready(app_config)
-            self.capture_cookies(stage)
+            capture_attempts = int(app_config.get("capture_attempts", 1) or 1)
+            retry_seconds = float(app_config.get("capture_retry_seconds", 2) or 2)
+            last_error = None
+            for attempt in range(1, capture_attempts + 1):
+                print(
+                    f"[INFO] 准备捕获 USM 应用 Cookie: {stage} / {app_name} "
+                    f"(第 {attempt}/{capture_attempts} 次)"
+                )
+                previous_handles = set(self.driver.window_handles)
+                try:
+                    if app_config.get("source_stage"):
+                        self.opened_app_handles[stage] = self.enter_usm_app_from_source(app_config)
+                    else:
+                        self.opened_app_handles[stage] = self.enter_usm_app(app_config)
+                    self.wait_for_storage_ready(app_config)
+                    self.capture_cookies(stage)
+                    last_error = None
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    self.opened_app_handles.pop(stage, None)
+                    self.close_failed_app_windows(previous_handles)
+                    if attempt < capture_attempts:
+                        print(f"[WARN] {app_name} 捕获失败，将重新打开应用: {exc}")
+                        time.sleep(retry_seconds)
+            if last_error is not None:
+                raise RuntimeError(
+                    f"{app_name} 连续 {capture_attempts} 次捕获失败"
+                ) from last_error
             if self.usm_window_handle and self.usm_window_handle in self.driver.window_handles:
                 self.driver.switch_to.window(self.usm_window_handle)
 

@@ -29,7 +29,17 @@
     "delete_after_success": true
   },
   "usm_cookie_apps": [
-    {"stage": "report_analysis", "name": "报表分析系统"},
+    {
+      "stage": "report_analysis",
+      "name": "报表分析系统",
+      "capture_attempts": 3,
+      "capture_retry_seconds": 2,
+      "page_ready": {
+        "url_contains": "/bicpreport/",
+        "cookie_names": ["ssr-token"],
+        "timeout_seconds": 60
+      }
+    },
     {
       "stage": "smart_ops",
       "name": "智慧运营平台",
