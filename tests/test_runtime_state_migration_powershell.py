@@ -1,0 +1,195 @@
+import json
+from pathlib import Path
+import shutil
+import subprocess
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def run_migration(repo_root: Path, runtime_root: Path):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    assert pwsh is not None
+    script = (ROOT / "scripts" / "lib" / "runtime_state_migration.ps1").as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+. '{script}'
+Invoke-RuntimeStateMigration -RepoRoot '{repo_root.as_posix()}' -RuntimeRoot '{runtime_root.as_posix()}' | ConvertTo-Json -Compress
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return json.loads(completed.stdout.splitlines()[-1])
+
+
+def test_migration_copies_legacy_cookie_and_profile_only_when_targets_absent(tmp_path):
+    repo_root = tmp_path / "repo"
+    runtime_root = tmp_path / "shared"
+    legacy_cookie = repo_root / "runtime" / "cookies" / "cookie_dump.json"
+    legacy_profile = repo_root / "runtime" / "browser_session" / "edge_profile_auto_login"
+    legacy_cookie.parent.mkdir(parents=True)
+    legacy_profile.mkdir(parents=True)
+    legacy_cookie.write_text('{"secret":"legacy"}', encoding="utf-8")
+    (legacy_profile / "marker.txt").write_text("legacy-profile", encoding="utf-8")
+
+    first = run_migration(repo_root, runtime_root)
+
+    target_cookie = runtime_root / "cookies" / "cookie_dump.json"
+    target_profile = runtime_root / "browser_session" / "edge_profile_auto_login"
+    assert target_cookie.read_text(encoding="utf-8") == '{"secret":"legacy"}'
+    assert (target_profile / "marker.txt").read_text(encoding="utf-8") == "legacy-profile"
+    assert {item["status"] for item in first} == {"copied"}
+
+    target_cookie.write_text('{"secret":"newer"}', encoding="utf-8")
+    (target_profile / "marker.txt").write_text("newer-profile", encoding="utf-8")
+    second = run_migration(repo_root, runtime_root)
+
+    assert target_cookie.read_text(encoding="utf-8") == '{"secret":"newer"}'
+    assert (target_profile / "marker.txt").read_text(encoding="utf-8") == "newer-profile"
+    assert {item["status"] for item in second} == {"target_exists"}
+
+
+def test_migration_failure_isolated_and_other_item_continues(tmp_path):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    assert pwsh is not None
+    repo_root = tmp_path / "repo"
+    runtime_root = tmp_path / "shared"
+    legacy_cookie = repo_root / "runtime" / "cookies" / "cookie_dump.json"
+    legacy_profile = repo_root / "runtime" / "browser_session" / "edge_profile_auto_login"
+    legacy_cookie.parent.mkdir(parents=True)
+    legacy_profile.mkdir(parents=True)
+    legacy_cookie.write_text('{"secret":"must-not-appear"}', encoding="utf-8")
+    (legacy_profile / "marker.txt").write_text("legacy-profile", encoding="utf-8")
+    script = (ROOT / "scripts" / "lib" / "runtime_state_migration.ps1").as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+. '{script}'
+function Copy-Item {{
+  param([string]$LiteralPath, [string]$Destination, [switch]$Recurse)
+  if ($LiteralPath -like '*cookie_dump.json') {{
+    [IO.File]::WriteAllText($Destination, 'partial-secret-material')
+    throw 'injected locked cookie copy failure with secret details'
+  }}
+  Microsoft.PowerShell.Management\\Copy-Item @PSBoundParameters
+}}
+Invoke-RuntimeStateMigration -RepoRoot '{repo_root.as_posix()}' -RuntimeRoot '{runtime_root.as_posix()}' | ConvertTo-Json -Compress
+"""
+
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    results = json.loads(completed.stdout.splitlines()[-1])
+
+    assert results == [
+        {
+            "name": "cookie_dump",
+            "status": "migration_failed_fresh_login_required",
+            "source": str(legacy_cookie),
+            "target": str(runtime_root / "cookies" / "cookie_dump.json"),
+        },
+        {
+            "name": "edge_profile",
+            "status": "copied",
+            "source": str(legacy_profile),
+            "target": str(
+                runtime_root / "browser_session" / "edge_profile_auto_login"
+            ),
+        },
+    ]
+    assert "must-not-appear" not in completed.stdout
+    assert "secret details" not in completed.stdout
+    assert not (runtime_root / "cookies" / "cookie_dump.json").exists()
+    assert not list(runtime_root.rglob(".migration-*"))
+    assert (
+        runtime_root / "browser_session" / "edge_profile_auto_login" / "marker.txt"
+    ).read_text(encoding="utf-8") == "legacy-profile"
+
+
+def test_directory_target_race_keeps_winner_and_removes_losing_staging(tmp_path):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    assert pwsh is not None
+    repo_root = tmp_path / "repo"
+    runtime_root = tmp_path / "shared"
+    legacy_profile = repo_root / "runtime" / "browser_session" / "edge_profile_auto_login"
+    target_profile = runtime_root / "browser_session" / "edge_profile_auto_login"
+    legacy_profile.mkdir(parents=True)
+    (legacy_profile / "legacy.txt").write_text("legacy", encoding="utf-8")
+    script = (ROOT / "scripts" / "lib" / "runtime_state_migration.ps1").as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+. '{script}'
+function Copy-Item {{
+  param([string]$LiteralPath, [string]$Destination, [switch]$Recurse)
+  Microsoft.PowerShell.Management\\Copy-Item @PSBoundParameters
+  if ($LiteralPath -like '*edge_profile_auto_login') {{
+    [IO.Directory]::CreateDirectory('{target_profile.as_posix()}') | Out-Null
+    [IO.File]::WriteAllText((Join-Path '{target_profile.as_posix()}' 'winner.txt'), 'winner')
+  }}
+}}
+Invoke-RuntimeStateMigration -RepoRoot '{repo_root.as_posix()}' -RuntimeRoot '{runtime_root.as_posix()}' | ConvertTo-Json -Compress
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    results = json.loads(completed.stdout.splitlines()[-1])
+    edge = next(item for item in results if item["name"] == "edge_profile")
+
+    assert edge["status"] == "target_exists_race"
+    assert (target_profile / "winner.txt").read_text(encoding="utf-8") == "winner"
+    assert not (target_profile / "legacy.txt").exists()
+    assert not list(runtime_root.rglob(".migration-*"))
+
+
+def test_sensitive_staging_residue_is_reported_without_clean_fallback(tmp_path):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    assert pwsh is not None
+    repo_root = tmp_path / "repo"
+    runtime_root = tmp_path / "shared"
+    legacy_cookie = repo_root / "runtime" / "cookies" / "cookie_dump.json"
+    legacy_cookie.parent.mkdir(parents=True)
+    legacy_cookie.write_text('{"secret":"must-not-appear"}', encoding="utf-8")
+    script = (ROOT / "scripts" / "lib" / "runtime_state_migration.ps1").as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+. '{script}'
+function Copy-Item {{
+  param([string]$LiteralPath, [string]$Destination, [switch]$Recurse)
+  [IO.File]::WriteAllText($Destination, 'sensitive-staging')
+  $script:lockedStaging = [IO.File]::Open($Destination, 'Open', 'ReadWrite', 'None')
+  throw 'injected locked staging with secret details'
+}}
+$results = @(Invoke-RuntimeStateMigration -RepoRoot '{repo_root.as_posix()}' -RuntimeRoot '{runtime_root.as_posix()}')
+$script:lockedStaging.Dispose()
+$results | ConvertTo-Json -Compress
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    results = json.loads(completed.stdout.splitlines()[-1])
+    cookie = next(item for item in results if item["name"] == "cookie_dump")
+
+    assert cookie["status"] == "migration_failed_sensitive_staging_cleanup_required"
+    assert "must-not-appear" not in completed.stdout
+    assert "secret details" not in completed.stdout
+    assert not (runtime_root / "cookies" / "cookie_dump.json").exists()
+    assert len(list(runtime_root.rglob(".migration-*"))) == 1

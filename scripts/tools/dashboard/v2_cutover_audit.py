@@ -198,12 +198,10 @@ async def _prefect_state_check(api_url: str, *, require_worker: bool) -> dict[st
                     "name": run.name,
                 })
             online_workers = []
-            for pool in await client.read_work_pools():
-                if pool.name != "default-agent-pool":
-                    continue
-                for worker in await client.read_workers_for_work_pool(pool.name):
-                    if str(worker.status).endswith("ONLINE"):
-                        online_workers.append(worker.name)
+            dashboard_pool = os.environ.get("PREFECT_DASHBOARD_POOL_NAME") or "windows-dashboard-pool"
+            for worker in await client.read_workers_for_work_pool(dashboard_pool):
+                if str(worker.status).endswith("ONLINE"):
+                    online_workers.append(worker.name)
             worker_ok = bool(online_workers) if require_worker else True
             ok = not missing and not unpaused and not active_runs and worker_ok
             return _check(

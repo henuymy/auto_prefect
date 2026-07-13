@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import TargetPlan
-from scripts.tools.dashboard import import_v2_target_plan
+from scripts.tools.dashboard import import_v2_target_plan, v2_cutover_audit
 from tests.test_dashboard_v2_query_service import _engine
 
 
@@ -53,3 +55,46 @@ def test_target_import_creates_draft_then_activates_existing_plan(
         plans = list(session.scalars(select(TargetPlan).order_by(TargetPlan.id)))
     assert len(plans) == 2  # fixture plan + newly imported immutable version
     assert plans[-1].status == "ACTIVE"
+
+
+def test_cutover_audit_reads_workers_only_from_dashboard_pool(monkeypatch):
+    monkeypatch.setenv("PREFECT_DASHBOARD_POOL_NAME", "dashboard-test-pool")
+    deployments = [
+        SimpleNamespace(name=name, id=f"deployment-{index}", paused=True)
+        for index, name in enumerate(sorted(v2_cutover_audit.REQUIRED_DEPLOYMENTS))
+    ]
+
+    class FakeClient:
+        def __init__(self):
+            self.worker_pool_reads = []
+
+        async def read_deployments(self):
+            return deployments
+
+        async def read_workers_for_work_pool(self, pool_name):
+            self.worker_pool_reads.append(pool_name)
+            return [SimpleNamespace(name="dashboard-worker", status="ONLINE")]
+
+    client = FakeClient()
+
+    class ClientContext:
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    async def _empty_runs():
+        return []
+
+    monkeypatch.setattr(v2_cutover_audit, "get_client", ClientContext)
+    monkeypatch.setattr(v2_cutover_audit, "_read_target_flow_runs", lambda client, deployment_ids: _empty_runs())
+
+    async def _run_check():
+        return await v2_cutover_audit._prefect_state_check("http://prefect.test/api", require_worker=True)
+
+    result = asyncio.run(_run_check())
+
+    assert result["ok"] is True
+    assert result["online_workers"] == ["dashboard-worker"]
+    assert client.worker_pool_reads == ["dashboard-test-pool"]

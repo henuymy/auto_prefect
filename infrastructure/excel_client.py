@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
+
+from services.runtime_paths import runtime_path
 
 XL_CALCULATION_MANUAL = -4135
-DEFAULT_EXCEL_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "locks" / "excel_com.lock"
 DEFAULT_EXCEL_LOCK_TIMEOUT_SECONDS = 900
 DEFAULT_EXCEL_LOCK_POLL_SECONDS = 2
 DEFAULT_EXCEL_LOCK_STALE_SECONDS = 180
@@ -18,6 +24,68 @@ DEFAULT_ORPHANED_EXCEL_MIN_AGE_SECONDS = 120
 
 class ExcelComLockTimeout(RuntimeError):
     pass
+
+
+def default_excel_lock_path() -> Path:
+    return runtime_path("locks/excel_com.lock")
+
+
+def _windows_process_started_at(pid: int) -> str | None:
+    command = (
+        f"$process = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
+        "if ($null -eq $process -or $null -eq $process.StartTime) { exit 1 }; "
+        "$process.StartTime.ToUniversalTime().ToString('o')"
+    )
+    completed = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", command],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    value = completed.stdout.strip()
+    return value or None
+
+
+def _parse_process_time(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized).astimezone(timezone.utc)
+
+
+def process_is_running(pid: int, started_at: str | None = None) -> bool:
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        actual_started_at = _windows_process_started_at(pid)
+        if actual_started_at is None:
+            return False
+        if not started_at:
+            return True
+        try:
+            return _parse_process_time(actual_started_at) == _parse_process_time(started_at)
+        except (TypeError, ValueError):
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, SystemError):
+        return False
+
+
+def current_process_started_at() -> str:
+    if sys.platform == "win32":
+        started_at = _windows_process_started_at(os.getpid())
+        if started_at is None:
+            raise RuntimeError("无法读取当前进程启动时间")
+        return _parse_process_time(started_at).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def cleanup_orphaned_excel_processes(min_age_seconds=DEFAULT_ORPHANED_EXCEL_MIN_AGE_SECONDS):
@@ -69,22 +137,77 @@ Get-Process -Name EXCEL -ErrorAction SilentlyContinue |
 class FileLock:
     def __init__(
         self,
-        path=DEFAULT_EXCEL_LOCK_PATH,
+        path=None,
         timeout_seconds=DEFAULT_EXCEL_LOCK_TIMEOUT_SECONDS,
         poll_seconds=DEFAULT_EXCEL_LOCK_POLL_SECONDS,
         stale_seconds=DEFAULT_EXCEL_LOCK_STALE_SECONDS,
     ):
-        self.path = Path(path)
+        self.path = Path(path) if path else default_excel_lock_path()
         self.timeout_seconds = timeout_seconds
         self.poll_seconds = poll_seconds
         self.stale_seconds = stale_seconds
         self.handle = None
+        self.owner_token = None
+
+    @staticmethod
+    def _owner_identity(payload, raw_content):
+        if isinstance(payload, dict) and payload.get("owner_token"):
+            return ("owner_token", str(payload["owner_token"]))
+        metadata = payload if isinstance(payload, dict) else {}
+        return (
+            "fingerprint",
+            metadata.get("pid"),
+            metadata.get("process_started_at"),
+            metadata.get("acquired_at"),
+            metadata.get("created_at"),
+            hashlib.sha256(raw_content).hexdigest(),
+        )
+
+    def _read_lock_snapshot(self):
+        try:
+            stat_before = self.path.stat()
+            raw_content = self.path.read_bytes()
+            stat_after = self.path.stat()
+        except FileNotFoundError:
+            return None
+        if (
+            stat_before.st_mtime_ns != stat_after.st_mtime_ns
+            or stat_before.st_size != stat_after.st_size
+        ):
+            return None
+        try:
+            payload = json.loads(raw_content.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, TypeError):
+            payload = {}
+        return {
+            "identity": self._owner_identity(payload, raw_content),
+            "payload": payload,
+            "mtime": stat_after.st_mtime,
+        }
+
+    def _snapshot_is_stale(self, snapshot):
+        payload = snapshot["payload"]
+        if isinstance(payload, dict) and payload.get("pid"):
+            return not process_is_running(
+                payload["pid"], payload.get("process_started_at")
+            )
+        return time.time() - snapshot["mtime"] > self.stale_seconds
 
     def is_stale(self):
+        snapshot = self._read_lock_snapshot()
+        return bool(snapshot and self._snapshot_is_stale(snapshot))
+
+    def _remove_stale_lock(self, inspected_identity):
+        current = self._read_lock_snapshot()
+        if current is None or current["identity"] != inspected_identity:
+            return "retry"
         try:
-            return time.time() - self.path.stat().st_mtime > self.stale_seconds
+            self.path.unlink()
+            return "removed"
         except FileNotFoundError:
-            return False
+            return "retry"
+        except PermissionError:
+            return "permission_denied"
 
     def acquire(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,15 +215,32 @@ class FileLock:
         while True:
             try:
                 self.handle = self.path.open("x", encoding="utf-8")
-                self.handle.write(f"pid={_current_pid()} acquired_at={time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                self.handle.flush()
+                try:
+                    self.owner_token = uuid4().hex
+                    self.handle.write(
+                        json.dumps(
+                            {
+                                "pid": _current_pid(),
+                                "process_started_at": current_process_started_at(),
+                                "owner_token": self.owner_token,
+                                "acquired_at": datetime.now(timezone.utc).isoformat(),
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    self.handle.flush()
+                except Exception:
+                    self.handle.close()
+                    self.handle = None
+                    self.owner_token = None
+                    self.path.unlink(missing_ok=True)
+                    raise
                 return self
             except FileExistsError:
-                if self.is_stale():
-                    try:
-                        self.path.unlink()
-                        continue
-                    except FileNotFoundError:
+                snapshot = self._read_lock_snapshot()
+                if snapshot and self._snapshot_is_stale(snapshot):
+                    removal = self._remove_stale_lock(snapshot["identity"])
+                    if removal in {"removed", "retry"}:
                         continue
                 if time.monotonic() >= deadline:
                     lock_info = ""
@@ -117,10 +257,20 @@ class FileLock:
                 self.handle.close()
             finally:
                 self.handle = None
+        if not self.owner_token:
+            return
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return
+        if not isinstance(payload, dict) or payload.get("owner_token") != self.owner_token:
+            return
         try:
             self.path.unlink()
         except FileNotFoundError:
             pass
+        finally:
+            self.owner_token = None
 
 
 class LockedExcel:
@@ -151,11 +301,7 @@ class LockedExcel:
 
 
 def _current_pid():
-    try:
-        import os
-        return os.getpid()
-    except Exception:
-        return "unknown"
+    return os.getpid()
 
 
 def require_win32():

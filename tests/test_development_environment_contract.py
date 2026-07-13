@@ -124,7 +124,6 @@ def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment(
 
     assert config["prefect"]["postgres"]["url"]
     assert config["dashboard"]["mysql"]["host"]
-    assert config["runtime"]["work_pool"]
 
     assert "config/runtime.local.json" in gitignore
     assert "function Import-RuntimeConfig" in loader_source
@@ -139,6 +138,135 @@ def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment(
         "PREFECT_WORK_POOL_NAME",
     ):
         assert variable in loader_source
+
+
+def test_runtime_json_template_exports_three_pool_topology_and_runtime_root():
+    template = json.loads(
+        (ROOT / "config" / "runtime.local.example.json").read_text(encoding="utf-8")
+    )
+    runtime = template["runtime"]
+
+    assert runtime["root"] == r"C:\AutoNotifyRuntime"
+    assert runtime["scheduled_notify_grace_seconds"] == 600
+    assert runtime["session_freshness_seconds"] == 180
+    assert runtime["work_pools"] == {
+        "session": {"name": "windows-session-pool", "limit": 1},
+        "dashboard": {"name": "windows-dashboard-pool", "limit": 4},
+        "notify": {"name": "windows-notify-pool", "limit": 6},
+    }
+
+
+def test_windows_setup_prepares_shared_runtime_and_lifecycle_commands():
+    source = (ROOT / "scripts" / "setup_windows_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert r'C:\AutoNotifyRuntime' in source
+    for directory in (
+        '"locks"',
+        '"session"',
+        '"browser_session"',
+        '"prefect\\prefect_home"',
+        '"logs"',
+        '"temp"',
+        '"processes"',
+    ):
+        assert directory in source
+    assert '"browser_session\\edge_profile_auto_login"' not in source
+    for command in (
+        "pwsh -File scripts/setup_windows_env.ps1",
+        "pwsh -File scripts/run.ps1",
+        "pwsh -File scripts/status.ps1",
+        "pwsh -File scripts/stop.ps1",
+    ):
+        assert command in source
+
+
+def test_windows_setup_serializes_shared_initialization_with_runtime_startup():
+    source = (ROOT / "scripts" / "setup_windows_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "process_registry.ps1" in source
+    assert "$env:AUTO_NOTIFY_RUNTIME_ROOT = $SharedRuntimeRoot" in source
+    assert source.count("Enter-StartupClaim") == 1
+    assert source.count("Exit-StartupClaim") == 1
+    claim = source.index("Enter-StartupClaim")
+    migration = source.index("Invoke-RuntimeStateMigration")
+    shared_init = source.index("foreach ($dir in $SharedRuntimeDirs)")
+    release = source.rindex("Exit-StartupClaim")
+    assert claim < migration < shared_init < release
+
+
+def test_runtime_loader_exports_three_pool_environment_contract():
+    source = (ROOT / "scripts" / "lib" / "runtime_config.ps1").read_text(
+        encoding="utf-8"
+    )
+    for variable in (
+        "AUTO_NOTIFY_RUNTIME_ROOT",
+        "PREFECT_SESSION_POOL_NAME",
+        "PREFECT_SESSION_POOL_LIMIT",
+        "PREFECT_DASHBOARD_POOL_NAME",
+        "PREFECT_DASHBOARD_POOL_LIMIT",
+        "PREFECT_NOTIFY_POOL_NAME",
+        "PREFECT_NOTIFY_POOL_LIMIT",
+        "AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS",
+        "AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS",
+    ):
+        assert variable in source
+
+
+def _run_runtime_config_import(config_path):
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if not powershell:
+        raise AssertionError("PowerShell is required to verify runtime configuration validation")
+
+    loader = (ROOT / "scripts" / "lib" / "runtime_config.ps1").as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+. '{loader}'
+Import-RuntimeConfig -ConfigPath '{config_path.as_posix()}' | Out-Null
+"""
+    return subprocess.run(
+        [powershell, "-NoProfile", "-Command", command],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def test_runtime_loader_rejects_fractional_positive_integer_value(tmp_path):
+    config = json.loads(
+        (ROOT / "config" / "runtime.local.example.json").read_text(encoding="utf-8")
+    )
+    config["runtime"]["work_pools"]["session"]["limit"] = 1.5
+    config_path = tmp_path / "runtime.fractional.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    result = _run_runtime_config_import(config_path)
+
+    assert result.returncode != 0
+    assert "运行配置必须为正整数: runtime.work_pools.session.limit" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_runtime_loader_rejects_nonnumeric_positive_integer_value(tmp_path):
+    config = json.loads(
+        (ROOT / "config" / "runtime.local.example.json").read_text(encoding="utf-8")
+    )
+    config["runtime"]["work_pools"]["session"]["limit"] = "one"
+    config_path = tmp_path / "runtime.nonnumeric.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    result = _run_runtime_config_import(config_path)
+
+    assert result.returncode != 0
+    assert "运行配置必须为正整数: runtime.work_pools.session.limit" in (
+        result.stdout + result.stderr
+    )
 
 
 def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
@@ -168,7 +296,16 @@ def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
                 "password": "json_password",
             }
         },
-        "runtime": {"work_pool": "json-pool"},
+        "runtime": {
+            "root": r"C:\JsonRuntime",
+            "scheduled_notify_grace_seconds": 601,
+            "session_freshness_seconds": 181,
+            "work_pools": {
+                "session": {"name": "windows-session-pool", "limit": 2},
+                "dashboard": {"name": "windows-dashboard-pool", "limit": 5},
+                "notify": {"name": "windows-notify-pool", "limit": 7},
+            },
+        },
     }
     unified_source = """\
 $env:AUTO_NOTIFY_PREFECT_DATABASE_URL = 'postgresql+asyncpg://unified:unified@db.example:5432/prefect'
@@ -188,6 +325,15 @@ $ErrorActionPreference = 'Stop'
   mysql_user = $env:DASHBOARD_MYSQL_USER
   mysql_password = $env:DASHBOARD_MYSQL_PASSWORD
   prefect_api_url = $env:PREFECT_API_URL
+  runtime_root = $env:AUTO_NOTIFY_RUNTIME_ROOT
+  session_pool = $env:PREFECT_SESSION_POOL_NAME
+  session_pool_limit = $env:PREFECT_SESSION_POOL_LIMIT
+  dashboard_pool = $env:PREFECT_DASHBOARD_POOL_NAME
+  dashboard_pool_limit = $env:PREFECT_DASHBOARD_POOL_LIMIT
+  notify_pool = $env:PREFECT_NOTIFY_POOL_NAME
+  notify_pool_limit = $env:PREFECT_NOTIFY_POOL_LIMIT
+  scheduled_notify_grace_seconds = $env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS
+  session_freshness_seconds = $env:AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS
   work_pool = $env:PREFECT_WORK_POOL_NAME
 }} | ConvertTo-Json -Compress
 """.format(script=(ROOT / "scripts" / "dev" / "env.ps1").as_posix())
@@ -220,7 +366,26 @@ $ErrorActionPreference = 'Stop'
             "mysql_user": json_config["dashboard"]["mysql"]["user"],
             "mysql_password": json_config["dashboard"]["mysql"]["password"],
             "prefect_api_url": json_config["prefect"]["api_url"],
-            "work_pool": json_config["runtime"]["work_pool"],
+            "runtime_root": json_config["runtime"]["root"],
+            "session_pool": json_config["runtime"]["work_pools"]["session"]["name"],
+            "session_pool_limit": str(
+                json_config["runtime"]["work_pools"]["session"]["limit"]
+            ),
+            "dashboard_pool": json_config["runtime"]["work_pools"]["dashboard"]["name"],
+            "dashboard_pool_limit": str(
+                json_config["runtime"]["work_pools"]["dashboard"]["limit"]
+            ),
+            "notify_pool": json_config["runtime"]["work_pools"]["notify"]["name"],
+            "notify_pool_limit": str(
+                json_config["runtime"]["work_pools"]["notify"]["limit"]
+            ),
+            "scheduled_notify_grace_seconds": str(
+                json_config["runtime"]["scheduled_notify_grace_seconds"]
+            ),
+            "session_freshness_seconds": str(
+                json_config["runtime"]["session_freshness_seconds"]
+            ),
+            "work_pool": json_config["runtime"]["work_pools"]["notify"]["name"],
         }
 
         config_path.unlink()
@@ -281,14 +446,31 @@ def test_prefect_runtime_uses_a_fastapi_release_compatible_with_prefect_3_7():
     assert "fastapi>=0.110.0,<0.116" in dependencies
 
 
-def test_prefect_deployments_use_the_runtime_default_work_pool():
-    prefect_config = (ROOT / "prefect.yaml").read_text(encoding="utf-8")
-    deployment_config = (ROOT / "deployments" / "notify_single_deployment.yaml").read_text(encoding="utf-8")
-    runner = (ROOT / "backend" / "services" / "prefect_runner.py").read_text(encoding="utf-8")
+def test_prefect_deployments_are_partitioned_across_three_pools():
+    config = yaml.safe_load((ROOT / "prefect.yaml").read_text(encoding="utf-8"))
+    pools = {row["name"]: row["work_pool"]["name"] for row in config["deployments"]}
 
-    for source in (prefect_config, deployment_config, runner):
-        assert "auto-notify-pool" not in source
-        assert "default-agent-pool" in source
+    assert pools["session-keeper"] == "windows-session-pool"
+    assert pools["notify-daily"] == "windows-notify-pool"
+    for name in (
+        "dashboard-collection",
+        "dashboard-daily-acc",
+        "dashboard-monthly",
+        "dashboard-indicator-sync",
+        "dashboard-v2-partition-maintenance",
+    ):
+        assert pools[name] == "windows-dashboard-pool"
+
+
+def test_notify_single_deployment_uses_notify_pool():
+    config = yaml.safe_load(
+        (ROOT / "deployments" / "notify_single_deployment.yaml").read_text(encoding="utf-8")
+    )
+
+    assert config["work_pool"] == {
+        "name": "windows-notify-pool",
+        "work_queue_name": "default",
+    }
 
 
 def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
@@ -314,7 +496,7 @@ def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
                 }
             ],
             "work_pool": {
-                "name": "default-agent-pool",
+                "name": "windows-session-pool",
                 "work_queue_name": "default",
             },
         }
@@ -324,23 +506,315 @@ def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
 def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():
     source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
 
-    worker_command = """\
-& (Join-Path $PSScriptRoot "lib\\prefect_start.ps1") `
-    -Mode worker `
-    -Detached `
-    -ApiUrl $ApiUrl `
-    -WorkPool $WorkPool `
-    -UseSqliteDebug:$UseSqliteDebug
-"""
+    session_worker = "-WorkPool $env:PREFECT_SESSION_POOL_NAME"
+    online_wait = "Wait-WorkerOnline -WorkPool $env:PREFECT_SESSION_POOL_NAME"
     keeper_command = 'prefect deployment run "session-keeper-flow/session-keeper"'
     web_marker = "if (-not $SkipWeb)"
     keeper_line = next(line for line in source.splitlines() if keeper_command in line)
-    worker_command_end = source.index(worker_command) + len(worker_command)
 
     assert source.count(keeper_command) == 1
-    assert worker_command_end <= source.index(keeper_command)
+    assert source.index(session_worker) < source.index(online_wait)
+    assert source.index(online_wait) < source.index(keeper_command)
     assert source.index(keeper_command) < source.index(web_marker)
     assert "--watch" not in keeper_line
+
+
+def test_run_script_reconciles_then_starts_three_bounded_workers():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+    lowered = source.lower()
+
+    reconcile = "prefect_startup_reconcile.py"
+    assert source.count("-Mode worker") == 3
+    assert "$env:PREFECT_SESSION_POOL_LIMIT" in source
+    assert "$env:PREFECT_DASHBOARD_POOL_LIMIT" in source
+    assert "$env:PREFECT_NOTIFY_POOL_LIMIT" in source
+    assert lowered.count(reconcile) == 1
+    assert lowered.index(reconcile) < lowered.index("-mode worker")
+    assert "prefect deploy --all --pool" not in lowered
+    assert "prefect deploy --all" in lowered
+
+
+def test_run_script_resolves_reconcile_cli_from_script_root():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    assert (
+        'Join-Path $PSScriptRoot "lib\\prefect_startup_reconcile.py"'
+        in source
+    )
+    assert "& $PythonExe $ReconcileScript `" in source
+    assert "& $PythonExe scripts/lib/prefect_startup_reconcile.py" not in source
+
+
+def test_run_script_configures_each_pool_concurrency_limit():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    for pool_name, pool_limit in (
+        ("PREFECT_SESSION_POOL_NAME", "PREFECT_SESSION_POOL_LIMIT"),
+        ("PREFECT_DASHBOARD_POOL_NAME", "PREFECT_DASHBOARD_POOL_LIMIT"),
+        ("PREFECT_NOTIFY_POOL_NAME", "PREFECT_NOTIFY_POOL_LIMIT"),
+    ):
+        assert f"$env:{pool_name}" in source
+        assert f"[int]$env:{pool_limit}" in source
+
+    assert "work-pool set-concurrency-limit $pool.Name $pool.Limit" in source
+
+
+def test_runtime_start_uses_external_prefect_home_for_every_prefect_component():
+    run_source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+    start_source = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "prefect\\prefect_home"' in run_source
+    assert run_source.count("-PrefectHome $PrefectHome") == 4
+    assert 'Join-Path $runtimeRoot "prefect\\prefect_home"' in start_source
+    assert '"C:\\AutoNotifyRuntime"' in start_source
+    assert 'Join-Path $RepoRoot "runtime\\prefect_home"' not in start_source
+
+
+def test_detached_prefect_commands_inherit_environment_without_secret_literals():
+    source = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Get-EnvBootstrap" not in source
+    assert "DASHBOARD_MYSQL_PASSWORD = '" not in source
+    assert "PREFECT_API_DATABASE_CONNECTION_URL = '" not in source
+    assert "Start-Process" in source
+
+
+def test_prefect_worker_command_applies_limit():
+    source = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[int]$WorkerLimit" in source
+    assert '"--limit", $WorkerLimit' in source or "--limit '$WorkerLimit'" in source
+
+
+def test_prefect_worker_start_uses_registry_as_the_only_duplicate_authority():
+    script = ROOT / "scripts" / "lib" / "prefect_start.ps1"
+    source = script.read_text(encoding="utf-8")
+
+    assert "Assert-ManagedProcessAvailable" in source
+    assert "Assert-NoOnlineWorker" not in source
+    assert "read_workers_for_work_pool" not in source
+
+    pwsh = shutil.which("pwsh")
+    assert pwsh is not None
+    ast_query = f"""
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    '{script}', [ref]$tokens, [ref]$errors
+)
+$ast.FindAll({{
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+}}, $true).Name
+"""
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", ast_query],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Assert-NoOnlineWorker" not in completed.stdout.splitlines()
+
+
+def test_lifecycle_scripts_use_project_process_registry():
+    registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").read_text(
+        encoding="utf-8"
+    )
+    run = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+    status = (ROOT / "scripts" / "status.ps1").read_text(encoding="utf-8")
+    stop = (ROOT / "scripts" / "stop.ps1").read_text(encoding="utf-8")
+
+    assert "Register-ManagedProcess" in registry
+    assert "process_started_at" in registry
+    assert "Test-ManagedProcessRecord" in registry
+    assert "process_registry.ps1" in run
+    assert "process_registry.ps1" in status
+    assert "process_registry.ps1" in stop
+    assert "KillAutoNotifyPython" not in stop
+
+
+def test_process_registry_requires_exact_process_start_time(tmp_path):
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    assert powershell is not None
+    registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").as_posix()
+    runtime_root = tmp_path.as_posix()
+    command = f"""
+$ErrorActionPreference = 'Stop'
+$env:AUTO_NOTIFY_RUNTIME_ROOT = '{runtime_root}'
+. '{registry}'
+$process = Get-Process -Id $PID
+Register-ManagedProcess -Name 'ownership-test' -Process $process -Command 'test command'
+$record = Get-ManagedProcessRecord -Name 'ownership-test'
+$validBefore = Test-ManagedProcessRecord -Record $record
+$duplicateRejected = $false
+try {{
+  Register-ManagedProcess -Name 'ownership-test' -Process $process -Command 'duplicate'
+}} catch {{
+  $duplicateRejected = $true
+}}
+$record.process_started_at = '2000-01-01T00:00:00.0000000+00:00'
+$validAfter = Test-ManagedProcessRecord -Record $record
+$record | ConvertTo-Json | Set-Content -LiteralPath (
+  Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT 'processes\\ownership-test.json'
+) -Encoding UTF8
+$stopResult = Stop-ManagedProcessTree -Name 'ownership-test'
+$currentProcessSurvived = $null -ne (Get-Process -Id $PID -ErrorAction SilentlyContinue)
+[pscustomobject]@{{
+  valid_before = $validBefore
+  valid_after = $validAfter
+  duplicate_rejected = $duplicateRejected
+  stop_result = $stopResult
+  current_process_survived = $currentProcessSurvived
+  record_path = (Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT 'processes\\ownership-test.json')
+}} | ConvertTo-Json -Compress
+"""
+
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-Command", command],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(completed.stdout.splitlines()[-1])
+    assert payload["valid_before"] is True
+    assert payload["valid_after"] is False
+    assert payload["duplicate_rejected"] is True
+    assert payload["stop_result"] is False
+    assert payload["current_process_survived"] is True
+    assert not Path(payload["record_path"]).exists()
+
+
+def test_managed_components_are_registered_and_stopped_in_fixed_order():
+    prefect_start = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(
+        encoding="utf-8"
+    )
+    start_web = (ROOT / "scripts" / "lib" / "start_web.ps1").read_text(
+        encoding="utf-8"
+    )
+    stop = (ROOT / "scripts" / "stop.ps1").read_text(encoding="utf-8")
+
+    for source in (prefect_start, start_web):
+        assert "-PassThru" in source
+        assert "-WindowStyle Hidden" in source
+        assert "Register-ManagedProcess" in source
+
+    for name in (
+        "prefect-server",
+        "prefect-worker-session",
+        "prefect-worker-dashboard",
+        "prefect-worker-notify",
+        "web-backend",
+        "web-frontend",
+    ):
+        assert name in prefect_start + start_web + stop
+
+    expected_order = [
+        "prefect-worker-notify",
+        "prefect-worker-dashboard",
+        "prefect-worker-session",
+        "web-frontend",
+        "web-backend",
+        "prefect-server",
+    ]
+    positions = [stop.index(f'"{name}"') for name in expected_order]
+    assert positions == sorted(positions)
+    assert "Stop-ManagedProcessTree -Name $_" in stop
+    assert '$ErrorActionPreference = "Stop"' in stop
+    registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "Get-ManagedProcessTreeSnapshot" in registry
+    assert "Test-ManagedProcessIdentity" in registry
+    assert "Invoke-ManagedTaskkill" in registry
+    assert "Wait-ManagedProcessTreeExit" in registry
+    assert "Get-NetTCPConnection" not in stop
+    assert "prefect_stop.ps1" not in stop
+
+
+def test_status_reports_runtime_health_without_secret_values():
+    source = (ROOT / "scripts" / "status.ps1").read_text(encoding="utf-8")
+
+    for marker in (
+        "Prefect API",
+        "PostgreSQL",
+        "MySQL",
+        "PREFECT_SESSION_POOL_NAME",
+        "PREFECT_DASHBOARD_POOL_NAME",
+        "PREFECT_NOTIFY_POOL_NAME",
+        "online workers",
+        "running",
+        "queued",
+        "concurrency_limit",
+        "overdue scheduled run",
+        "Session state",
+        "verified_at",
+        "age_seconds",
+        "login.lock",
+        "excel_com.lock",
+        "owner PID",
+        "held seconds",
+        "Disk free",
+    ):
+        assert marker in source
+
+    assert 'Write-Host "$env:DASHBOARD_MYSQL_PASSWORD' not in source
+    assert 'Write-Host "$env:AUTO_NOTIFY_PREFECT_DATABASE_URL' not in source
+    assert "waiters=unavailable" in source
+
+
+def test_run_script_holds_exclusive_startup_claim_around_all_launches():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    claim = "Enter-StartupClaim"
+    release = "Exit-StartupClaim"
+    assert source.count(claim) == 1
+    assert source.count(release) == 1
+    launch_marker = '& (Join-Path $PSScriptRoot "lib\\prefect_start.ps1")'
+    assert source.index(claim) < source.index(launch_marker)
+    assert source.rindex(release) > source.rindex(launch_marker)
+
+
+def test_startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed():
+    registry = (ROOT / "scripts" / "lib" / "process_registry.ps1").read_text(
+        encoding="utf-8"
+    )
+    run = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+    assert 'return "Global\\AutoNotifyStartup-$hash"' in registry
+    assert "legacy_notify_run:" in run
+    assert "旧 Notify Pool 仍有保留 Run" in run
+    assert "scripts\\stop.ps1" in run
+    assert "scripts\\run.ps1 -ForceRestart" in run
+    assert "$LegacyNotifyPools" not in run
+    assert "prefect-worker-notify-legacy" not in run
+    assert "prefect_legacy_drain.py" not in run
+    blocker_index = run.index("旧 Notify Pool 仍有保留 Run")
+    assert blocker_index < run.index("prefect deploy --all")
+    assert blocker_index < run.index("-Mode worker")
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "PROJECT_GUIDE.md").read_text(encoding="utf-8")
+    for document in (readme, guide):
+        assert "scripts/stop.ps1" in document
+        assert "scripts/run.ps1 -ForceRestart" in document
+
+
+def test_runtime_state_migration_is_invoked_before_services_start():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    migration = "Invoke-RuntimeStateMigration"
+    assert "runtime_state_migration.ps1" in source
+    assert source.count(migration) == 1
+    assert source.index(migration) < source.index('Write-Host "启动 Prefect Server')
 
 
 def test_unified_runtime_entry_points_start_services_without_running_flows():
@@ -364,6 +838,26 @@ def test_unified_runtime_entry_points_start_services_without_running_flows():
 
     assert source.index("-mode server") < source.index("prefect deploy --all")
     assert source.index("prefect deploy --all") < source.index("-mode worker")
+
+
+def test_prefect_worker_start_has_no_embedded_dashboard_cleanup():
+    source = (ROOT / "scripts" / "lib" / "prefect_start.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Prepare-DashboardWorkerStart" not in source
+    assert "set_flow_run_state" not in source
+
+
+def test_deprecated_scheduled_backlog_deletion_script_is_retired():
+    retired = ROOT / "scripts" / "dev" / "clear_scheduled_backlog.ps1"
+    assert not retired.exists()
+
+    public_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "scripts").rglob("*.ps1")
+    )
+    assert "clear_scheduled_backlog.ps1" not in public_sources
 
 
 def test_legacy_dev_entry_points_only_forward_to_unified_scripts():
@@ -412,6 +906,43 @@ def test_docs_describe_json_lifecycle_entry_points_and_cron_safety():
         assert "scripts/status.ps1" in document
         assert "Cron" in document
         assert "不会自动" in document
+
+
+def test_docs_describe_three_pool_windows_operations():
+    for path in (ROOT / "README.md", ROOT / "PROJECT_GUIDE.md"):
+        source = path.read_text(encoding="utf-8")
+        for marker in (
+            "windows-session-pool",
+            "windows-dashboard-pool",
+            "windows-notify-pool",
+            r"C:\AutoNotifyRuntime",
+            "10 分钟",
+            "scripts/run.ps1",
+            "scripts/status.ps1",
+            "scripts/stop.ps1",
+        ):
+            assert marker in source
+
+
+def test_docs_distinguish_automated_checks_from_unrun_live_acceptance():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "PROJECT_GUIDE.md").read_text(encoding="utf-8")
+
+    for source in (readme, guide):
+        assert "受控 Windows 验收" not in source
+
+    for marker in (
+        "620 passed",
+        "98 passed",
+        "PowerShell",
+        "YAML",
+        "Ruff",
+        "git diff --check",
+        "未执行",
+        "config/runtime.local.json",
+        "凭据",
+    ):
+        assert marker in guide
 
 
 def test_script_root_contains_only_public_entry_points_or_compatibility_wrappers():

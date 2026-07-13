@@ -176,6 +176,45 @@ def test_headed_browser_keeps_legacy_retained_default():
     assert config["retain_after_login"] is True
 
 
+def test_browser_runtime_paths_rebase_to_external_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+
+    config = browser_config(
+        {
+            "browser": {
+                "session_state_path": "runtime/browser_session/session.json",
+                "user_data_dir": "runtime/browser_session/profile",
+            }
+        },
+        base_dir=tmp_path,
+    )
+
+    assert config["session_state_path"] == (
+        tmp_path / "shared" / "browser_session" / "session.json"
+    ).resolve()
+    assert config["user_data_dir"] == (
+        tmp_path / "shared" / "browser_session" / "profile"
+    ).resolve()
+
+
+def test_cookie_dump_runtime_path_rebases_to_external_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+    login = login_service.AutoLogin(
+        config={
+            "credentials": {},
+            "cookie_dump": {
+                "enabled": True,
+                "output_file": "runtime/cookies/cookie_dump.json",
+            },
+        },
+        config_label="runtime-path-test",
+    )
+
+    assert login.cookie_recorder.output_path == (
+        tmp_path / "shared" / "cookies" / "cookie_dump.json"
+    ).resolve()
+
+
 def test_init_driver_uses_original_retained_mode_when_headed(monkeypatch, tmp_path):
     captured = {}
     fake_driver = FakeDriver()

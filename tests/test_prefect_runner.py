@@ -28,6 +28,30 @@ def _patch_publish(monkeypatch, tmp_path):
     return commands
 
 
+def test_dynamic_notify_publish_uses_notify_pool(monkeypatch):
+    monkeypatch.setenv("PREFECT_NOTIFY_POOL_NAME", "notify-test-pool")
+
+    assert prefect_runner.get_notify_work_pool() == "notify-test-pool"
+
+
+def test_dynamic_notify_publish_defaults_to_fixed_notify_pool(monkeypatch):
+    monkeypatch.delenv("PREFECT_NOTIFY_POOL_NAME", raising=False)
+
+    assert prefect_runner.get_notify_work_pool() == "windows-notify-pool"
+
+
+def test_publish_command_and_response_use_dynamic_notify_pool(monkeypatch, tmp_path):
+    monkeypatch.setenv("PREFECT_NOTIFY_POOL_NAME", "notify-test-pool")
+    commands = _patch_publish(monkeypatch, tmp_path)
+
+    result = prefect_runner.publish_config(
+        {"name": "日报", "enabled": False, "deployment": {"crons": [], "timezone": "Asia/Shanghai"}}
+    )
+
+    assert commands[0][commands[0].index("--pool") + 1] == "notify-test-pool"
+    assert result["workPool"] == "notify-test-pool"
+
+
 def test_publish_without_crons_removes_existing_schedules(monkeypatch, tmp_path):
     commands = _patch_publish(monkeypatch, tmp_path)
 

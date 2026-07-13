@@ -9,17 +9,21 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from services.runtime_paths import resolve_runtime_path, runtime_path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_SESSION_STATE_PATH = PROJECT_DIR / "runtime" / "browser_session" / "session.json"
-DEFAULT_USER_DATA_DIR = PROJECT_DIR / "runtime" / "browser_session" / "edge_profile_auto_login"
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
-    if not value:
-        return None
-    path = Path(value)
-    return path if path.is_absolute() else (base_dir / path).resolve()
+    return resolve_runtime_path(value, project_dir=Path(base_dir))
+
+
+def default_session_state_path():
+    return runtime_path("browser_session/session.json")
+
+
+def default_user_data_dir():
+    return runtime_path("browser_session/edge_profile_auto_login")
 
 
 def browser_config(config: dict, base_dir=PROJECT_DIR):
@@ -31,12 +35,15 @@ def browser_config(config: dict, base_dir=PROJECT_DIR):
     return {
         "headless": headless,
         "retain_after_login": bool(retain_after_login),
-        "session_state_path": resolve_path(browser.get("session_state_path"), base_dir) or DEFAULT_SESSION_STATE_PATH,
-        "user_data_dir": resolve_path(browser.get("user_data_dir"), base_dir) or DEFAULT_USER_DATA_DIR,
+        "session_state_path": resolve_path(browser.get("session_state_path"), base_dir)
+        or default_session_state_path(),
+        "user_data_dir": resolve_path(browser.get("user_data_dir"), base_dir)
+        or default_user_data_dir(),
     }
 
 
-def read_session_state(session_state_path=DEFAULT_SESSION_STATE_PATH):
+def read_session_state(session_state_path=None):
+    session_state_path = session_state_path or default_session_state_path()
     try:
         return json.loads(Path(session_state_path).read_text(encoding="utf-8"))
     except Exception:
@@ -50,7 +57,8 @@ def write_session_state(session_state_path, payload):
     return path
 
 
-def remove_session_state(session_state_path=DEFAULT_SESSION_STATE_PATH):
+def remove_session_state(session_state_path=None):
+    session_state_path = session_state_path or default_session_state_path()
     try:
         Path(session_state_path).unlink()
     except FileNotFoundError:
@@ -126,7 +134,8 @@ def stop_process_ids(process_ids):
     return stopped
 
 
-def close_recorded_browser_session(session_state_path=DEFAULT_SESSION_STATE_PATH):
+def close_recorded_browser_session(session_state_path=None):
+    session_state_path = session_state_path or default_session_state_path()
     state_path = Path(session_state_path)
     state = read_session_state(state_path)
     if not state:
@@ -145,10 +154,11 @@ def close_recorded_browser_session(session_state_path=DEFAULT_SESSION_STATE_PATH
     return {"status": "closed", "stopped_pids": stopped, "state_path": str(state_path)}
 
 
-def close_browser_session(session_state_path=DEFAULT_SESSION_STATE_PATH, user_data_dir=None, wait_seconds=10, poll_seconds=0.5):
+def close_browser_session(session_state_path=None, user_data_dir=None, wait_seconds=10, poll_seconds=0.5):
+    session_state_path = session_state_path or default_session_state_path()
     state_path = Path(session_state_path)
     state = read_session_state(state_path)
-    profile_dir = user_data_dir or state.get("user_data_dir") or DEFAULT_USER_DATA_DIR
+    profile_dir = user_data_dir or state.get("user_data_dir") or default_user_data_dir()
     process_ids = []
     if state.get("driver_pid"):
         process_ids.append(state.get("driver_pid"))

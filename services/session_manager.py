@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -24,6 +25,12 @@ from services.method_service import (
     build_cookie_jar,
     build_headers,
     resolve_storage_references,
+)
+from services.runtime_paths import resolve_runtime_path
+from services.session_health_state import (
+    read_session_health,
+    session_health_is_fresh,
+    write_session_health_atomic,
 )
 
 
@@ -50,12 +57,7 @@ def _local_file_lock(path: Path) -> threading.Lock:
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
-    if not value:
-        return None
-    path = Path(value)
-    if path.is_absolute():
-        return path
-    return (base_dir / path).resolve()
+    return resolve_runtime_path(value, project_dir=Path(base_dir))
 
 
 def load_json(path):
@@ -80,7 +82,41 @@ def read_lock_info(lock_path):
         return {}
 
 
-def process_is_running(pid):
+def _windows_process_started_at(pid: int) -> str | None:
+    completed = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"$p=Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue; if ($p) {{$p.StartTime.ToUniversalTime().ToString('o')}}",
+        ],
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
+def _parse_process_time(value):
+    return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00")).astimezone(
+        timezone.utc
+    )
+
+
+def current_process_started_at():
+    if os.name == "nt":
+        value = _windows_process_started_at(os.getpid())
+        if value is None:
+            raise RuntimeError("无法读取当前进程启动时间")
+        return _parse_process_time(value).isoformat()
+    return datetime.now(timezone.utc).isoformat()
+
+
+def process_is_running(pid, started_at=None):
     try:
         pid = int(pid)
     except (TypeError, ValueError):
@@ -88,20 +124,17 @@ def process_is_running(pid):
     if pid <= 0:
         return False
     if os.name == "nt":
-        completed = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}",
-            ],
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            check=False,
-        )
-        return completed.returncode == 0
+        actual_started_at = _windows_process_started_at(pid)
+        if actual_started_at is None:
+            return False
+        if not started_at:
+            return True
+        try:
+            return _parse_process_time(actual_started_at) == _parse_process_time(
+                started_at
+            )
+        except (TypeError, ValueError):
+            return False
     try:
         os.kill(pid, 0)
         return True
@@ -110,17 +143,70 @@ def process_is_running(pid):
 
 
 def lock_is_stale(lock_path, stale_seconds):
-    lock_info = read_lock_info(lock_path)
-    if lock_info.get("pid"):
-        # A live owner must never be evicted merely because a long-running job
-        # has exceeded the age threshold.  The mtime fallback is only for
-        # legacy/corrupt lock files without an owner PID.
-        return not process_is_running(lock_info.get("pid"))
+    snapshot = _read_lock_snapshot(Path(lock_path))
+    return bool(snapshot and _lock_snapshot_is_stale(snapshot, stale_seconds))
+
+
+def _lock_owner_identity(payload, raw_content):
+    if isinstance(payload, dict) and payload.get("owner_token"):
+        return ("owner_token", str(payload["owner_token"]))
+    metadata = payload if isinstance(payload, dict) else {}
+    return (
+        "fingerprint",
+        metadata.get("pid"),
+        metadata.get("process_started_at"),
+        metadata.get("acquired_at"),
+        metadata.get("created_at"),
+        hashlib.sha256(raw_content).hexdigest(),
+    )
+
+
+def _read_lock_snapshot(lock_path):
+    lock_path = Path(lock_path)
     try:
-        mtime = Path(lock_path).stat().st_mtime
+        stat_before = lock_path.stat()
+        raw_content = lock_path.read_bytes()
+        stat_after = lock_path.stat()
     except FileNotFoundError:
-        return False
-    return time.time() - mtime > stale_seconds
+        return None
+    if (
+        stat_before.st_mtime_ns != stat_after.st_mtime_ns
+        or stat_before.st_size != stat_after.st_size
+    ):
+        return None
+    try:
+        payload = json.loads(raw_content.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, TypeError):
+        payload = {}
+    return {
+        "identity": _lock_owner_identity(payload, raw_content),
+        "payload": payload,
+        "mtime": stat_after.st_mtime,
+    }
+
+
+def _lock_snapshot_is_stale(snapshot, stale_seconds):
+    payload = snapshot["payload"]
+    if isinstance(payload, dict) and payload.get("pid"):
+        started_at = payload.get("process_started_at")
+        if started_at:
+            return not process_is_running(payload["pid"], started_at)
+        return not process_is_running(payload["pid"])
+    return time.time() - snapshot["mtime"] > stale_seconds
+
+
+def _remove_stale_lock(lock_path, inspected_identity):
+    lock_path = Path(lock_path)
+    current = _read_lock_snapshot(lock_path)
+    if current is None or current["identity"] != inspected_identity:
+        return "retry"
+    try:
+        lock_path.unlink()
+        return "removed"
+    except FileNotFoundError:
+        return "retry"
+    except PermissionError:
+        return "permission_denied"
 
 
 def _unlink_lock_file(lock_path: Path, *, retry_seconds: float = 2.0) -> None:
@@ -138,6 +224,156 @@ def _unlink_lock_file(lock_path: Path, *, retry_seconds: float = 2.0) -> None:
             time.sleep(0.05)
 
 
+def _try_acquire_os_lock(handle):
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    import fcntl
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _release_os_lock(handle):
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+class LoginFileLock:
+    def __init__(
+        self,
+        lock_path,
+        *,
+        wait_seconds=DEFAULT_LOCK_WAIT_SECONDS,
+        poll_seconds=DEFAULT_LOCK_POLL_SECONDS,
+        stale_seconds=DEFAULT_LOCK_STALE_SECONDS,
+        lock_label="登录锁",
+    ):
+        self.path = Path(lock_path).resolve()
+        self.wait_seconds = wait_seconds
+        self.poll_seconds = poll_seconds
+        self.stale_seconds = stale_seconds
+        self.lock_label = lock_label
+        self.owner_token = None
+        self.waited = False
+        self.guard_handle = None
+        self.guard_acquired = False
+
+    def _release_guard(self):
+        if self.guard_handle is None:
+            return
+        try:
+            if self.guard_acquired:
+                _release_os_lock(self.guard_handle)
+        finally:
+            self.guard_handle.close()
+            self.guard_handle = None
+            self.guard_acquired = False
+
+    def acquire(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + self.wait_seconds
+        guard_path = self.path.with_name(f"{self.path.name}.guard")
+        self.guard_handle = guard_path.open("a+b")
+        if self.guard_handle.seek(0, os.SEEK_END) == 0:
+            self.guard_handle.write(b"\0")
+            self.guard_handle.flush()
+        while True:
+            if not _try_acquire_os_lock(self.guard_handle):
+                self.waited = True
+            else:
+                self.guard_acquired = True
+                try:
+                    snapshot = _read_lock_snapshot(self.path)
+                    if snapshot is not None:
+                        if not _lock_snapshot_is_stale(
+                            snapshot, self.stale_seconds
+                        ):
+                            self._release_guard()
+                            self.guard_handle = guard_path.open("a+b")
+                            self.waited = True
+                        else:
+                            removal = _remove_stale_lock(
+                                self.path, snapshot["identity"]
+                            )
+                            if removal == "permission_denied":
+                                self._release_guard()
+                                self.guard_handle = guard_path.open("a+b")
+                                self.waited = True
+                    if self.guard_handle is not None and not self.path.exists():
+                        fd = os.open(
+                            str(self.path),
+                            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                        )
+                    else:
+                        fd = None
+                    if fd is None:
+                        if self.guard_acquired:
+                            self._release_guard()
+                            self.guard_handle = guard_path.open("a+b")
+                        self.waited = True
+                    else:
+                        self.owner_token = uuid4().hex
+                        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                            json.dump(
+                                {
+                                    "pid": os.getpid(),
+                                    "process_started_at": current_process_started_at(),
+                                    "owner_token": self.owner_token,
+                                    "acquired_at": datetime.now(timezone.utc).isoformat(),
+                                },
+                                handle,
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                        return self
+                except Exception:
+                    self.owner_token = None
+                    self.path.unlink(missing_ok=True)
+                    self._release_guard()
+                    raise
+            if time.monotonic() >= deadline:
+                self._release_guard()
+                raise TimeoutError(f"等待{self.lock_label}超时: {self.path}")
+            time.sleep(self.poll_seconds)
+
+    def release(self):
+        try:
+            if not self.owner_token:
+                return
+            try:
+                payload = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                return
+            if (
+                not isinstance(payload, dict)
+                or payload.get("owner_token") != self.owner_token
+            ):
+                return
+            _unlink_lock_file(self.path)
+        finally:
+            self.owner_token = None
+            self._release_guard()
+
+
 @contextmanager
 def _cross_process_file_lock(
     lock_path,
@@ -146,43 +382,17 @@ def _cross_process_file_lock(
     stale_seconds=DEFAULT_LOCK_STALE_SECONDS,
     lock_label="登录锁",
 ):
-    lock_path = Path(lock_path).resolve()
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.time() + wait_seconds
-    acquired = False
-    waited = False
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "pid": os.getpid(),
-                        "created_at": datetime.now().isoformat(),
-                    },
-                    f,
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            acquired = True
-            break
-        except FileExistsError:
-            if lock_is_stale(lock_path, stale_seconds):
-                try:
-                    _unlink_lock_file(lock_path)
-                    continue
-                except FileNotFoundError:
-                    continue
-            if time.time() >= deadline:
-                lock_info = read_lock_info(lock_path)
-                raise TimeoutError(f"等待{lock_label}超时: {lock_path}, lock_info={lock_info}")
-            waited = True
-            time.sleep(poll_seconds)
+    lock = LoginFileLock(
+        lock_path,
+        wait_seconds=wait_seconds,
+        poll_seconds=poll_seconds,
+        stale_seconds=stale_seconds,
+        lock_label=lock_label,
+    ).acquire()
     try:
-        yield {"lock_path": str(lock_path), "waited": waited}
+        yield {"lock_path": str(lock.path), "waited": lock.waited}
     finally:
-        if acquired:
-            _unlink_lock_file(lock_path)
+        lock.release()
 
 
 @contextmanager
@@ -547,6 +757,8 @@ def run_login_with_retry(
         try:
             result = login_attempt()
             return {**result, "attempt_count": attempt}
+        except SessionInfrastructureError:
+            raise
         except Exception as exc:
             errors.append(summarize_login_failure(exc))
             if attempt == max_attempts:
@@ -555,11 +767,19 @@ def run_login_with_retry(
     raise AssertionError("unreachable")
 
 
-def load_cookie_dump_if_exists(path):
+def load_cookie_snapshot_if_exists(path):
     resolved = Path(path).resolve()
-    if not resolved.exists():
-        return None
-    payload, _ = load_json(resolved)
+    try:
+        raw_payload = resolved.read_bytes()
+    except FileNotFoundError:
+        return None, None
+    cookie_hash = hashlib.sha256(raw_payload).hexdigest()
+    payload = json.loads(raw_payload.decode("utf-8"))
+    return payload, cookie_hash
+
+
+def load_cookie_dump_if_exists(path):
+    payload, _ = load_cookie_snapshot_if_exists(path)
     return payload
 
 
@@ -597,6 +817,14 @@ def session_login_lock(lock_path, *, wait_seconds, poll_seconds, stale_seconds):
 
 def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None):
     cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/cookies/cookie_dump.json"), base_dir)
+    session_health_state_path = resolve_runtime_path(
+        config.get("session_health_state_path", "runtime/session/session_state.json"),
+        project_dir=Path(base_dir),
+    )
+    freshness_seconds = int(
+        os.environ.get("AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS")
+        or config.get("session_freshness_seconds", 180)
+    )
     legacy_cookie_dump_path = resolve_path(config.get("legacy_cookie_dump_path"), base_dir)
     required_stages = config.get("required_stages") or []
     stage_probes = config.get("stage_probes") or {}
@@ -616,18 +844,52 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         if event_logger:
             event_logger.warning(message, *args)
 
-    cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+    def write_healthy_state(cookie_hash):
+        return write_session_health_atomic(
+            session_health_state_path,
+            {
+                "healthy": True,
+                "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
+                "cookie_hash": cookie_hash,
+                "healthy_stages": sorted(required_stages),
+            },
+        )
+
+    def write_authentication_failure_state(cookie_hash):
+        return write_session_health_atomic(
+            session_health_state_path,
+            {
+                "healthy": False,
+                "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
+                "cookie_hash": cookie_hash,
+                "healthy_stages": [],
+                "failure_classification": PROBE_AUTHENTICATION_FAILURE,
+            },
+        )
+
+    cookie_dump, cookie_hash = load_cookie_snapshot_if_exists(cookie_dump_path)
     if not cookie_dump and legacy_cookie_dump_path and legacy_cookie_dump_path.exists():
         sync_cookie_dump(legacy_cookie_dump_path, cookie_dump_path)
-        cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+        cookie_dump, cookie_hash = load_cookie_snapshot_if_exists(cookie_dump_path)
 
     if cookie_dump and not force_refresh:
         validation = validate_cookie_dump(cookie_dump, required_stages, min_ttl_seconds=min_ttl_seconds, max_age_seconds=max_age_seconds)
         if validation["valid"]:
+            if session_health_is_fresh(
+                read_session_health(session_health_state_path),
+                cookie_hash=cookie_hash,
+                required_stages=required_stages,
+                freshness_seconds=freshness_seconds,
+            ):
+                return {
+                    "status": "reused_fresh",
+                    "cookie_dump_path": str(cookie_dump_path),
+                    "validation": validation,
+                }
             probe_validation = validate_stage_probes(cookie_dump, required_stages, stage_probes)
             validation["probe_validation"] = probe_validation
             if probe_validation["valid"]:
-                validation["probe_validation"] = probe_validation
+                write_healthy_state(cookie_hash)
                 return {
                     "status": "reused",
                     "cookie_dump_path": str(cookie_dump_path),
@@ -636,6 +898,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             failure_kind = classify_probe_validation(probe_validation)
             if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
                 raise SessionInfrastructureError(format_probe_validation_error(probe_validation))
+            write_authentication_failure_state(cookie_hash)
             warn("已有 Cookie 探活失败，将进入登录锁并在锁内复检: %s", format_probe_validation_error(probe_validation))
         else:
             warn("已有 Cookie 静态检查失败，将重新登录: %s", validation)
@@ -692,7 +955,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
     ) as lock_result:
         # Re-check under the login lock. Parallel flow runs may have refreshed
         # cookies between this run's first probe/download failure and lock acquisition.
-        locked_cookie_dump = load_cookie_dump_if_exists(cookie_dump_path)
+        locked_cookie_dump, locked_cookie_hash = load_cookie_snapshot_if_exists(
+            cookie_dump_path
+        )
         locked_validation, locked_probe_validation = validate_existing_session(
             locked_cookie_dump,
             required_stages,
@@ -701,6 +966,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             max_age_seconds=max_age_seconds,
         )
         if locked_validation["valid"] and locked_probe_validation and locked_probe_validation["valid"]:
+            write_healthy_state(locked_cookie_hash)
             return {
                 "status": "reused_after_lock",
                 "cookie_dump_path": str(cookie_dump_path),
@@ -711,6 +977,7 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             failure_kind = classify_probe_validation(locked_probe_validation)
             if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
                 raise SessionInfrastructureError(format_probe_validation_error(locked_probe_validation))
+            write_authentication_failure_state(locked_cookie_hash)
             warn("登录锁内 Cookie 探活仍失败，将自行重新登录: %s", format_probe_validation_error(locked_probe_validation))
         else:
             warn("登录锁内 Cookie 静态检查仍失败，将自行重新登录: %s", locked_validation)
@@ -735,7 +1002,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                     timeout_seconds=login_timeout_seconds,
                     env={"AUTO_NOTIFY_COOKIE_DUMP_PATH": str(attempt_snapshot_path)},
                 )
-                refreshed_cookie_dump = load_cookie_dump_if_exists(attempt_snapshot_path)
+                refreshed_cookie_dump, refreshed_cookie_hash = (
+                    load_cookie_snapshot_if_exists(attempt_snapshot_path)
+                )
                 refreshed_validation = validate_cookie_dump(
                     refreshed_cookie_dump or {},
                     required_stages,
@@ -749,12 +1018,23 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                     stage_probes,
                 )
                 if not refreshed_probe_validation["valid"]:
+                    failure_kind = classify_probe_validation(
+                        refreshed_probe_validation
+                    )
+                    if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
+                        raise SessionInfrastructureError(
+                            format_probe_validation_error(
+                                refreshed_probe_validation
+                            )
+                        )
+                    write_authentication_failure_state(refreshed_cookie_hash)
                     raise RuntimeError(
                         "登录后 session 探活仍不可用: "
                         + format_probe_validation_error(refreshed_probe_validation)
                     )
                 refreshed_validation["probe_validation"] = refreshed_probe_validation
                 publish_cookie_dump(attempt_snapshot_path, cookie_dump_path)
+                write_healthy_state(refreshed_cookie_hash)
                 return {
                     "command": command_result,
                     "close": close_result,

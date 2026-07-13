@@ -7,7 +7,7 @@ deployments:
     parameters:
       config_path: config/tasks/爱家亲情网营业厅每日盯控.json
     work_pool:
-      name: default-agent-pool
+      name: windows-notify-pool
       work_queue_name: default
   - name: dashboard-collection
     entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
@@ -21,7 +21,7 @@ deployments:
         timezone: Asia/Shanghai
         active: true
     work_pool:
-      name: default-agent-pool
+      name: windows-dashboard-pool
       work_queue_name: default
   - name: dashboard-daily-acc
     description: 日累计
@@ -32,7 +32,7 @@ deployments:
       trigger_type: SCHEDULED
       force_refresh: false
     work_pool:
-      name: default-agent-pool
+      name: windows-dashboard-pool
       work_queue_name: default
   - name: dashboard-monthly
     entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
@@ -42,7 +42,7 @@ deployments:
       trigger_type: SCHEDULED
       force_refresh: false
     work_pool:
-      name: default-agent-pool
+      name: windows-dashboard-pool
       work_queue_name: default
   - name: dashboard-indicator-sync
     entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
@@ -56,7 +56,7 @@ deployments:
         timezone: Asia/Shanghai
         active: true
     work_pool:
-      name: default-agent-pool
+      name: windows-dashboard-pool
       work_queue_name: default
   - name: dashboard-v2-partition-maintenance
     entrypoint: flows/dashboard_partition_maintenance_flow.py:dashboard_v2_partition_maintenance_flow
@@ -67,7 +67,7 @@ deployments:
         timezone: Asia/Shanghai
         active: true
     work_pool:
-      name: default-agent-pool
+      name: windows-dashboard-pool
       work_queue_name: default
   - name: session-keeper
     entrypoint: flows/session_keeper_flow.py:session_keeper_flow
@@ -78,5 +78,5 @@ deployments:
         timezone: Asia/Shanghai
         active: true
     work_pool:
-      name: default-agent-pool
+      name: windows-session-pool
       work_queue_name: default

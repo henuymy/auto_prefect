@@ -8,6 +8,10 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "lib\python_env.ps1")
+. (Join-Path $PSScriptRoot "lib\runtime_state_migration.ps1")
+. (Join-Path $PSScriptRoot "lib\process_registry.ps1")
+$SharedRuntimeRoot = "C:\AutoNotifyRuntime"
+$env:AUTO_NOTIFY_RUNTIME_ROOT = $SharedRuntimeRoot
 $RuntimeDirs = @(
     "runtime",
     "runtime\cookies",
@@ -17,6 +21,16 @@ $RuntimeDirs = @(
     "runtime\report_downloader\downloads",
     "runtime\report_compare",
     "runtime\template_updater"
+)
+$SharedRuntimeDirs = @(
+    "locks",
+    "session",
+    "cookies",
+    "browser_session",
+    "prefect\prefect_home",
+    "logs",
+    "temp",
+    "processes"
 )
 
 function Write-Step {
@@ -45,8 +59,20 @@ Write-Step "安装 Python 依赖"
 & $PythonExe -m pip install -r (Join-Path $RepoRoot "requirements-dev.lock") -i $PipIndexUrl --trusted-host $PipTrustedHost
 
 Write-Step "初始化运行目录"
+$SetupClaim = Enter-StartupClaim
+try {
+$migrationResults = @(Invoke-RuntimeStateMigration -RepoRoot $RepoRoot -RuntimeRoot $SharedRuntimeRoot)
+foreach ($migration in $migrationResults) {
+    Write-Host "Runtime migration: $($migration.name) / $($migration.status) / $($migration.target)"
+}
 foreach ($dir in $RuntimeDirs) {
     New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot $dir) | Out-Null
+}
+foreach ($dir in $SharedRuntimeDirs) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $SharedRuntimeRoot $dir) | Out-Null
+}
+} finally {
+    Exit-StartupClaim -Claim $SetupClaim
 }
 
 Write-Step "检查本机组件"
@@ -75,10 +101,11 @@ if (-not $SkipSmokeTest) {
 Write-Step "完成"
 Write-Host "Python 路径    : $PythonExe"
 Write-Host "项目目录      : $RepoRoot"
+Write-Host "共享运行目录  : $SharedRuntimeRoot"
 Write-Host "PIP 镜像源    : $PipIndexUrl"
 Write-Host ""
 Write-Host "后续常用命令：" -ForegroundColor Green
-Write-Host "1. 本地调试:  . .\scripts\prefect_env_debug.ps1"
-Write-Host "2. 正式调度:  . .\scripts\lib\prefect_env_prod.ps1"
-Write-Host "3. 启动系统: pwsh -File scripts/run.ps1"
-Write-Host "4. 单条运行:  python -c `"from flows.notify_single_flow import auto_notify_flow; print(auto_notify_flow('config/tasks/日通报.json'))`""
+Write-Host "1. 初始化环境: pwsh -File scripts/setup_windows_env.ps1"
+Write-Host "2. 启动系统:   pwsh -File scripts/run.ps1"
+Write-Host "3. 查看状态:   pwsh -File scripts/status.ps1"
+Write-Host "4. 停止系统:   pwsh -File scripts/stop.ps1"

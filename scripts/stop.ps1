@@ -1,23 +1,21 @@
 param(
     [int]$BackendPort = 8000,
-    [int]$FrontendPort = 5173,
-    [switch]$KillAutoNotifyPython = $true
+    [int]$FrontendPort = 5173
 )
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 Import-ProjectRuntimeConfig | Out-Null
+. (Join-Path $PSScriptRoot "lib\process_registry.ps1")
 
-& (Join-Path $PSScriptRoot "lib\prefect_stop.ps1") `
-    -Ports @(4200) `
-    -KillAutoNotifyPython:$KillAutoNotifyPython
-
-foreach ($port in @($BackendPort, $FrontendPort) | Select-Object -Unique) {
-    Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
-        }
-}
+@(
+    "prefect-worker-notify",
+    "prefect-worker-dashboard",
+    "prefect-worker-session",
+    "web-frontend",
+    "web-backend",
+    "prefect-server"
+) | ForEach-Object { Stop-ManagedProcessTree -Name $_ | Out-Null }
 
 Write-Host "运行栈已停止。"

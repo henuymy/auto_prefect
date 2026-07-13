@@ -13,6 +13,8 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "lib\python_env.ps1")
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
+. (Join-Path $PSScriptRoot "lib\process_registry.ps1")
+. (Join-Path $PSScriptRoot "lib\runtime_state_migration.ps1")
 $UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
 $LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
 if (-not (Import-ProjectRuntimeConfig)) {
@@ -33,6 +35,14 @@ if (-not $WorkPool) {
     $WorkPool = $env:PREFECT_WORK_POOL_NAME
 }
 $PythonExe = Get-ProjectPython
+$PrefectHome = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "prefect\prefect_home"
+$StartupClaim = Enter-StartupClaim
+
+try {
+$migrationResults = @(Invoke-RuntimeStateMigration -RepoRoot $RepoRoot -RuntimeRoot $env:AUTO_NOTIFY_RUNTIME_ROOT)
+foreach ($migration in $migrationResults) {
+    Write-Host "Runtime migration: $($migration.name) / $($migration.status) / $($migration.target)"
+}
 
 function Test-RuntimeDatabaseConnections {
     $checkScript = @'
@@ -98,6 +108,44 @@ function Wait-HttpOk {
     return $false
 }
 
+function Wait-WorkerOnline {
+    param(
+        [string]$WorkPool,
+        [int]$TimeoutSeconds = 90
+    )
+
+    $waitScript = @'
+import asyncio
+import sys
+import time
+
+from prefect.client.orchestration import get_client
+
+
+async def wait_for_online_worker(work_pool_name: str, timeout_seconds: int) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    async with get_client() as client:
+        while time.monotonic() < deadline:
+            workers = await client.read_workers_for_work_pool(work_pool_name)
+            if any(
+                getattr(worker.status, "value", worker.status) == "ONLINE"
+                for worker in workers
+            ):
+                return True
+            await asyncio.sleep(2)
+    return False
+
+
+if not asyncio.run(wait_for_online_worker(sys.argv[1], int(sys.argv[2]))):
+    raise SystemExit(2)
+'@
+
+    $waitScript | & $PythonExe - $WorkPool $TimeoutSeconds
+    if ($LASTEXITCODE -ne 0) {
+        throw "Session Worker 未在 $TimeoutSeconds 秒内上线: $WorkPool"
+    }
+}
+
 if ($ForceRestart) {
     & (Join-Path $PSScriptRoot "stop.ps1") -BackendPort $BackendPort -FrontendPort $FrontendPort
 }
@@ -110,34 +158,92 @@ Write-Host "启动 Prefect Server..."
     -Detached `
     -ApiUrl $ApiUrl `
     -WorkPool $WorkPool `
+    -PrefectHome $PrefectHome `
     -UseSqliteDebug:$UseSqliteDebug
 
 if (-not (Wait-HttpOk -Url "$($ApiUrl.TrimEnd('/'))/health")) {
     throw "Prefect Server 未在 90 秒内就绪: $ApiUrl"
 }
 
-& $PythonExe -m prefect work-pool inspect $WorkPool *> $null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "创建 Work Pool: $WorkPool"
-    & $PythonExe -m prefect work-pool create --type process $WorkPool
+$Pools = @(
+    [pscustomobject]@{ Name = $env:PREFECT_SESSION_POOL_NAME; Limit = [int]$env:PREFECT_SESSION_POOL_LIMIT },
+    [pscustomobject]@{ Name = $env:PREFECT_DASHBOARD_POOL_NAME; Limit = [int]$env:PREFECT_DASHBOARD_POOL_LIMIT },
+    [pscustomobject]@{ Name = $env:PREFECT_NOTIFY_POOL_NAME; Limit = [int]$env:PREFECT_NOTIFY_POOL_LIMIT }
+)
+
+foreach ($pool in $Pools) {
+    & $PythonExe -m prefect work-pool inspect $pool.Name *> $null
     if ($LASTEXITCODE -ne 0) {
-        throw "创建 Work Pool 失败: $WorkPool"
+        Write-Host "创建 Work Pool: $($pool.Name)"
+        & $PythonExe -m prefect work-pool create --type process $pool.Name
+        if ($LASTEXITCODE -ne 0) {
+            throw "创建 Work Pool 失败: $($pool.Name)"
+        }
+    }
+
+    & $PythonExe -m prefect work-pool set-concurrency-limit $pool.Name $pool.Limit
+    if ($LASTEXITCODE -ne 0) {
+        throw "设置 Work Pool 并发上限失败: $($pool.Name)"
     }
 }
 
+Write-Host "清理 Prefect 启动队列..."
+$ReconcileScript = Join-Path $PSScriptRoot "lib\prefect_startup_reconcile.py"
+$reconcileOutput = @(& $PythonExe $ReconcileScript `
+    --notify-grace-seconds ([int]$env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS) `
+    --notify-work-pool $env:PREFECT_NOTIFY_POOL_NAME)
+$reconcileExitCode = $LASTEXITCODE
+$reconcileOutput | ForEach-Object { Write-Host $_ }
+if ($reconcileExitCode -ne 0) {
+    throw "Prefect 启动队列清理失败，未启动 Worker"
+}
+$LegacyNotifyRuns = @(
+    $reconcileOutput |
+        Where-Object { $_ -like "legacy_notify_run:*" } |
+        ForEach-Object { $_.Substring("legacy_notify_run:".Length) }
+)
+if ($LegacyNotifyRuns.Count -gt 0) {
+    $runSummary = $LegacyNotifyRuns -join "; "
+    throw "旧 Notify Pool 仍有保留 Run，Prefect 3.7 不支持安全改派单个排队 Run，已拒绝启动避免遗漏或执行无关工作。请先用旧 Pool Worker 排空或取消这些 Run。Prefect Server 已注册；处理后请执行 scripts\stop.ps1 再重新运行 scripts\run.ps1，或直接执行 scripts\run.ps1 -ForceRestart。Runs: $runSummary"
+}
+
 Write-Host "同步 Prefect deployments（仅同步 Cron，不运行 flow）..."
-& $PythonExe -m prefect deploy --all --pool $WorkPool
+& $PythonExe -m prefect deploy --all
 if ($LASTEXITCODE -ne 0) {
     throw "Prefect deployment 同步失败"
 }
 
-Write-Host "启动 Prefect Worker..."
+Write-Host "启动 Session Prefect Worker..."
 & (Join-Path $PSScriptRoot "lib\prefect_start.ps1") `
     -Mode worker `
     -Detached `
     -ApiUrl $ApiUrl `
-    -WorkPool $WorkPool `
+    -WorkPool $env:PREFECT_SESSION_POOL_NAME `
+    -PrefectHome $PrefectHome `
+    -WorkerLimit ([int]$env:PREFECT_SESSION_POOL_LIMIT) `
     -UseSqliteDebug:$UseSqliteDebug
+
+Write-Host "启动 Dashboard Prefect Worker..."
+& (Join-Path $PSScriptRoot "lib\prefect_start.ps1") `
+    -Mode worker `
+    -Detached `
+    -ApiUrl $ApiUrl `
+    -WorkPool $env:PREFECT_DASHBOARD_POOL_NAME `
+    -PrefectHome $PrefectHome `
+    -WorkerLimit ([int]$env:PREFECT_DASHBOARD_POOL_LIMIT) `
+    -UseSqliteDebug:$UseSqliteDebug
+
+Write-Host "启动 Notify Prefect Worker..."
+& (Join-Path $PSScriptRoot "lib\prefect_start.ps1") `
+    -Mode worker `
+    -Detached `
+    -ApiUrl $ApiUrl `
+    -WorkPool $env:PREFECT_NOTIFY_POOL_NAME `
+    -PrefectHome $PrefectHome `
+    -WorkerLimit ([int]$env:PREFECT_NOTIFY_POOL_LIMIT) `
+    -UseSqliteDebug:$UseSqliteDebug
+
+Wait-WorkerOnline -WorkPool $env:PREFECT_SESSION_POOL_NAME
 
 Write-Host "触发首次 Session Keeper 检查..."
 & $PythonExe -m prefect deployment run "session-keeper-flow/session-keeper"
@@ -154,4 +260,7 @@ if (-not $SkipWeb) {
         -PrefectApiUrl $ApiUrl
 }
 
-Write-Host "运行栈已启动。Prefect: $ApiUrl; Work Pool: $WorkPool"
+Write-Host "运行栈已启动。Prefect: $ApiUrl; Work Pools: $($Pools.Name -join ', ')"
+} finally {
+    Exit-StartupClaim -Claim $StartupClaim
+}
