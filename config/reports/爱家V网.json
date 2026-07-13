@@ -7,7 +7,10 @@
     "items": [
       {
         "type": "image",
-        "sheet": "通报"
+        "sheet": "通报",
+        "capture": {
+          "mode": "used_range"
+        }
       },
       {
         "type": "text",
@@ -35,7 +38,7 @@
         "sheetIndex": "-1",
         "sheetName": "新增",
         "type": "excel",
-        "versionName": "${yesterday_yyyymmdd}",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
         "resId": "335837",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
@@ -66,7 +69,7 @@
         "sheetIndex": "-1",
         "sheetName": "整体",
         "type": "excel",
-        "versionName": "${yesterday_yyyymmdd}",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
         "resId": "338462",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
@@ -159,7 +162,7 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-06-23 15:18:02",
+  "updatedAt": "2026-07-04 17:26:26",
   "source": "published",
   "has_draft": false
 }

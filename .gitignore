@@ -41,3 +41,4 @@ frp/frpc.exe
 frp/frps.exe
 frp/frpc.toml
 frp/frps.toml
+session_lifetime_results/
