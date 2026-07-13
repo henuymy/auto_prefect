@@ -162,11 +162,13 @@ pwsh -File scripts/status.ps1
 pwsh -File scripts/stop.ps1
 ```
 
-只启动配置中心和驾驶舱：
+仅在本地开发或诊断时，可直接调用内部 Web 启动脚本：
 
 ```powershell
-pwsh -File scripts/start_web.ps1 -Mode both
+pwsh -File scripts/lib/start_web.ps1 -Mode both
 ```
+
+日常运行仍应使用 `scripts/run.ps1`；`scripts/lib/` 下的脚本是实现模块，不作为稳定的运维入口。
 
 默认地址：
 

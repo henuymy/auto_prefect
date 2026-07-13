@@ -132,6 +132,24 @@ pwsh -File scripts/stop.ps1
 
 ## 四、变更记录
 
+### 2026-07-13 - 驾驶舱工具项目根路径修复
+
+- 原因：`scripts/tools/dashboard/` 下的 Python 工具将 `scripts/` 误判为项目根目录，直接执行时无法导入 `services`、`infrastructure` 等项目模块。
+- 修改内容：统一工具脚本的项目根目录层级；新增直接执行 `--help` 的目录契约测试，并补充驾驶舱工具的用途和风险说明。
+- 涉及文件：`scripts/tools/dashboard/*.py`、`scripts/README.md`、`tests/test_development_environment_contract.py`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无。
+- 验证：`python -m pytest -p no:cacheprovider tests/test_development_environment_contract.py::test_dashboard_tools_can_run_directly_from_the_repository_root -q`，`python -m pytest -p no:cacheprovider tests/test_dashboard_v2_admin_scripts.py -q`，`python -m compileall -q scripts/tools/dashboard`。
+- 风险与回滚：仅修正脚本自定位路径，不改变数据库、会话或导入导出参数；回滚相应脚本即可恢复旧行为。
+
+### 2026-07-13 - 脚本入口与诊断工具归类
+
+- 原因：`scripts/` 根目录混有日常运行入口、兼容转发和人工诊断脚本，README 还将内部 Web 启动模块误写为根入口。
+- 修改内容：将 City Ops 下钻诊断脚本归入 `scripts/dev/`；明确 `scripts/lib/start_web.ps1` 是内部开发/诊断模块，日常运行只使用四个根入口。
+- 涉及文件：`scripts/dev/test_city_ops_drilldown.py`、`scripts/README.md`、`README.md`、`tests/test_development_environment_contract.py`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无；本机 `.local.ps1` 覆盖文件路径保持不变。
+- 验证：`python -m pytest -p no:cacheprovider tests/test_development_environment_contract.py -q`，PowerShell 语法解析与 `git diff --check`。
+- 风险与回滚：外部手工调用诊断脚本时需改用新路径；恢复原路径即可回滚，不影响日常运行入口。
+
 ### 2026-07-13 - 强制运行时目录收敛
 
 - 原因：仓库 `runtime/`、旧共享目录与 Flow 临时目录并存，容易混用 Cookie、浏览器状态和任务产物。

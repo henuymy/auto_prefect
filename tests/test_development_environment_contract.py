@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tomllib
 
 import yaml
@@ -959,3 +960,30 @@ def test_script_root_contains_only_public_entry_points_or_compatibility_wrappers
         ("scripts/stop_public_stack.ps1", "legacy\\stop_public_stack.ps1"),
     ):
         assert target in (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def test_script_docs_keep_internal_helpers_and_diagnostics_out_of_root():
+    root = ROOT / "scripts"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert not (root / "test_city_ops_drilldown.py").exists()
+    assert (root / "dev" / "test_city_ops_drilldown.py").is_file()
+    assert "scripts/lib/start_web.ps1" in readme
+    assert "scripts/start_web.ps1" not in readme
+
+
+def test_dashboard_tools_can_run_directly_from_the_repository_root():
+    for relative_path in (
+        "scripts/tools/dashboard/import_areas.py",
+        "scripts/tools/dashboard/run_collection.py",
+    ):
+        result = subprocess.run(
+            [sys.executable, relative_path, "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "usage:" in result.stdout.lower()

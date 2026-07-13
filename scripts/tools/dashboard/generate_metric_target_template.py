@@ -8,7 +8,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
-PROJECT_DIR = Path(__file__).resolve().parents[2]
+PROJECT_DIR = Path(__file__).resolve().parents[3]
 REF_JSON = PROJECT_DIR / "docs" / "area_indicator_ref.json"
 OUTPUT = PROJECT_DIR / "docs" / "指标目标值模板.xlsx"
 

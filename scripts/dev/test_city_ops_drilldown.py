@@ -1,7 +1,7 @@
 """Run a real city-ops drilldown request and convert the JSON result to Excel.
 
 Prerequisite:
-    Run auto login first so runtime/cookies/cookie_dump.json contains city_ops.
+    Run auto login first so runtime/session/cookie_dump.json contains city_ops.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from services.method_service import download_reports
 
 def main():
     config = {
-        "cookie_dump_path": "runtime/cookies/cookie_dump.json",
-        "output_dir": "runtime/test_work/city_ops_drilldown",
-        "manifest_path": "runtime/test_work/city_ops_drilldown_manifest.json",
+        "cookie_dump_path": "runtime/session/cookie_dump.json",
+        "output_dir": "runtime/modules/city_ops_drilldown/output",
+        "manifest_path": "runtime/modules/city_ops_drilldown/output/manifest.json",
         "request_timeout_seconds": 120,
         "verify_ssl": False,
         "trust_env": False,

@@ -15,7 +15,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 
-PROJECT_DIR = Path(__file__).resolve().parents[2]
+PROJECT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_DIR = PROJECT_DIR / "config" / "reports"
 DEFAULT_OUTPUT = PROJECT_DIR / "docs" / "数据驾驶舱指标候选.xlsx"
 NON_INDICATOR_FIELDS = {
