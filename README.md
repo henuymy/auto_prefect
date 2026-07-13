@@ -29,15 +29,14 @@ Prefect Flow
 ├── models/           # 领域模型与 SQLAlchemy 模型
 ├── migrations/       # Alembic 数据库迁移
 ├── config/           # 模块、报表、任务和驾驶舱配置
-├── deployments/      # Prefect 部署定义
+├── prefect.yaml      # Session Keeper、驾驶舱等系统级 Prefect 部署声明
 ├── scripts/          # 环境、服务、迁移和运维脚本
 ├── tests/            # Python 自动化测试
 ├── utils/            # 配置、日期和请求解析工具
-├── runtime/          # 本地运行数据，不纳入版本控制
 └── templates/        # 本地业务模板，不纳入版本控制
 ```
 
-`runtime/` 可能包含 Cookie、会话、日志和临时报表。不要提交、公开或随意清空该目录。
+运行时 Cookie、会话、日志和临时报表位于 `C:\AutoNotifyRuntime`，不要提交、公开或随意清空。自动通报 Deployment 由前端“发布到调度”按钮直接发布到 Prefect，不使用独立 `deployments/` 文件。
 
 ## 环境要求
 

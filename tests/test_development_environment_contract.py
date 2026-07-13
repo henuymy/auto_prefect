@@ -464,15 +464,8 @@ def test_prefect_deployments_are_partitioned_across_three_pools():
         assert pools[name] == "windows-dashboard-pool"
 
 
-def test_notify_single_deployment_uses_notify_pool():
-    config = yaml.safe_load(
-        (ROOT / "deployments" / "notify_single_deployment.yaml").read_text(encoding="utf-8")
-    )
-
-    assert config["work_pool"] == {
-        "name": "windows-notify-pool",
-        "work_queue_name": "default",
-    }
+def test_legacy_notify_deployment_file_is_retired():
+    assert not (ROOT / "deployments" / "notify_single_deployment.yaml").exists()
 
 
 def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
