@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from services.dashboard_collection_orchestrator import (
+from services.dashboard_structure import (
     StructureEdge,
     StructureGraph,
     StructureNode,

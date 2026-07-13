@@ -55,10 +55,8 @@ def check_runtime_storage() -> dict[str, Any]:
 def readiness_status() -> dict[str, Any]:
     mysql = check_dashboard_mysql()
     try:
-        dashboard_config, _ = load_dashboard_config()
-        schema_version = int(dashboard_config.get("schema_version", 1) or 1)
+        load_dashboard_config()
     except (OSError, ValueError) as exc:
-        schema_version = 0
         dashboard_schema = {
             "ok": False,
             "message": f"驾驶舱配置读取失败: {type(exc).__name__}",
@@ -66,15 +64,11 @@ def readiness_status() -> dict[str, Any]:
     else:
         dashboard_schema = (
             check_dashboard_v2_schema()
-            if schema_version == 2 and mysql.get("ok")
+            if mysql.get("ok")
             else {
-                "ok": schema_version == 1,
-                "schema_version": schema_version,
-                "message": (
-                    "V1 结构检查由旧迁移链负责"
-                    if schema_version == 1
-                    else "等待 MySQL 连接正常后检查 V2 结构"
-                ),
+                "ok": False,
+                "schema_version": 2,
+                "message": "等待 MySQL 连接正常后检查 V2 结构",
             }
         )
     prefect = prefect_runner.check_prefect_status()

@@ -1,5 +1,7 @@
 # Dashboard V2 Only Implementation Plan
 
+> Historical implementation plan. The V1 cleanup was completed on 2026-07-14; checklist items are retained for traceability only and must not be used to operate the current environment.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 删除驾驶舱数据库 V1 实现并将运行路径固定为 V2。

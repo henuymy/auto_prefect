@@ -141,6 +141,7 @@ C:\AutoNotifyRuntime\
 - 驾驶舱只保留 V2 数据模型、服务、运行记录与迁移链路，不支持 V1 运行时分派。
 - 数据库迁移唯一入口为：`alembic -c alembic_dashboard_v2.ini upgrade head`。
 - 运行状态使用 V2 collection-run 存储；状态接口和任务入口不得导入 V1 run store 或 V1 trigger 路径。
+- 驾驶舱模块产物写入 `runtime/modules/dashboard/output/...`；历史迁移审核包仅能作为离线输入或输出，默认目录为 `runtime/modules/dashboard/output/v2_migration`，不得作为日常 Flow 的运行依赖。
 
 ### 会话生命周期约定
 
@@ -170,6 +171,15 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-14 - Runtime 路径收口与驾驶舱 V2-only 清理
+
+- 原因：共享运行目录迁移后，新手模板清单和配置删除仍尝试生成仓库相对路径；驾驶舱还保留 V1 任务分派、手工入口、数据库模型、迁移链和旧输出目录。
+- 修改内容：增加统一路径展示和运行根目录绝对路径校验；修复草稿删除、新手模板和迁移工具的共享 Runtime 路径；抽离 V2 所需的采集、结构比对、指标和运行记录通用能力；删除 V1 运行代码、迁移、手工工具与测试；任务、手工采集、健康检查和 MySQL 本机覆盖均固定为 V2。
+- 涉及文件：`services/runtime_paths.py`、`backend/services/{config_store,starter_template,prefect_runner,health_service}.py`、`services/dashboard_*`、`infrastructure/dashboard_run_protocol.py`、`tasks/dashboard_tasks.py`、`scripts/tools/dashboard/`、`models/dashboard_*.py`、`migrations/dashboard/`、V2 测试与项目文档。
+- 配置或迁移：当前运行环境只允许 `dashboard_v2` 和 `alembic_dashboard_v2.ini`；已移除的 V1 Alembic 链不能用于回滚。历史迁移包工具保留为离线审计能力，默认写入共享模块输出目录。
+- 验证：运行 Runtime 与 Dashboard V2 聚焦测试、完整 Pytest 收集、Ruff、`compileall`、V1 引用扫描和 `git diff --check`。
+- 风险与回滚：该清理不再支持 V1 数据库或脚本回退；如需恢复 V1，必须切回清理前的完整提交并使用独立数据库，禁止与 V2 代码或数据库混用。
 
 ### 2026-07-13 - 共享运行路径与 Excel 截图稳定性修复
 

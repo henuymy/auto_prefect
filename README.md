@@ -247,10 +247,9 @@ prefect deploy --all
 
 ## 数据库迁移
 
-旧驾驶舱和 V2 驾驶舱使用独立 Alembic 配置：
+驾驶舱仅使用 V2 Alembic 配置：
 
 ```powershell
-alembic -c alembic_dashboard.ini upgrade head
 alembic -c alembic_dashboard_v2.ini upgrade head
 ```
 

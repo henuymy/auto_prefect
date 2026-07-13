@@ -14,8 +14,6 @@ def run_dashboard_v2_partition_maintenance_task(
     config_path: str = "config/dashboard/session.json",
 ):
     config, _ = load_dashboard_config(config_path)
-    if int(config.get("schema_version", 1) or 1) != 2:
-        raise RuntimeError("分区维护仅允许在 schema_version=2 时运行")
     logger = get_run_logger()
     engine = create_dashboard_engine()
     try:

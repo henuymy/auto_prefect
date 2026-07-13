@@ -31,7 +31,6 @@
 | `environment.local.ps1` | 本机环境变量实际值，已忽略。 |
 | `prefect_env_prod.local.ps1` | 旧式 Prefect 连接覆盖，已忽略。 |
 | `dashboard/mysql_env.local.ps1` | 默认驾驶舱 MySQL 本机覆盖，已忽略。 |
-| `dashboard/mysql_env.v1.local.ps1` | V1 驾驶舱 MySQL 本机覆盖，已忽略。 |
 | `dashboard/mysql_env.v2.local.ps1` | V2 驾驶舱 MySQL 本机覆盖，已忽略。 |
 
 ### 内部库 `lib/`
@@ -76,7 +75,7 @@
 `tools/dashboard/` 中的 Python 工具必须从仓库根目录运行，并自行解析项目根目录：
 
 ```powershell
-python scripts/tools/dashboard/import_areas.py --help
+python scripts/tools/dashboard/run_collection.py --help
 ```
 
 | 文件 | 用途 |
@@ -85,20 +84,15 @@ python scripts/tools/dashboard/import_areas.py --help
 | `mysql_env.example.ps1` | MySQL 覆盖配置模板。 |
 | `run_v2_mysql_tests.ps1` | 使用可丢弃的 V2 测试库运行 MySQL 集成测试。 |
 | `create_v2_databases.sql.example` | 创建 V2 正式库与测试库的 SQL 示例。 |
-| `run_collection.py` | 手工执行一批驾驶舱采集任务。 |
-| `benchmark_collection_concurrency.py` | 压测 City Ops 采集请求的并发能力。 |
+| `run_collection.py` | 手工执行一批 Dashboard V2 采集任务。 |
 | `render_flow.ps1` | 渲染驾驶舱执行流程图 PNG。 |
 | `v2_cutover_audit.py` | 只读检查 V2 切换前置条件、Worker 和部署状态。 |
 | `initialize_v2_hierarchy.py` | 初始化 V2 城市、分公司和网格层级。 |
-| `import_areas.py` | 将区域层级 Excel 导入驾驶舱数据库。 |
-| `import_request_targets.py` | 导入平台请求目标。 |
-| `import_metric_targets.py` | 导入指标目标值。 |
 | `import_v2_indicator_config.py` | 导入审核后的 V2 指标和自定义公式配置。 |
 | `import_v2_target_plan.py` | 从 JSON 导入并激活 V2 指标目标方案。 |
-| `export_areas.py` | 从业务平台导出区域层级到 Excel。 |
 | `export_indicator_candidates.py` | 从报表配置扫描并导出候选指标。 |
 | `export_metric_sample.py` | 导出单个指标的原始采集样本，不写 MySQL。 |
-| `export_v2_migration_bundle.py` | 导出 V1 层级和配置，供 V2 迁移审核。 |
+| `export_v2_migration_bundle.py` | 离线导出历史迁移审核包；不能用于当前 Dashboard V2 运行链。 |
 | `generate_metric_target_template.py` | 基于区域和指标参考数据生成目标值 Excel 模板。 |
 
 这些工具可能读取生产会话、访问数据库或写出 Excel；执行前确认目标环境和输入文件，不要把它们接入日常启动入口。

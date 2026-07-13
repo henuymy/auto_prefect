@@ -10,7 +10,7 @@ from typing import Any, Callable
 from openpyxl import Workbook, load_workbook
 
 from services.method_service import download_reports
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import display_path, resolve_runtime_path
 from services.session_manager import prepare_session
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_structure
@@ -277,7 +277,10 @@ def generate_starter_template(config: dict[str, Any], progress: Callable[[str, s
         "template_path": relative_path,
         "filename": template_filename,
         "required_stages": stages,
-        "download_manifest_path": str((run_dir / "download_manifest.json").relative_to(PROJECT_ROOT)),
+        "download_manifest_path": display_path(
+            run_dir / "download_manifest.json",
+            project_dir=PROJECT_ROOT,
+        ),
         "merged_sheets": merged_sheets,
         "generated_at": datetime.now().isoformat(),
     }

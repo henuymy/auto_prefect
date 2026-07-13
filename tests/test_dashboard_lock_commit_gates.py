@@ -8,14 +8,6 @@ def _source(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_v1_pipeline_checks_database_lock_before_explicit_commit():
-    source = _source("services/dashboard_pipeline.py")
-    check = source.index("batch.database_lock.assert_held()")
-    commit = source.index("transaction.commit()")
-
-    assert check < commit
-
-
 def test_v2_pipeline_checks_database_lock_after_run_finalization():
     source = _source("services/dashboard_v2_pipeline.py")
     finalize = source.index("finalize_v2_run_in_session(")
@@ -33,9 +25,15 @@ def test_v2_indicator_sync_checks_database_lock_after_success_state():
 
 
 def test_batch_contexts_keep_lease_separate_from_serializable_lock_metadata():
-    v1 = _source("services/dashboard_batch_runner.py")
     v2 = _source("services/dashboard_v2_batch_runner.py")
 
-    for source in (v1, v2):
-        assert "database_lock: DashboardMySQLLockLease" in source
-        assert '"database_lock": database_lock.as_dict()' in source
+    assert "database_lock: DashboardMySQLLockLease" in v2
+    assert '"database_lock": database_lock.as_dict()' in v2
+
+
+def test_v2_batch_defaults_use_controlled_module_output_paths():
+    source = _source("services/dashboard_v2_batch_runner.py")
+
+    assert "runtime/dashboard/" not in source
+    assert "runtime/modules/dashboard/output/area_anomalies" in source
+    assert "runtime/modules/dashboard/output/failure_reports" in source

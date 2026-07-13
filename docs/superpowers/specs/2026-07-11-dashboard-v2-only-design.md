@@ -1,5 +1,7 @@
 # Dashboard V2 Only Design
 
+> Historical design record. The V1 cleanup was completed on 2026-07-14; do not use this document as an operational runbook. Current operations use `dashboard_v2`, `alembic_dashboard_v2.ini`, and the V2-only instructions in `README.md` and `PROJECT_GUIDE.md`.
+
 ## Goal
 
 Remove the dashboard V1 implementation and make dashboard runtime configuration, database access, migrations, scheduled tasks, scripts, and tests V2-only. The dashboard remains available through its existing V2 API and frontend.

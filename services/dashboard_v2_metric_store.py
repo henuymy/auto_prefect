@@ -20,7 +20,7 @@ from models.dashboard_v2 import (
     MetricCurrentV2,
     MetricSnapshotV2,
 )
-from services.dashboard_metric_store import (
+from services.dashboard_metrics import (
     MetricConflictError,
     MetricWriteError,
     parse_metric_value,

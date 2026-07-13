@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from infrastructure.dashboard_mysql import DashboardMySQLSettings, create_dashboard_engine
 from models.dashboard_v2 import IndicatorFormulaComponent, IndicatorV2
 from services.dashboard_v2_readiness import EXPECTED_REVISION
+from services.runtime_paths import resolve_runtime_path
 
 
 def _read_list(path: str | Path, label: str) -> list[dict[str, Any]]:
@@ -170,10 +171,11 @@ def import_indicator_config(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="导入驾驶舱 V2 指标设置和自建公式")
-    parser.add_argument("--bundle", default="runtime/dashboard_v2_migration")
+    parser.add_argument("--bundle", default="runtime/modules/dashboard/output/v2_migration")
     parser.add_argument("--expected-database", default="dashboard_v2")
     args = parser.parse_args()
-    bundle = Path(args.bundle)
+    bundle = resolve_runtime_path(args.bundle, project_dir=PROJECT_ROOT)
+    assert bundle is not None
     result = import_indicator_config(
         indicator_settings_path=bundle / "indicator_settings.json",
         custom_indicators_path=bundle / "custom_indicators.json",

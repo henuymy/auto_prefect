@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.dialects import mysql
 
-from services.dashboard_metric_store import MetricConflictError, MetricWriteError
+from services.dashboard_metrics import MetricConflictError, MetricWriteError
 from services.dashboard_v2_metric_store import (
     build_v2_acc_upsert_statement,
     build_v2_current_upsert_statement,

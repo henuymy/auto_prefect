@@ -865,12 +865,11 @@ def test_legacy_dev_entry_points_only_forward_to_unified_scripts():
         assert "prefect flow run" not in source.lower()
 
 
-def test_dashboard_low_frequency_tools_are_archived_outside_lifecycle_scripts():
+def test_dashboard_v2_tools_are_archived_outside_lifecycle_scripts():
     tools_dir = ROOT / "scripts" / "tools" / "dashboard"
     for name in (
-        "import_areas.py",
-        "export_areas.py",
-        "import_metric_targets.py",
+        "initialize_v2_hierarchy.py",
+        "import_v2_target_plan.py",
         "export_v2_migration_bundle.py",
         "v2_cutover_audit.py",
     ):
@@ -967,7 +966,7 @@ def test_script_docs_keep_internal_helpers_and_diagnostics_out_of_root():
 
 def test_dashboard_tools_can_run_directly_from_the_repository_root():
     for relative_path in (
-        "scripts/tools/dashboard/import_areas.py",
+        "scripts/tools/dashboard/export_v2_migration_bundle.py",
         "scripts/tools/dashboard/run_collection.py",
     ):
         result = subprocess.run(

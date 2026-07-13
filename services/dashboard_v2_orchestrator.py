@@ -10,25 +10,25 @@ from typing import Any, Callable, Iterable
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from infrastructure.dashboard_run_store import CollectionRunStore
-from services.dashboard_collection_orchestrator import (
+from infrastructure.dashboard_run_protocol import CollectionRunStore
+from services.dashboard_structure import (
     StructureDiff,
     StructureGraph,
-    _affected_grid_codes_from_diff,
-    _build_candidate_targets_from_observations,
-    _build_subtree_retry_targets,
-    _manager_codes_for_grids,
-    _merge_subtree_retry_collection,
+    affected_grid_codes_from_diff,
+    build_candidate_targets_from_observations,
+    build_subtree_retry_targets,
+    manager_codes_for_grids,
+    merge_subtree_retry_collection,
     diff_structure_graph,
     naive_shanghai_now,
     normalize_collection_retry_strategy,
     summarize_structure_changes,
 )
-from services.dashboard_collection_service import (
+from services.dashboard_collection_runtime import (
     CollectionTarget,
     execute_collection_phase,
 )
-from services.dashboard_metric_store import parse_metric_value
+from services.dashboard_metrics import parse_metric_value
 from services.dashboard_v2_hierarchy import (
     BASE_NODE_TYPES,
     V2HierarchyError,
@@ -94,7 +94,7 @@ def collect_validate_metric_rows_v2(
         )
         collect_seconds = perf_counter() - started
         if first_collection is not None:
-            collection = _merge_subtree_retry_collection(
+            collection = merge_subtree_retry_collection(
                 first_collection,
                 collection,
                 affected_grid_codes,
@@ -178,17 +178,17 @@ def collect_validate_metric_rows_v2(
         if attempt_index == 1:
             break
 
-        affected_grid_codes = _affected_grid_codes_from_diff(
+        affected_grid_codes = affected_grid_codes_from_diff(
             graph_diff,
             current_graph,
             observed,
         )
-        affected_manager_codes = _manager_codes_for_grids(
+        affected_manager_codes = manager_codes_for_grids(
             current_graph, affected_grid_codes
-        ) | _manager_codes_for_grids(observed, affected_grid_codes)
+        ) | manager_codes_for_grids(observed, affected_grid_codes)
         run_store.update(batch_no, status="RUNNING", phase="PREPARE_CANDIDATE")
         if strategy == "affected_grid" and affected_grid_codes:
-            retry_targets = _build_subtree_retry_targets(
+            retry_targets = build_subtree_retry_targets(
                 targets,
                 collection.get("rows", []),
                 collection.get("structure_observations", []),
@@ -197,7 +197,7 @@ def collect_validate_metric_rows_v2(
         else:
             retry_targets = []
         if not retry_targets:
-            retry_targets = _build_candidate_targets_from_observations(
+            retry_targets = build_candidate_targets_from_observations(
                 collection.get("rows", []),
                 collection.get("structure_observations", []),
             )

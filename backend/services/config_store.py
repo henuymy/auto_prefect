@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from services.session_manager import file_lock
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import display_path, resolve_runtime_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -375,7 +375,7 @@ def _delete_config_unlocked(config_id: str, source: str = "published") -> list[s
         draft_path.unlink()
         if not report_path.exists():
             _replace_config_order_id(name, None)
-        return [str(draft_path.relative_to(PROJECT_ROOT))]
+        return [display_path(draft_path, project_dir=PROJECT_ROOT)]
     if not report_path.exists():
         raise FileNotFoundError(f"配置不存在: {config_id}")
 
@@ -390,6 +390,6 @@ def _delete_config_unlocked(config_id: str, source: str = "published") -> list[s
     for path in candidates:
         if path.exists() and path.is_file():
             path.unlink()
-            deleted.append(str(path.relative_to(PROJECT_ROOT)))
+            deleted.append(display_path(path, project_dir=PROJECT_ROOT))
     _replace_config_order_id(name, None)
     return deleted

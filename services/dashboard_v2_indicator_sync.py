@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 from infrastructure.dashboard_mysql import create_dashboard_engine, dashboard_mysql_lock
 from infrastructure.dashboard_v2_run_store import MySQLV2CollectionRunStore
 from models.dashboard_v2 import CollectionRunV2
-from services.dashboard_indicator_sync import (
-    _extract_indicator_records,
+from services.dashboard_indicator_runtime import (
+    extract_indicator_records,
     fetch_user_diy_indicators,
 )
 from services.dashboard_v2_trigger import (
@@ -109,7 +109,7 @@ def execute_dashboard_v2_indicator_sync(
                         or 30
                     ),
                 )
-                records = _extract_indicator_records(payload)
+                records = extract_indicator_records(payload)
                 finished_at = now_shanghai().replace(tzinfo=None)
                 with Session(engine) as session, session.begin():
                     result = sync_v2_indicator_records(session, records)

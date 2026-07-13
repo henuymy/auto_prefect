@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from sqlalchemy import text
 
 from infrastructure.dashboard_mysql import create_dashboard_engine
+from services.runtime_paths import resolve_runtime_path
 
 
 def _json_default(value: Any) -> Any:
@@ -238,7 +239,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="导出驾驶舱 V2 配置迁移包")
     parser.add_argument(
         "--output",
-        default="runtime/dashboard_v2_migration",
+        default="runtime/modules/dashboard/output/v2_migration",
     )
     parser.add_argument(
         "--effective-from",
@@ -247,7 +248,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     summary = export_bundle(
-        args.output,
+        resolve_runtime_path(args.output, project_dir=PROJECT_ROOT),
         effective_from=args.effective_from,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, default=_json_default))

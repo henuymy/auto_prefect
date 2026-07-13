@@ -18,10 +18,10 @@ from infrastructure.dashboard_mysql import (
     create_dashboard_engine,
     dashboard_mysql_lock,
 )
-from infrastructure.dashboard_run_store import CollectionRunStore
+from infrastructure.dashboard_run_protocol import CollectionRunStore
 from infrastructure.dashboard_v2_run_store import MySQLV2CollectionRunStore
 from models.dashboard_v2 import CollectionRunV2
-from services.dashboard_collection_service import CollectionTarget
+from services.dashboard_collection_runtime import CollectionTarget
 from services.dashboard_v2_trigger import (
     build_city_ops_login_config,
     load_dashboard_config,
@@ -71,13 +71,13 @@ class DashboardV2BatchContext:
             anomaly_directory=resolve_project_path(
                 self.config.get(
                     "area_anomaly_directory",
-                    "runtime/dashboard/area_anomalies",
+                    "runtime/modules/dashboard/output/area_anomalies",
                 )
             ),
             failure_directory=resolve_project_path(
                 self.config.get(
                     "failure_report_directory",
-                    "runtime/dashboard/failures",
+                    "runtime/modules/dashboard/output/failure_reports",
                 )
             ),
             event_logger=self.config.get("event_logger"),

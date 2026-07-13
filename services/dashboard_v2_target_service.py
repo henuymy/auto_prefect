@@ -11,7 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import MetricTargetValue, TargetPlan
-from services.dashboard_metric_store import parse_metric_value
+from services.dashboard_metrics import parse_metric_value
 
 
 class TargetPlanError(RuntimeError):

@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import display_path, resolve_runtime_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -33,10 +33,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> Path:
 
 
 def _display_path(path: Path) -> str:
-    try:
-        return str(path.relative_to(PROJECT_ROOT))
-    except ValueError:
-        return str(path)
+    return display_path(path, project_dir=PROJECT_ROOT)
 
 
 def get_prefect_api_url() -> str:

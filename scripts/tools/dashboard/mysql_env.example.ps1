@@ -1,12 +1,11 @@
 # Copy this file to scripts/tools/dashboard/mysql_env.local.ps1 and fill in local values.
-# For cutover/rollback, keep separate ignored profiles such as
-# mysql_env.v1.local.ps1 and mysql_env.v2.local.ps1, then set
-# DASHBOARD_MYSQL_ENV_FILE before loading mysql_env.ps1.
+# The active runtime uses Dashboard V2 only. To use another ignored local
+# profile, set DASHBOARD_MYSQL_ENV_FILE before loading mysql_env.ps1.
 # The *.local.ps1 file is ignored by Git.
 
 $env:DASHBOARD_MYSQL_HOST = "127.0.0.1"
 $env:DASHBOARD_MYSQL_PORT = "3306"
-$env:DASHBOARD_MYSQL_DATABASE = "dashboard"
+$env:DASHBOARD_MYSQL_DATABASE = "dashboard_v2"
 $env:DASHBOARD_MYSQL_USER = "dashboard_app"
 $env:DASHBOARD_MYSQL_PASSWORD = ""
 

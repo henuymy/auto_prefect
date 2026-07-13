@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import HierarchyNode
-from services.dashboard_collection_orchestrator import (
+from services.dashboard_structure import (
     StructureEdge,
     StructureGraph,
     StructureNode,

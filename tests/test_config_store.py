@@ -117,6 +117,29 @@ def test_save_config_removes_same_name_draft(monkeypatch, tmp_path):
     assert not (config_store.DRAFTS_DIR / "同名.json").exists()
 
 
+def test_delete_draft_returns_logical_shared_runtime_path(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+    _write(config_store.DRAFTS_DIR / "草稿.json", "草稿")
+
+    deleted = config_store.delete_config("草稿", source="draft")
+
+    assert deleted == ["runtime/config/drafts/草稿.json"]
+    assert not (config_store.DRAFTS_DIR / "草稿.json").exists()
+
+
+def test_delete_published_config_returns_logical_path_for_shared_draft(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+    _write(config_store.REPORTS_DIR / "正式.json", "正式")
+    _write(config_store.DRAFTS_DIR / "正式.json", "正式")
+
+    deleted = config_store.delete_config("正式")
+
+    assert "config/reports/正式.json" in deleted
+    assert "runtime/config/drafts/正式.json" in deleted
+
+
 def test_create_config_rejects_duplicate_name(monkeypatch, tmp_path):
     _patch_dirs(monkeypatch, tmp_path)
     _write(config_store.REPORTS_DIR / "日报.json", "日报")

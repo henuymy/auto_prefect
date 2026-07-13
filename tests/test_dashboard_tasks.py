@@ -10,7 +10,7 @@ def test_metric_task_dispatches_monthly_mode(monkeypatch):
     monkeypatch.setattr(
         dashboard_tasks,
         "load_dashboard_config",
-        lambda path: ({"schema_version": 1}, path),
+        lambda path: ({"schema_version": 2}, path),
     )
     monkeypatch.setattr(
         dashboard_tasks,
@@ -19,7 +19,7 @@ def test_metric_task_dispatches_monthly_mode(monkeypatch):
     )
     monkeypatch.setattr(
         dashboard_tasks,
-        "execute_dashboard_monthly_pipeline",
+        "execute_dashboard_v2_pipeline",
         lambda **kwargs: calls.append(kwargs) or {"status": "SUCCESS"},
     )
 
@@ -33,13 +33,14 @@ def test_metric_task_dispatches_monthly_mode(monkeypatch):
     assert result == {"status": "SUCCESS"}
     assert calls[0]["trigger_type"] == "MANUAL"
     assert calls[0]["force_refresh"] is True
+    assert calls[0]["period_type"] == "MONTH"
 
 
 def test_metric_task_rejects_unknown_mode(monkeypatch):
     monkeypatch.setattr(
         dashboard_tasks,
         "load_dashboard_config",
-        lambda path: ({"schema_version": 1}, path),
+        lambda path: ({"schema_version": 2}, path),
     )
     with pytest.raises(ValueError, match="mode 只支持"):
         dashboard_tasks.run_dashboard_metric_task.fn(

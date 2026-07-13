@@ -15,6 +15,13 @@ _CONFIG_AREAS = {"drafts", "versions"}
 _OPERATIONAL_AREAS = {"logs", "health", "starter_templates", "temp"}
 
 
+def _configured_runtime_root(value: str, source: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"{source} 必须是绝对路径: {value!r}")
+    return path.resolve()
+
+
 def _runtime_root_from_local_config() -> Path | None:
     config_path = PROJECT_DIR / "config" / "runtime.local.json"
     if not config_path.exists():
@@ -26,14 +33,14 @@ def _runtime_root_from_local_config() -> Path | None:
     configured_root = (config.get("runtime") or {}).get("root")
     if not isinstance(configured_root, str) or not configured_root.strip():
         return None
-    return Path(configured_root).expanduser().resolve()
+    return _configured_runtime_root(configured_root, "config/runtime.local.json 中的 runtime.root")
 
 
 def runtime_root(env: Mapping[str, str] | None = None) -> Path:
     values = os.environ if env is None else env
     configured = values.get("AUTO_NOTIFY_RUNTIME_ROOT")
     if configured:
-        return Path(configured).expanduser().resolve()
+        return _configured_runtime_root(configured, "AUTO_NOTIFY_RUNTIME_ROOT")
     local_config_root = _runtime_root_from_local_config()
     if local_config_root is not None:
         return local_config_root
@@ -41,7 +48,21 @@ def runtime_root(env: Mapping[str, str] | None = None) -> Path:
 
 
 def runtime_path(relative: str | Path) -> Path:
-    return (runtime_root() / Path(relative)).resolve()
+    logical_path = validate_runtime_path(Path("runtime") / Path(relative))
+    return (runtime_root() / Path(*logical_path.parts[1:])).resolve()
+
+
+def display_path(value: str | Path, *, project_dir: Path = PROJECT_DIR) -> str:
+    """Return a stable project or logical Runtime path for API responses and logs."""
+    path = Path(value).resolve()
+    try:
+        return "runtime/" + path.relative_to(runtime_root()).as_posix()
+    except ValueError:
+        pass
+    try:
+        return path.relative_to(Path(project_dir).resolve()).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def validate_runtime_path(value: str | Path) -> Path:

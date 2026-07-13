@@ -1,4 +1,4 @@
-"""Read-only audit of Dashboard V2 preflight and cutover gates."""
+"""Read-only audit of the active Dashboard V2 runtime gates."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ from infrastructure.dashboard_mysql import (
 )
 from services.dashboard_v2_trigger import load_dashboard_config
 from services.dashboard_v2_readiness import check_dashboard_v2_schema
+from services.runtime_paths import resolve_runtime_path
 
 
 REQUIRED_DEPLOYMENTS = {
@@ -253,19 +254,23 @@ async def _read_target_flow_runs(client: Any, deployment_ids: set[Any]) -> list[
 async def audit(args: argparse.Namespace) -> dict[str, Any]:
     connection, schema = _mysql_checks(args.expected_database)
     config, resolved_config = load_dashboard_config(args.config)
-    schema_version = int(config.get("schema_version", 1) or 1)
-    expected_schema_version = 2 if args.phase == "cutover" else 1
+    schema_version = int(config.get("schema_version", 0) or 0)
     checks = {
         "git": _git_check(),
         "mysql_connection": connection,
         "dashboard_v2_schema": schema,
-        "migration_bundle": _bundle_check(Path(args.bundle), require_pk=args.require_pk_targets),
-        "approval_evidence": _approval_check(Path(args.approvals)),
+        "migration_bundle": _bundle_check(
+            resolve_runtime_path(args.bundle, project_dir=PROJECT_ROOT),
+            require_pk=args.require_pk_targets,
+        ),
+        "approval_evidence": _approval_check(
+            resolve_runtime_path(args.approvals, project_dir=PROJECT_ROOT)
+        ),
         "dashboard_config": _check(
-            schema_version == expected_schema_version,
+            schema_version == 2,
             f"schema_version={schema_version}",
             config_path=str(resolved_config),
-            expected_schema_version=expected_schema_version,
+            expected_schema_version=2,
         ),
         "prefect_health": _prefect_health(args.prefect_api_url),
         "prefect_state": await _prefect_state_check(
@@ -284,13 +289,13 @@ async def audit(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="只读审计驾驶舱 V2 切换门槛")
-    parser.add_argument("--phase", choices=["preflight", "cutover"], default="preflight")
+    parser.add_argument("--phase", choices=["cutover"], default="cutover")
     parser.add_argument("--expected-database", default="dashboard_v2")
     parser.add_argument("--config", default="config/dashboard/session.json")
-    parser.add_argument("--bundle", default="runtime/dashboard_v2_migration")
+    parser.add_argument("--bundle", default="runtime/modules/dashboard/output/v2_migration")
     parser.add_argument(
         "--approvals",
-        default="runtime/dashboard_v2_migration/cutover_approvals.json",
+        default="runtime/modules/dashboard/output/v2_migration/cutover_approvals.json",
     )
     parser.add_argument("--prefect-api-url", default="http://127.0.0.1:4200/api")
     parser.add_argument("--require-pk-targets", action="store_true")

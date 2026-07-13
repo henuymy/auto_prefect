@@ -10,10 +10,13 @@ def test_readiness_status_requires_all_dependencies(monkeypatch):
     monkeypatch.setattr(
         health_service,
         "load_dashboard_config",
-        lambda: ({"schema_version": 1}, "config/dashboard/session.json"),
+        lambda: ({"schema_version": 2}, "config/dashboard/session.json"),
     )
     monkeypatch.setattr(
         health_service, "check_dashboard_mysql", lambda: {"ok": True}
+    )
+    monkeypatch.setattr(
+        health_service, "check_dashboard_v2_schema", lambda: {"ok": True}
     )
     monkeypatch.setattr(
         health_service.prefect_runner,
@@ -57,3 +60,23 @@ def test_runtime_storage_probe_is_writable(monkeypatch, tmp_path):
     assert result["writable"] is True
     assert list((tmp_path / "shared" / "health").iterdir()) == []
     assert not (tmp_path / "runtime").exists()
+
+
+def test_readiness_rejects_non_v2_dashboard_config(monkeypatch):
+    monkeypatch.setattr(
+        health_service,
+        "load_dashboard_config",
+        lambda: (_ for _ in ()).throw(ValueError("dashboard schema_version 只支持 2")),
+    )
+    monkeypatch.setattr(health_service, "check_dashboard_mysql", lambda: {"ok": True})
+    monkeypatch.setattr(
+        health_service.prefect_runner,
+        "check_prefect_status",
+        lambda: {"ok": True},
+    )
+    monkeypatch.setattr(health_service, "check_runtime_storage", lambda: {"ok": True})
+
+    result = health_service.readiness_status()
+
+    assert result["ok"] is False
+    assert result["checks"]["dashboard_schema"]["ok"] is False

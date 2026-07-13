@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import TargetPlan
-from scripts.tools.dashboard import import_v2_target_plan, v2_cutover_audit
+from scripts.tools.dashboard import import_v2_target_plan, run_collection, v2_cutover_audit
 from tests.test_dashboard_v2_query_service import _engine
 
 
@@ -98,3 +100,14 @@ def test_cutover_audit_reads_workers_only_from_dashboard_pool(monkeypatch):
     assert result["ok"] is True
     assert result["online_workers"] == ["dashboard-worker"]
     assert client.worker_pool_reads == ["dashboard-test-pool"]
+
+
+def test_manual_collection_tool_rejects_removed_v1_schema_override(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_collection.py", "--schema-version", "1"],
+    )
+
+    with pytest.raises(SystemExit):
+        run_collection.parse_args()

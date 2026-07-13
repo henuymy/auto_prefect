@@ -9,7 +9,7 @@ from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.orm import Session, aliased
 
 from models.dashboard_v2 import IndicatorFormulaComponent, IndicatorV2
-from services.dashboard_custom_indicator_service import _normalize_components
+from services.dashboard_metrics import normalize_indicator_components
 
 
 def _components_for(
@@ -94,7 +94,7 @@ def upsert_custom_indicator(
         raise ValueError("自建指标编码不能为空")
     if not normalized_name:
         raise ValueError("自建指标名称不能为空")
-    normalized_components = _normalize_components(components)
+    normalized_components = normalize_indicator_components(components)
     if not normalized_components:
         raise ValueError("自建指标至少需要 1 个源指标")
     with Session(engine) as session:

@@ -16,7 +16,7 @@ from sqlalchemy import Engine, and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import HierarchyNode, IndicatorV2, MetricTargetValue, TargetPlan
-from services.dashboard_metric_store import parse_metric_value
+from services.dashboard_metrics import parse_metric_value
 from services.dashboard_v2_target_service import (
     TargetPlanError,
     activate_v2_target_plan_in_session,

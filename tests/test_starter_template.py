@@ -127,6 +127,65 @@ def test_generate_starter_template_uses_request_snapshot(monkeypatch):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def test_generate_starter_template_returns_logical_shared_runtime_manifest_path(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        project_dir = work_dir / "project"
+        runtime_dir = work_dir / "shared-runtime"
+        source = work_dir / "source.xlsx"
+        create_workbook(source, {"明细": [["名称"], ["共享目录数据"]]})
+        monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_dir))
+        monkeypatch.setattr(starter_template, "PROJECT_ROOT", project_dir)
+        monkeypatch.setattr(starter_template, "RUNTIME_DIR", runtime_dir / "starter_templates")
+        monkeypatch.setattr(starter_template, "TEMPLATES_DIR", project_dir / "templates")
+        monkeypatch.setattr(
+            starter_template,
+            "_build_download_config",
+            lambda downloads, _run_dir: {"reports": downloads},
+        )
+        monkeypatch.setattr(
+            starter_template,
+            "_prepare_required_session",
+            lambda stages: {"status": "reused", "validation": {"required": stages}},
+        )
+        monkeypatch.setattr(
+            starter_template,
+            "download_reports",
+            lambda config, base_dir, dry_run=False, debug=False: {
+                "results": [
+                    {
+                        "name": config["reports"][0]["name"],
+                        "stage": config["reports"][0]["stage"],
+                        "output_path": str(source),
+                    }
+                ]
+            },
+        )
+
+        result = starter_template.generate_starter_template(
+            {
+                "name": "共享目录模板",
+                "downloads": [
+                    {
+                        "name": "下载",
+                        "stage": "city_ops",
+                        "method": "POST",
+                        "url": "https://example.invalid/export",
+                        "body_type": "json",
+                        "response_mode": "file",
+                    }
+                ],
+            }
+        )
+
+        assert result["status"] == "success"
+        assert result["download_manifest_path"].startswith(
+            "runtime/starter_templates/共享目录模板/"
+        )
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def test_generate_starter_template_relogs_once_when_session_expired(monkeypatch):
     work_dir = make_work_dir()
     try:

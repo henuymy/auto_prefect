@@ -28,7 +28,7 @@ from models.dashboard_v2 import (
     MetricSnapshotV2,
     TargetPlan,
 )
-from services.dashboard_query_service import (
+from services.dashboard_query_windows import (
     CHANGE_WINDOW_TOLERANCE_MINUTES,
     SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS,
     parse_change_window_minutes,

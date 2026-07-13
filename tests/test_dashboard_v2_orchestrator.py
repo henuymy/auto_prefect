@@ -4,11 +4,11 @@ from decimal import Decimal
 
 import pytest
 
-from services.dashboard_collection_orchestrator import (
+from services.dashboard_structure import (
     StructureEdge,
     StructureGraph,
     StructureNode,
-    _merge_subtree_retry_collection,
+    merge_subtree_retry_collection,
 )
 from services.dashboard_v2_orchestrator import (
     V2MetricCoverageError,
@@ -178,7 +178,7 @@ def test_subtree_merge_replaces_manager_self_row_instead_of_duplicating_it():
         "recoverable_errors": [],
     }
 
-    merged = _merge_subtree_retry_collection(base, retry, {"G"}, {"M"})
+    merged = merge_subtree_retry_collection(base, retry, {"G"}, {"M"})
 
     assert len(merged["rows"]) == 1
     assert merged["rows"][0]["metric"] == 2

@@ -14,13 +14,13 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import HierarchyNode, HierarchyParentHistory
-from services.dashboard_collection_orchestrator import (
+from services.dashboard_structure import (
     StructureEdge,
     StructureGraph,
     StructureNode,
     build_observed_structure_graph,
 )
-from services.dashboard_collection_service import CollectionTarget
+from services.dashboard_collection_runtime import CollectionTarget
 
 
 NODE_LEVELS = {

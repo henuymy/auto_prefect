@@ -3,8 +3,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from services import runtime_paths
-from services.runtime_paths import resolve_runtime_path, runtime_path, runtime_root
+from services.runtime_paths import display_path, resolve_runtime_path, runtime_path, runtime_root
 
 
 def test_runtime_relative_paths_rebase_to_external_root(monkeypatch, tmp_path):
@@ -43,6 +45,18 @@ def test_runtime_root_uses_local_runtime_config_when_environment_is_unset(monkey
     monkeypatch.setattr(runtime_paths, "PROJECT_DIR", project_dir)
 
     assert runtime_paths.runtime_root() == runtime_dir.resolve()
+
+
+def test_runtime_root_rejects_relative_local_config(monkeypatch, tmp_path):
+    project_dir = tmp_path / "project"
+    config_path = project_dir / "config" / "runtime.local.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text('{"runtime": {"root": "shared-runtime"}}', encoding="utf-8")
+    monkeypatch.delenv("AUTO_NOTIFY_RUNTIME_ROOT", raising=False)
+    monkeypatch.setattr(runtime_paths, "PROJECT_DIR", project_dir)
+
+    with pytest.raises(ValueError, match="必须是绝对路径"):
+        runtime_paths.runtime_root()
 
 
 def test_runtime_root_uses_machine_shared_default_without_override(monkeypatch):
@@ -86,6 +100,26 @@ def test_runtime_path_is_resolved_lazily(monkeypatch, tmp_path):
     assert runtime_path("session/locks/excel.lock") == (
         tmp_path / "second" / "session" / "locks" / "excel.lock"
     ).resolve()
+
+
+def test_runtime_path_rejects_escape_and_legacy_directory(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+
+    with pytest.raises(ValueError, match="受控"):
+        runtime_path("../outside")
+    with pytest.raises(ValueError, match="旧或未分类"):
+        runtime_path("dashboard/failures")
+
+
+def test_display_path_uses_logical_runtime_prefix(monkeypatch, tmp_path):
+    runtime_dir = tmp_path / "shared"
+    project_dir = tmp_path / "project"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_dir))
+
+    assert display_path(
+        runtime_dir / "config" / "drafts" / "日报.json",
+        project_dir=project_dir,
+    ) == "runtime/config/drafts/日报.json"
 
 
 def test_runtime_config_and_operational_paths_rebase_to_shared_root(monkeypatch, tmp_path):
