@@ -124,13 +124,33 @@ scripts/prefect_env_prod.local.ps1
 `C:\AutoNotifyRuntime`：
 
 ```text
-session/                    Cookie、浏览器 Profile、会话健康状态和登录/Excel 锁
-prefect/prefect_home/       Prefect Home；本机 Server 与 Worker 共用
-processes/                  受管 Server、Worker、后端和前端的进程登记 JSON
-modules/<module>/output/    模块独立产物
-flow/<task>/{output,backup,debug,tmp}/
-                            Flow 任务产物
-logs/、temp/                按需产生的运行日志和临时文件
+C:\AutoNotifyRuntime\
+  session\
+    cookie_dump.json
+    browser-session.json
+    browser-profile\
+    session-health.json
+    locks\
+      login.lock
+      excel_com.lock
+      dashboard_collection.lock
+    login_debug\
+  config\
+    drafts\                  前端保存、尚未发布的通报配置草稿
+    versions\<配置名>\        正式配置覆盖前的历史备份
+  logs\
+    web_runs.jsonl           Web/后端运行日志
+  health\                    健康检查探针
+  starter_templates\         新手模板生成的中间产物
+  modules\<模块名>\output\   模块独立产物
+  flow\<任务名>\
+    output\
+    backup\
+    debug\
+    tmp\
+  temp\                      工具临时文件
+  prefect\prefect_home\      Prefect Home；本机 Server 与 Worker 共用
+  processes\                 受管 Server、Worker、后端和前端的进程登记 JSON
 ```
 
 `session/` 下的 `cookie_dump.json`、`browser-profile/` 和

@@ -33,8 +33,9 @@ def _patch_dirs(monkeypatch, tmp_path):
     monkeypatch.setattr(config_store, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(config_store, "REPORTS_DIR", tmp_path / "config" / "reports")
     monkeypatch.setattr(config_store, "TASKS_DIR", tmp_path / "config" / "tasks")
-    monkeypatch.setattr(config_store, "DRAFTS_DIR", tmp_path / "runtime" / "drafts")
-    monkeypatch.setattr(config_store, "VERSIONS_DIR", tmp_path / "runtime" / "config_versions")
+    monkeypatch.setattr(config_store, "DRAFTS_DIR", tmp_path / "shared" / "config" / "drafts")
+    monkeypatch.setattr(config_store, "VERSIONS_DIR", tmp_path / "shared" / "config" / "versions")
+    monkeypatch.setattr(config_store, "CONFIG_WRITE_LOCK_PATH", tmp_path / "shared" / "session" / "locks" / "config_store.lock")
     monkeypatch.setattr(config_store, "CONFIG_ORDER_PATH", tmp_path / "config" / "report_order.json")
 
 

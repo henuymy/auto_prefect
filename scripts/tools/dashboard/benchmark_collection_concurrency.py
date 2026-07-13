@@ -33,11 +33,12 @@ from services.method_service import (
     request_report,
     response_json_with_context,
 )
+from services.runtime_paths import runtime_path
 
 
 DEFAULT_CONFIG = PROJECT_DIR / "config" / "reports" / "家客和存量通报.json"
-DEFAULT_COOKIE_DUMP = PROJECT_DIR / "runtime" / "cookies" / "cookie_dump.json"
-DEFAULT_OUTPUT = PROJECT_DIR / "runtime" / "dashboard" / "concurrency_benchmark.json"
+DEFAULT_COOKIE_DUMP = runtime_path("session/cookie_dump.json")
+DEFAULT_OUTPUT = runtime_path("temp/dashboard/concurrency_benchmark.json")
 DEFAULT_LEVELS = [4, 8, 16, 24, 32]
 
 

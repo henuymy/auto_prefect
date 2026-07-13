@@ -121,7 +121,7 @@ def execute_session_phase(
         lock_path = resolve_project_path(
             dashboard_config.get(
                 "collection_lock_path",
-                "runtime/locks/dashboard_collection.lock",
+                "runtime/session/locks/dashboard_collection.lock",
             )
         )
         login_config = build_city_ops_login_config(

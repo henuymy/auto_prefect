@@ -65,7 +65,7 @@ foreach ($homePath in @($PrefectHome, (Join-Path $env:USERPROFILE ".prefect"))) 
     Remove-Item -LiteralPath (Join-Path $homePath "prefect.db-shm") -Force -ErrorAction SilentlyContinue
 }
 
-Remove-Item -LiteralPath (Join-Path $RepoRoot "runtime\locks\excel_com.lock") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\locks\excel_com.lock") -Force -ErrorAction SilentlyContinue
 
 $CleanupPython = $ProjectPython
 Push-Location $RepoRoot

@@ -76,7 +76,7 @@ def delete_config(config_id: str, source: str = Query("published", pattern="^(pu
 @router.post("/{config_id}/draft")
 def save_draft(config_id: str, config: dict):
     saved = config_store.save_draft(config_id, config)
-    append_log("success", "保存草稿", f"已写入 runtime/drafts/{saved.get('name', '')}.json")
+    append_log("success", "保存草稿", f"已写入 C:\\AutoNotifyRuntime\\config\\drafts\\{saved.get('name', '')}.json")
     return saved
 
 

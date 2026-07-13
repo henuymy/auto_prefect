@@ -58,7 +58,7 @@ def test_status_lock_metadata_accepts_login_and_excel_timestamp_fields(tmp_path)
     command = f"""
 $ErrorActionPreference = 'Stop'
 $env:AUTO_NOTIFY_RUNTIME_ROOT = '{runtime_root}'
-$lockRoot = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT 'locks'
+$lockRoot = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT 'session\locks'
 New-Item -ItemType Directory -Force -Path $lockRoot | Out-Null
 @{{ pid = 111; created_at = ([DateTimeOffset]::Now.AddSeconds(-30).ToString('o')); secret = 'login-secret' }} |
   ConvertTo-Json | Set-Content (Join-Path $lockRoot 'login.lock') -Encoding UTF8

@@ -16,10 +16,14 @@ if (-not (Import-ProjectRuntimeConfig)) {
 $SharedRuntimeRoot = $env:AUTO_NOTIFY_RUNTIME_ROOT
 $SharedRuntimeDirs = @(
     "session\locks",
+    "config\drafts",
+    "config\versions",
     "modules",
     "flow",
     "prefect\prefect_home",
+    "health",
     "logs",
+    "starter_templates",
     "temp",
     "processes"
 )

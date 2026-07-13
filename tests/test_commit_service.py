@@ -1,7 +1,7 @@
 import json
 import shutil
+import tempfile
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 
@@ -14,9 +14,7 @@ def write_json(path, payload):
 
 
 def make_work_dir():
-    work_dir = Path("runtime/test_work") / uuid4().hex
-    work_dir.mkdir(parents=True, exist_ok=True)
-    return work_dir
+    return Path(tempfile.mkdtemp(prefix="auto_notify_commit_test_"))
 
 
 def test_commit_template_after_successful_send():

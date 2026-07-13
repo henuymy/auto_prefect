@@ -5,10 +5,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from services.runtime_paths import runtime_root
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RUNTIME_DIR = PROJECT_ROOT / "runtime"
-PROTECTED_TOP_LEVEL = {"prefect_home", "cookies", "locks"}
+RUNTIME_DIR = runtime_root()
+PROTECTED_TOP_LEVEL = {
+    "config",
+    "health",
+    "logs",
+    "prefect",
+    "processes",
+    "session",
+    "starter_templates",
+}
 
 
 def _resolve_runtime_path(relative_path: str | None = None) -> Path:

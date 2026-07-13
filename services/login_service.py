@@ -16,6 +16,7 @@ from selenium.common.exceptions import TimeoutException
 from services.cookie_recorder import CookieRecorder, resolve_cookie_dump_path
 from services.otp_service import delete_message, prepare_wait_context, wait_for_otp
 from services.browser_session import browser_config, close_browser_session, record_browser_session
+from services.runtime_paths import runtime_path
 from services.session_manager import format_probe_validation_error, validate_existing_session
 from utils.config_loader import load_json_with_local_override
 
@@ -126,7 +127,7 @@ class AutoLogin:
         return element
 
     def dump_login_page_debug(self, reason):
-        debug_dir = PROJECT_DIR / "runtime" / "login_debug"
+        debug_dir = runtime_path("session/login_debug")
         debug_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         payload = {

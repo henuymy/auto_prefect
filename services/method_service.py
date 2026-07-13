@@ -23,6 +23,7 @@ from services.json_excel_service import (
     set_by_path,
 )
 from services.tencent_sheet_service import download_tencent_sheet_report
+from services.runtime_paths import resolve_runtime_path
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
@@ -68,6 +69,10 @@ def load_json(path):
 
 def resolve_path(value, base_dir=PROJECT_DIR):
     path = Path(value)
+    if path.parts and path.parts[0].lower() == "runtime":
+        resolved = resolve_runtime_path(path, project_dir=base_dir)
+        assert resolved is not None
+        return resolved
     if path.is_absolute():
         return path
     return base_dir / path

@@ -1,8 +1,8 @@
 import json
 import shutil
+import tempfile
 import time
 from pathlib import Path
-from uuid import uuid4
 
 from openpyxl import load_workbook
 
@@ -14,9 +14,7 @@ from services.json_excel_service import (
 
 
 def make_work_dir():
-    work_dir = Path("runtime/test_work") / uuid4().hex
-    work_dir.mkdir(parents=True, exist_ok=True)
-    return work_dir
+    return Path(tempfile.mkdtemp(prefix="auto_notify_json_excel_test_"))
 
 
 def test_get_by_path_reads_result_table_data():

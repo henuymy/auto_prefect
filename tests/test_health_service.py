@@ -48,11 +48,12 @@ def test_live_is_independent_from_dependencies():
 
 
 def test_runtime_storage_probe_is_writable(monkeypatch, tmp_path):
-    monkeypatch.setattr(health_service, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
     monkeypatch.setenv("HEALTH_MIN_FREE_BYTES", "1")
 
     result = health_service.check_runtime_storage()
 
     assert result["ok"] is True
     assert result["writable"] is True
-    assert list((tmp_path / "runtime" / "health").iterdir()) == []
+    assert list((tmp_path / "shared" / "health").iterdir()) == []
+    assert not (tmp_path / "runtime").exists()

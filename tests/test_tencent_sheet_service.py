@@ -1,7 +1,7 @@
 import json
 import shutil
+import tempfile
 from pathlib import Path
-from uuid import uuid4
 
 import requests
 from openpyxl import load_workbook
@@ -17,9 +17,7 @@ from services.tencent_sheet_service import (
 
 
 def make_work_dir():
-    work_dir = Path("runtime/test_work") / uuid4().hex
-    work_dir.mkdir(parents=True, exist_ok=True)
-    return work_dir
+    return Path(tempfile.mkdtemp(prefix="auto_notify_tencent_sheet_test_"))
 
 
 def make_response(payload):

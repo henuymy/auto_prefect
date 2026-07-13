@@ -1,7 +1,7 @@
 import json
 import shutil
+import tempfile
 from pathlib import Path
-from uuid import uuid4
 
 from openpyxl import Workbook
 
@@ -9,9 +9,7 @@ from services.compare_service import compare_report, compare_tables, find_empty_
 
 
 def make_work_dir():
-    work_dir = Path("runtime/test_work") / uuid4().hex
-    work_dir.mkdir(parents=True, exist_ok=True)
-    return work_dir
+    return Path(tempfile.mkdtemp(prefix="auto_notify_compare_test_"))
 
 
 def create_workbook(path, sheets):

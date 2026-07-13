@@ -91,11 +91,41 @@ config/runtime.local.example.json
 
 Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
 
-运行时目录固定为 `C:\AutoNotifyRuntime`。业务逻辑只允许使用三类路径：`runtime/session/...`（Cookie、会话健康状态、Edge Profile 与锁）、`runtime/modules/<模块名>/output/...`（模块独立产物）和 `runtime/flow/<任务名>/{output,backup,debug,tmp}/...`（Flow 产物），分别映射到 `session`、`modules` 与 `flow`。运行栈另外维护 `prefect/prefect_home`（本机 Prefect Home）和 `processes`（受管进程登记 JSON）；它们不是业务产物，禁止被 Flow 当作输入/输出目录。`logs` 与 `temp` 仅供启动和工具按需使用。
+运行时目录固定为 `C:\AutoNotifyRuntime`。业务逻辑只允许使用受控逻辑路径：`runtime/session/...`（Cookie、会话健康状态、Edge Profile、锁与登录调试）、`runtime/config/{drafts,versions}/...`（未发布草稿与正式配置历史）、`runtime/{logs,health,starter_templates,temp}/...`（运行日志、健康探针、新手模板中间产物和工具临时文件）、`runtime/modules/<模块名>/output/...`（模块独立产物）和 `runtime/flow/<任务名>/{output,backup,debug,tmp}/...`（Flow 产物）。它们分别映射到共享目录的同名顶级目录。运行栈另外维护 `prefect/prefect_home`（本机 Prefect Home）和 `processes`（受管进程登记 JSON）；它们不是业务产物，禁止被 Flow 当作输入/输出目录。
 
-这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、`runtime/cookies`、`runtime/browser_session` 或其他未分类路径；路径解析必须拒绝绝对路径、`../` 与旧目录格式。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态和浏览器 Profile，并在成功后删除旧源目录。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
+```text
+C:\AutoNotifyRuntime\
+  session\
+    cookie_dump.json
+    browser-session.json
+    browser-profile\
+    session-health.json
+    locks\
+      login.lock
+      excel_com.lock
+      dashboard_collection.lock
+    login_debug\
+  config\
+    drafts\
+    versions\<配置名>\
+  logs\
+    web_runs.jsonl
+  health\
+  starter_templates\
+  modules\<模块名>\output\
+  flow\<任务名>\
+    output\
+    backup\
+    debug\
+    tmp\
+  temp\
+  prefect\prefect_home\
+  processes\
+```
 
-`setup_windows_env.ps1` 只预建 `session\locks`、`modules` 与 `flow` 骨架。首次登录由 Session Manager 在 `session\browser-profile` 创建 Profile，并在 `session` 下写入 Cookie 与健康状态。
+这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、`runtime/cookies`、`runtime/browser_session` 或其他未分类路径；路径解析必须拒绝绝对路径、`../` 与旧目录格式。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态、浏览器 Profile、草稿、配置版本、日志、健康检查、新手模板中间产物和登录调试文件；同名目标冲突时保留源目录，不自动覆盖。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
+
+`setup_windows_env.ps1` 预建 `session\locks`、`config\{drafts,versions}`、`modules`、`flow`、`health`、`logs`、`starter_templates` 和 `temp` 骨架。首次登录由 Session Manager 在 `session\browser-profile` 创建 Profile，并在 `session` 下写入 Cookie 与健康状态。
 
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
 

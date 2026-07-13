@@ -10,21 +10,22 @@ from pathlib import Path
 from typing import Any
 
 from services.session_manager import file_lock
+from services.runtime_paths import resolve_runtime_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REPORTS_DIR = PROJECT_ROOT / "config" / "reports"
 TASKS_DIR = PROJECT_ROOT / "config" / "tasks"
-DRAFTS_DIR = PROJECT_ROOT / "runtime" / "drafts"
-VERSIONS_DIR = PROJECT_ROOT / "runtime" / "config_versions"
+DRAFTS_DIR = resolve_runtime_path("runtime/config/drafts")
+VERSIONS_DIR = resolve_runtime_path("runtime/config/versions")
+CONFIG_WRITE_LOCK_PATH = resolve_runtime_path("runtime/session/locks/config_store.lock")
 CONFIG_ORDER_PATH = PROJECT_ROOT / "config" / "report_order.json"
 
 
 @contextmanager
 def _config_write_lock():
-    lock_path = PROJECT_ROOT / "runtime" / "locks" / "config_store.lock"
     with file_lock(
-        lock_path,
+        CONFIG_WRITE_LOCK_PATH,
         wait_seconds=15,
         poll_seconds=0.1,
         stale_seconds=300,
@@ -310,7 +311,7 @@ def list_versions(config_id: str) -> list[dict[str, Any]]:
         versions.append(
             {
                 "id": path.stem,
-                "path": str(path.relative_to(PROJECT_ROOT)),
+                "path": f"runtime/config/versions/{name}/{path.name}",
                 "size": path.stat().st_size,
                 "createdAt": _mtime_text(path),
             }

@@ -1,6 +1,6 @@
 import shutil
+import tempfile
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -9,9 +9,7 @@ from backend.services import starter_template
 
 
 def make_work_dir():
-    work_dir = (Path("runtime/test_work") / uuid4().hex).resolve()
-    work_dir.mkdir(parents=True, exist_ok=True)
-    return work_dir
+    return Path(tempfile.mkdtemp(prefix="auto_notify_starter_template_test_"))
 
 
 def create_workbook(path, sheets):
@@ -78,8 +76,14 @@ def test_generate_starter_template_uses_request_snapshot(monkeypatch):
     try:
         source = work_dir / "source.xlsx"
         create_workbook(source, {"明细": [["名称"], ["未保存配置数据"]]})
+        monkeypatch.setattr(starter_template, "PROJECT_ROOT", work_dir)
         monkeypatch.setattr(starter_template, "RUNTIME_DIR", work_dir / "runtime")
         monkeypatch.setattr(starter_template, "TEMPLATES_DIR", work_dir / "templates")
+        monkeypatch.setattr(
+            starter_template,
+            "_build_download_config",
+            lambda downloads, _run_dir: {"reports": downloads},
+        )
         monkeypatch.setattr(starter_template, "_prepare_required_session", lambda stages: {"status": "reused", "validation": {"required": stages}})
 
         def fake_download_reports(config, base_dir, dry_run=False, debug=False):
@@ -128,8 +132,14 @@ def test_generate_starter_template_relogs_once_when_session_expired(monkeypatch)
     try:
         source = work_dir / "source.xlsx"
         create_workbook(source, {"明细": [["名称"], ["刷新后数据"]]})
+        monkeypatch.setattr(starter_template, "PROJECT_ROOT", work_dir)
         monkeypatch.setattr(starter_template, "RUNTIME_DIR", work_dir / "runtime")
         monkeypatch.setattr(starter_template, "TEMPLATES_DIR", work_dir / "templates")
+        monkeypatch.setattr(
+            starter_template,
+            "_build_download_config",
+            lambda downloads, _run_dir: {"reports": downloads},
+        )
         session_calls = []
 
         def fake_prepare(stages, force_refresh=False):

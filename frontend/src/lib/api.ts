@@ -549,7 +549,7 @@ export async function updateConfig(id: string, config: ReportConfig) {
 
 export async function saveDraftConfig(id: string, config: ReportConfig) {
   const saved = normalizeReportConfig(await request<ReportConfig>(`/api/configs/${encodeURIComponent(id)}/draft`, { method: "POST", body: JSON.stringify(normalizeReportConfig(config)) }));
-  pushLog("success", "保存草稿", `已写入 runtime/drafts/${saved.name}.json`);
+  pushLog("success", "保存草稿", `已写入 C:\\AutoNotifyRuntime\\config\\drafts\\${saved.name}.json`);
   return saved;
 }
 

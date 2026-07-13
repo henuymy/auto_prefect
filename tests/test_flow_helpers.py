@@ -181,7 +181,7 @@ def test_resolve_dynamic_placeholders_supports_today_and_hour():
 
 def test_build_download_config_resolves_dynamic_tokens():
     base = {
-        "cookie_dump_path": "runtime/cookies/cookie_dump.json",
+        "cookie_dump_path": "runtime/session/cookie_dump.json",
         "report_defaults": {},
     }
     report_cfg = {

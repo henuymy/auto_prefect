@@ -101,7 +101,7 @@ def test_execute_session_phase_records_success(monkeypatch, tmp_path):
         "prepare_session",
         lambda *args, **kwargs: {
             "status": "reused",
-            "cookie_dump_path": "runtime/cookies/cookie_dump.json",
+            "cookie_dump_path": "runtime/session/cookie_dump.json",
         },
     )
 

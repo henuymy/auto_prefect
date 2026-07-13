@@ -62,12 +62,12 @@ def test_excel_lock_payload_records_process_identity(monkeypatch, tmp_path):
 def test_excel_lock_default_path_tracks_runtime_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "first"))
     assert excel_client.FileLock().path == (
-        tmp_path / "first" / "locks" / "excel_com.lock"
+        tmp_path / "first" / "session" / "locks" / "excel_com.lock"
     ).resolve()
 
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "second"))
     assert excel_client.FileLock().path == (
-        tmp_path / "second" / "locks" / "excel_com.lock"
+        tmp_path / "second" / "session" / "locks" / "excel_com.lock"
     ).resolve()
 
 

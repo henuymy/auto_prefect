@@ -47,7 +47,7 @@ def execute_dashboard_v2_indicator_sync(
         "dashboard-", "dashboard-v2-indicators-", 1
     )
     lock_path = resolve_project_path(
-        config.get("collection_lock_path", "runtime/locks/dashboard_collection.lock")
+        config.get("collection_lock_path", "runtime/session/locks/dashboard_collection.lock")
     )
     engine = create_dashboard_engine()
     run_store = MySQLV2CollectionRunStore(engine)

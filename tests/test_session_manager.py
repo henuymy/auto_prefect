@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
@@ -60,9 +61,7 @@ def write_json(path, payload):
 
 
 def make_work_dir():
-    work_dir = (Path("runtime/test_work") / uuid4().hex).resolve()
-    work_dir.mkdir(parents=True, exist_ok=True)
-    return work_dir
+    return Path(tempfile.mkdtemp(prefix="auto_notify_session_test_"))
 
 
 def valid_city_ops_cookie_dump():
@@ -351,11 +350,11 @@ def test_prepare_session_from_config_keeps_project_base_dir():
 
 def test_prepare_session_from_config_rebases_runtime_state(monkeypatch, tmp_path):
     config_path = tmp_path / "config" / "modules" / "autologin.json"
-    shared_cookie_path = tmp_path / "shared" / "cookies" / "cookie_dump.json"
+    shared_cookie_path = tmp_path / "shared" / "session" / "cookie_dump.json"
     write_json(
         config_path,
         {
-            "cookie_dump_path": "runtime/cookies/cookie_dump.json",
+            "cookie_dump_path": "runtime/session/cookie_dump.json",
             "required_stages": ["report_analysis"],
             "allow_login": False,
         },
@@ -724,7 +723,7 @@ def test_prepare_session_does_not_login_when_lock_recheck_finds_infrastructure_f
     ],
 )
 def test_prepare_session_rejects_non_production_retry_configuration(key, value):
-    config = session_config(Path("runtime/unused-cookie-dump.json"))
+    config = session_config(Path(tempfile.gettempdir()) / f"unused-cookie-{uuid4().hex}.json")
     config[key] = value
     config["allow_login"] = False
 
@@ -1083,7 +1082,7 @@ def test_post_login_infrastructure_failure_aborts_without_retry_or_unhealthy_wri
 
 
 def test_prepare_session_converts_login_lock_timeout_to_infrastructure(monkeypatch):
-    config = session_config(Path("runtime/unused-cookie-dump.json"))
+    config = session_config(Path(tempfile.gettempdir()) / f"unused-cookie-{uuid4().hex}.json")
     monkeypatch.setattr(session_manager, "file_lock", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("busy")))
 
     with pytest.raises(SessionInfrastructureError, match="busy"):
@@ -1091,7 +1090,7 @@ def test_prepare_session_converts_login_lock_timeout_to_infrastructure(monkeypat
 
 
 def test_lock_wait_must_cover_complete_login_retry_envelope():
-    config = session_config(Path("runtime/unused-cookie-dump.json"))
+    config = session_config(Path(tempfile.gettempdir()) / f"unused-cookie-{uuid4().hex}.json")
     config.update({"login_timeout_seconds": 600, "login_lock_wait_seconds": 1200})
 
     with pytest.raises(ValueError, match="login_lock_wait_seconds"):

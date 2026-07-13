@@ -1,23 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { toast } from "sonner";
-import { FileSpreadsheet, FolderClock, GitBranch, History } from "lucide-react";
+import { FileSpreadsheet, History } from "lucide-react";
 import { ConfigForm } from "@/components/config-form/ConfigForm";
 import type { ConfigFormTab } from "@/components/config-form/ConfigForm";
 import { Header } from "@/components/layout/Header";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { JsonPanel } from "@/components/json-panel/JsonPanel";
 import { RunLogDrawer } from "@/components/run-log/RunLogDrawer";
-import { RuntimeDrawer } from "@/components/runtime/RuntimeDrawer";
 import { TemplateDrawer } from "@/components/templates/TemplateDrawer";
-import { VersionDrawer } from "@/components/versions/VersionDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { createConfig, deleteConfig, deleteDeployment, deleteRuntime, getConfig, getSystemStatus, listConfigVersions, listConfigs, listRunLogs, listRuntime, previewRuntimeCleanup, publishConfig, realTestRunConfig, restoreConfigVersion, runRuntimeCleanup, saveDraftConfig, testRunConfig, updateConfig, updateConfigOrder, validateConfig } from "@/lib/api";
+import { createConfig, deleteConfig, deleteDeployment, getConfig, getSystemStatus, listConfigs, listRunLogs, publishConfig, realTestRunConfig, saveDraftConfig, testRunConfig, updateConfig, updateConfigOrder, validateConfig } from "@/lib/api";
 import type { ConfigSource } from "@/lib/api";
 import { uid } from "@/lib/utils";
 import { validateReportConfig } from "@/schemas/reportConfigSchema";
-import type { ConfigVersion, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
+import type { ReportConfig, RunLog, SystemStatus, ValidationIssue } from "@/types/config";
 
 const SAFETY_TEST_STEPS = ["配置校验", "生成临时配置", "执行 dry-run", "读取日志"];
 const REAL_TEST_STEPS = ["配置校验", "会话探活/登录", "下载比对", "截图发送", "读取日志"];
@@ -131,14 +129,6 @@ export default function App() {
   const [logs, setLogs] = useState<RunLog[]>([]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
-  const [runtimeOpen, setRuntimeOpen] = useState(false);
-  const [runtimePath, setRuntimePath] = useState("");
-  const [runtimeItems, setRuntimeItems] = useState<RuntimeEntry[]>([]);
-  const [runtimeLoading, setRuntimeLoading] = useState(false);
-  const [cleanupDays, setCleanupDays] = useState(7);
-  const [cleanupPreview, setCleanupPreview] = useState<RuntimeCleanupPreview | null>(null);
-  const [versionsOpen, setVersionsOpen] = useState(false);
-  const [versions, setVersions] = useState<ConfigVersion[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [jsonFocusPath, setJsonFocusPath] = useState<JsonPath>([]);
   const [activeConfigTab, setActiveConfigTab] = useState<ConfigFormTab>("base");
@@ -398,7 +388,7 @@ export default function App() {
           duration: 2400,
         });
       } else {
-        toast.success("草稿已保存", { description: `runtime/drafts/${saved.name}.json` });
+        toast.success("草稿已保存", { description: `C:\\AutoNotifyRuntime\\config\\drafts\\${saved.name}.json` });
       }
     } catch (error) {
       toast.error("保存草稿失败", { description: toastDescription(error), duration: 2400 });
@@ -490,7 +480,7 @@ export default function App() {
     const deleteSource: ConfigSource = isPersistedConfig ? "published" : "draft";
     const confirmText = deleteSource === "draft"
       ? `确定删除草稿「${config.name}」吗？正式配置不会受影响。`
-      : `确定删除配置「${config.name}」吗？该操作会同步删除 config/reports、config/tasks 和 runtime/drafts 中的同名配置文件。`;
+      : `确定删除配置「${config.name}」吗？该操作会同步删除 config/reports、config/tasks 和 C:\\AutoNotifyRuntime\\config\\drafts 中的同名配置文件。`;
     if (!window.confirm(confirmText)) return;
     try {
       const result = await deleteConfig(config.id, deleteSource);
@@ -584,89 +574,6 @@ export default function App() {
     } finally {
       setDeletingDeployment(false);
     }
-  }
-
-  async function openRuntime(path = runtimePath) {
-    setRuntimeLoading(true);
-    try {
-      const result = await listRuntime(path);
-      setRuntimePath(result.current.path === "." ? "" : result.current.path);
-      setRuntimeItems(result.items);
-      setCleanupPreview(null);
-      setRuntimeOpen(true);
-    } catch (error) {
-      toast.error("读取 runtime 失败", { description: toastDescription(error), duration: 2400 });
-    } finally {
-      setRuntimeLoading(false);
-    }
-  }
-
-  async function removeRuntime(path: string) {
-    if (!window.confirm(`确定删除 runtime/${path} 吗？`)) return;
-    try {
-      await deleteRuntime(path);
-      await openRuntime(runtimePath);
-      setLogs(await listRunLogs());
-      toast.success("runtime 文件已删除");
-    } catch (error) {
-      toast.error("删除失败", { description: toastDescription(error), duration: 2400 });
-    }
-  }
-
-  async function previewCleanup() {
-    try {
-      const preview = await previewRuntimeCleanup(cleanupDays, runtimePath);
-      setCleanupPreview(preview);
-      toast.info("清理预览已生成", { description: `将清理 ${preview.count} 项` });
-    } catch (error) {
-      toast.error("清理预览失败", { description: toastDescription(error), duration: 2400 });
-    }
-  }
-
-  async function executeCleanup() {
-    if (!cleanupPreview?.count) return;
-    if (!window.confirm(`确定清理 ${cleanupPreview.count} 项 runtime 文件吗？`)) return;
-    try {
-      const result = await runRuntimeCleanup(cleanupDays, runtimePath);
-      setCleanupPreview(result);
-      await openRuntime(runtimePath);
-      setLogs(await listRunLogs());
-      toast.success("Runtime 清理完成", { description: `已删除 ${result.deleted?.length || 0} 项` });
-    } catch (error) {
-      toast.error("Runtime 清理失败", { description: toastDescription(error), duration: 2400 });
-    }
-  }
-
-  async function openVersions() {
-    if (!config) return;
-    try {
-      setVersions(await listConfigVersions(config.id));
-      setVersionsOpen(true);
-    } catch (error) {
-      toast.error("读取版本历史失败", { description: toastDescription(error), duration: 2400 });
-    }
-  }
-
-  async function restoreVersion(versionId: string) {
-    if (!config) return;
-    if (!window.confirm(`确定恢复版本 ${versionId} 吗？当前配置会先备份再恢复。`)) return;
-    try {
-      const restored = await restoreConfigVersion(config.id, versionId);
-      setConfig(restored);
-      setConfigs(await listConfigs());
-      setLogs(await listRunLogs());
-      setVersions(await listConfigVersions(restored.id));
-      toast.success("配置版本已恢复");
-    } catch (error) {
-      toast.error("恢复版本失败", { description: toastDescription(error), duration: 2400 });
-    }
-  }
-
-  function runtimeBack() {
-    if (!runtimePath) return;
-    const parts = runtimePath.split(/[\\/]/).filter(Boolean);
-    parts.pop();
-    void openRuntime(parts.join("/"));
   }
 
   async function openRunLogs() {
@@ -780,7 +687,7 @@ export default function App() {
         </div>
         <div className="flex min-h-12 flex-col gap-3 border-t border-border/70 bg-card/70 px-3 py-3 text-xs text-muted-foreground backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between lg:px-5">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span>真实 API 模式：配置写入 config/reports，草稿写入 runtime/drafts。</span>
+            <span>真实 API 模式：配置写入 config/reports，草稿写入 C:\\AutoNotifyRuntime\\config\\drafts。</span>
             {systemStatus && (
               <>
                 <Badge variant={systemStatus.backend.ok ? "success" : "failed"}>Backend {systemStatus.backend.ok ? "OK" : "Down"}</Badge>
@@ -792,9 +699,7 @@ export default function App() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => void refreshStatus()}>刷新状态</Button>
-            <Button variant="ghost" size="sm" onClick={() => void openVersions()}><GitBranch className="h-4 w-4" />版本历史</Button>
             <Button variant="ghost" size="sm" onClick={() => setTemplatesOpen(true)}><FileSpreadsheet className="h-4 w-4" />模板管理</Button>
-            <Button variant="ghost" size="sm" onClick={() => void openRuntime("")}><FolderClock className="h-4 w-4" />Runtime 文件</Button>
             <Button variant="ghost" size="sm" onClick={() => void openRunLogs()}><History className="h-4 w-4" />查看运行日志</Button>
           </div>
         </div>
@@ -804,29 +709,6 @@ export default function App() {
         open={templatesOpen}
         onClose={() => setTemplatesOpen(false)}
         onDeleted={handleTemplateDeleted}
-      />
-      <RuntimeDrawer
-        open={runtimeOpen}
-        currentPath={runtimePath}
-        items={runtimeItems}
-        loading={runtimeLoading}
-        onClose={() => setRuntimeOpen(false)}
-        onOpenPath={(path) => void openRuntime(path)}
-        onBack={runtimeBack}
-        onRefresh={() => void openRuntime(runtimePath)}
-        onDelete={removeRuntime}
-        cleanupDays={cleanupDays}
-        onCleanupDaysChange={setCleanupDays}
-        cleanupPreview={cleanupPreview}
-        onPreviewCleanup={() => void previewCleanup()}
-        onRunCleanup={() => void executeCleanup()}
-      />
-      <VersionDrawer
-        open={versionsOpen}
-        configName={config.name}
-        versions={versions}
-        onClose={() => setVersionsOpen(false)}
-        onRestore={(versionId) => void restoreVersion(versionId)}
       />
     </div>
   );

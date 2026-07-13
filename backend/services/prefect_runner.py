@@ -293,9 +293,12 @@ def write_task_config(
     report_path = f"config/reports/{report_name}.json"
     if draft:
         report_suffix = suffix if suffix is not None else (".dry_run" if dry_run else "")
-        report_config_path = PROJECT_ROOT / "runtime" / "drafts" / f"{report_name}{report_suffix}.report.json"
+        report_config_path = resolve_runtime_path(
+            f"runtime/config/drafts/{report_name}{report_suffix}.report.json"
+        )
+        assert report_config_path is not None
         _write_json(report_config_path, config)
-        report_path = str(report_config_path.relative_to(PROJECT_ROOT)).replace("\\", "/")
+        report_path = f"runtime/config/drafts/{report_name}{report_suffix}.report.json"
     task_config = build_task_config(
         report_name,
         report_path,
@@ -306,7 +309,10 @@ def write_task_config(
     )
     if config.get("wait_for_change"):
         task_config["wait_for_change"] = config["wait_for_change"]
-    target_dir = PROJECT_ROOT / ("runtime/drafts" if draft else "config/tasks")
+    target_dir = (
+        resolve_runtime_path("runtime/config/drafts") if draft else PROJECT_ROOT / "config/tasks"
+    )
+    assert target_dir is not None
     file_suffix = suffix if suffix is not None else (".dry_run.task.json" if dry_run else ".json")
     return _write_json(target_dir / f"{report_name}{file_suffix}", task_config)
 

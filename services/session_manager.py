@@ -750,7 +750,7 @@ def expand_login_command(command: str) -> str:
     """Resolve the configured Python placeholder for the active Worker."""
     if not isinstance(command, str) or not command.strip():
         raise ValueError("login_command 必须是非空字符串")
-    python_executable = subprocess.list2cmdline([sys.executable])
+    python_executable = subprocess.list2cmdline([str(Path(sys.executable))])
     return command.replace("{python_executable}", python_executable)
 
 
@@ -825,7 +825,10 @@ def session_login_lock(lock_path, *, wait_seconds, poll_seconds, stale_seconds):
 
 
 def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None):
-    cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/cookies/cookie_dump.json"), base_dir)
+    cookie_dump_path = resolve_path(
+        config.get("cookie_dump_path", "runtime/session/cookie_dump.json"),
+        base_dir,
+    )
     session_health_state_path = resolve_runtime_path(
         config.get("session_health_state_path", "runtime/session/session-health.json"),
         project_dir=Path(base_dir),
@@ -942,7 +945,10 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         config.get("login_timeout_seconds", DEFAULT_LOGIN_TIMEOUT_SECONDS)
         or DEFAULT_LOGIN_TIMEOUT_SECONDS
     )
-    lock_path = resolve_path(config.get("login_lock_path", "runtime/locks/login.lock"), base_dir)
+    lock_path = resolve_path(
+        config.get("login_lock_path", "runtime/session/locks/login.lock"),
+        base_dir,
+    )
     lock_wait_seconds = int(config.get("login_lock_wait_seconds", DEFAULT_LOCK_WAIT_SECONDS) or DEFAULT_LOCK_WAIT_SECONDS)
     lock_poll_seconds = int(config.get("login_lock_poll_seconds", DEFAULT_LOCK_POLL_SECONDS) or DEFAULT_LOCK_POLL_SECONDS)
     lock_stale_seconds = int(config.get("login_lock_stale_seconds", DEFAULT_LOCK_STALE_SECONDS) or DEFAULT_LOCK_STALE_SECONDS)

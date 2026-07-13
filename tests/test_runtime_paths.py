@@ -70,3 +70,23 @@ def test_runtime_path_is_resolved_lazily(monkeypatch, tmp_path):
     assert runtime_path("session/locks/excel.lock") == (
         tmp_path / "second" / "session" / "locks" / "excel.lock"
     ).resolve()
+
+
+def test_runtime_config_and_operational_paths_rebase_to_shared_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+
+    assert resolve_runtime_path("runtime/config/drafts/日报.json", project_dir=tmp_path) == (
+        tmp_path / "shared" / "config" / "drafts" / "日报.json"
+    ).resolve()
+    assert resolve_runtime_path("runtime/config/versions/日报/1.json", project_dir=tmp_path) == (
+        tmp_path / "shared" / "config" / "versions" / "日报" / "1.json"
+    ).resolve()
+    assert resolve_runtime_path("runtime/logs/web_runs.jsonl", project_dir=tmp_path) == (
+        tmp_path / "shared" / "logs" / "web_runs.jsonl"
+    ).resolve()
+    assert resolve_runtime_path("runtime/health/probe", project_dir=tmp_path) == (
+        tmp_path / "shared" / "health" / "probe"
+    ).resolve()
+    assert resolve_runtime_path("runtime/starter_templates/日报/run", project_dir=tmp_path) == (
+        tmp_path / "shared" / "starter_templates" / "日报" / "run"
+    ).resolve()

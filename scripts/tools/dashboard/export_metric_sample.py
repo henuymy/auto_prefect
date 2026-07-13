@@ -23,10 +23,11 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from services.method_service import download_reports
+from services.runtime_paths import runtime_path
 
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "reports" / "家客和存量通报.json"
-DEFAULT_COOKIE_DUMP_PATH = PROJECT_DIR / "runtime" / "cookies" / "cookie_dump.json"
+DEFAULT_COOKIE_DUMP_PATH = runtime_path("session/cookie_dump.json")
 DEFAULT_OUTPUT_PATH = PROJECT_DIR / "docs" / "数据驾驶舱单指标采集样本.xlsx"
 DEFAULT_INDICATOR_CODE = "sgs_ajvwdz"
 DEFAULT_INDICATOR_NAME = "爱家亲情网(V网版)"

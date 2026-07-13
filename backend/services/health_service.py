@@ -11,6 +11,7 @@ from backend.services import prefect_runner
 from infrastructure.dashboard_mysql import check_dashboard_mysql
 from services.dashboard_v2_trigger import load_dashboard_config
 from services.dashboard_v2_readiness import check_dashboard_v2_schema
+from services.runtime_paths import resolve_runtime_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -18,8 +19,9 @@ DEFAULT_MIN_FREE_BYTES = 100 * 1024 * 1024
 
 
 def check_runtime_storage() -> dict[str, Any]:
-    runtime_dir = PROJECT_ROOT / "runtime"
-    probe_dir = runtime_dir / "health"
+    runtime_dir = resolve_runtime_path("runtime/health")
+    assert runtime_dir is not None
+    probe_dir = runtime_dir
     minimum_free = int(
         os.environ.get("HEALTH_MIN_FREE_BYTES", str(DEFAULT_MIN_FREE_BYTES))
     )

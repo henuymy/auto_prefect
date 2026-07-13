@@ -103,7 +103,7 @@ def dashboard_v2_batch(
     lock_path = resolve_project_path(
         dashboard_config.get(
             "collection_lock_path",
-            "runtime/locks/dashboard_collection.lock",
+            "runtime/session/locks/dashboard_collection.lock",
         )
     )
     with file_lock(

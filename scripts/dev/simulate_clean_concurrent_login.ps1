@@ -85,10 +85,10 @@ function Convert-ToRepoRelativePath {
 }
 
 $PythonExe = Resolve-PythonExe -Candidate $PythonExe
-$CookieDumpPath = Join-Path $RepoRoot "runtime\cookies\cookie_dump.json"
-$LoginLockPath = Join-Path $RepoRoot "runtime\locks\login.lock"
-$BrowserSessionPath = Join-Path $RepoRoot "runtime\browser_session\session.json"
-$BrowserProfilePath = Join-Path $RepoRoot "runtime\browser_session\edge_profile_auto_login"
+$CookieDumpPath = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\cookie_dump.json"
+$LoginLockPath = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\locks\login.lock"
+$BrowserSessionPath = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\browser-session.json"
+$BrowserProfilePath = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\browser-profile"
 
 Write-Host "RepoRoot      : $RepoRoot"
 Write-Host "TaskDir       : $TaskRoot"
