@@ -246,7 +246,7 @@ def prepare_excel_for_capture(ws, capture):
     poll_seconds = max(0.05, float(capture.get("excel_ready_poll_seconds", 0.2) or 0.2))
 
     active_printer = str(
-        capture.get("excel_active_printer", "Microsoft Print to PDF on PORTPROMPT:") or ""
+        capture.get("excel_active_printer", "Microsoft Print to PDF") or ""
     ).strip()
     if active_printer:
         try:
@@ -840,6 +840,22 @@ def build_text_message_package(config, base_dir=PROJECT_DIR):
     return package, str(package_file)
 
 
+def switch_default_printer_if_needed(printer_api, target_printer):
+    current_printer = str(printer_api.GetDefaultPrinter())
+    if current_printer.casefold() == target_printer.casefold():
+        return False
+    printer_api.SetDefaultPrinter(target_printer)
+    confirmed_printer = str(printer_api.GetDefaultPrinter())
+    if confirmed_printer.casefold() != target_printer.casefold():
+        raise RuntimeError(f"系统默认打印机仍为 {confirmed_printer!r}")
+    return True
+
+
+def open_excel_after_setting_default_printer(printer_api, target_printer, open_excel_fn, *, visible):
+    switch_default_printer_if_needed(printer_api, target_printer)
+    return open_excel_fn(visible=visible, cleanup_orphaned=True)
+
+
 def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
     started = time.perf_counter()
     image_dir, package_file, preview_file = get_output_paths(config, base_dir)
@@ -856,34 +872,23 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
     # A previous abnormal task may leave an invisible EXCEL.EXE holding stale
     # printer/COM state. The shared lock is acquired before cleanup, so another
     # healthy automation task cannot be killed here.
-    excel = open_excel(visible=visible, cleanup_orphaned=True)
-    win32print_module = None
-    previous_default_printer = None
+    active_printer = str(
+        default_capture.get("excel_active_printer", "Microsoft Print to PDF") or ""
+    ).strip()
+    default_printer = active_printer or "Microsoft Print to PDF"
     try:
         import win32print  # type: ignore
 
-        win32print_module = win32print
-        previous_default_printer = win32print.GetDefaultPrinter()
-        win32print.SetDefaultPrinter("Microsoft Print to PDF")
+        excel = open_excel_after_setting_default_printer(
+            win32print,
+            default_printer,
+            open_excel,
+            visible=visible,
+        )
     except Exception as exc:
-        quit_excel(excel, get_excel_process_id(excel))
-        raise RuntimeError("无法临时将系统默认打印机切换为 Microsoft Print to PDF") from exc
-    active_printer = str(
-        default_capture.get("excel_active_printer", "Microsoft Print to PDF on PORTPROMPT:") or ""
-    ).strip()
-    if active_printer:
-        try:
-            excel.ActivePrinter = active_printer
-        except Exception as exc:
+        if "excel" in locals():
             quit_excel(excel, get_excel_process_id(excel))
-            if win32print_module is not None and previous_default_printer:
-                try:
-                    win32print_module.SetDefaultPrinter(previous_default_printer)
-                except Exception:
-                    pass
-            raise RuntimeError(
-                f"无法在打开工作簿前设置 Excel 打印机 {active_printer!r}"
-            ) from exc
+        raise RuntimeError(f"无法将系统默认打印机切换为 {default_printer!r} 后启动 Excel") from exc
     excel_pid = get_excel_process_id(excel)
     try:
         for workbook_index, workbook_config in enumerate(workbooks, start=1):
@@ -957,11 +962,6 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
                     workbook.Close(SaveChanges=False)
     finally:
         quit_excel(excel, excel_pid)
-        if win32print_module is not None and previous_default_printer:
-            try:
-                win32print_module.SetDefaultPrinter(previous_default_printer)
-            except Exception:
-                pass
 
     preview_path = build_preview_image(package, preview_file)
     if preview_path:

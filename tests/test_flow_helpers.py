@@ -12,6 +12,7 @@ from flows.notify_single_flow import (
     load_config,
     materialize_runtime_paths,
     parse_wait_for_change_config,
+    read_json,
     required_stages_for_report,
     resolve_dynamic_placeholders,
     select_downloaded_report_path,
@@ -19,6 +20,16 @@ from flows.notify_single_flow import (
 )
 
 PROJECT_TEST_RUNTIME_DIR = Path("runtime/flow/test")
+
+
+def test_read_json_accepts_absolute_file_under_shared_runtime_root(monkeypatch, tmp_path):
+    shared_runtime_root = tmp_path / "shared-runtime"
+    runtime_file = shared_runtime_root / "flow" / "测试" / "debug" / "compare.json"
+    runtime_file.parent.mkdir(parents=True)
+    runtime_file.write_text('{"result": "changed"}', encoding="utf-8")
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(shared_runtime_root))
+
+    assert read_json(runtime_file) == {"result": "changed"}
 
 
 def test_notify_task_defaults_are_merged_and_runtime_paths_are_derived():

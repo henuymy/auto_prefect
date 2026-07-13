@@ -10,6 +10,16 @@ import pytest
 from services import dashboard_v2_trigger
 
 
+def test_resolve_project_path_rebases_logical_runtime_paths(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "shared-runtime"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
+
+    assert dashboard_v2_trigger.resolve_project_path(
+        "runtime/session/locks/dashboard_collection.lock",
+        base_dir=tmp_path / "project",
+    ) == (runtime_root / "session" / "locks" / "dashboard_collection.lock").resolve()
+
+
 def write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

@@ -89,7 +89,7 @@ config/runtime.local.example.json
 
 其中维护 Prefect PostgreSQL 与驾驶舱 MySQL V2 的地址、端口、数据库、账号和密码。`prefect.postgres.url` 直接指定 Prefect 使用的数据库，不再从 `/prefect` 派生 `/prefect_dev`。当前测试库名为 `prefect_test`；后续正式切换时创建新的空库并只修改该 URL。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2` 和 `dashboard_v2`；配置值不应写入 README、本文件或 Git 提交。
 
-Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
+Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。运行根目录解析优先级为环境变量 `AUTO_NOTIFY_RUNTIME_ROOT`、`config/runtime.local.json` 中的 `runtime.root`、默认值 `C:\AutoNotifyRuntime`；生产环境应让后两者保持一致，环境变量只用于测试或受控诊断。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
 
 运行时目录固定为 `C:\AutoNotifyRuntime`。业务逻辑只允许使用受控逻辑路径：`runtime/session/...`（Cookie、会话健康状态、Edge Profile、锁与登录调试）、`runtime/config/{drafts,versions}/...`（未发布草稿与正式配置历史）、`runtime/{logs,health,starter_templates,temp}/...`（运行日志、健康探针、新手模板中间产物和工具临时文件）、`runtime/modules/<模块名>/output/...`（模块独立产物）和 `runtime/flow/<任务名>/{output,backup,debug,tmp}/...`（Flow 产物）。它们分别映射到共享目录的同名顶级目录。运行栈另外维护 `prefect/prefect_home`（本机 Prefect Home）和 `processes`（受管进程登记 JSON）；它们不是业务产物，禁止被 Flow 当作输入/输出目录。
 
@@ -123,11 +123,18 @@ C:\AutoNotifyRuntime\
   processes\
 ```
 
-这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、`runtime/cookies`、`runtime/browser_session` 或其他未分类路径；路径解析必须拒绝绝对路径、`../` 与旧目录格式。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态、浏览器 Profile、草稿、配置版本、日志、健康检查、新手模板中间产物和登录调试文件；同名目标冲突时保留源目录，不自动覆盖。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
+这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、`runtime/cookies`、`runtime/browser_session` 或其他未分类路径。业务配置中的 `runtime/...` 必须通过统一路径服务映射到共享运行根目录；Flow 内部只可接受共享运行根目录下的绝对路径，并继续拒绝根目录外的绝对路径、`../` 与旧目录格式。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态、浏览器 Profile、草稿、配置版本、日志、健康检查、新手模板中间产物和登录调试文件；同名目标冲突时保留源目录，不自动覆盖。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
 
 `setup_windows_env.ps1` 预建 `session\locks`、`config\{drafts,versions}`、`modules`、`flow`、`health`、`logs`、`starter_templates` 和 `temp` 骨架。首次登录由 Session Manager 在 `session\browser-profile` 创建 Profile，并在 `session` 下写入 Cookie 与健康状态。
 
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
+
+### 通报任务配置约定
+
+- `config/task_defaults/notify.json` 保存通报任务的公共步骤、模块配置入口和默认等待参数。
+- 已发布的 `config/tasks/<任务名>.json` 默认只保存 `flow_name` 与 `report_config_path`；只有偏离公共默认值的等待或步骤参数才写入覆盖项，禁止重新复制整套默认配置。
+- 草稿、安全测试和真实试跑配置写入共享运行目录 `runtime/config/drafts`。API 返回路径时不得假设文件一定在仓库内；仓库外的共享运行文件使用可直接定位的绝对路径。
+- 提交、比较、模板更新、会话告警和驾驶舱服务读取 `runtime/...` 时必须复用统一运行路径解析，不得各自拼接仓库根目录。驾驶舱失败报告统一写入 `runtime/modules/dashboard/output/failure_reports`。
 
 ### 驾驶舱数据库约定
 
@@ -160,7 +167,18 @@ pwsh -File scripts/stop.ps1
 
 所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\session\locks\excel_com.lock` 串行，登录刷新通过 `C:\AutoNotifyRuntime\session\locks\login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
 
+截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
+
 ## 四、变更记录
+
+### 2026-07-13 - 共享运行路径与 Excel 截图稳定性修复
+
+- 原因：部分服务仍将 `runtime/...` 解释为仓库内目录，草稿和真实试跑配置位于共享运行目录时又被强制转成仓库相对路径；同时 Excel 可能在启动时继承远程控制虚拟打印机，导致截图阶段无法设置稳定打印机。
+- 修改内容：运行根目录增加本地统一配置回退；提交、比较、模板、会话告警和驾驶舱服务统一重定位逻辑运行路径；Flow 允许读取共享运行根目录内的绝对文件；正式任务配置收敛为最小指针和必要覆盖；驾驶舱失败报告迁入模块输出目录；截图流程在启动 Excel 前确认系统默认打印机，并移除打印端口后缀依赖。
+- 涉及文件：`backend/services/prefect_runner.py`、`flows/notify_single_flow.py`、`services/runtime_paths.py`、`services/{commit,compare,template,session_alert,dashboard_v2_trigger,dashboard_failure_report,screenshot}_service.py`、`config/modules/wecom_sender.json`、报表与任务发布配置、`tests/test_*.py`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无需迁移业务数据；确认 `config/runtime.local.json` 中的 `runtime.root` 指向 `C:\AutoNotifyRuntime`，并确认系统已安装名为 `Microsoft Print to PDF` 的打印机。旧驾驶舱失败报告保留在原目录，不自动搬迁。
+- 验证：运行相关服务与 Flow 的聚焦 Pytest、Ruff 检查和 `git diff --check`。
+- 风险与回滚：截图会持续保留 `Microsoft Print to PDF` 为系统默认打印机，可能影响同一 Windows 用户的手工打印；回滚截图服务和发送配置可恢复旧行为，路径变更应与任务配置和相关服务整体回滚。
 
 ### 2026-07-13 - 运行时目录文档对齐
 

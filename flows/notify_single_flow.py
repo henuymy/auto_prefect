@@ -26,7 +26,7 @@ from services.session_retry_service import (
     run_with_session_refresh_once,
 )
 from services.session_business_failure_service import run_with_business_session_reporting
-from services.runtime_paths import resolve_runtime_path, validate_runtime_path
+from services.runtime_paths import resolve_runtime_path, runtime_root, validate_runtime_path
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
 
@@ -122,7 +122,15 @@ def resolve_project_path(path):
     value = Path(path)
     if value.parts and value.parts[0].lower() == "runtime":
         return resolve_runtime_path(value, project_dir=PROJECT_DIR)
-    if value.is_absolute() or ".." in value.parts:
+    if value.is_absolute():
+        resolved = value.resolve()
+        try:
+            runtime_relative = resolved.relative_to(runtime_root())
+        except ValueError as exc:
+            raise ValueError(f"不允许绝对路径或父目录路径: {path}") from exc
+        validate_runtime_path(Path("runtime") / runtime_relative)
+        return resolved
+    if ".." in value.parts:
         raise ValueError(f"不允许绝对路径或父目录路径: {path}")
     return (PROJECT_DIR / value).resolve()
 

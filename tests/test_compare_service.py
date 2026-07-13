@@ -5,7 +5,13 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from services.compare_service import compare_report, compare_tables, find_empty_download_sheet_mappings, sheet_has_data_below_header
+from services.compare_service import (
+    compare_report,
+    compare_tables,
+    find_empty_download_sheet_mappings,
+    resolve_path,
+    sheet_has_data_below_header,
+)
 
 
 def make_work_dir():
@@ -22,6 +28,15 @@ def create_workbook(path, sheets):
                 sheet.cell(row=row_index, column=column_index).value = value
     workbook.save(path)
     workbook.close()
+
+
+def test_resolve_path_rebases_logical_runtime_paths(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "shared-runtime"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
+
+    assert resolve_path("runtime/flow/日报/tmp/compare_results/result.json") == (
+        runtime_root / "flow" / "日报" / "tmp" / "compare_results" / "result.json"
+    ).resolve()
 
 
 def test_compare_tables_same():

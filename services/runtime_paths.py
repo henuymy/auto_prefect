@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Mapping
@@ -14,11 +15,28 @@ _CONFIG_AREAS = {"drafts", "versions"}
 _OPERATIONAL_AREAS = {"logs", "health", "starter_templates", "temp"}
 
 
+def _runtime_root_from_local_config() -> Path | None:
+    config_path = PROJECT_DIR / "config" / "runtime.local.json"
+    if not config_path.exists():
+        return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"运行配置读取失败: {config_path}") from exc
+    configured_root = (config.get("runtime") or {}).get("root")
+    if not isinstance(configured_root, str) or not configured_root.strip():
+        return None
+    return Path(configured_root).expanduser().resolve()
+
+
 def runtime_root(env: Mapping[str, str] | None = None) -> Path:
     values = os.environ if env is None else env
     configured = values.get("AUTO_NOTIFY_RUNTIME_ROOT")
     if configured:
         return Path(configured).expanduser().resolve()
+    local_config_root = _runtime_root_from_local_config()
+    if local_config_root is not None:
+        return local_config_root
     return DEFAULT_RUNTIME_ROOT.resolve()
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from services.template_service import update_template
+from services.template_service import resolve_path, update_template
 
 
 def write_json(path, payload):
@@ -30,6 +30,15 @@ def create_workbook(path, sheets):
     path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(path)
     workbook.close()
+
+
+def test_resolve_path_rebases_logical_runtime_paths(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "shared-runtime"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
+
+    assert resolve_path("runtime/flow/日报/debug/compare_result.json") == (
+        runtime_root / "flow" / "日报" / "debug" / "compare_result.json"
+    ).resolve()
 
 
 def test_update_template_skips_when_compare_same():

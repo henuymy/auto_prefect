@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from backend.services import prefect_runner
 
 
@@ -38,6 +40,37 @@ def test_dynamic_notify_publish_defaults_to_fixed_notify_pool(monkeypatch):
     monkeypatch.delenv("PREFECT_NOTIFY_POOL_NAME", raising=False)
 
     assert prefect_runner.get_notify_work_pool() == "windows-notify-pool"
+
+
+def test_write_task_config_keeps_published_task_as_minimal_pointer(monkeypatch, tmp_path):
+    monkeypatch.setattr(prefect_runner, "PROJECT_ROOT", tmp_path)
+
+    task_path = prefect_runner.write_task_config(
+        {
+            "name": "日常进度",
+            "wait_for_change": {
+                "enabled": False,
+                "poll_interval_seconds": 300,
+                "max_wait_minutes": 180,
+            },
+        }
+    )
+
+    assert json.loads(task_path.read_text(encoding="utf-8")) == {
+        "flow_name": "auto-notify-日常进度",
+        "report_config_path": "config/reports/日常进度.json",
+    }
+
+
+def test_real_test_run_accepts_task_config_outside_project_root(monkeypatch, tmp_path):
+    task_path = tmp_path.parent / "runtime" / "日报.real_test.task.json"
+    monkeypatch.setattr(prefect_runner, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(prefect_runner, "write_task_config", lambda *args, **kwargs: task_path)
+    monkeypatch.setattr(prefect_runner.subprocess, "run", lambda *args, **kwargs: _Completed())
+
+    result = prefect_runner.real_test_run_config({"name": "日报"})
+
+    assert result["taskConfigPath"] == str(task_path)
 
 
 def test_publish_command_and_response_use_dynamic_notify_pool(monkeypatch, tmp_path):

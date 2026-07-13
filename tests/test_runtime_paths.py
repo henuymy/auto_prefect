@@ -3,6 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from services import runtime_paths
 from services.runtime_paths import resolve_runtime_path, runtime_path, runtime_root
 
 
@@ -27,6 +28,21 @@ def test_absolute_paths_are_preserved_for_internal_callers(monkeypatch, tmp_path
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
 
     assert resolve_runtime_path(target, project_dir=tmp_path) == target
+
+
+def test_runtime_root_uses_local_runtime_config_when_environment_is_unset(monkeypatch, tmp_path):
+    project_dir = tmp_path / "project"
+    runtime_dir = tmp_path / "configured-runtime"
+    config_path = project_dir / "config" / "runtime.local.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        '{"runtime": {"root": "' + runtime_dir.as_posix() + '"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AUTO_NOTIFY_RUNTIME_ROOT", raising=False)
+    monkeypatch.setattr(runtime_paths, "PROJECT_DIR", project_dir)
+
+    assert runtime_paths.runtime_root() == runtime_dir.resolve()
 
 
 def test_runtime_root_uses_machine_shared_default_without_override(monkeypatch):

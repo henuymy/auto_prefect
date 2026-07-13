@@ -7,7 +7,7 @@
     "pdf_crop_whitespace": true,
     "excel_ready_timeout_seconds": 60,
     "excel_ready_poll_seconds": 0.2,
-    "excel_active_printer": "Microsoft Print to PDF on PORTPROMPT:",
+    "excel_active_printer": "Microsoft Print to PDF",
     "optimize_png": false,
     "png_colors": 256
   },

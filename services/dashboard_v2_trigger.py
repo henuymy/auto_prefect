@@ -19,6 +19,7 @@ from services.dashboard_failure_report import (
     DEFAULT_FAILURE_DIRECTORY,
     write_dashboard_failure_report,
 )
+from services.runtime_paths import resolve_runtime_path
 from services.session_manager import file_lock, prepare_session
 
 
@@ -33,6 +34,10 @@ SENSITIVE_PATTERN = re.compile(
 
 def resolve_project_path(value: str | Path, base_dir: Path = PROJECT_ROOT) -> Path:
     path = Path(value)
+    if path.parts and path.parts[0].lower() == "runtime":
+        resolved = resolve_runtime_path(path, project_dir=base_dir)
+        assert resolved is not None
+        return resolved
     return path if path.is_absolute() else (base_dir / path).resolve()
 
 

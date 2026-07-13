@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from services import screenshot_service
 
 from services.screenshot_service import (
     capture_range_to_png,
@@ -91,6 +92,102 @@ def test_prepare_excel_for_capture_normalizes_application_state():
     assert excel.PrintCommunication is True
     assert excel.DisplayAlerts is False
     assert excel.EnableEvents is False
+
+
+def test_prepare_excel_for_capture_rejects_unexpected_printer_without_mutation():
+    class Excel:
+        Ready = True
+        CalculationState = 0
+
+        def __init__(self):
+            self._active_printer = "RustDesk Printer on Ne02:"
+            self.set_calls = []
+
+        @property
+        def ActivePrinter(self):
+            return self._active_printer
+
+        @ActivePrinter.setter
+        def ActivePrinter(self, value):
+            self.set_calls.append(value)
+            self._active_printer = value
+
+        def CalculateUntilAsyncQueriesDone(self):
+            return None
+
+    excel = Excel()
+    workbook = type("Workbook", (), {"Activate": lambda self: None})()
+    sheet = type(
+        "Sheet",
+        (),
+        {
+            "Application": excel,
+            "Parent": workbook,
+            "Activate": lambda self: None,
+            "Name": "test",
+        },
+    )()
+
+    with pytest.raises(RuntimeError, match="无法为 Excel 设置稳定打印机"):
+        prepare_excel_for_capture(sheet, {"excel_active_printer": "Microsoft Print to PDF on PORTPROMPT:"})
+
+    assert excel.set_calls == []
+
+
+def test_open_excel_switches_default_printer_before_starting_excel():
+    events = []
+    excel_instance = object()
+
+    class PrinterApi:
+        def __init__(self):
+            self.current = "RustDesk Printer"
+
+        def GetDefaultPrinter(self):
+            return self.current
+
+        def SetDefaultPrinter(self, printer):
+            events.append(("set", printer))
+            self.current = printer
+
+    def open_excel(*, visible, cleanup_orphaned):
+        events.append(("open", visible, cleanup_orphaned))
+        return excel_instance
+
+    excel = screenshot_service.open_excel_after_setting_default_printer(
+        PrinterApi(),
+        "Microsoft Print to PDF",
+        open_excel,
+        visible=False,
+    )
+
+    assert excel is excel_instance
+    assert events == [
+        ("set", "Microsoft Print to PDF"),
+        ("open", False, True),
+    ]
+
+
+def test_switch_default_printer_only_when_target_is_not_current():
+    class PrinterApi:
+        def __init__(self, current):
+            self.current = current
+            self.set_calls = []
+
+        def GetDefaultPrinter(self):
+            return self.current
+
+        def SetDefaultPrinter(self, printer):
+            self.set_calls.append(printer)
+            self.current = printer
+
+    target = "Microsoft Print to PDF"
+    already_target = PrinterApi(target)
+    switched = PrinterApi("RustDesk Printer")
+
+    assert screenshot_service.switch_default_printer_if_needed(already_target, target) is False
+    assert already_target.set_calls == []
+    assert screenshot_service.switch_default_printer_if_needed(switched, target) is True
+    assert switched.set_calls == [target]
 
 
 @pytest.mark.parametrize("page_size", [(200, 100), (100, 200)])

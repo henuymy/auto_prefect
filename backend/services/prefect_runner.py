@@ -32,6 +32,13 @@ def _write_json(path: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def get_prefect_api_url() -> str:
     return os.environ.get("PREFECT_API_URL") or "http://127.0.0.1:4200/api"
 
@@ -226,58 +233,22 @@ def build_task_config(
     send_dry_run = dry_run if send_dry_run is None else send_dry_run
     commit_enabled = (not dry_run) if commit_enabled is None else commit_enabled
     login_enabled = (not dry_run) if login_enabled is None else login_enabled
-    return {
+    task_config: dict[str, Any] = {
         "flow_name": f"auto-notify-{slug}",
-        "runtime_dir": f"runtime/flow/{slug}",
         "report_config_path": report_config_path,
-        "wait_for_change": {
-            "enabled": True,
-            "poll_interval_seconds": 300,
-            "max_wait_minutes": 180,
-        },
-        "steps": {
-            "login": {
-                "enabled": login_enabled,
-                "config_path": "config/modules/autologin.json",
-                "force_refresh": False,
-            },
-            "download": {
-                "enabled": True,
-                "config_path": "config/modules/report_downloader.json",
-                "dry_run": dry_run,
-                "debug": dry_run,
-            },
-            "compare": {
-                "enabled": True,
-                "config_path": "config/modules/report_compare.json",
-                "generated_config_path": f"runtime/flow/{slug}/debug/compare_config.json",
-                "download_report_name": report_name,
-            },
-            "update_template": {
-                "enabled": True,
-                "config_path": "config/modules/template_updater.json",
-                "generated_config_path": f"runtime/flow/{slug}/debug/template_updater_config.json",
-                "output_dir": f"runtime/flow/{slug}/output/templates",
-                "manifest_path": f"runtime/flow/{slug}/debug/update_manifest.json",
-            },
-            "send_wecom": {
-                "enabled": True,
-                "base_config_path": "config/modules/wecom_sender.json",
-                "generated_config_path": f"runtime/flow/{slug}/debug/excel_sender_config.json",
-                "runtime_dir": f"runtime/flow/{slug}/output/wecom",
-                "dry_run": send_dry_run,
-                "timeout": 30,
-            },
-            "commit_template": {
-                "enabled": commit_enabled,
-                "config_path": "config/modules/template_commit.json",
-                "update_manifest_path": f"runtime/flow/{slug}/debug/update_manifest.json",
-                "send_result_path": f"runtime/flow/{slug}/output/wecom/send_result.json",
-                "backup_dir": f"runtime/flow/{slug}/backup",
-                "manifest_path": f"runtime/flow/{slug}/debug/commit_manifest.json",
-            },
-        },
     }
+    step_overrides: dict[str, Any] = {}
+    if login_enabled is not True:
+        step_overrides["login"] = {"enabled": login_enabled}
+    if dry_run:
+        step_overrides["download"] = {"dry_run": True, "debug": True}
+    if send_dry_run is not False:
+        step_overrides["send_wecom"] = {"dry_run": send_dry_run}
+    if commit_enabled is not True:
+        step_overrides["commit_template"] = {"enabled": commit_enabled}
+    if step_overrides:
+        task_config["steps"] = step_overrides
+    return task_config
 
 
 def write_task_config(
@@ -307,8 +278,15 @@ def write_task_config(
         commit_enabled=commit_enabled,
         login_enabled=login_enabled,
     )
-    if config.get("wait_for_change"):
-        task_config["wait_for_change"] = config["wait_for_change"]
+    if draft:
+        task_config["runtime_dir"] = f"runtime/flow/{report_name}"
+    wait_for_change = config.get("wait_for_change") or {}
+    if wait_for_change.get("enabled"):
+        wait_override = {"enabled": True}
+        for key, default_value in (("poll_interval_seconds", 300), ("max_wait_minutes", 180)):
+            if key in wait_for_change and wait_for_change[key] != default_value:
+                wait_override[key] = wait_for_change[key]
+        task_config["wait_for_change"] = wait_override
     target_dir = (
         resolve_runtime_path("runtime/config/drafts") if draft else PROJECT_ROOT / "config/tasks"
     )
@@ -462,7 +440,7 @@ def test_run_config(config: dict[str, Any], progress: Callable[[str, str], None]
         progress("生成临时配置", "正在写入安全测试专用的 dry-run 配置")
     task_config_path = write_task_config(config, draft=True, dry_run=True)
     if progress:
-        progress("启动 dry-run", f"即将执行安全测试流程: {task_config_path.relative_to(PROJECT_ROOT)}")
+        progress("启动 dry-run", f"即将执行安全测试流程: {_display_path(task_config_path)}")
     command = [
         sys.executable,
         "-c",
@@ -496,7 +474,7 @@ def test_run_config(config: dict[str, Any], progress: Callable[[str, str], None]
         "flowRunId": f"manual-{int(datetime.now().timestamp())}",
         "status": "success",
         "message": f"安全测试运行完成: {config.get('name', '')}",
-        "taskConfigPath": str(task_config_path.relative_to(PROJECT_ROOT)),
+        "taskConfigPath": _display_path(task_config_path),
         "output": output[-4000:],
     }
 
@@ -514,7 +492,7 @@ def real_test_run_config(config: dict[str, Any], progress: Callable[[str, str], 
         suffix=".real_test.task.json",
     )
     if progress:
-        progress("启动真实流程", f"即将执行真实试跑流程: {task_config_path.relative_to(PROJECT_ROOT)}")
+        progress("启动真实流程", f"即将执行真实试跑流程: {_display_path(task_config_path)}")
     command = [
         sys.executable,
         "-c",
@@ -548,7 +526,7 @@ def real_test_run_config(config: dict[str, Any], progress: Callable[[str, str], 
         "flowRunId": f"real-test-{int(datetime.now().timestamp())}",
         "status": "success",
         "message": f"真实试跑完成（已发送企业微信，未提交正式模板）: {config.get('name', '')}",
-        "taskConfigPath": str(task_config_path.relative_to(PROJECT_ROOT)),
+        "taskConfigPath": _display_path(task_config_path),
         "output": output[-4000:],
     }
 
@@ -776,7 +754,7 @@ def publish_config(config: dict[str, Any]) -> dict[str, Any]:
         "deploymentId": f"deployment-{int(datetime.now().timestamp())}",
         "status": "success",
         "message": f"已发布到 Prefect 调度: {config.get('name', '')}",
-        "taskConfigPath": str(task_config_path.relative_to(PROJECT_ROOT)),
+        "taskConfigPath": _display_path(task_config_path),
         "crons": crons,
         "timezone": deployment.get("timezone", "Asia/Shanghai"),
         "scheduleStatus": schedule_status,

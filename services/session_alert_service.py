@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from infrastructure.wecom_client import send_text
+from services.runtime_paths import resolve_runtime_path
 from services.session_manager import file_lock
 
 
@@ -37,6 +38,10 @@ REDACTED_SENSITIVE_DETAIL = "<redacted sensitive detail>"
 
 def _resolve(path_value, base_dir):
     path = Path(path_value)
+    if path.parts and path.parts[0].lower() == "runtime":
+        resolved = resolve_runtime_path(path, project_dir=base_dir)
+        assert resolved is not None
+        return resolved
     return path if path.is_absolute() else base_dir / path
 
 

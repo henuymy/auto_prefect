@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from services.commit_service import commit_template
+from services.commit_service import commit_template, resolve_project_path
 
 
 def write_json(path, payload):
@@ -15,6 +15,15 @@ def write_json(path, payload):
 
 def make_work_dir():
     return Path(tempfile.mkdtemp(prefix="auto_notify_commit_test_"))
+
+
+def test_resolve_project_path_rebases_logical_runtime_paths(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "shared-runtime"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
+
+    assert resolve_project_path("runtime/flow/日报/debug/update_manifest.json") == (
+        runtime_root / "flow" / "日报" / "debug" / "update_manifest.json"
+    ).resolve()
 
 
 def test_commit_template_after_successful_send():

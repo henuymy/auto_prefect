@@ -5,10 +5,23 @@ from pathlib import Path
 
 import pytest
 
+from services import session_alert_service
 from services.session_alert_service import (
     notify_session_failure,
     notify_session_recovery,
 )
+
+
+def test_resolve_rebases_logical_runtime_paths(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "shared-runtime"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
+
+    assert session_alert_service._resolve(
+        "runtime/session/session-keeper/incident_state.json",
+        tmp_path / "project",
+    ) == (
+        runtime_root / "session" / "session-keeper" / "incident_state.json"
+    ).resolve()
 
 
 def alert_config(tmp_path: Path):
