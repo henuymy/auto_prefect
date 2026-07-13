@@ -99,8 +99,8 @@ def backup_template(template_path, backup_dir):
 def commit_template(config, base_dir=PROJECT_DIR):
     update_manifest_path = resolve_project_path(config.get("update_manifest_path"), base_dir)
     send_result_path = resolve_project_path(config.get("send_result_path"), base_dir)
-    backup_dir = resolve_project_path(config.get("backup_dir", "runtime/backups"), base_dir)
-    manifest_path = resolve_project_path(config.get("manifest_path", "runtime/commit_manifest.json"), base_dir)
+    backup_dir = resolve_project_path(config.get("backup_dir", "runtime/modules/template_commit/output/backup"), base_dir)
+    manifest_path = resolve_project_path(config.get("manifest_path", "runtime/modules/template_commit/output/commit_manifest.json"), base_dir)
 
     if not update_manifest_path:
         raise ValueError("缺少 update_manifest_path")

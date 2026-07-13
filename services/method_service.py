@@ -641,9 +641,9 @@ def write_manifest(path, manifest):
 
 
 def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
-    cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/cookies/cookie_dump.json"), base_dir)
-    output_dir = resolve_path(config.get("output_dir", "runtime/downloads"), base_dir)
-    manifest_path = resolve_path(config.get("manifest_path", "runtime/download_manifest.json"), base_dir)
+    cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/session/cookie_dump.json"), base_dir)
+    output_dir = resolve_path(config.get("output_dir", "runtime/modules/report_downloader/output/downloads"), base_dir)
+    manifest_path = resolve_path(config.get("manifest_path", "runtime/modules/report_downloader/output/download_manifest.json"), base_dir)
     timeout = int(config.get("request_timeout_seconds", 120))
     request_retry = retry_settings(config)
     verify_ssl = bool(config.get("verify_ssl", True))

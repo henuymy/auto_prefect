@@ -14,7 +14,6 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "lib\python_env.ps1")
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 . (Join-Path $PSScriptRoot "lib\process_registry.ps1")
-. (Join-Path $PSScriptRoot "lib\runtime_state_migration.ps1")
 $UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
 $LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
 if (-not (Import-ProjectRuntimeConfig)) {
@@ -39,11 +38,6 @@ $PrefectHome = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "prefect\prefect_home"
 $StartupClaim = Enter-StartupClaim
 
 try {
-$migrationResults = @(Invoke-RuntimeStateMigration -RepoRoot $RepoRoot -RuntimeRoot $env:AUTO_NOTIFY_RUNTIME_ROOT)
-foreach ($migration in $migrationResults) {
-    Write-Host "Runtime migration: $($migration.name) / $($migration.status) / $($migration.target)"
-}
-
 function Test-RuntimeDatabaseConnections {
     $checkScript = @'
 import asyncio
@@ -205,12 +199,6 @@ $LegacyNotifyRuns = @(
 if ($LegacyNotifyRuns.Count -gt 0) {
     $runSummary = $LegacyNotifyRuns -join "; "
     throw "旧 Notify Pool 仍有保留 Run，Prefect 3.7 不支持安全改派单个排队 Run，已拒绝启动避免遗漏或执行无关工作。请先用旧 Pool Worker 排空或取消这些 Run。Prefect Server 已注册；处理后请执行 scripts\stop.ps1 再重新运行 scripts\run.ps1，或直接执行 scripts\run.ps1 -ForceRestart。Runs: $runSummary"
-}
-
-Write-Host "同步 Prefect deployments（仅同步 Cron，不运行 flow）..."
-& $PythonExe -m prefect deploy --all
-if ($LASTEXITCODE -ne 0) {
-    throw "Prefect deployment 同步失败"
 }
 
 Write-Host "启动 Session Prefect Worker..."

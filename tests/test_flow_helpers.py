@@ -5,9 +5,12 @@ from flows.notify_single_flow import (
     aggregate_compare_results,
     assert_report_schema_contract,
     build_download_config,
+    build_send_config,
     build_compare_source_configs,
     build_login_config,
     is_session_expired_error,
+    load_config,
+    materialize_runtime_paths,
     parse_wait_for_change_config,
     required_stages_for_report,
     resolve_dynamic_placeholders,
@@ -16,6 +19,50 @@ from flows.notify_single_flow import (
 )
 
 PROJECT_TEST_RUNTIME_DIR = Path("runtime/flow/test")
+
+
+def test_notify_task_defaults_are_merged_and_runtime_paths_are_derived():
+    config, resolved = load_config("config/tasks/PK赛通报.json")
+
+    assert resolved.name == "PK赛通报.json"
+    assert config["steps"]["login"]["config_path"] == "config/modules/autologin.json"
+    assert config["steps"]["send_wecom"]["timeout"] == 30
+    assert config["wait_for_change"]["enabled"] is False
+
+    runtime_dir = Path("runtime/flow/PK赛通报")
+    materialize_runtime_paths(config, runtime_dir)
+
+    assert config["steps"]["update_template"]["output_dir"] == str(runtime_dir / "output" / "templates")
+    assert config["steps"]["commit_template"]["send_result_path"] == str(
+        runtime_dir / "output" / "wecom" / "send_result.json"
+    )
+
+
+def test_notify_task_can_override_default_wait_strategy():
+    config, _ = load_config("config/tasks/网格区公司PK赛通报.json")
+
+    assert config["wait_for_change"]["enabled"] is True
+    assert config["wait_for_change"]["poll_interval_seconds"] == 300
+
+
+def test_send_config_overrides_generic_module_workbook_with_report_content():
+    base = {
+        "workbooks": [
+            {"name": "通报工作簿", "file": "runtime/modules/wecom_sender/output/input.xlsx", "reports": []}
+        ]
+    }
+    report = {
+        "send": {
+            "workbook_name": "测试通报",
+            "items": [{"type": "image", "sheet": "通报"}],
+        }
+    }
+
+    config = build_send_config(base, report, "runtime/flow/测试/output/templates/latest.xlsx")
+
+    assert config["workbooks"][0]["name"] == "测试通报"
+    assert config["workbooks"][0]["file"].endswith("latest.xlsx")
+    assert config["workbooks"][0]["reports"] == [{"name": "测试通报", "items": report["send"]["items"]}]
 
 
 def test_is_session_expired_error_matches_known_messages():

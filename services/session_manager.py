@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import logging
@@ -745,6 +746,14 @@ def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
     }
 
 
+def expand_login_command(command: str) -> str:
+    """Resolve the configured Python placeholder for the active Worker."""
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("login_command 必须是非空字符串")
+    python_executable = subprocess.list2cmdline([sys.executable])
+    return command.replace("{python_executable}", python_executable)
+
+
 def run_login_with_retry(
     login_attempt,
     *,
@@ -818,7 +827,7 @@ def session_login_lock(lock_path, *, wait_seconds, poll_seconds, stale_seconds):
 def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None):
     cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/cookies/cookie_dump.json"), base_dir)
     session_health_state_path = resolve_runtime_path(
-        config.get("session_health_state_path", "runtime/session/session_state.json"),
+        config.get("session_health_state_path", "runtime/session/session-health.json"),
         project_dir=Path(base_dir),
     )
     freshness_seconds = int(
@@ -921,8 +930,9 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
     command = config.get("login_command")
     if not command:
         raise ValueError("Cookie 无效且未配置 login_command")
+    command = expand_login_command(command)
     browser_session_state_path = resolve_path(
-        config.get("browser_session_state_path", "runtime/browser_session/session.json"),
+        config.get("browser_session_state_path", "runtime/session/browser-session.json"),
         base_dir,
     )
     browser_config = config.get("browser") or {}

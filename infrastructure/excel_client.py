@@ -27,7 +27,7 @@ class ExcelComLockTimeout(RuntimeError):
 
 
 def default_excel_lock_path() -> Path:
-    return runtime_path("locks/excel_com.lock")
+    return runtime_path("session/locks/excel_com.lock")
 
 
 def _windows_process_started_at(pid: int) -> str | None:

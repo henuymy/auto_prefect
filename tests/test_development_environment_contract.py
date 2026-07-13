@@ -530,8 +530,7 @@ def test_run_script_reconciles_then_starts_three_bounded_workers():
     assert "$env:PREFECT_NOTIFY_POOL_LIMIT" in source
     assert lowered.count(reconcile) == 1
     assert lowered.index(reconcile) < lowered.index("-mode worker")
-    assert "prefect deploy --all --pool" not in lowered
-    assert "prefect deploy --all" in lowered
+    assert "prefect deploy --all" not in lowered
 
 
 def test_run_script_resolves_reconcile_cli_from_script_root():
@@ -798,7 +797,6 @@ def test_startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed():
     assert "prefect-worker-notify-legacy" not in run
     assert "prefect_legacy_drain.py" not in run
     blocker_index = run.index("旧 Notify Pool 仍有保留 Run")
-    assert blocker_index < run.index("prefect deploy --all")
     assert blocker_index < run.index("-Mode worker")
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -830,14 +828,13 @@ def test_unified_runtime_entry_points_start_services_without_running_flows():
     assert "import-projectruntimeconfig" in source
     assert "prefect_start.ps1" in source
     assert "-mode server" in source
-    assert "prefect deploy --all" in source
+    assert "prefect deploy --all" not in source
     assert "-mode worker" in source
     assert "start_web.ps1" in source
     assert "prefect flow run" not in source
     assert "flow run" not in source
 
-    assert source.index("-mode server") < source.index("prefect deploy --all")
-    assert source.index("prefect deploy --all") < source.index("-mode worker")
+    assert source.index("-mode server") < source.index("-mode worker")
 
 
 def test_prefect_worker_start_has_no_embedded_dashboard_cleanup():

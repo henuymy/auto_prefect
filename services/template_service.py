@@ -366,8 +366,8 @@ def write_manifest(path, payload):
 def update_template(config, base_dir=PROJECT_DIR):
     compare_result, source_report_path, template_path = load_compare_context(config, base_dir)
 
-    manifest_path = resolve_path(config.get("manifest_path", "runtime/template_updater/update_manifest.json"), base_dir)
-    output_dir = resolve_path(config.get("output_dir", "runtime/template_updater/templates"), base_dir)
+    manifest_path = resolve_path(config.get("manifest_path", "runtime/modules/template_updater/output/update_manifest.json"), base_dir)
+    output_dir = resolve_path(config.get("output_dir", "runtime/modules/template_updater/output/templates"), base_dir)
     engine = normalize_template_update_engine(config.get("engine"))
     write_sheets = config.get("write_sheets", "changed")
     update_condition = config.get("update_condition", "any_changed")

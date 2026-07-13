@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -27,6 +26,7 @@ from services.session_retry_service import (
     run_with_session_refresh_once,
 )
 from services.session_business_failure_service import run_with_business_session_reporting
+from services.runtime_paths import resolve_runtime_path, validate_runtime_path
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
 
@@ -38,6 +38,7 @@ except ImportError as exc:  # pragma: no cover - runtime dependency guard
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "local.json"
 EXAMPLE_CONFIG_PATH = PROJECT_DIR / "config" / "tasks" / "example.json"
+TASK_DEFAULTS_PATH = PROJECT_DIR / "config" / "task_defaults" / "notify.json"
 HEALTHY_SESSION_STATUSES = {"reused", "reused_after_lock", "refreshed"}
 
 
@@ -82,14 +83,47 @@ def load_config(config_path=None):
     path = Path(config_path).resolve() if config_path else DEFAULT_CONFIG_PATH
     if not path.exists() and not config_path:
         path = EXAMPLE_CONFIG_PATH
+    with TASK_DEFAULTS_PATH.open("r", encoding="utf-8") as f:
+        defaults = json.load(f)
     with path.open("r", encoding="utf-8") as f:
-        return json.load(f), path
+        config = json.load(f)
+    return deep_merge(defaults, config), path
+
+
+def flow_runtime_path(flow_runtime_dir, area, *parts):
+    path = Path(flow_runtime_dir) / area / Path(*parts)
+    validate_runtime_path(path)
+    return path
+
+
+def materialize_runtime_paths(config, flow_runtime_dir):
+    """Fill per-run output paths after task defaults and overrides are merged."""
+    steps = config["steps"]
+    compare = steps["compare"]
+    compare.setdefault("generated_config_path", str(flow_runtime_path(flow_runtime_dir, "debug", "compare_config.json")))
+
+    update = steps["update_template"]
+    update.setdefault("generated_config_path", str(flow_runtime_path(flow_runtime_dir, "debug", "template_updater_config.json")))
+    update.setdefault("output_dir", str(flow_runtime_path(flow_runtime_dir, "output", "templates")))
+    update.setdefault("manifest_path", str(flow_runtime_path(flow_runtime_dir, "debug", "update_manifest.json")))
+
+    send = steps["send_wecom"]
+    send.setdefault("generated_config_path", str(flow_runtime_path(flow_runtime_dir, "debug", "excel_sender_config.json")))
+    send.setdefault("runtime_dir", str(flow_runtime_path(flow_runtime_dir, "output", "wecom")))
+
+    commit = steps["commit_template"]
+    commit.setdefault("update_manifest_path", str(flow_runtime_path(flow_runtime_dir, "debug", "update_manifest.json")))
+    commit.setdefault("send_result_path", str(flow_runtime_path(flow_runtime_dir, "output", "wecom", "send_result.json")))
+    commit.setdefault("backup_dir", str(flow_runtime_path(flow_runtime_dir, "backup")))
+    commit.setdefault("manifest_path", str(flow_runtime_path(flow_runtime_dir, "debug", "commit_manifest.json")))
 
 
 def resolve_project_path(path):
     value = Path(path)
-    if value.is_absolute():
-        return value
+    if value.parts and value.parts[0].lower() == "runtime":
+        return resolve_runtime_path(value, project_dir=PROJECT_DIR)
+    if value.is_absolute() or ".." in value.parts:
+        raise ValueError(f"不允许绝对路径或父目录路径: {path}")
     return (PROJECT_DIR / value).resolve()
 
 
@@ -289,7 +323,7 @@ def build_compare_source_configs(base_config, report_cfg, download_manifest, com
             "new_report_path": paths_by_name[download_name],
             **source_override,
         })
-        compare_config["output_path"] = str(flow_runtime_dir / "compare_results" / f"{download_name}.json")
+        compare_config["output_path"] = str(flow_runtime_path(flow_runtime_dir, "tmp", "compare_results", f"{download_name}.json"))
         configs.append({
             "name": source.get("name") or download_name,
             "download_name": download_name,
@@ -378,9 +412,9 @@ def auto_notify_flow(config_path=None):
     logger.info("读取流程配置: %s", resolved_config_path)
 
     steps = config["steps"]
-    flow_runtime_dir = resolve_project_path(
-        config.get("runtime_dir", f"runtime/flow/{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    )
+    flow_runtime_dir = Path(config.get("runtime_dir", f"runtime/flow/{resolved_config_path.stem}"))
+    validate_runtime_path(flow_runtime_path(flow_runtime_dir, "output"))
+    materialize_runtime_paths(config, flow_runtime_dir)
 
     report_cfg = read_json(config["report_config_path"]) if config.get("report_config_path") else {}
     assert_report_schema_contract(report_cfg)
@@ -408,6 +442,8 @@ def auto_notify_flow(config_path=None):
         if not steps.get("download", {}).get("enabled", True):
             return None
         download_config = build_download_config(read_json(steps["download"]["config_path"]), report_cfg)
+        download_config["output_dir"] = str(flow_runtime_path(flow_runtime_dir, "tmp", "downloads"))
+        download_config["manifest_path"] = str(flow_runtime_path(flow_runtime_dir, "debug", "download_manifest.json"))
 
         def download_operation():
             return download_reports_task(
@@ -454,7 +490,7 @@ def auto_notify_flow(config_path=None):
                 },
                 "update_condition": get_update_condition(report_cfg),
             }
-            write_json(str(flow_runtime_dir / "compare_result.json"), compare_result)
+            write_json(str(flow_runtime_path(flow_runtime_dir, "debug", "compare_result.json")), compare_result)
             elapsed_seconds = int(monotonic() - wait_started_at)
             max_wait_seconds = wait_cfg["max_wait_seconds"]
             if max_wait_seconds is not None and elapsed_seconds >= max_wait_seconds:
@@ -517,7 +553,7 @@ def auto_notify_flow(config_path=None):
                     },
                     "update_condition": get_update_condition(report_cfg),
                 }
-                write_json(str(flow_runtime_dir / "compare_result.json"), compare_result)
+                write_json(str(flow_runtime_path(flow_runtime_dir, "debug", "compare_result.json")), compare_result)
                 elapsed_seconds = int(monotonic() - wait_started_at)
                 max_wait_seconds = wait_cfg["max_wait_seconds"]
                 if max_wait_seconds is not None and elapsed_seconds >= max_wait_seconds:
@@ -542,7 +578,7 @@ def auto_notify_flow(config_path=None):
         compare_runs = []
         for index, compare_item in enumerate(compare_configs, start=1):
             compare_config_path = write_json(
-                str(flow_runtime_dir / "compare_configs" / f"compare_{index}.json"),
+                str(flow_runtime_path(flow_runtime_dir, "debug", "compare_configs", f"compare_{index}.json")),
                 compare_item["config"],
             )
             compare_result_item = compare_report_task(read_json(compare_config_path))
@@ -553,10 +589,10 @@ def auto_notify_flow(config_path=None):
             })
         compare_result = aggregate_compare_results(compare_runs, get_update_condition(report_cfg))
         compare_config_path = write_json(
-            steps["compare"].get("generated_config_path", str(flow_runtime_dir / "compare_config.json")),
+            steps["compare"].get("generated_config_path", str(flow_runtime_path(flow_runtime_dir, "debug", "compare_config.json"))),
             {
                 "template_path": report_cfg.get("template_path"),
-                "compare_result_path": str(flow_runtime_dir / "compare_result.json"),
+                "compare_result_path": str(flow_runtime_path(flow_runtime_dir, "debug", "compare_result.json")),
                 "compare_runs": [
                     {
                         "name": item.get("name"),
@@ -568,7 +604,7 @@ def auto_notify_flow(config_path=None):
                 ],
             },
         )
-        write_json(str(flow_runtime_dir / "compare_result.json"), compare_result)
+        write_json(str(flow_runtime_path(flow_runtime_dir, "debug", "compare_result.json")), compare_result)
         compare_status = compare_result.get("result")
         if compare_status == "invalid":
             raise RuntimeError("比对结果 invalid，停止流程")
@@ -606,7 +642,7 @@ def auto_notify_flow(config_path=None):
 
     template_config_path = prepare_template_config(
         steps["update_template"]["config_path"],
-        steps["update_template"].get("generated_config_path", str(flow_runtime_dir / "template_updater_config.json")),
+        steps["update_template"].get("generated_config_path", str(flow_runtime_path(flow_runtime_dir, "debug", "template_updater_config.json"))),
         compare_config_path,
         overrides={
             **{k: steps["update_template"][k] for k in ("output_dir", "manifest_path") if k in steps["update_template"]},
@@ -627,7 +663,7 @@ def auto_notify_flow(config_path=None):
     if send_step.get("runtime_dir"):
         send_config.setdefault("output", {})["runtime_dir"] = send_step["runtime_dir"]
     send_config_path = write_json(
-        send_step.get("generated_config_path", str(flow_runtime_dir / "excel_sender_config.json")),
+        send_step.get("generated_config_path", str(flow_runtime_path(flow_runtime_dir, "debug", "excel_sender_config.json"))),
         send_config,
     )
     send_config = read_json(send_config_path)

@@ -1,0 +1,38 @@
+{
+  "wait_for_change": {
+    "enabled": false,
+    "poll_interval_seconds": 300,
+    "max_wait_minutes": 180
+  },
+  "steps": {
+    "login": {
+      "enabled": true,
+      "config_path": "config/modules/autologin.json",
+      "force_refresh": false
+    },
+    "download": {
+      "enabled": true,
+      "config_path": "config/modules/report_downloader.json",
+      "dry_run": false,
+      "debug": false
+    },
+    "compare": {
+      "enabled": true,
+      "config_path": "config/modules/report_compare.json"
+    },
+    "update_template": {
+      "enabled": true,
+      "config_path": "config/modules/template_updater.json"
+    },
+    "send_wecom": {
+      "enabled": true,
+      "base_config_path": "config/modules/wecom_sender.json",
+      "dry_run": false,
+      "timeout": 30
+    },
+    "commit_template": {
+      "enabled": true,
+      "config_path": "config/modules/template_commit.json"
+    }
+  }
+}

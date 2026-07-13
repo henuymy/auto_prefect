@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from services.runtime_paths import resolve_runtime_path, runtime_path, runtime_root
 
 
@@ -10,8 +12,8 @@ def test_runtime_relative_paths_rebase_to_external_root(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
 
     assert resolve_runtime_path(
-        "runtime/cookies/cookie_dump.json", project_dir=tmp_path
-    ) == (tmp_path / "shared" / "cookies" / "cookie_dump.json").resolve()
+        "runtime/session/cookie_dump.json", project_dir=tmp_path
+    ) == (tmp_path / "shared" / "session" / "cookie_dump.json").resolve()
 
 
 def test_non_runtime_relative_paths_remain_project_relative(monkeypatch, tmp_path):
@@ -22,11 +24,12 @@ def test_non_runtime_relative_paths_remain_project_relative(monkeypatch, tmp_pat
     ).resolve()
 
 
-def test_absolute_paths_are_preserved(monkeypatch, tmp_path):
+def test_absolute_paths_are_rejected(monkeypatch, tmp_path):
     target = (tmp_path / "absolute.json").resolve()
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
 
-    assert resolve_runtime_path(target, project_dir=tmp_path) == target
+    with pytest.raises(ValueError, match="绝对路径"):
+        resolve_runtime_path(target, project_dir=tmp_path)
 
 
 def test_runtime_root_uses_machine_shared_default_without_override(monkeypatch):
@@ -62,11 +65,11 @@ def test_runtime_root_direct_launch_is_independent_of_working_directory(
 
 def test_runtime_path_is_resolved_lazily(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "first"))
-    assert runtime_path("locks/excel.lock") == (
-        tmp_path / "first" / "locks" / "excel.lock"
+    assert runtime_path("session/locks/excel.lock") == (
+        tmp_path / "first" / "session" / "locks" / "excel.lock"
     ).resolve()
 
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "second"))
-    assert runtime_path("locks/excel.lock") == (
-        tmp_path / "second" / "locks" / "excel.lock"
+    assert runtime_path("session/locks/excel.lock") == (
+        tmp_path / "second" / "session" / "locks" / "excel.lock"
     ).resolve()

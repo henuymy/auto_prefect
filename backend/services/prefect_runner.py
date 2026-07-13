@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from services.runtime_paths import resolve_runtime_path
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_NOTIFY_WORK_POOL = "windows-notify-pool"
@@ -248,31 +250,31 @@ def build_task_config(
             "compare": {
                 "enabled": True,
                 "config_path": "config/modules/report_compare.json",
-                "generated_config_path": f"runtime/flow/{slug}/compare_config.json",
+                "generated_config_path": f"runtime/flow/{slug}/debug/compare_config.json",
                 "download_report_name": report_name,
             },
             "update_template": {
                 "enabled": True,
                 "config_path": "config/modules/template_updater.json",
-                "generated_config_path": f"runtime/flow/{slug}/template_updater_config.json",
-                "output_dir": f"runtime/flow/{slug}/templates",
-                "manifest_path": f"runtime/flow/{slug}/update_manifest.json",
+                "generated_config_path": f"runtime/flow/{slug}/debug/template_updater_config.json",
+                "output_dir": f"runtime/flow/{slug}/output/templates",
+                "manifest_path": f"runtime/flow/{slug}/debug/update_manifest.json",
             },
             "send_wecom": {
                 "enabled": True,
                 "base_config_path": "config/modules/wecom_sender.json",
-                "generated_config_path": f"runtime/flow/{slug}/excel_sender_config.json",
-                "runtime_dir": f"runtime/flow/{slug}/wecom",
+                "generated_config_path": f"runtime/flow/{slug}/debug/excel_sender_config.json",
+                "runtime_dir": f"runtime/flow/{slug}/output/wecom",
                 "dry_run": send_dry_run,
                 "timeout": 30,
             },
             "commit_template": {
                 "enabled": commit_enabled,
                 "config_path": "config/modules/template_commit.json",
-                "update_manifest_path": f"runtime/flow/{slug}/update_manifest.json",
-                "send_result_path": f"runtime/flow/{slug}/wecom/send_result.json",
-                "backup_dir": f"runtime/flow/{slug}/backups",
-                "manifest_path": f"runtime/flow/{slug}/commit_manifest.json",
+                "update_manifest_path": f"runtime/flow/{slug}/debug/update_manifest.json",
+                "send_result_path": f"runtime/flow/{slug}/output/wecom/send_result.json",
+                "backup_dir": f"runtime/flow/{slug}/backup",
+                "manifest_path": f"runtime/flow/{slug}/debug/commit_manifest.json",
             },
         },
     }
@@ -318,7 +320,10 @@ def _project_path(path_value: str | None) -> Path | None:
 
 def _known_stages() -> set[str]:
     stages = set()
-    for path in [PROJECT_ROOT / "config/modules/login_config.json", PROJECT_ROOT / "runtime/cookies/cookie_dump.json"]:
+    for path in [
+        PROJECT_ROOT / "config/modules/login_config.json",
+        resolve_runtime_path("runtime/session/cookie_dump.json"),
+    ]:
         if not path.exists():
             continue
         try:

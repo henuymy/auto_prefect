@@ -114,5 +114,7 @@ def resolve_cookie_dump_path(base_dir, config):
     if override:
         return Path(override).resolve()
     cookie_dump_config = config.get("cookie_dump", {})
-    output_file = cookie_dump_config.get("output_file", "runtime/cookie_dump.json")
+    output_file = cookie_dump_config.get(
+        "output_file", "runtime/session/cookie_dump.json"
+    )
     return resolve_runtime_path(output_file, project_dir=Path(base_dir))

@@ -13,31 +13,14 @@
   },
   "workbooks": [
     {
-      "name": "郑州移动PK赛日通报",
-      "file": "runtime/template_updater/templates/latest.xlsx",
+      "name": "通报工作簿",
+      "file": "runtime/modules/wecom_sender/output/input.xlsx",
       "excel_open": {
         "update_links": false,
         "refresh_before_capture": false,
         "refresh_timeout_seconds": 120
       },
-      "reports": [
-        {
-          "name": "郑州移动PK赛日通报",
-          "items": [
-            {
-              "type": "image",
-              "sheet": "通报"
-            },
-            {
-              "type": "text",
-              "sheet": "通报语句",
-              "text": {
-                "mode": "used_range"
-              }
-            }
-          ]
-        }
-      ]
+      "reports": []
     }
   ],
   "wecom": {
@@ -45,7 +28,7 @@
     "webhook_url": ""
   },
   "output": {
-    "runtime_dir": "runtime/excel_sender_wx",
+    "runtime_dir": "runtime/modules/wecom_sender/output",
     "image_dir": "images",
     "package_file": "message_package.json",
     "preview_image_file": "preview.png",

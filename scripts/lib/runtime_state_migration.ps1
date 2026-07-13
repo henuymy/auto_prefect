@@ -6,96 +6,57 @@ function Invoke-RuntimeStateMigration {
         [string]$RuntimeRoot
     )
 
+    # This is a one-time, destructive cutover. Startup scripts deliberately do not call it.
+    foreach ($directory in @(
+        $RuntimeRoot,
+        (Join-Path $RuntimeRoot "session\locks"),
+        (Join-Path $RuntimeRoot "modules"),
+        (Join-Path $RuntimeRoot "flow")
+    )) {
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    }
     $items = @(
-        [pscustomobject]@{
-            Name = "cookie_dump"
-            Source = Join-Path $RepoRoot "runtime\cookies\cookie_dump.json"
-            Target = Join-Path $RuntimeRoot "cookies\cookie_dump.json"
-            Kind = "file"
-        },
-        [pscustomobject]@{
-            Name = "edge_profile"
-            Source = Join-Path $RepoRoot "runtime\browser_session\edge_profile_auto_login"
-            Target = Join-Path $RuntimeRoot "browser_session\edge_profile_auto_login"
-            Kind = "directory"
-        }
+        [pscustomobject]@{ Name = "cookie_dump"; Sources = @(
+            (Join-Path $RuntimeRoot "cookies\cookie_dump.json"),
+            (Join-Path $RepoRoot "runtime\cookies\cookie_dump.json")
+        ); Target = Join-Path $RuntimeRoot "session\cookie_dump.json" },
+        [pscustomobject]@{ Name = "session_health"; Sources = @(
+            (Join-Path $RuntimeRoot "session\session_state.json"),
+            (Join-Path $RepoRoot "runtime\session\session_state.json")
+        ); Target = Join-Path $RuntimeRoot "session\session-health.json" },
+        [pscustomobject]@{ Name = "browser_session"; Sources = @(
+            (Join-Path $RuntimeRoot "browser_session\session.json"),
+            (Join-Path $RepoRoot "runtime\browser_session\session.json")
+        ); Target = Join-Path $RuntimeRoot "session\browser-session.json" },
+        [pscustomobject]@{ Name = "browser_profile"; Sources = @(
+            (Join-Path $RuntimeRoot "browser_session\edge_profile_auto_login"),
+            (Join-Path $RepoRoot "runtime\browser_session\edge_profile_auto_login")
+        ); Target = Join-Path $RuntimeRoot "session\browser-profile" }
     )
 
     foreach ($item in $items) {
+        $source = $item.Sources | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $source) {
+            [pscustomobject]@{ name = $item.Name; status = "source_absent"; target = $item.Target }
+            continue
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $item.Target) | Out-Null
         if (Test-Path -LiteralPath $item.Target) {
-            [pscustomobject]@{
-                name = $item.Name
-                status = "target_exists"
-                source = $item.Source
-                target = $item.Target
-            }
+            Remove-Item -LiteralPath $source -Recurse -Force
+            [pscustomobject]@{ name = $item.Name; status = "source_removed_target_present"; target = $item.Target }
             continue
         }
-        if (-not (Test-Path -LiteralPath $item.Source)) {
-            [pscustomobject]@{
-                name = $item.Name
-                status = "source_absent"
-                source = $item.Source
-                target = $item.Target
-            }
-            continue
-        }
+        Move-Item -LiteralPath $source -Destination $item.Target -Force
+        [pscustomobject]@{ name = $item.Name; status = "moved"; target = $item.Target }
+    }
 
-        $stagingPath = $null
-        $status = "migration_failed_fresh_login_required"
-        try {
-            $parent = Split-Path -Parent $item.Target
-            New-Item -ItemType Directory -Force -Path $parent | Out-Null
-            $stagingPath = Join-Path $parent (
-                ".migration-{0}-{1}" -f $item.Name, [guid]::NewGuid().ToString("N")
-            )
-            if ($item.Kind -eq "directory") {
-                Copy-Item -LiteralPath $item.Source -Destination $stagingPath -Recurse
-            } else {
-                Copy-Item -LiteralPath $item.Source -Destination $stagingPath
-            }
-            try {
-                if ($item.Kind -eq "directory") {
-                    [IO.Directory]::Move($stagingPath, $item.Target)
-                } else {
-                    [IO.File]::Move($stagingPath, $item.Target)
-                }
-                $status = "copied"
-            } catch {
-                if (Test-Path -LiteralPath $item.Target) {
-                    $status = "target_exists_race"
-                } else {
-                    throw
-                }
-            }
-        } catch {
-            $status = "migration_failed_fresh_login_required"
-        } finally {
-            if ($stagingPath) {
-                $cleanupDeadline = (Get-Date).AddSeconds(2)
-                do {
-                    try {
-                        if (Test-Path -LiteralPath $stagingPath -PathType Container) {
-                            [IO.Directory]::Delete($stagingPath, $true)
-                        } elseif (Test-Path -LiteralPath $stagingPath -PathType Leaf) {
-                            [IO.File]::Delete($stagingPath)
-                        }
-                    } catch {
-                        if ((Get-Date) -lt $cleanupDeadline) {
-                            Start-Sleep -Milliseconds 50
-                        }
-                    }
-                } while ((Test-Path -LiteralPath $stagingPath) -and (Get-Date) -lt $cleanupDeadline)
-                if (Test-Path -LiteralPath $stagingPath) {
-                    $status = "migration_failed_sensitive_staging_cleanup_required"
-                }
-            }
-        }
-        [pscustomobject]@{
-            name = $item.Name
-            status = $status
-            source = $item.Source
-            target = $item.Target
+    foreach ($legacy in @(
+        (Join-Path $RuntimeRoot "cookies"),
+        (Join-Path $RuntimeRoot "browser_session"),
+        (Join-Path $RepoRoot "runtime")
+    )) {
+        if (Test-Path -LiteralPath $legacy) {
+            Remove-Item -LiteralPath $legacy -Recurse -Force
         }
     }
 }

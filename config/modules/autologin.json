@@ -1,5 +1,5 @@
 {
-  "cookie_dump_path": "runtime/cookies/cookie_dump.json",
+  "cookie_dump_path": "runtime/session/cookie_dump.json",
   "legacy_cookie_dump_path": null,
   "required_stages": [
     "report_analysis",
@@ -11,15 +11,15 @@
   "login_timeout_seconds": 600,
   "login_max_attempts": 2,
   "login_retry_delay_seconds": 60,
-  "login_lock_path": "runtime/locks/login.lock",
+  "login_lock_path": "runtime/session/locks/login.lock",
   "login_lock_wait_seconds": 1440,
   "login_lock_poll_seconds": 5,
   "login_lock_stale_seconds": 900,
-  "session_health_state_path": "runtime/session/session_state.json",
+  "session_health_state_path": "runtime/session/session-health.json",
   "session_freshness_seconds": 180,
-  "browser_session_state_path": "runtime/browser_session/session.json",
+  "browser_session_state_path": "runtime/session/browser-session.json",
   "browser": {
-    "user_data_dir": "runtime/browser_session/edge_profile_auto_login"
+    "user_data_dir": "runtime/session/browser-profile"
   },
   "stage_probes": {
     "report_analysis": {
@@ -76,5 +76,5 @@
       "timeout_seconds": 8
     }
   },
-  "login_command": "\"C:\\Users\\yuyu\\.conda\\envs\\auto-notify\\python.exe\" -c \"from services.login_service import run_login; run_login('config/modules/login_config.json')\""
+  "login_command": "{python_executable} -c \"from services.login_service import run_login; run_login('config/modules/login_config.json')\""
 }

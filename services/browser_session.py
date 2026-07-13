@@ -19,11 +19,11 @@ def resolve_path(value, base_dir=PROJECT_DIR):
 
 
 def default_session_state_path():
-    return runtime_path("browser_session/session.json")
+    return runtime_path("session/browser-session.json")
 
 
 def default_user_data_dir():
-    return runtime_path("browser_session/edge_profile_auto_login")
+    return runtime_path("session/browser-profile")
 
 
 def browser_config(config: dict, base_dir=PROJECT_DIR):

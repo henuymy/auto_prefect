@@ -91,11 +91,11 @@ config/runtime.local.example.json
 
 Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
 
-共享 Cookie、Edge Profile 和 Prefect Home 的实际路径分别为 `C:\AutoNotifyRuntime\cookies\cookie_dump.json`、`C:\AutoNotifyRuntime\browser_session\edge_profile_auto_login` 和 `C:\AutoNotifyRuntime\prefect\prefect_home`。初始化/启动只在共享目标不存在时复制仓库旧运行状态，绝不覆盖已有共享状态；无法迁移时回退为重新登录。
+运行时目录固定为 `C:\AutoNotifyRuntime`，且只允许三类逻辑路径：`runtime/session/...`（Cookie、会话健康状态、Edge Profile 与锁）、`runtime/modules/<模块名>/output/...`（模块独立产物）和 `runtime/flow/<任务名>/{output,backup,debug,tmp}/...`（Flow 产物）。它们分别映射到 `C:\AutoNotifyRuntime\session`、`modules` 与 `flow`。
 
-Cookie 与 Edge Profile 的迁移必须逐项隔离。单项失败只能输出包含项目/源/目标路径的 `migration_failed_fresh_login_required`，不得输出异常或认证内容，也不得阻断另一项迁移或后续启动；失败项的 staging 必须清理且最终目标保持不存在，由 Session Manager 触发新登录。若 staging 重试后仍存在，必须输出 `migration_failed_sensitive_staging_cleanup_required` 并要求人工清理，不得声称 clean fallback。目录发布必须使用 exact-target `Directory.Move`，目标竞争者胜出时清理本方 staging 并报告 `target_exists_race`，禁止嵌套复制。
+这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、`runtime/cookies`、`runtime/browser_session` 或其他未分类路径；路径解析必须拒绝绝对路径、`../` 与旧目录格式。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态和浏览器 Profile，并在成功后删除旧源目录。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
 
-`setup_windows_env.ps1` 和 `run.ps1` 必须使用同一个机器级运行时互斥锁保护迁移与共享目录初始化。setup 只预建 `browser_session` 父目录，不能预建 `edge_profile_auto_login` 最终目标；迁移失败后由 Session Manager 新登录创建最终 Profile。
+`setup_windows_env.ps1` 只预建 `session\locks`、`modules` 与 `flow` 骨架。首次登录由 Session Manager 在 `session\browser-profile` 创建 Profile，并在 `session` 下写入 Cookie 与健康状态。
 
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
 
@@ -107,7 +107,7 @@ Cookie 与 Edge Profile 的迁移必须逐项隔离。单项失败只能输出�
 
 ### 会话生命周期约定
 
-Session Keeper 和所有业务 Flow 必须复用共享 Session Manager 与全局登录锁。不得新增绕过该管理器或锁的直接登录入口；Windows 运行时应保留 Edge 用户会话，业务重试仅允许在明确的会话失效后强刷新一次并重试失败步骤一次。
+Session Keeper 和所有业务 Flow 必须复用共享 Session Manager 与全局登录锁。不得新增绕过该管理器或锁的直接登录入口；当前登录使用无头模式且不保留浏览器进程，业务重试仅允许在明确的会话失效后强刷新一次并重试失败步骤一次。
 
 ### 运行入口
 
@@ -120,7 +120,7 @@ pwsh -File scripts/status.ps1
 pwsh -File scripts/stop.ps1
 ```
 
-系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。该脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`，并主动提交一次 Session Keeper；通报与驾驶舱采集仍由 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
+系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。该脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`，并主动提交一次 Session Keeper；它不发布、同步或修改任何 Prefect Deployment。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
 
 自动调度的 Notify Run 比预计时间晚超过 10 分钟时取消，手工 Notify Run 保留。过期 Session Keeper 和高频 Dashboard Run 不补跑。处于 `RUNNING`、`CANCELLING` 或 `PAUSED` 的本项目 Run 会阻止替代 Worker 启动，必须人工处理。Worker 监督进程在崩溃 30 秒后重启 Worker；Prefect Server 需要手工执行 `scripts/run.ps1` 恢复。`scripts/stop.ps1` 只能停止 `C:\AutoNotifyRuntime\processes` 中已登记且身份匹配的进程。
 
@@ -128,9 +128,18 @@ pwsh -File scripts/stop.ps1
 
 旧 Notify Pool 上若仍有保留的手工、宽限期或 PENDING Run，启动必须列出 Run 身份并失败关闭。Prefect 3.7 无法安全改派单个已排队 Run，也不能为共享旧 Pool 自动启动不受 Run ID 约束的 Worker；运维人员应先受控排空或取消列出的旧 Run。由于 Prefect Server 已注册，随后必须执行 `scripts/stop.ps1` 再运行 `scripts/run.ps1`，或直接执行 `scripts/run.ps1 -ForceRestart`。禁止删除 Run 强行完成切换。
 
-所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\locks\excel_com.lock` 串行，登录刷新通过 `login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
+所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\session\locks\excel_com.lock` 串行，登录刷新通过 `C:\AutoNotifyRuntime\session\locks\login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
 
 ## 四、变更记录
+
+### 2026-07-13 - 强制运行时目录收敛
+
+- 原因：仓库 `runtime/`、旧共享目录与 Flow 临时目录并存，容易混用 Cookie、浏览器状态和任务产物。
+- 修改内容：统一为 `session`、`modules`、`flow` 三类目录；移除旧路径读取兼容与启动时迁移；模块发送配置收敛为不含业务报表内容的通用默认值。
+- 涉及文件：`services/runtime_paths.py`、`scripts/lib/runtime_state_migration.ps1`、`config/modules/*.json`、`flows/notify_single_flow.py`、`PROJECT_GUIDE.md`、相关测试。
+- 配置或迁移：停止运行栈后人工执行一次迁移；旧 Cookie/Profile 不再保留。首次启动可能需要重新登录。
+- 验证：`python -m pytest tests/test_runtime_paths.py tests/test_runtime_state_migration_powershell.py tests/test_flow_helpers.py -q`。
+- 风险与回滚：该目录迁移不兼容，回滚必须恢复同版本代码与配置，不能混用新旧状态目录。
 
 每次修改后新增一条，格式如下：
 
@@ -144,6 +153,24 @@ pwsh -File scripts/stop.ps1
 - 验证：
 - 风险与回滚：
 ```
+
+### 2026-07-13 - 通报任务配置收敛与驾驶舱分区修复
+
+- 原因：每份通报任务重复维护相同的步骤与运行目录，且驾驶舱未来分区缺失会使健康检查失败。
+- 修改内容：新增通报任务默认模板，任务文件仅保留报表和差异配置；Flow 在运行时生成任务专属中间文件路径；补齐驾驶舱未来分区。
+- 涉及文件：`config/task_defaults/notify.json`、`config/tasks/*.json`、`flows/notify_single_flow.py`、`tests/test_flow_helpers.py`、`README.md`。
+- 配置或迁移：本机登录覆盖使用 `retain_after_login`；已执行一次 Dashboard V2 分区维护。
+- 验证：`python -m pytest -p no:cacheprovider tests/test_flow_helpers.py -q`，`python -m ruff check flows/notify_single_flow.py tests/test_flow_helpers.py`，Dashboard V2 readiness 为 ready。
+- 风险与回滚：回滚模板加载与任务文件即可恢复每任务独立步骤配置；分区维护只补齐未来分区，不删除有效业务数据。
+
+### 2026-07-13 - 启动不再同步 Prefect Deployment
+
+- 原因：自动通报后续新增的 Deployment 不保证同步写入 `prefect.yaml`，日常启动覆盖部署会导致配置漂移。
+- 修改内容：移除 `scripts/run.ps1` 的 `prefect deploy --all`；启动只恢复服务和 Worker，不修改现有 Deployment。
+- 涉及文件：`scripts/run.ps1`、`README.md`、`PROJECT_GUIDE.md`、启动环境契约测试。
+- 配置或迁移：无。需要按仓库配置新建或更新 Deployment 时，人工执行 `prefect deploy --all`。
+- 验证：`python -m pytest -p no:cacheprovider tests/test_development_environment_contract.py -q`。
+- 风险与回滚：仓库中的 `prefect.yaml` 不再自动反映到 Prefect；如需恢复自动同步，恢复启动脚本中的部署命令。
 
 ### 2026-07-11 - 统一数据库本地配置
 

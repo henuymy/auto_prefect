@@ -72,7 +72,7 @@
   ],
   "cookie_dump": {
     "enabled": true,
-    "output_file": "runtime/cookies/cookie_dump.json"
+    "output_file": "runtime/session/cookie_dump.json"
   },
   "login_waits": {
     "existing_session_dialog_seconds": 1.5
@@ -84,8 +84,8 @@
   },
   "browser": {
     "headless": true,
-    "session_state_path": "runtime/browser_session/session.json",
-    "user_data_dir": "runtime/browser_session/edge_profile_auto_login",
+    "session_state_path": "runtime/session/browser-session.json",
+    "user_data_dir": "runtime/session/browser-profile",
     "window_width": 1920,
     "window_height": 1080,
     "close_existing_before_start": true,

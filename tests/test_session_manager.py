@@ -14,6 +14,7 @@ from services.session_health_state import cookie_snapshot_hash
 from services.session_manager import (
     SessionInfrastructureError,
     classify_probe_validation,
+    expand_login_command,
     format_probe_validation_error,
     lock_is_stale,
     prepare_session,
@@ -88,6 +89,15 @@ def session_config(cookie_dump_path, **overrides):
     }
     config.update(overrides)
     return config
+
+
+def test_expand_login_command_uses_current_python_executable(monkeypatch):
+    monkeypatch.setattr(session_manager.sys, "executable", r"C:\\Program Files\\Python\\python.exe")
+
+    command = expand_login_command('{python_executable} -c "print(1)"')
+
+    assert "{python_executable}" not in command
+    assert '"C:\\Program Files\\Python\\python.exe"' in command
 
 
 def write_fresh_health_state(state_path, cookie_path):
