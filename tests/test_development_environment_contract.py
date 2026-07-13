@@ -987,3 +987,13 @@ def test_dashboard_tools_can_run_directly_from_the_repository_root():
 
         assert result.returncode == 0, result.stderr
         assert "usage:" in result.stdout.lower()
+
+
+def test_runtime_docs_describe_prefect_home_and_process_registry():
+    scripts_readme = (ROOT / "scripts" / "README.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "PROJECT_GUIDE.md").read_text(encoding="utf-8")
+
+    for source in (scripts_readme, readme, guide):
+        assert "prefect/prefect_home" in source
+        assert "processes" in source

@@ -106,12 +106,24 @@ python scripts/tools/dashboard/import_areas.py --help
 ## 运行目录
 
 脚本产生的状态不写入项目目录。运行根目录由
-`config/runtime.local.json` 的 `runtime.root` 指定，并使用：
+`config/runtime.local.json` 的 `runtime.root` 指定，默认是
+`C:\AutoNotifyRuntime`：
 
 ```text
-session/                 Cookie、浏览器 Profile、会话状态和锁
-modules/<module>/output/ 模块独立运行产物
-flow/<task>/{output,backup,debug,tmp}/ Flow 任务产物
+session/                    Cookie、浏览器 Profile、会话状态和锁
+prefect/prefect_home/       Prefect Home；本机 Server 与 Worker 共享
+processes/                  受管 Server、Worker、后端和前端的进程登记 JSON
+modules/<module>/output/    模块独立运行产物
+flow/<task>/{output,backup,debug,tmp}/
+                            Flow 任务产物
+logs/、temp/                启动和工具按需产生的临时运行文件
 ```
+
+`session/` 包含 `cookie_dump.json`、`browser-profile/`、
+`browser-session.json`、`session-health.json` 与 `locks/`；其中 Cookie 和
+浏览器 Profile 是敏感登录态，不能提交、复制或随意删除。`processes/` 仅供
+`stop.ps1` 和 `status.ps1` 识别本项目进程，停止运行栈前不得手工删除其中的
+登记文件。`prefect/prefect_home/` 不随代码分支或 Worktree 切换，应与运行根目录
+一起保留。
 
 不要新增根级运行脚本、项目内 `runtime/` 路径或未分类的 `scripts/` 工具；应将实现放入对应子目录，并从现有入口调用。

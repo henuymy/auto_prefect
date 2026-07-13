@@ -91,7 +91,7 @@ config/runtime.local.example.json
 
 Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
 
-运行时目录固定为 `C:\AutoNotifyRuntime`，且只允许三类逻辑路径：`runtime/session/...`（Cookie、会话健康状态、Edge Profile 与锁）、`runtime/modules/<模块名>/output/...`（模块独立产物）和 `runtime/flow/<任务名>/{output,backup,debug,tmp}/...`（Flow 产物）。它们分别映射到 `C:\AutoNotifyRuntime\session`、`modules` 与 `flow`。
+运行时目录固定为 `C:\AutoNotifyRuntime`。业务逻辑只允许使用三类路径：`runtime/session/...`（Cookie、会话健康状态、Edge Profile 与锁）、`runtime/modules/<模块名>/output/...`（模块独立产物）和 `runtime/flow/<任务名>/{output,backup,debug,tmp}/...`（Flow 产物），分别映射到 `session`、`modules` 与 `flow`。运行栈另外维护 `prefect/prefect_home`（本机 Prefect Home）和 `processes`（受管进程登记 JSON）；它们不是业务产物，禁止被 Flow 当作输入/输出目录。`logs` 与 `temp` 仅供启动和工具按需使用。
 
 这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、`runtime/cookies`、`runtime/browser_session` 或其他未分类路径；路径解析必须拒绝绝对路径、`../` 与旧目录格式。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态和浏览器 Profile，并在成功后删除旧源目录。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
 
@@ -131,6 +131,15 @@ pwsh -File scripts/stop.ps1
 所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\session\locks\excel_com.lock` 串行，登录刷新通过 `C:\AutoNotifyRuntime\session\locks\login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
 
 ## 四、变更记录
+
+### 2026-07-13 - 运行时目录文档对齐
+
+- 原因：运行目录文档只描述业务产物，遗漏 `prefect/prefect_home` 与 `processes`，根 README 还保留旧目录与自动迁移说明。
+- 修改内容：统一记录运行时完整目录树、敏感会话数据边界和进程登记使用方式；移除已失效的旧路径说明。
+- 涉及文件：`scripts/README.md`、`README.md`、`PROJECT_GUIDE.md`、`tests/test_development_environment_contract.py`。
+- 配置或迁移：无；旧状态迁移仍仅能在停栈后人工执行。
+- 验证：`python -m pytest -p no:cacheprovider tests/test_development_environment_contract.py -q`，`git diff --check`。
+- 风险与回滚：仅文档与契约测试变更，不修改运行目录或会话数据。
 
 ### 2026-07-13 - 驾驶舱工具项目根路径修复
 
