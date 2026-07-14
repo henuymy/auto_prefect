@@ -3,12 +3,37 @@ import json
 import pytest
 
 from flows.notify_single_flow import (
+    prepare_notify_session,
     run_notify_download_with_session_refresh,
     run_notify_session_preparation,
 )
 from services.session_retry_service import RefreshBudget
 from services.session_alert_service import notify_session_failure, notify_session_recovery
 from services.session_business_failure_service import recover_business_session_incidents
+
+
+@pytest.mark.parametrize("force_refresh", [False, True])
+def test_notify_session_preparation_uses_one_full_login_attempt(monkeypatch, force_refresh):
+    calls = []
+    monkeypatch.setattr(
+        "flows.notify_single_flow.prepare_session_task",
+        lambda config, **kwargs: calls.append((config, kwargs)) or {"status": "refreshed"},
+    )
+    monkeypatch.setattr(
+        "flows.notify_single_flow.run_notify_session_preparation",
+        lambda operation: operation(),
+    )
+
+    config = {"name": "session"}
+    result = prepare_notify_session(config, force_refresh=force_refresh)
+
+    assert result == {"status": "refreshed"}
+    assert calls == [
+        (
+            config,
+            {"force_refresh": force_refresh, "login_attempts": 1},
+        )
+    ]
 
 
 def test_notify_poll_iterations_share_one_refresh_budget():

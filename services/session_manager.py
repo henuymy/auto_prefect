@@ -824,7 +824,13 @@ def session_login_lock(lock_path, *, wait_seconds, poll_seconds, stale_seconds):
         raise SessionInfrastructureError(str(exc)) from exc
 
 
-def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_logger=None):
+def prepare_session(
+    config,
+    base_dir=PROJECT_DIR,
+    force_refresh=False,
+    event_logger=None,
+    login_attempts: int | None = None,
+):
     cookie_dump_path = resolve_path(
         config.get("cookie_dump_path", "runtime/session/cookie_dump.json"),
         base_dir,
@@ -850,11 +856,24 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         raise ValueError("login_max_attempts 必须固定为 2")
     if login_retry_delay_seconds != 60:
         raise ValueError("login_retry_delay_seconds 必须固定为 60")
+    if login_attempts is None:
+        effective_login_attempts = login_max_attempts
+    elif type(login_attempts) is int and login_attempts in {1, 2}:
+        effective_login_attempts = login_attempts
+    else:
+        raise ValueError("login_attempts 只支持 1 或 2")
+
+    started_at = time.monotonic()
 
     def warn(message, *args):
         LOGGER.warning(message, *args)
         if event_logger:
             event_logger.warning(message, *args)
+
+    def info(message, *args):
+        LOGGER.info(message, *args)
+        if event_logger:
+            event_logger.info(message, *args)
 
     def write_healthy_state(cookie_hash):
         return write_session_health_atomic(
@@ -893,15 +912,29 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                 required_stages=required_stages,
                 freshness_seconds=freshness_seconds,
             ):
+                info(
+                    "会话准备完成: source=health_cache elapsed_seconds=%.2f",
+                    time.monotonic() - started_at,
+                )
                 return {
                     "status": "reused_fresh",
                     "cookie_dump_path": str(cookie_dump_path),
                     "validation": validation,
                 }
+            probe_started_at = time.monotonic()
             probe_validation = validate_stage_probes(cookie_dump, required_stages, stage_probes)
+            info(
+                "会话探活完成: valid=%s elapsed_seconds=%.2f",
+                bool(probe_validation.get("valid")),
+                time.monotonic() - probe_started_at,
+            )
             validation["probe_validation"] = probe_validation
             if probe_validation["valid"]:
                 write_healthy_state(cookie_hash)
+                info(
+                    "会话准备完成: source=stage_probe elapsed_seconds=%.2f",
+                    time.monotonic() - started_at,
+                )
                 return {
                     "status": "reused",
                     "cookie_dump_path": str(cookie_dump_path),
@@ -963,12 +996,17 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
             f"({minimum_lock_wait_seconds} 秒)"
         )
 
+    lock_wait_started_at = time.monotonic()
     with session_login_lock(
         lock_path,
         wait_seconds=lock_wait_seconds,
         poll_seconds=lock_poll_seconds,
         stale_seconds=lock_stale_seconds,
     ) as lock_result:
+        info(
+            "会话登录锁已获取: elapsed_seconds=%.2f",
+            time.monotonic() - lock_wait_started_at,
+        )
         # Re-check under the login lock. Parallel flow runs may have refreshed
         # cookies between this run's first probe/download failure and lock acquisition.
         locked_cookie_dump, locked_cookie_hash = load_cookie_snapshot_if_exists(
@@ -983,6 +1021,10 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         )
         if locked_validation["valid"] and locked_probe_validation and locked_probe_validation["valid"]:
             write_healthy_state(locked_cookie_hash)
+            info(
+                "会话准备完成: source=lock_recheck elapsed_seconds=%.2f",
+                time.monotonic() - started_at,
+            )
             return {
                 "status": "reused_after_lock",
                 "cookie_dump_path": str(cookie_dump_path),
@@ -998,14 +1040,30 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
         else:
             warn("登录锁内 Cookie 静态检查仍失败，将自行重新登录: %s", locked_validation)
 
+        attempt_number = 0
+
         def login_attempt():
+            nonlocal attempt_number
+            attempt_number += 1
+            attempt_started_at = time.monotonic()
+            info(
+                "完整登录尝试开始: attempt=%s max_attempts=%s",
+                attempt_number,
+                effective_login_attempts,
+            )
             attempt_snapshot_path = cookie_dump_path.with_name(
                 f".{cookie_dump_path.name}.{uuid4().hex}.attempt"
             )
+            browser_close_started_at = time.monotonic()
             close_result = close_browser_session(
                 browser_session_state_path,
                 user_data_dir=browser_user_data_dir,
                 wait_seconds=float(config.get("browser_close_wait_seconds", 10) or 10),
+            )
+            info(
+                "登录浏览器清理完成: attempt=%s elapsed_seconds=%.2f",
+                attempt_number,
+                time.monotonic() - browser_close_started_at,
             )
             if close_result.get("stopped_pids"):
                 warn("重新登录前已关闭旧自动登录浏览器: %s", close_result)
@@ -1051,35 +1109,64 @@ def prepare_session(config, base_dir=PROJECT_DIR, force_refresh=False, event_log
                 refreshed_validation["probe_validation"] = refreshed_probe_validation
                 publish_cookie_dump(attempt_snapshot_path, cookie_dump_path)
                 write_healthy_state(refreshed_cookie_hash)
+                info(
+                    "完整登录尝试成功: attempt=%s elapsed_seconds=%.2f",
+                    attempt_number,
+                    time.monotonic() - attempt_started_at,
+                )
                 return {
                     "command": command_result,
                     "close": close_result,
                     "validation": refreshed_validation,
                 }
+            except Exception as exc:
+                warn(
+                    "完整登录尝试失败: attempt=%s elapsed_seconds=%.2f error_type=%s",
+                    attempt_number,
+                    time.monotonic() - attempt_started_at,
+                    type(exc).__name__,
+                )
+                raise
             finally:
                 attempt_snapshot_path.unlink(missing_ok=True)
 
         login_result = run_login_with_retry(
             login_attempt,
-            max_attempts=login_max_attempts,
+            max_attempts=effective_login_attempts,
             retry_delay_seconds=login_retry_delay_seconds,
         )
 
+    completed_login_attempts = login_result.get("attempt_count", attempt_number)
+    info(
+        "会话刷新完成: attempts=%s elapsed_seconds=%.2f",
+        completed_login_attempts,
+        time.monotonic() - started_at,
+    )
     return {
         "status": "refreshed",
         "cookie_dump_path": str(cookie_dump_path),
         "validation": login_result["validation"],
         "login": login_result["command"],
         "close": login_result["close"],
-        "login_attempt_count": login_result["attempt_count"],
+        "login_attempt_count": completed_login_attempts,
         "lock": lock_result,
     }
 
 
-def prepare_session_from_config(config_path, base_dir=PROJECT_DIR, force_refresh=False):
+def prepare_session_from_config(
+    config_path,
+    base_dir=PROJECT_DIR,
+    force_refresh=False,
+    login_attempts: int | None = None,
+):
     config_path = resolve_path(config_path, base_dir)
     config, _ = load_json(config_path)
     # The bundled module configs intentionally express runtime paths from the
     # project root, not from config/modules. Preserve the caller's base_dir so
     # direct helper use resolves Cookie files and login commands consistently.
-    return prepare_session(config, base_dir=base_dir, force_refresh=force_refresh)
+    return prepare_session(
+        config,
+        base_dir=base_dir,
+        force_refresh=force_refresh,
+        login_attempts=login_attempts,
+    )

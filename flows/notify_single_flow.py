@@ -62,6 +62,17 @@ def run_notify_session_preparation(operation, recoverer=None):
     )
 
 
+def prepare_notify_session(login_config, *, force_refresh: bool):
+    """Refresh once in the business Flow; the keeper retains the recovery retry policy."""
+    return run_notify_session_preparation(
+        lambda: prepare_session_task(
+            login_config,
+            force_refresh=force_refresh,
+            login_attempts=1,
+        )
+    )
+
+
 def run_notify_download_with_session_refresh(
     operation,
     refresh_session,
@@ -432,11 +443,9 @@ def auto_notify_flow(config_path=None):
 
     if steps.get("login", {}).get("enabled", False):
         initial_force_refresh = bool(steps["login"].get("force_refresh", False))
-        run_notify_session_preparation(
-            lambda: prepare_session_task(
-                login_config,
-                force_refresh=initial_force_refresh,
-            ),
+        prepare_notify_session(
+            login_config,
+            force_refresh=initial_force_refresh,
         )
     else:
         initial_force_refresh = False
@@ -465,9 +474,7 @@ def auto_notify_flow(config_path=None):
 
         def refresh_session():
             logger.warning("下载失败（session 过期），强制重新登录后重试")
-            return run_notify_session_preparation(
-                lambda: prepare_session_task(login_config, force_refresh=True)
-            )
+            return prepare_notify_session(login_config, force_refresh=True)
 
         return run_notify_download_with_session_refresh(
             download_operation,

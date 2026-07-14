@@ -731,6 +731,54 @@ def test_prepare_session_rejects_non_production_retry_configuration(key, value):
         prepare_session(config)
 
 
+@pytest.mark.parametrize("login_attempts", [0, 3, True, "1"])
+def test_prepare_session_rejects_invalid_caller_login_attempt_override(login_attempts):
+    config = session_config(Path(tempfile.gettempdir()) / f"unused-cookie-{uuid4().hex}.json")
+    config["allow_login"] = False
+
+    with pytest.raises(ValueError, match="login_attempts"):
+        prepare_session(config, login_attempts=login_attempts)
+
+
+def test_prepare_session_allows_business_single_login_attempt_override(monkeypatch, tmp_path):
+    cookie_path = tmp_path / "cookie.json"
+    retry_options = {}
+    monkeypatch.setattr(
+        session_manager,
+        "close_browser_session",
+        lambda *_args, **_kwargs: {"stopped_pids": []},
+    )
+    monkeypatch.setattr(
+        session_manager,
+        "validate_stage_probes",
+        lambda *_args, **_kwargs: {"valid": True, "results": []},
+    )
+
+    def fake_login(_command, **kwargs):
+        write_json(
+            Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"]),
+            valid_city_ops_cookie_dump(),
+        )
+        return {"returncode": 0}
+
+    def fake_retry(login_attempt, **kwargs):
+        retry_options.update(kwargs)
+        return login_attempt()
+
+    monkeypatch.setattr(session_manager, "run_login_command", fake_login)
+    monkeypatch.setattr(session_manager, "run_login_with_retry", fake_retry)
+
+    result = prepare_session(
+        session_config(cookie_path),
+        force_refresh=True,
+        login_attempts=1,
+    )
+
+    assert result["status"] == "refreshed"
+    assert result["login_attempt_count"] == 1
+    assert retry_options == {"max_attempts": 1, "retry_delay_seconds": 60}
+
+
 def test_login_failure_waits_sixty_seconds_and_retries_once(monkeypatch):
     calls = []
     sleeps = []
