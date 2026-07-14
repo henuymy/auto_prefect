@@ -675,25 +675,22 @@ def classify_probe_validation(probe_validation):
     return PROBE_INFRASTRUCTURE_FAILURE
 
 
-def format_probe_failure(item):
+def format_probe_failure(item, *, include_diagnostics=False):
     stage = item.get("stage") or "unknown"
     reason = item.get("reason") or "unknown"
     parts = [f"{stage} 探活失败", f"原因={reason}"]
     if item.get("status_code") is not None:
         parts.append(f"HTTP={item.get('status_code')}")
-    if item.get("actual_value") is not None or item.get("expected_value") is not None:
-        parts.append(f"实际值={item.get('actual_value')!r}")
-        parts.append(f"期望值={item.get('expected_value')!r}")
-    if item.get("error"):
-        parts.append(f"错误={item.get('error')}")
-    if item.get("url"):
-        parts.append(f"URL={item.get('url')}")
+    if include_diagnostics and item.get("error"):
+        error_type = str(item["error"]).split(":", 1)[0].strip()
+        if error_type:
+            parts.append(f"错误类型={error_type}")
     return "，".join(parts)
 
 
-def format_probe_validation_error(probe_validation):
+def format_probe_validation_error(probe_validation, *, include_diagnostics=False):
     failures = [
-        format_probe_failure(item)
+        format_probe_failure(item, include_diagnostics=include_diagnostics)
         for item in (probe_validation or {}).get("results", [])
         if not item.get("ok")
     ]
@@ -942,9 +939,17 @@ def prepare_session(
                 }
             failure_kind = classify_probe_validation(probe_validation)
             if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
-                raise SessionInfrastructureError(format_probe_validation_error(probe_validation))
+                raise SessionInfrastructureError(
+                    format_probe_validation_error(
+                        probe_validation,
+                        include_diagnostics=True,
+                    )
+                )
             write_authentication_failure_state(cookie_hash)
-            warn("已有 Cookie 探活失败，将进入登录锁并在锁内复检: %s", format_probe_validation_error(probe_validation))
+            warn(
+                "共享会话已失效，进入登录锁后执行一次刷新: %s",
+                format_probe_validation_error(probe_validation),
+            )
         else:
             warn("已有 Cookie 静态检查失败，将重新登录: %s", validation)
     else:
@@ -1034,9 +1039,17 @@ def prepare_session(
         if locked_validation["valid"]:
             failure_kind = classify_probe_validation(locked_probe_validation)
             if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
-                raise SessionInfrastructureError(format_probe_validation_error(locked_probe_validation))
+                raise SessionInfrastructureError(
+                    format_probe_validation_error(
+                        locked_probe_validation,
+                        include_diagnostics=True,
+                    )
+                )
             write_authentication_failure_state(locked_cookie_hash)
-            warn("登录锁内 Cookie 探活仍失败，将自行重新登录: %s", format_probe_validation_error(locked_probe_validation))
+            warn(
+                "登录锁内会话仍失效，将执行一次刷新: %s",
+                format_probe_validation_error(locked_probe_validation),
+            )
         else:
             warn("登录锁内 Cookie 静态检查仍失败，将自行重新登录: %s", locked_validation)
 
@@ -1105,7 +1118,8 @@ def prepare_session(
                     if failure_kind == PROBE_INFRASTRUCTURE_FAILURE:
                         raise SessionInfrastructureError(
                             format_probe_validation_error(
-                                refreshed_probe_validation
+                                refreshed_probe_validation,
+                                include_diagnostics=True,
                             )
                         )
                     write_authentication_failure_state(refreshed_cookie_hash)

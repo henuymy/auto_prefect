@@ -836,6 +836,9 @@ def test_format_probe_validation_error_is_human_readable():
                     "reason": "session_expired",
                     "status_code": 401,
                     "url": "https://example/getUserInfo",
+                    "actual_value": "sensitive-actual",
+                    "expected_value": "sensitive-expected",
+                    "error": "ConnectTimeout at https://example/getUserInfo",
                 }
             ],
         }
@@ -844,6 +847,27 @@ def test_format_probe_validation_error_is_human_readable():
     assert "city_ops 探活失败" in message
     assert "原因=session_expired" in message
     assert "HTTP=401" in message
+    assert "example/getUserInfo" not in message
+    assert "sensitive-actual" not in message
+    assert "sensitive-expected" not in message
+    assert "ConnectTimeout" not in message
+
+    diagnostic_message = format_probe_validation_error(
+        {
+            "valid": False,
+            "results": [
+                {
+                    "stage": "city_ops",
+                    "ok": False,
+                    "reason": "probe_error",
+                    "error": "ConnectTimeout: https://example/getUserInfo",
+                }
+            ],
+        },
+        include_diagnostics=True,
+    )
+    assert "错误类型=ConnectTimeout" in diagnostic_message
+    assert "example/getUserInfo" not in diagnostic_message
 
 
 def test_probe_classification_marks_redirect_as_authentication_failure():
