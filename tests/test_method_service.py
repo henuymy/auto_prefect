@@ -11,6 +11,7 @@ from services.method_service import (
     build_cookie_string,
     download_one_report,
     download_reports,
+    download_reports_from_config,
     EmptyReportDataError,
     filename_from_content_disposition,
     find_stage,
@@ -29,6 +30,44 @@ def write_json(path, payload):
 
 def make_work_dir():
     return Path(tempfile.mkdtemp(prefix="auto_notify_method_test_"))
+
+
+def test_download_reports_from_config_prepares_required_stage_with_broker(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        config_path = work_dir / "config" / "modules" / "report_downloader.json"
+        write_json(
+            config_path,
+            {"reports": [{"name": "日报", "stage": "report_analysis", "url": "https://example.test"}]},
+        )
+        write_json(work_dir / "config" / "modules" / "autologin.json", {"required_stages": []})
+        captured = {}
+
+        class FakeBroker:
+            def __init__(self, *, base_dir):
+                assert base_dir == work_dir
+
+            def ensure(self, config):
+                captured["session_config"] = config
+                return {
+                    "status": "reused",
+                    "stage_data": {"report_analysis": {"stage": "report_analysis", "cookies": []}},
+                }
+
+        monkeypatch.setattr("services.session_broker.StageSessionBroker", FakeBroker)
+        monkeypatch.setattr(
+            "services.method_service.download_reports",
+            lambda config, **_kwargs: captured.setdefault("download_config", config) or {"results": []},
+        )
+
+        download_reports_from_config("config/modules/report_downloader.json", base_dir=work_dir)
+
+        assert captured["session_config"]["required_stages"] == ["report_analysis"]
+        assert captured["download_config"]["stage_data"] == {
+            "report_analysis": {"stage": "report_analysis", "cookies": []}
+        }
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def test_request_report_retries_network_timeout(monkeypatch):
@@ -379,6 +418,7 @@ def test_download_reports_dry_run_writes_manifest():
         manifest = download_reports(
             {
                 "cookie_dump_path": str(cookie_dump_path),
+                "stage_data": {"report_analysis": {"stage": "report_analysis", "cookies": []}},
                 "manifest_path": str(manifest_path),
                 "reports": [
                     {
@@ -513,6 +553,7 @@ def test_download_reports_json_to_excel_writes_output(monkeypatch):
         manifest = download_reports(
             {
                 "cookie_dump_path": str(cookie_dump_path),
+                "stage_data": {"city_ops": {"stage": "city_ops", "cookies": []}},
                 "manifest_path": str(manifest_path),
                 "output_dir": str(output_dir),
                 "reports": [
@@ -579,6 +620,7 @@ def test_download_reports_file_converts_xls_output_path(monkeypatch):
         manifest = download_reports(
             {
                 "cookie_dump_path": str(cookie_dump_path),
+                "stage_data": {"report_analysis": {"stage": "report_analysis", "cookies": []}},
                 "manifest_path": str(manifest_path),
                 "output_dir": str(output_dir),
                 "reports": [
@@ -647,6 +689,7 @@ def test_download_reports_retries_xls_normalization_once(monkeypatch):
         manifest = download_reports(
             {
                 "cookie_dump_path": str(cookie_dump_path),
+                "stage_data": {"report_analysis": {"stage": "report_analysis", "cookies": []}},
                 "manifest_path": str(manifest_path),
                 "output_dir": str(output_dir),
                 "reports": [

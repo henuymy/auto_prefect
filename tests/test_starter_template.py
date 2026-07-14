@@ -84,10 +84,19 @@ def test_generate_starter_template_uses_request_snapshot(monkeypatch):
             "_build_download_config",
             lambda downloads, _run_dir: {"reports": downloads},
         )
-        monkeypatch.setattr(starter_template, "_prepare_required_session", lambda stages: {"status": "reused", "validation": {"required": stages}})
+        monkeypatch.setattr(
+            starter_template,
+            "_prepare_required_session",
+            lambda stages: {
+                "status": "reused",
+                "validation": {"required": stages},
+                "stage_data": {"custom_stage": {"stage": "custom_stage", "cookies": []}},
+            },
+        )
 
         def fake_download_reports(config, base_dir, dry_run=False, debug=False):
             assert config["reports"][0]["name"] == "页面未保存下载项"
+            assert config["stage_data"] == {"custom_stage": {"stage": "custom_stage", "cookies": []}}
             return {
                 "results": [
                     {
@@ -203,12 +212,22 @@ def test_generate_starter_template_relogs_once_when_session_expired(monkeypatch)
 
         def fake_prepare(stages, force_refresh=False):
             session_calls.append(force_refresh)
-            return {"status": "refreshed" if force_refresh else "reused"}
+            return {
+                "status": "refreshed" if force_refresh else "reused",
+                "stage_data": {
+                    "smart_ops": {
+                        "stage": "smart_ops",
+                        "cookies": [{"name": "refreshed" if force_refresh else "initial"}],
+                    }
+                },
+            }
 
         download_calls = {"count": 0}
 
         def fake_download_reports(config, base_dir, dry_run=False, debug=False):
             download_calls["count"] += 1
+            expected_cookie = "initial" if download_calls["count"] == 1 else "refreshed"
+            assert config["stage_data"]["smart_ops"]["cookies"] == [{"name": expected_cookie}]
             if download_calls["count"] == 1:
                 raise RuntimeError("JSON 接口返回 session 已过期: reCode=1101, reMsg=单点登录超时，请登录后重新跳转")
             return {

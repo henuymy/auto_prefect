@@ -101,15 +101,13 @@ pwsh -File scripts/setup_windows_env.ps1
 config/modules/login_config.local.json
 config/modules/wecom_sender.local.json
 config/runtime.local.json
-scripts/prefect_env_prod.local.ps1
 ```
 
 ### 统一运行配置
 
 将 `config/runtime.local.example.json` 复制为 `config/runtime.local.json`，在该文件中统一维护 Prefect PostgreSQL、驾驶舱 MySQL、Prefect API 地址和 Work Pool。该本地文件已被 Git 忽略，不能提交。
 
-启动脚本优先使用 JSON；仅在 JSON 缺失时，才回退读取
-`scripts/environment.local.ps1` 和旧的 `scripts/prefect_env_prod.local.ps1`。
+启动脚本只读取 JSON 配置。
 `prefect.postgres.url` 指定 Prefect 直接使用的 PostgreSQL 数据库；测试环境可使用
 `prefect_test`，正式环境可切换为新的干净数据库。
 运行配置必须声明固定共享目录 `C:\AutoNotifyRuntime` 和三个 Process Work Pool：
@@ -218,7 +216,7 @@ Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge �
 - 业务 Flow 仅在明确的会话失效时强刷新一次会话，并仅重试失败的业务步骤一次。
 - 完整登录仅捕获调用方声明的业务阶段 Cookie；未声明阶段范围的手工登录仍捕获全部阶段。
 - 请求状态码、探活原因与自动恢复边界见 [请求故障分类与处理](docs/request-failure-handling.md)。
-- 故障去重状态保存在 `runtime/session_keeper/incident_state.json`。在 Prefect UI 中打开上述 Deployment 查看最新运行，或执行 `python -m prefect flow-run ls --flow-name session-keeper-flow --limit 1`。
+- 会话告警去重状态保存在 `runtime/session/session-alerts/incident_state.json`；开发环境业务 Run 告警状态保存在 `runtime/session/business-alerts/incident_state.json`。两者都会映射到共享运行根目录，而不会写入代码仓库。在 Prefect UI 中打开上述 Deployment 查看最新运行，或执行 `python -m prefect flow-run ls --flow-name session-keeper-flow --limit 1`。
 - 支持日志不得复制账号密码、Cookie、Token、Webhook 值或其他认证材料。
 
 ## 积压与故障恢复

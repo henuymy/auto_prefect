@@ -1185,14 +1185,12 @@ def prepare_session_from_config(
     force_refresh=False,
     login_attempts: int | None = None,
 ):
+    from services.session_broker import StageSessionBroker
+
     config_path = resolve_path(config_path, base_dir)
     config, _ = load_json(config_path)
-    # The bundled module configs intentionally express runtime paths from the
-    # project root, not from config/modules. Preserve the caller's base_dir so
-    # direct helper use resolves Cookie files and login commands consistently.
-    return prepare_session(
+    return StageSessionBroker(base_dir=base_dir).ensure(
         config,
-        base_dir=base_dir,
         force_refresh=force_refresh,
         login_attempts=login_attempts,
     )

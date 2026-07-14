@@ -11,7 +11,7 @@ from openpyxl import Workbook, load_workbook
 
 from services.method_service import download_reports
 from services.runtime_paths import display_path, resolve_runtime_path
-from services.session_manager import prepare_session
+from services.session_broker import StageSessionBroker
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_structure
 
@@ -140,7 +140,10 @@ def _prepare_required_session_with_refresh(stages: list[str], force_refresh: boo
     autologin_path = PROJECT_ROOT / "config" / "modules" / "autologin.json"
     config = _read_json(autologin_path)
     config["required_stages"] = stages
-    return prepare_session(config, base_dir=PROJECT_ROOT, force_refresh=force_refresh)
+    return StageSessionBroker(base_dir=PROJECT_ROOT).ensure(
+        config,
+        force_refresh=force_refresh,
+    )
 
 
 def _session_status_message(session_result: dict[str, Any]) -> str:
@@ -160,13 +163,21 @@ def _is_session_expired_error(exc: RuntimeError) -> bool:
     return "session 已过期" in str(exc)
 
 
-def _download_reports_with_session_retry(download_config: dict[str, Any], stages: list[str]) -> dict[str, Any]:
+def _download_reports_with_session_retry(
+    download_config: dict[str, Any],
+    stages: list[str],
+    session_result: dict[str, Any],
+) -> dict[str, Any]:
+    download_config["stage_data"] = session_result.get("stage_data") or {}
     try:
         return download_reports(download_config, base_dir=PROJECT_ROOT, dry_run=False, debug=False)
     except RuntimeError as exc:
         if not _is_session_expired_error(exc):
             raise
-        _prepare_required_session_with_refresh(stages, force_refresh=True)
+        refreshed_session = _prepare_required_session_with_refresh(stages, force_refresh=True)
+        if refreshed_session.get("status") == "invalid":
+            raise RuntimeError(f"会话不可用: {refreshed_session.get('reason')}")
+        download_config["stage_data"] = refreshed_session.get("stage_data") or {}
         return download_reports(download_config, base_dir=PROJECT_ROOT, dry_run=False, debug=False)
 
 
@@ -258,6 +269,7 @@ def generate_starter_template(config: dict[str, Any], progress: Callable[[str, s
 
     stages = _required_stages(downloads)
     _emit_progress(progress, "探活/登录", f"正在探活本次下载所需 stage: {', '.join(stages) or '无'}")
+    session_result: dict[str, Any] = {}
     if stages:
         session_result = _prepare_required_session(stages)
         _emit_progress(progress, "探活/登录", _session_status_message(session_result))
@@ -267,7 +279,11 @@ def generate_starter_template(config: dict[str, Any], progress: Callable[[str, s
     download_config = _build_download_config(downloads, run_dir)
     _write_json(run_dir / "download_config.json", download_config)
     _emit_progress(progress, "下载数据", f"正在下载 {len(downloads)} 个抓取项")
-    download_manifest = _download_reports_with_session_retry(download_config, stages)
+    download_manifest = _download_reports_with_session_retry(
+        download_config,
+        stages,
+        session_result,
+    )
     _emit_progress(progress, "合并模板", "正在把下载数据写入新手模板")
     merged_sheets = _merge_downloads_to_template(download_manifest, template_path)
     relative_path = template_path.relative_to(PROJECT_ROOT).as_posix()

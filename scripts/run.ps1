@@ -14,16 +14,8 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "lib\python_env.ps1")
 . (Join-Path $PSScriptRoot "lib\runtime_config.ps1")
 . (Join-Path $PSScriptRoot "lib\process_registry.ps1")
-$UnifiedLocalEnvPath = Join-Path $PSScriptRoot "environment.local.ps1"
-$LegacyLocalEnvPath = Join-Path $PSScriptRoot "prefect_env_prod.local.ps1"
 if (-not (Import-ProjectRuntimeConfig)) {
-    if (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
-        . $UnifiedLocalEnvPath
-    } elseif (Test-Path -LiteralPath $LegacyLocalEnvPath) {
-        . $LegacyLocalEnvPath
-    } else {
-        throw "缺少运行配置。请创建 config\runtime.local.json，或在迁移期使用 scripts\environment.local.ps1。"
-    }
+    throw "缺少运行配置。请创建 config\runtime.local.json。"
 }
 . (Join-Path $PSScriptRoot "tools\dashboard\mysql_env.ps1")
 

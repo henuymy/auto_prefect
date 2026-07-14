@@ -1,6 +1,6 @@
 {
   "autologin_config_path": "config/modules/autologin.json",
   "alert_config_path": "config/modules/wecom_sender.json",
-  "incident_state_path": "runtime/session/session-keeper/incident_state.json",
+  "incident_state_path": "runtime/session/session-alerts/incident_state.json",
   "required_stages": ["city_ops"]
 }

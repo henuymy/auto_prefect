@@ -1,4 +1,7 @@
-from services.business_run_alert_service import notify_business_run_failure
+from services.business_run_alert_service import (
+    business_alert_state_path,
+    notify_business_run_failure,
+)
 
 
 def incident(flow_run_id="run-1"):
@@ -41,3 +44,12 @@ def test_business_run_alert_is_disabled_outside_development(tmp_path):
     result = notify_business_run_failure(config, incident(), sender=lambda *_args, **_kwargs: None)
 
     assert result == {"sent": False, "suppressed": True, "reason": "environment"}
+
+
+def test_business_alert_state_is_written_under_external_runtime_root(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "shared-runtime"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
+
+    assert business_alert_state_path(tmp_path / "project") == (
+        runtime_root / "session" / "business-alerts" / "incident_state.json"
+    ).resolve()

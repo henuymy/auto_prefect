@@ -430,12 +430,13 @@ def run_auto_notify_pipeline(config_path=None):
 
     if steps.get("login", {}).get("enabled", False):
         initial_force_refresh = bool(steps["login"].get("force_refresh", False))
-        prepare_notify_session(
+        active_session = prepare_notify_session(
             login_config,
             force_refresh=initial_force_refresh,
         )
     else:
         initial_force_refresh = False
+        active_session = {}
 
     refresh_budget = RefreshBudget(consumed=initial_force_refresh)
 
@@ -448,6 +449,7 @@ def run_auto_notify_pipeline(config_path=None):
         download_config = build_download_config(read_json(steps["download"]["config_path"]), report_cfg)
         download_config["output_dir"] = str(flow_runtime_path(flow_runtime_dir, "tmp", "downloads"))
         download_config["manifest_path"] = str(flow_runtime_path(flow_runtime_dir, "debug", "download_manifest.json"))
+        download_config["stage_data"] = active_session.get("stage_data") or {}
 
         def download_operation():
             return download_reports_task(
@@ -460,8 +462,11 @@ def run_auto_notify_pipeline(config_path=None):
             return download_operation()
 
         def refresh_session():
+            nonlocal active_session
             logger.warning("下载失败（session 过期），强制重新登录后重试")
-            return prepare_notify_session(login_config, force_refresh=True)
+            active_session = prepare_notify_session(login_config, force_refresh=True)
+            download_config["stage_data"] = active_session.get("stage_data") or {}
+            return active_session
 
         return run_notify_download_with_session_refresh(
             download_operation,

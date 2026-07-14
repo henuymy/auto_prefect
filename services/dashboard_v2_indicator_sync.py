@@ -27,7 +27,6 @@ from services.dashboard_v2_trigger import (
     sanitize_error,
 )
 from services.dashboard_v2_indicator_service import sync_v2_indicator_records
-from services.method_service import find_stage, load_json
 from services.session_broker import StageSessionBroker
 from services.session_manager import file_lock, prepare_session
 
@@ -79,13 +78,10 @@ def execute_dashboard_v2_indicator_sync(
             )
             if session_result.get("status") == "invalid":
                 raise RuntimeError("V2 指标同步 city_ops 会话不可用")
-            cookie_path = session_result.get("cookie_dump_path")
-            if not cookie_path:
-                raise RuntimeError("V2 指标同步未返回 cookie_dump_path")
-            stage = find_stage(
-                load_json(resolve_project_path(cookie_path)),
-                str(config.get("required_stage") or "city_ops"),
-            )
+            stage_name = str(config.get("required_stage") or "city_ops")
+            stage = (session_result.get("stage_data") or {}).get(stage_name)
+            if not stage:
+                raise RuntimeError(f"V2 指标同步未返回 stage_data: {stage_name}")
             with dashboard_mysql_lock(
                 engine,
                 lock_name=str(

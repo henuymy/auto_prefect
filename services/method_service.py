@@ -642,7 +642,6 @@ def write_manifest(path, manifest):
 
 
 def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
-    cookie_dump_path = resolve_path(config.get("cookie_dump_path", "runtime/session/cookie_dump.json"), base_dir)
     output_dir = resolve_path(config.get("output_dir", "runtime/modules/report_downloader/output/downloads"), base_dir)
     manifest_path = resolve_path(config.get("manifest_path", "runtime/modules/report_downloader/output/download_manifest.json"), base_dir)
     timeout = int(config.get("request_timeout_seconds", 120))
@@ -652,8 +651,7 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
     proxies = config.get("proxies") or None
     results = []
     reports = [report for report in config.get("reports", []) if report.get("enabled", True)]
-    needs_cookie_dump = any((report.get("source") or "http_api") != "tencent_sheet" for report in reports)
-    cookie_dump = load_json(cookie_dump_path) if needs_cookie_dump else {"stages": []}
+    provided_stages = config.get("stage_data") or {}
     for report in reports:
         name = report.get("name", report.get("url", "未命名报表"))
         if report.get("source") == "tencent_sheet":
@@ -680,7 +678,9 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
         stage_name = report.get("stage")
         if not stage_name:
             raise ValueError(f"报表 {name} 缺少 stage")
-        stage = find_stage(cookie_dump, stage_name)
+        stage = provided_stages.get(stage_name)
+        if not stage:
+            raise RuntimeError(f"报表 {name} 未从 SessionBroker 获取 stage_data: {stage_name}")
         if dry_run:
             payload = {
                 "name": name,
@@ -697,7 +697,7 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
 
     manifest = {
         "generated_at": datetime.now().isoformat(),
-        "cookie_dump_path": str(cookie_dump_path),
+        "stage_names": sorted(provided_stages),
         "dry_run": dry_run,
         "results": results,
     }
@@ -708,4 +708,25 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
 def download_reports_from_config(config_path, base_dir=PROJECT_DIR, dry_run=False, debug=False):
     config_path = resolve_path(config_path, base_dir)
     config = load_json(config_path)
+    required_stages = sorted(
+        {
+            str(report.get("stage") or "").strip()
+            for report in config.get("reports") or []
+            if report.get("enabled", True) and report.get("source") != "tencent_sheet"
+        }
+        - {""}
+    )
+    if required_stages:
+        from services.session_broker import StageSessionBroker
+
+        session_config_path = resolve_path(
+            config.pop("session_config_path", "config/modules/autologin.json"),
+            base_dir,
+        )
+        session_config = load_json(session_config_path)
+        session_config["required_stages"] = required_stages
+        session_result = StageSessionBroker(base_dir=base_dir).ensure(session_config)
+        if session_result.get("status") == "invalid":
+            raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
+        config["stage_data"] = session_result.get("stage_data") or {}
     return download_reports(config, base_dir=config_path.parent, dry_run=dry_run, debug=debug)

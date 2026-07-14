@@ -32,9 +32,8 @@
 
 ### 4. 管理本地配置与密钥
 
-- 提供可提交的 `*.example.*` 模板。
-- 提供被 Git 忽略的 `*.local.*` 实际配置文件。
-- 统一本地配置入口，避免数据库、端口和凭据分散在多个脚本。
+- 提供可提交的 JSON 配置模板与被 Git 忽略的 `config/runtime.local.json` 实际配置文件。
+- 统一本地配置入口，避免数据库、端口和凭据分散在多个脚本或 PowerShell profile。
 - 配置文件中只保存连接信息和运行参数，不保存业务代码或临时运行产物。
 
 ### 5. 实现与测试
@@ -96,7 +95,10 @@ Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分�
 ```text
 C:\AutoNotifyRuntime\
   session\
-    cookie_dump.json
+    stages\
+      report_analysis.json
+      city_ops.json
+    stage_health.json
     browser-session.json
     browser-profile\
     locks\
@@ -124,7 +126,7 @@ C:\AutoNotifyRuntime\
 
 这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、`runtime/cookies`、`runtime/browser_session` 或其他未分类路径。业务配置中的 `runtime/...` 必须通过统一路径服务映射到共享运行根目录；Flow 内部只可接受共享运行根目录下的绝对路径，并继续拒绝根目录外的绝对路径、`../` 与旧目录格式。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态、浏览器 Profile、草稿、配置版本、日志、健康检查、新手模板中间产物和登录调试文件；同名目标冲突时保留源目录，不自动覆盖。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
 
-`setup_windows_env.ps1` 预建 `session\locks`、`config\{drafts,versions}`、`modules`、`flow`、`health`、`logs`、`starter_templates` 和 `temp` 骨架。首次登录由 Session Manager 在 `session\browser-profile` 创建 Profile，并在 `session` 下写入 Cookie 与健康状态。
+`setup_windows_env.ps1` 预建 `session\locks`、`config\{drafts,versions}`、`modules`、`flow`、`health`、`logs`、`starter_templates` 和 `temp` 骨架。首次登录由 Session Manager 在 `session\browser-profile` 创建 Profile；Stage SessionBroker 将已验证的阶段数据写入 `session\stages` 并维护 `stage_health.json`。全量 Cookie 快照只可作为 Broker 内部的临时兼容文件，方法结束后必须删除。
 
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
 
@@ -140,11 +142,13 @@ C:\AutoNotifyRuntime\
 - 驾驶舱只保留 V2 数据模型、服务、运行记录与迁移链路，不支持 V1 运行时分派。
 - 数据库迁移唯一入口为：`alembic -c alembic_dashboard_v2.ini upgrade head`。
 - 运行状态使用 V2 collection-run 存储；状态接口和任务入口不得导入 V1 run store 或 V1 trigger 路径。
-- 驾驶舱模块产物写入 `runtime/modules/dashboard/output/...`；历史迁移审核包仅能作为离线输入或输出，默认目录为 `runtime/modules/dashboard/output/v2_migration`，不得作为日常 Flow 的运行依赖。
+- 驾驶舱模块产物写入 `runtime/modules/dashboard/output/...`；不保留历史 V2 迁移审核导出工具，历史追溯应使用版本库提交和已归档产物。
 
 ### 会话生命周期约定
 
-Session Keeper 和所有业务 Flow 必须复用共享 Session Manager 与全局登录锁。不得新增绕过该管理器或锁的直接登录入口；当前登录使用无头模式并保留同一浏览器 Profile 与进程，业务重试仅允许在明确的会话失效后强刷新一次并重试失败步骤一次。
+Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通过 `StageSessionBroker` 获取会话。Broker 使用独立状态锁与全局登录锁，按所需 stage 重建临时兼容快照、探活并持久化独立 stage 快照及健康状态；成功后删除遗留 `cookie_dump.json` 和临时快照。调用方只能消费返回的内存 `stage_data`，不得重新读取 Cookie 文件。
+
+当前登录使用无头模式并保留同一浏览器 Profile 与进程；业务请求明确认证失效时只允许强刷新一次并重试失败步骤一次。Session Keeper 仅作预热，分别调度 `report_analysis` 与 `city_ops`，不发送会话失败或恢复通知。development 环境的最终业务 Run 失败由外层 Flow 按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
 
 请求故障按认证失效、基础设施、接口契约和业务结果处理。302、401、403、登录页语义和 `reCode=1101` 的认证边界，以及 429、5xx、超时和 JSON 契约失败的处理规则，统一见 [docs/request-failure-handling.md](docs/request-failure-handling.md)。运行日志不得输出完整内部 URL、认证材料或响应正文。
 
@@ -173,12 +177,21 @@ pwsh -File scripts/stop.ps1
 
 ## 四、变更记录
 
+### 2026-07-14 - 阶段会话收敛与脚本兼容层清理
+
+- 原因：共享 `cookie_dump.json` 使不同业务 stage 相互影响，下载与维护脚本可绕过会话策略；旧公网栈、PowerShell profile 回退和一次性迁移脚本长期共存，增加凭据残留与误启动风险。
+- 修改内容：以 `StageSessionBroker` 统一 Session Keeper、通知 Flow、驾驶舱 V2、新手模板、配置式下载及受支持指标样本工具的会话准备；下载器仅接受内存 `stage_data`；Broker 返回保留底层诊断字段、以独立锁串行化 stage 状态、成功后清理临时及遗留全量 Cookie 快照。业务告警仅在 development 环境最终失败时发送一次，Keeper 改为分阶段预热。删除旧公网栈、兼容转发、City Ops 临时诊断、历史 V2 迁移导出和硬编码模板脚本；启动链只读取 `config/runtime.local.json`，不再加载 PowerShell 本机 profile。
+- 涉及文件：`services/{session_broker,session_manager,method_service}.py`、`tasks/session_tasks.py`、`flows/notify_single_flow.py`、`services/dashboard_v2_*`、`backend/services/starter_template.py`、`services/business_run_alert_service.py`、`config/modules/session_keeper*.json`、`scripts/`、`README.md`、`PROJECT_GUIDE.md` 与相关测试。
+- 配置或迁移：运行环境必须具备 `config/runtime.local.json`；保留的 `*.local.ps1` 不再被加载。旧公网栈、V1/V2 历史迁移导出和 Cookie 文件回退均不受支持；如需追溯或恢复，只能使用清理前的版本库提交与隔离运行环境。
+- 验证：`python -m pytest -p no:cacheprovider tests/test_development_environment_contract.py tests/test_session_broker.py tests/test_session_manager.py tests/test_method_service.py tests/test_notify_flow_session.py tests/test_dashboard_v2_trigger.py tests/test_session_keeper_flow.py tests/test_starter_template.py tests/test_dashboard_metric_sample.py -q`，`158 passed`；Python 编译检查与 `git diff --check` 通过。
+- 风险与回滚：运行前必须完成 JSON 本机配置，不能依赖旧 PowerShell profile；回滚必须整体切回清理前提交，不能混用旧脚本、全量 Cookie 快照和新 Broker 状态目录。
+
 ### 2026-07-14 - Runtime 路径收口与驾驶舱 V2-only 清理
 
 - 原因：共享运行目录迁移后，新手模板清单和配置删除仍尝试生成仓库相对路径；驾驶舱还保留 V1 任务分派、手工入口、数据库模型、迁移链和旧输出目录。
 - 修改内容：增加统一路径展示和运行根目录绝对路径校验；修复草稿删除、新手模板和迁移工具的共享 Runtime 路径；抽离 V2 所需的采集、结构比对、指标和运行记录通用能力；删除 V1 运行代码、迁移、手工工具与测试；任务、手工采集、健康检查和 MySQL 本机覆盖均固定为 V2。
 - 涉及文件：`services/runtime_paths.py`、`backend/services/{config_store,starter_template,prefect_runner,health_service}.py`、`services/dashboard_*`、`infrastructure/dashboard_run_protocol.py`、`tasks/dashboard_tasks.py`、`scripts/tools/dashboard/`、`models/dashboard_*.py`、`migrations/dashboard/`、V2 测试与项目文档。
-- 配置或迁移：当前运行环境只允许 `dashboard_v2` 和 `alembic_dashboard_v2.ini`；已移除的 V1 Alembic 链不能用于回滚。历史迁移包工具保留为离线审计能力，默认写入共享模块输出目录。
+- 配置或迁移：当前运行环境只允许 `dashboard_v2` 和 `alembic_dashboard_v2.ini`；已移除的 V1 Alembic 链不能用于回滚。历史迁移审核应使用版本库提交和已归档产物。
 - 验证：运行 Runtime 与 Dashboard V2 聚焦测试、完整 Pytest 收集、Ruff、`compileall`、V1 引用扫描和 `git diff --check`。
 - 风险与回滚：该清理不再支持 V1 数据库或脚本回退；如需恢复 V1，必须切回清理前的完整提交并使用独立数据库，禁止与 V2 代码或数据库混用。
 

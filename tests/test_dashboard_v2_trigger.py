@@ -36,6 +36,8 @@ def make_configs(tmp_path: Path) -> tuple[Path, Path, Path]:
         autologin_path,
         {
             "cookie_dump_path": str(tmp_path / "cookie_dump.json"),
+            "stage_session_dir": str(tmp_path / "stages"),
+            "stage_health_path": str(tmp_path / "stage_health.json"),
             "required_stages": ["report_analysis", "city_ops"],
             "stage_probes": {
                 "report_analysis": {"enabled": False},

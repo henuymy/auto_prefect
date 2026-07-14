@@ -13,25 +13,9 @@
 
 - `lib/`：仅供入口脚本加载的 PowerShell/Python 实现，不直接作为日常命令运行。
 - `tools/`：一次性维护、导入导出和诊断工具；`tools/dashboard/` 是驾驶舱专项工具。
-- `dev/`：开发环境、模拟与诊断脚本，不能用于生产运行栈；包括
-  `test_city_ops_drilldown.py` 等会调用真实业务接口的人工诊断工具。
-- `legacy/`：旧公网栈和计划任务脚本，仅为兼容保留。根目录的
-  `start_public_stack.ps1`、`stop_public_stack.ps1` 只转发到这里，不应用于当前三 Pool 架构。
-- `dashboard/`：被忽略的本机驾驶舱连接覆盖文件；不提交其中的 `*.local.ps1`。
+- `dev/`：开发环境与并发登录模拟脚本，不能用于生产运行栈。
 
 ## 完整脚本索引
-
-### 根目录与本机覆盖
-
-| 文件 | 用途 |
-| --- | --- |
-| `start_public_stack.ps1` | 已废弃公网栈的兼容启动转发入口。 |
-| `stop_public_stack.ps1` | 已废弃公网栈的兼容停止转发入口。 |
-| `environment.local.example.ps1` | 旧式本机环境变量覆盖模板。 |
-| `environment.local.ps1` | 本机环境变量实际值，已忽略。 |
-| `prefect_env_prod.local.ps1` | 旧式 Prefect 连接覆盖，已忽略。 |
-| `dashboard/mysql_env.local.ps1` | 默认驾驶舱 MySQL 本机覆盖，已忽略。 |
-| `dashboard/mysql_env.v2.local.ps1` | V2 驾驶舱 MySQL 本机覆盖，已忽略。 |
 
 ### 内部库 `lib/`
 
@@ -40,7 +24,7 @@
 | `python_env.ps1` | 统一定位项目 Python 解释器。 |
 | `runtime_config.ps1` | 读取 `config/runtime.local.json` 并导出运行时环境变量。 |
 | `process_registry.ps1` | 登记、校验和停止受管进程，并维护启动互斥锁。 |
-| `prefect_env_prod.ps1` | 兼容加载 Prefect 运行环境配置。 |
+| `prefect_env_prod.ps1` | 加载 Prefect 运行环境配置。 |
 | `prefect_start.ps1` | 启动 Prefect Server 或 Worker，并登记后台进程。 |
 | `prefect_stop.ps1` | 停止 Prefect 相关进程的底层实现。 |
 | `prefect_startup_reconcile.py` | 启动前检查和清理过期调度任务，阻止不安全的旧 Pool 切换。 |
@@ -52,23 +36,9 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `env.ps1` | 加载开发环境变量和旧配置兼容项。 |
+| `env.ps1` | 加载开发环境变量。 |
 | `prefect_env_debug.ps1` | 提供 Prefect 本地调试配置。 |
-| `start.ps1` | 转发到根目录 `run.ps1`。 |
-| `status.ps1` | 转发到根目录 `status.ps1`。 |
-| `stop.ps1` | 转发到根目录 `stop.ps1`。 |
 | `simulate_clean_concurrent_login.ps1` | 模拟并发登录和干净会话场景。 |
-| `test_city_ops_drilldown.py` | 使用真实 City Ops 会话执行下钻请求并导出 Excel；仅人工诊断使用。 |
-
-### 旧公网栈 `legacy/`
-
-| 文件 | 用途 |
-| --- | --- |
-| `public_stack.ps1` | 旧的公网 Prefect、Web 与 FRP 运行栈总控脚本。 |
-| `start_public_stack.ps1` | 调用旧公网栈启动流程。 |
-| `stop_public_stack.ps1` | 调用旧公网栈停止流程。 |
-| `install_public_stack_schedule.ps1` | 安装旧公网栈计划任务。 |
-| `uninstall_public_stack_schedule.ps1` | 移除旧公网栈计划任务。 |
 
 ## 驾驶舱工具
 
@@ -80,8 +50,7 @@ python scripts/tools/dashboard/run_collection.py --help
 
 | 文件 | 用途 |
 | --- | --- |
-| `mysql_env.ps1` | 加载驾驶舱 MySQL 配置，优先使用统一 JSON 配置。 |
-| `mysql_env.example.ps1` | MySQL 覆盖配置模板。 |
+| `mysql_env.ps1` | 加载统一 JSON 中的驾驶舱 MySQL 配置。 |
 | `run_v2_mysql_tests.ps1` | 使用可丢弃的 V2 测试库运行 MySQL 集成测试。 |
 | `create_v2_databases.sql.example` | 创建 V2 正式库与测试库的 SQL 示例。 |
 | `run_collection.py` | 手工执行一批 Dashboard V2 采集任务。 |
@@ -92,8 +61,6 @@ python scripts/tools/dashboard/run_collection.py --help
 | `import_v2_target_plan.py` | 从 JSON 导入并激活 V2 指标目标方案。 |
 | `export_indicator_candidates.py` | 从报表配置扫描并导出候选指标。 |
 | `export_metric_sample.py` | 导出单个指标的原始采集样本，不写 MySQL。 |
-| `export_v2_migration_bundle.py` | 离线导出历史迁移审核包；不能用于当前 Dashboard V2 运行链。 |
-| `generate_metric_target_template.py` | 基于区域和指标参考数据生成目标值 Excel 模板。 |
 
 这些工具可能读取生产会话、访问数据库或写出 Excel；执行前确认目标环境和输入文件，不要把它们接入日常启动入口。
 

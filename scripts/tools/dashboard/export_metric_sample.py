@@ -23,11 +23,11 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from services.method_service import download_reports
-from services.runtime_paths import runtime_path
+from services.session_broker import StageSessionBroker
 
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config" / "reports" / "家客和存量通报.json"
-DEFAULT_COOKIE_DUMP_PATH = runtime_path("session/cookie_dump.json")
+DEFAULT_AUTOLOGIN_CONFIG_PATH = PROJECT_DIR / "config" / "modules" / "autologin.json"
 DEFAULT_OUTPUT_PATH = PROJECT_DIR / "docs" / "数据驾驶舱单指标采集样本.xlsx"
 DEFAULT_INDICATOR_CODE = "sgs_ajvwdz"
 DEFAULT_INDICATOR_NAME = "爱家亲情网(V网版)"
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
         description="完整采集单个指标并导出原始样本，不写入 MySQL"
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
-    parser.add_argument("--cookie-dump", type=Path, default=DEFAULT_COOKIE_DUMP_PATH)
+    parser.add_argument("--autologin-config", type=Path, default=DEFAULT_AUTOLOGIN_CONFIG_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--indicator-code", default=DEFAULT_INDICATOR_CODE)
     parser.add_argument("--indicator-name", default=DEFAULT_INDICATOR_NAME)
@@ -268,14 +268,17 @@ def write_workbook(
 
 
 def export_sample(args: argparse.Namespace) -> tuple[Path, list[dict], dict]:
-    if not args.cookie_dump.resolve().exists():
-        raise FileNotFoundError(f"Cookie 文件不存在: {args.cookie_dump.resolve()}")
     report = build_report(args)
+    login_config = json.loads(args.autologin_config.resolve().read_text(encoding="utf-8"))
+    login_config["required_stages"] = [str(report["stage"])]
+    session_result = StageSessionBroker(base_dir=PROJECT_DIR).ensure(login_config)
+    if session_result.get("status") == "invalid":
+        raise RuntimeError(f"会话不可用: {session_result.get('reason')}")
     with tempfile.TemporaryDirectory(prefix="dashboard-metric-sample-") as temp_value:
         temp_dir = Path(temp_value)
         manifest = download_reports(
             {
-                "cookie_dump_path": str(args.cookie_dump.resolve()),
+                "stage_data": session_result.get("stage_data") or {},
                 "output_dir": str(temp_dir),
                 "manifest_path": str(temp_dir / "manifest.json"),
                 "request_timeout_seconds": 120,

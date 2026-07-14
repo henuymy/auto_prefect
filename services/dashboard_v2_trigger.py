@@ -189,7 +189,7 @@ def execute_session_phase(
             "phase": "SESSION_READY",
             "trigger_type": normalized_trigger,
             "session_status": session_result.get("status"),
-            "cookie_dump_path": session_result.get("cookie_dump_path"),
+            "stage_data": session_result.get("stage_data") or {},
             "lock": lock_result,
             "run_record": record,
         }

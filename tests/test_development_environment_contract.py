@@ -43,15 +43,24 @@ def test_runtime_scripts_use_shared_python_resolver():
         assert "python_env.ps1" in (ROOT / relative_path).read_text(encoding="utf-8")
 
 
-def test_prefect_stop_keeps_legacy_kill_switch_and_public_callers_forward_it():
+def test_runtime_scripts_require_json_configuration_without_legacy_ps1_fallbacks():
+    for relative_path in (
+        "scripts/run.ps1",
+        "scripts/lib/prefect_start.ps1",
+        "scripts/lib/prefect_env_prod.ps1",
+        "scripts/tools/dashboard/mysql_env.ps1",
+        "scripts/dev/env.ps1",
+    ):
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "environment.local.ps1" not in source
+        assert "prefect_env_prod.local.ps1" not in source
+
+
+def test_prefect_stop_keeps_legacy_kill_switch():
     stop_source = (ROOT / "scripts" / "lib" / "prefect_stop.ps1").read_text(encoding="utf-8")
-    public_source = (ROOT / "scripts" / "legacy" / "public_stack.ps1").read_text(encoding="utf-8")
-    wrapper_source = (ROOT / "scripts" / "stop_public_stack.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$KillAutoNotifyPython = $true" in stop_source
     assert "if ($KillAutoNotifyPython)" in stop_source
-    assert "-KillAutoNotifyPython:$KillAutoNotifyPython" in public_source
-    assert "legacy\\stop_public_stack.ps1" in wrapper_source
 
 
 def test_readme_explains_dependency_file_roles():
@@ -99,20 +108,15 @@ def test_readme_declares_install_commands_and_feature_prerequisites():
     assert "涉及 Excel COM 的比对、模板更新和截图功能还需 Microsoft Excel" in source
 
 
-def test_single_local_environment_file_is_documented_and_loaded_first():
-    template = ROOT / "scripts" / "environment.local.example.ps1"
+def test_runtime_json_is_the_only_documented_local_configuration_source():
     prefect_source = (ROOT / "scripts" / "lib" / "prefect_env_prod.ps1").read_text(encoding="utf-8")
     mysql_source = (ROOT / "scripts" / "tools" / "dashboard" / "mysql_env.ps1").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
-    source = template.read_text(encoding="utf-8")
-    assert "AUTO_NOTIFY_PREFECT_DATABASE_URL" in source
-    assert "DASHBOARD_MYSQL_HOST" in source
-    assert "environment.local.ps1" in prefect_source
-    assert "environment.local.ps1" in mysql_source
-    assert "scripts/environment.local.ps1" in readme
-    assert "scripts/environment.local.ps1" in gitignore
+    assert "environment.local.ps1" not in prefect_source
+    assert "environment.local.ps1" not in mysql_source
+    assert "environment.local.ps1" not in readme
+    assert "config/runtime.local.json" in readme
 
 
 def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment():
@@ -383,11 +387,6 @@ $ErrorActionPreference = 'Stop'
             "work_pool": json_config["runtime"]["work_pools"]["notify"]["name"],
         }
 
-        config_path.unlink()
-        assert run_environment()["database_url"].startswith("postgresql+asyncpg://unified:")
-
-        unified_path.unlink()
-        assert run_environment()["database_url"].startswith("postgresql+asyncpg://legacy:")
     finally:
         for path, content in original_files.items():
             if content is None:
@@ -426,11 +425,9 @@ def test_prefect_helpers_use_configured_database_url_directly():
 
 def test_direct_database_documentation_uses_the_configured_database_name():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    environment_template = (ROOT / "scripts" / "environment.local.example.ps1").read_text(encoding="utf-8")
 
     assert "自动派生开发库" not in readme
-    assert "prefect_test" in environment_template
-    assert "directly to Prefect" in environment_template
+    assert "config/runtime.local.json" in readme
 
 
 def test_prefect_runtime_uses_a_fastapi_release_compatible_with_prefect_3_7():
@@ -858,18 +855,9 @@ def test_deprecated_scheduled_backlog_deletion_script_is_retired():
     assert "clear_scheduled_backlog.ps1" not in public_sources
 
 
-def test_legacy_dev_entry_points_only_forward_to_unified_scripts():
-    expected_targets = {
-        "scripts/dev/start.ps1": "run.ps1",
-        "scripts/dev/stop.ps1": "stop.ps1",
-        "scripts/dev/status.ps1": "status.ps1",
-    }
-
-    for relative_path, target in expected_targets.items():
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
-        assert target in source
-        assert "prefect deploy --all" not in source.lower()
-        assert "prefect flow run" not in source.lower()
+def test_legacy_dev_entry_points_are_removed():
+    for name in ("start.ps1", "stop.ps1", "status.ps1", "test_city_ops_drilldown.py"):
+        assert not (ROOT / "scripts" / "dev" / name).exists()
 
 
 def test_dashboard_v2_tools_are_archived_outside_lifecycle_scripts():
@@ -877,7 +865,6 @@ def test_dashboard_v2_tools_are_archived_outside_lifecycle_scripts():
     for name in (
         "initialize_v2_hierarchy.py",
         "import_v2_target_plan.py",
-        "export_v2_migration_bundle.py",
         "v2_cutover_audit.py",
     ):
         assert (tools_dir / name).is_file(), f"missing archived tool: {name}"
@@ -942,7 +929,7 @@ def test_docs_distinguish_automated_checks_from_unrun_live_acceptance():
         assert marker in guide
 
 
-def test_script_root_contains_only_public_entry_points_or_compatibility_wrappers():
+def test_script_root_contains_only_public_entry_points():
     root = ROOT / "scripts"
     for name in (
         "python_env.ps1",
@@ -954,11 +941,9 @@ def test_script_root_contains_only_public_entry_points_or_compatibility_wrappers
     ):
         assert not (root / name).exists(), f"internal script remains at root: {name}"
 
-    for relative_path, target in (
-        ("scripts/start_public_stack.ps1", "legacy\\start_public_stack.ps1"),
-        ("scripts/stop_public_stack.ps1", "legacy\\stop_public_stack.ps1"),
-    ):
-        assert target in (ROOT / relative_path).read_text(encoding="utf-8")
+    assert not (root / "start_public_stack.ps1").exists()
+    assert not (root / "stop_public_stack.ps1").exists()
+    assert not (root / "legacy").exists()
 
 
 def test_script_docs_keep_internal_helpers_and_diagnostics_out_of_root():
@@ -966,14 +951,13 @@ def test_script_docs_keep_internal_helpers_and_diagnostics_out_of_root():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
     assert not (root / "test_city_ops_drilldown.py").exists()
-    assert (root / "dev" / "test_city_ops_drilldown.py").is_file()
+    assert not (root / "dev" / "test_city_ops_drilldown.py").exists()
     assert "scripts/lib/start_web.ps1" in readme
     assert "scripts/start_web.ps1" not in readme
 
 
 def test_dashboard_tools_can_run_directly_from_the_repository_root():
     for relative_path in (
-        "scripts/tools/dashboard/export_v2_migration_bundle.py",
         "scripts/tools/dashboard/run_collection.py",
     ):
         result = subprocess.run(

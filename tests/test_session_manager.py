@@ -280,14 +280,17 @@ def test_prepare_session_from_config_keeps_project_base_dir():
             config_path,
             {
                 "cookie_dump_path": "state/cookies/cookie_dump.json",
+                "stage_session_dir": "state/stages",
+                "stage_health_path": "state/stage_health.json",
                 "required_stages": ["report_analysis"],
                 "allow_login": False,
             },
         )
         write_json(
-            cookie_dump_path,
-            {"stages": [{"stage": "report_analysis", "cookies": [{"name": "sid", "value": "x"}]}]},
+            work_dir / "state" / "stages" / "report_analysis.json",
+            {"stage": "report_analysis", "data": {"stage": "report_analysis", "cookies": [{"name": "sid", "value": "x"}]}},
         )
+        write_json(work_dir / "state" / "stage_health.json", {"report_analysis": {"status": "healthy"}})
 
         result = prepare_session_from_config(
             "config/modules/autologin.json",
@@ -295,7 +298,8 @@ def test_prepare_session_from_config_keeps_project_base_dir():
         )
 
         assert result["status"] == "reused"
-        assert result["cookie_dump_path"] == str(cookie_dump_path.resolve())
+        assert result["cookie_dump_path"] is None
+        assert not cookie_dump_path.exists()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -307,21 +311,17 @@ def test_prepare_session_from_config_rebases_runtime_state(monkeypatch, tmp_path
         config_path,
         {
             "cookie_dump_path": "runtime/session/cookie_dump.json",
+            "stage_session_dir": "runtime/session/stages",
+            "stage_health_path": "runtime/session/stage_health.json",
             "required_stages": ["report_analysis"],
             "allow_login": False,
         },
     )
     write_json(
-        shared_cookie_path,
-        {
-            "stages": [
-                {
-                    "stage": "report_analysis",
-                    "cookies": [{"name": "sid", "value": "x"}],
-                }
-            ]
-        },
+        tmp_path / "shared" / "session" / "stages" / "report_analysis.json",
+        {"stage": "report_analysis", "data": {"stage": "report_analysis", "cookies": [{"name": "sid", "value": "x"}]}},
     )
+    write_json(tmp_path / "shared" / "session" / "stage_health.json", {"report_analysis": {"status": "healthy"}})
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
 
     result = prepare_session_from_config(
@@ -329,7 +329,8 @@ def test_prepare_session_from_config_rebases_runtime_state(monkeypatch, tmp_path
     )
 
     assert result["status"] == "reused"
-    assert result["cookie_dump_path"] == str(shared_cookie_path.resolve())
+    assert result["cookie_dump_path"] is None
+    assert not shared_cookie_path.exists()
 
 
 def test_prepare_session_syncs_legacy_cookie_dump():

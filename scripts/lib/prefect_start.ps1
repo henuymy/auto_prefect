@@ -19,15 +19,9 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $PSScriptRoot "python_env.ps1")
 . (Join-Path $PSScriptRoot "process_registry.ps1")
 $ScriptsRoot = Split-Path -Parent $PSScriptRoot
-$UnifiedLocalEnvPath = Join-Path $ScriptsRoot "environment.local.ps1"
-$LegacyLocalEnvPath = Join-Path $ScriptsRoot "prefect_env_prod.local.ps1"
 . (Join-Path $PSScriptRoot "runtime_config.ps1")
 if (-not (Import-ProjectRuntimeConfig)) {
-    if (Test-Path -LiteralPath $UnifiedLocalEnvPath) {
-        . $UnifiedLocalEnvPath
-    } elseif (Test-Path -LiteralPath $LegacyLocalEnvPath) {
-        . $LegacyLocalEnvPath
-    }
+    throw "缺少运行配置。请创建 config\runtime.local.json。"
 }
 . (Join-Path $ScriptsRoot "tools\dashboard\mysql_env.ps1")
 if (-not $ApiUrl) {
@@ -182,7 +176,7 @@ print("postgres_ok")
     $checkExitCode = $LASTEXITCODE
     $checkOutput | ForEach-Object { Write-Host "  $_" }
     if ($checkExitCode -ne 0) {
-        throw "Prefect PostgreSQL 连接失败。请先检查 scripts\prefect_env_prod.local.ps1 中的 AUTO_NOTIFY_PREFECT_DATABASE_URL、服务器 5432 端口、数据库服务和网络连通性。"
+        throw "Prefect PostgreSQL 连接失败。请检查 config\runtime.local.json 中的连接串、服务器 5432 端口、数据库服务和网络连通性。"
     }
 }
 

@@ -32,7 +32,6 @@ from services.dashboard_v2_trigger import (
 from services.dashboard_v2_hierarchy import load_v2_collection_targets
 from services.dashboard_v2_indicator_service import load_v2_metric_indicator_plan
 from services.dashboard_v2_orchestrator import collect_validate_metric_rows_v2
-from services.method_service import find_stage, load_json
 from services.session_broker import StageSessionBroker
 from services.session_manager import file_lock, prepare_session
 from services.dashboard_v2_trigger import now_shanghai
@@ -221,13 +220,10 @@ def dashboard_v2_batch(
                     raise RuntimeError("V2 没有启用的请求节点")
                 if not indicator_plan["request_codes"]:
                     raise RuntimeError("V2 没有可请求的源指标")
-                cookie_dump_path = session_result.get("cookie_dump_path")
-                if not cookie_dump_path:
-                    raise RuntimeError("V2 会话阶段未返回 cookie_dump_path")
-                stage = find_stage(
-                    load_json(resolve_project_path(cookie_dump_path)),
-                    str(dashboard_config.get("required_stage") or "city_ops"),
-                )
+                stage_name = str(dashboard_config.get("required_stage") or "city_ops")
+                stage = (session_result.get("stage_data") or {}).get(stage_name)
+                if not stage:
+                    raise RuntimeError(f"V2 会话阶段未返回 stage_data: {stage_name}")
                 yield DashboardV2BatchContext(
                     config={**dashboard_config, "event_logger": event_logger},
                     batch_no=batch_no,
