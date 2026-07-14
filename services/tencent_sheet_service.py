@@ -33,11 +33,19 @@ class TencentDocsCredentials:
 
 
 class TencentDocsApiError(RuntimeError):
-    def __init__(self, message: str, status_code: int | None = None, code: Any = None, ret: Any = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        code: Any = None,
+        ret: Any = None,
+        range_invalid: bool = False,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.ret = ret
+        self.range_invalid = range_invalid
 
 
 def resolve_path(value: str | Path | None, base_dir: Path = PROJECT_DIR) -> Path:
@@ -84,16 +92,31 @@ def parse_api_json(response: requests.Response) -> dict[str, Any]:
     try:
         payload = response.json()
     except ValueError as exc:
-        preview = response.text[:500].replace("\r", " ").replace("\n", " ")
-        raise TencentDocsApiError(f"腾讯文档接口响应不是 JSON: HTTP {response.status_code}, body_preview={preview}", status_code=response.status_code) from exc
+        content_type = response.headers.get("Content-Type", "")
+        raise TencentDocsApiError(
+            f"腾讯文档接口响应不是 JSON: HTTP {response.status_code}, content_type={content_type}",
+            status_code=response.status_code,
+        ) from exc
     if response.status_code < 200 or response.status_code >= 300:
-        raise TencentDocsApiError(f"腾讯文档接口 HTTP 错误: HTTP {response.status_code}, body={payload}", status_code=response.status_code)
+        raise TencentDocsApiError(
+            f"腾讯文档接口 HTTP 错误: HTTP {response.status_code}",
+            status_code=response.status_code,
+        )
     ret = payload.get("ret")
     code = payload.get("code")
     if ret not in (None, 0):
-        raise TencentDocsApiError(f"腾讯文档接口返回失败: ret={ret}, msg={payload.get('msg')}", status_code=response.status_code, ret=ret)
+        raise TencentDocsApiError(
+            f"腾讯文档接口返回失败: ret={ret}",
+            status_code=response.status_code,
+            ret=ret,
+        )
     if code not in (None, 0):
-        raise TencentDocsApiError(f"腾讯文档接口返回失败: code={code}, message={payload.get('message')}", status_code=response.status_code, code=code)
+        raise TencentDocsApiError(
+            f"腾讯文档接口返回失败: code={code}",
+            status_code=response.status_code,
+            code=code,
+            range_invalid=is_range_invalid_message(payload.get("message")),
+        )
     return payload
 
 
@@ -147,7 +170,14 @@ def request_api_json(
 
 
 def is_range_invalid_error(exc: Exception) -> bool:
+    if isinstance(exc, TencentDocsApiError) and exc.range_invalid:
+        return True
     text = str(exc)
+    return is_range_invalid_message(text)
+
+
+def is_range_invalid_message(message: Any) -> bool:
+    text = str(message or "")
     return "'range' invalid" in text or "RangeSize Validate error" in text
 
 

@@ -16,6 +16,7 @@ from services.session_manager import (
     SessionInfrastructureError,
     classify_probe_validation,
     expand_login_command,
+    format_cookie_validation,
     format_probe_validation_error,
     lock_is_stale,
     prepare_session,
@@ -97,6 +98,24 @@ def test_expand_login_command_uses_current_python_executable(monkeypatch):
 
     assert "{python_executable}" not in command
     assert '"C:\\Program Files\\Python\\python.exe"' in command
+
+
+def test_format_cookie_validation_excludes_available_stages():
+    message = format_cookie_validation(
+        {
+            "valid": False,
+            "available_stages": ["ngboss_main", "city_ops"],
+            "missing_stages": ["report_analysis"],
+            "expired_or_empty_stages": ["city_ops"],
+            "too_old": True,
+        }
+    )
+
+    assert message == (
+        "missing_stages=['report_analysis']，"
+        "expired_or_empty_stages=['city_ops']，too_old=True"
+    )
+    assert "available_stages" not in message
 
 
 def write_fresh_health_state(state_path, cookie_path):

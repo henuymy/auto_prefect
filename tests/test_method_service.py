@@ -251,6 +251,7 @@ def test_raise_for_status_treats_401_json_login_as_session_expired():
         raise_for_status_with_context(response)
     except RuntimeError as exc:
         assert "session 已过期" in str(exc)
+        assert "http://example/login.jsp" not in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
 
@@ -266,7 +267,8 @@ def test_raise_for_status_treats_302_login_redirect_as_session_expired():
         raise_for_status_with_context(response)
     except RuntimeError as exc:
         assert "session 已过期" in str(exc)
-        assert "location=" in str(exc)
+        assert "location=" not in str(exc)
+        assert "ngbossgq.ha.cmcc" not in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
 
@@ -282,7 +284,7 @@ def test_raise_for_status_reports_non_auth_redirect_location():
         raise_for_status_with_context(response)
     except RuntimeError as exc:
         assert "不是明确登录地址" in str(exc)
-        assert "file.xlsx" in str(exc)
+        assert "file.xlsx" not in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
 
@@ -325,6 +327,8 @@ def test_download_one_report_raises_empty_report_data_error(monkeypatch):
         )
     except EmptyReportDataError as exc:
         assert exc.returnmsg == "对应地区暂未生成报表数据！"
+        assert exc.url == "https://example/export"
+        assert "https://example/export" not in str(exc)
     else:
         raise AssertionError("expected EmptyReportDataError")
 

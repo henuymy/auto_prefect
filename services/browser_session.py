@@ -154,6 +154,25 @@ def close_recorded_browser_session(session_state_path=None):
     return {"status": "closed", "stopped_pids": stopped, "state_path": str(state_path)}
 
 
+def summarize_browser_close_result(result):
+    """Return the non-sensitive browser-close fields suitable for logs."""
+    result = result or {}
+    return {
+        "status": str(result.get("status") or "unknown"),
+        "stopped_count": len(result.get("stopped_pids") or []),
+        "remaining_count": len(result.get("remaining_pids") or []),
+    }
+
+
+def format_browser_close_result(result):
+    summary = summarize_browser_close_result(result)
+    return (
+        f"status={summary['status']}，"
+        f"stopped_count={summary['stopped_count']}，"
+        f"remaining_count={summary['remaining_count']}"
+    )
+
+
 def close_browser_session(session_state_path=None, user_data_dir=None, wait_seconds=10, poll_seconds=0.5):
     session_state_path = session_state_path or default_session_state_path()
     state_path = Path(session_state_path)

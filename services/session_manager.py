@@ -19,7 +19,11 @@ from uuid import uuid4
 
 import requests
 
-from services.browser_session import close_browser_session
+from services.browser_session import (
+    close_browser_session,
+    format_browser_close_result,
+    summarize_browser_close_result,
+)
 from services.json_excel_service import get_by_path
 from services.method_service import (
     AuthenticationMaterialMissingError,
@@ -743,6 +747,16 @@ def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
     }
 
 
+def format_cookie_validation(validation):
+    """Format only the actionable, non-sensitive static Cookie validation fields."""
+    validation = validation or {}
+    return (
+        f"missing_stages={validation.get('missing_stages') or []}，"
+        f"expired_or_empty_stages={validation.get('expired_or_empty_stages') or []}，"
+        f"too_old={bool(validation.get('too_old', False))}"
+    )
+
+
 def expand_login_command(command: str) -> str:
     """Resolve the configured Python placeholder for the active Worker."""
     if not isinstance(command, str) or not command.strip():
@@ -951,7 +965,10 @@ def prepare_session(
                 format_probe_validation_error(probe_validation),
             )
         else:
-            warn("已有 Cookie 静态检查失败，将重新登录: %s", validation)
+            warn(
+                "已有 Cookie 静态检查失败，将执行一次刷新: %s",
+                format_cookie_validation(validation),
+            )
     else:
         validation = {
             "valid": False,
@@ -1051,7 +1068,10 @@ def prepare_session(
                 format_probe_validation_error(locked_probe_validation),
             )
         else:
-            warn("登录锁内 Cookie 静态检查仍失败，将自行重新登录: %s", locked_validation)
+            warn(
+                "登录锁内 Cookie 静态检查仍失败，将执行一次刷新: %s",
+                format_cookie_validation(locked_validation),
+            )
 
         attempt_number = 0
 
@@ -1078,10 +1098,17 @@ def prepare_session(
                 attempt_number,
                 time.monotonic() - browser_close_started_at,
             )
-            if close_result.get("stopped_pids"):
-                warn("重新登录前已关闭旧自动登录浏览器: %s", close_result)
-            if close_result.get("remaining_pids"):
-                warn("旧自动登录浏览器仍有残留进程，继续尝试登录: %s", close_result)
+            close_summary = summarize_browser_close_result(close_result)
+            if close_summary["stopped_count"]:
+                warn(
+                    "重新登录前已关闭旧自动登录浏览器: %s",
+                    format_browser_close_result(close_result),
+                )
+            if close_summary["remaining_count"]:
+                warn(
+                    "旧自动登录浏览器仍有残留进程，继续尝试登录: %s",
+                    format_browser_close_result(close_result),
+                )
             try:
                 login_environment = {
                     "AUTO_NOTIFY_COOKIE_DUMP_PATH": str(attempt_snapshot_path),
@@ -1105,7 +1132,10 @@ def prepare_session(
                     min_ttl_seconds=min_ttl_seconds,
                 )
                 if not refreshed_validation["valid"]:
-                    raise RuntimeError(f"登录后 Cookie 仍不可用: {refreshed_validation}")
+                    raise RuntimeError(
+                        "登录后 Cookie 仍不可用: "
+                        + format_cookie_validation(refreshed_validation)
+                    )
                 refreshed_probe_validation = validate_stage_probes(
                     refreshed_cookie_dump or {},
                     required_stages,

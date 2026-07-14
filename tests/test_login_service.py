@@ -170,6 +170,30 @@ def test_init_driver_enables_headless_edge(monkeypatch, tmp_path):
     assert login.driver.implicit_wait_seconds == 0
 
 
+def test_init_driver_logs_browser_close_summary_without_paths_or_process_ids(monkeypatch, tmp_path, capsys):
+    fake_driver = FakeDriver()
+    monkeypatch.setattr(
+        login_service,
+        "close_browser_session",
+        lambda *args, **kwargs: {
+            "status": "closed",
+            "stopped_pids": [15880, 8170],
+            "remaining_pids": [],
+            "state_path": r"C:\\AutoNotifyRuntime\\session\\browser-session.json",
+            "user_data_dir": r"C:\\AutoNotifyRuntime\\session\\browser-profile",
+        },
+    )
+    monkeypatch.setattr(login_service.webdriver, "Edge", lambda *, options: fake_driver)
+
+    make_login(tmp_path).init_driver()
+
+    output = capsys.readouterr().out
+    assert "stopped_count=2" in output
+    assert "remaining_count=0" in output
+    assert "15880" not in output
+    assert "browser-session.json" not in output
+
+
 def test_init_driver_detaches_explicitly_retained_headless_edge(monkeypatch, tmp_path):
     captured = {}
     fake_driver = FakeDriver()

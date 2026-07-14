@@ -51,7 +51,7 @@ class EmptyReportDataError(RuntimeError):
         self.returnmsg = returnmsg
         super().__init__(
             f"下载接口返回业务空数据: report={report_name}, "
-            f"returncode={returncode}, returnmsg={returnmsg}, url={url}"
+            f"returncode={returncode}, returnmsg={returnmsg}"
         )
 
 
@@ -430,7 +430,8 @@ def request_report(session, report, stage, timeout, verify_ssl, proxies, retry=N
             wait_seconds = delay_seconds * (backoff ** (attempt - 1))
             print(
                 f"[WARN] 下载请求网络异常，准备重试 {attempt}/{retries}: "
-                f"{type(exc).__name__} {method} {url}, wait={wait_seconds:.1f}s"
+                f"错误类型={type(exc).__name__}，方法={method}，"
+                f"wait={wait_seconds:.1f}s"
             )
             if wait_seconds > 0:
                 sleep(wait_seconds)
@@ -441,9 +442,8 @@ def response_json_with_context(response):
         return response.json()
     except ValueError as exc:
         content_type = response.headers.get("Content-Type", "")
-        preview = response.text[:500].replace("\r", " ").replace("\n", " ")
         raise RuntimeError(
-            f"下载响应不是 JSON，无法转 Excel: content_type={content_type}, body_preview={preview}"
+            f"下载响应不是 JSON，无法转 Excel: content_type={content_type}"
         ) from exc
 
 
@@ -454,35 +454,31 @@ def raise_for_status_with_context(response):
     lowered_preview = body_preview.lower()
     location = response.headers.get("Location", "")
     lowered_location = location.lower()
+    request_method = getattr(getattr(response, "request", None), "method", "UNKNOWN")
+    response_context = f"HTTP {response.status_code} {request_method}"
     if response.status_code in {301, 302, 303, 307, 308}:
         if any(keyword in lowered_location for keyword in AUTH_REDIRECT_KEYWORDS):
             raise RuntimeError(
                 "下载认证失效（session 已过期），需要重新登录后重试: "
-                f"HTTP {response.status_code} {response.request.method} {response.url}; "
-                f"location={location}; body_preview={body_preview}"
+                + response_context
             )
         raise RuntimeError(
-            "下载接口返回重定向但不是明确登录地址: "
-            f"HTTP {response.status_code} {response.request.method} {response.url}; "
-            f"location={location}; body_preview={body_preview}"
+                "下载接口返回重定向但不是明确登录地址: "
+            + response_context
         )
     if response.status_code in {401, 403} or "unauthorized" in lowered_preview or "login.jsp" in lowered_preview:
         raise RuntimeError(
             "下载认证失效（session 已过期），需要重新登录后重试: "
-            f"HTTP {response.status_code} {response.request.method} {response.url}; "
-            f"body_preview={body_preview}"
+            + response_context
         )
     try:
         response.raise_for_status()
     except requests.HTTPError as exc:
         details = {
             "status_code": response.status_code,
-            "method": response.request.method,
-            "url": response.url,
+            "method": request_method,
             "allow": response.headers.get("Allow"),
             "content_type": response.headers.get("Content-Type"),
-            "location": location,
-            "body_preview": body_preview,
         }
         raise RuntimeError(f"下载接口返回错误: {details}") from exc
     raise RuntimeError(f"下载接口返回非文件状态码: HTTP {response.status_code}")
@@ -533,12 +529,12 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
         raise RuntimeError(
             "下载接口返回业务错误: "
             f"report={report.get('name') or '未命名报表'}, "
-            f"returncode={returncode}, returnmsg={returnmsg}, url={response.url}"
+            f"returncode={returncode}, returnmsg={returnmsg}"
         )
     if is_html_response(response):
-        raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {response.url}")
+        raise RuntimeError("下载响应为 HTML（可能是登录页），session 已过期")
     if not response.content:
-        raise RuntimeError(f"下载响应为空: HTTP {response.status_code} {response.url}")
+        raise RuntimeError(f"下载响应为空: HTTP {response.status_code}")
 
     response_mode = str(report["response_mode"]).strip().lower()
     if response_mode in {"json_to_excel", "json_drilldown_to_excel"}:
@@ -574,7 +570,7 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
                 next_response = request_report(drilldown_session(), next_report, stage, timeout, verify_ssl, proxies, retry=request_retry)
                 raise_for_status_with_context(next_response)
                 if is_html_response(next_response):
-                    raise RuntimeError(f"下载响应为 HTML（可能是登录页），session 已过期: {next_response.url}")
+                    raise RuntimeError("下载响应为 HTML（可能是登录页），session 已过期")
                 return response_json_with_context(next_response)
 
             request_area_field = (report.get("drilldown") or {}).get("request_area_field") or "areaId"

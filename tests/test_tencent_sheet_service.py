@@ -7,9 +7,11 @@ import requests
 from openpyxl import load_workbook
 
 from services.tencent_sheet_service import (
+    TencentDocsApiError,
     cell_to_value,
     download_tencent_sheet_report,
     extract_encoded_id,
+    parse_api_json,
     resolve_sheet_range,
     sheet_id_from_doc_url,
     split_a1_range,
@@ -32,6 +34,46 @@ def make_response_with_status(status_code, payload):
     response = make_response(payload)
     response.status_code = status_code
     return response
+
+
+def test_parse_api_json_excludes_response_body_from_errors():
+    non_json_response = requests.Response()
+    non_json_response.status_code = 502
+    non_json_response._content = b"internal response body"
+    non_json_response.headers["Content-Type"] = "text/html"
+    try:
+        parse_api_json(non_json_response)
+    except TencentDocsApiError as exc:
+        assert "internal response body" not in str(exc)
+        assert "content_type=text/html" in str(exc)
+    else:
+        raise AssertionError("expected TencentDocsApiError")
+
+
+def test_parse_api_json_keeps_range_invalid_as_non_rendered_classification():
+    response = make_response(
+        {"code": 400001, "message": "invalid param error: 'range' invalid"}
+    )
+
+    try:
+        parse_api_json(response)
+    except TencentDocsApiError as exc:
+        assert str(exc) == "腾讯文档接口返回失败: code=400001"
+        assert exc.range_invalid is True
+    else:
+        raise AssertionError("expected TencentDocsApiError")
+
+    error_response = make_response_with_status(
+        500,
+        {"ret": 500, "debug": "internal response body"},
+    )
+    try:
+        parse_api_json(error_response)
+    except TencentDocsApiError as exc:
+        assert "internal response body" not in str(exc)
+        assert str(exc) == "腾讯文档接口 HTTP 错误: HTTP 500"
+    else:
+        raise AssertionError("expected TencentDocsApiError")
 
 
 def write_json(path, payload):

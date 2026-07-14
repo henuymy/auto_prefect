@@ -147,6 +147,8 @@ C:\AutoNotifyRuntime\
 
 Session Keeper 和所有业务 Flow 必须复用共享 Session Manager 与全局登录锁。不得新增绕过该管理器或锁的直接登录入口；当前登录使用无头模式并保留同一浏览器 Profile 与进程，业务重试仅允许在明确的会话失效后强刷新一次并重试失败步骤一次。
 
+请求故障按认证失效、基础设施、接口契约和业务结果处理。302、401、403、登录页语义和 `reCode=1101` 的认证边界，以及 429、5xx、超时和 JSON 契约失败的处理规则，统一见 [docs/request-failure-handling.md](docs/request-failure-handling.md)。运行日志不得输出完整内部 URL、认证材料或响应正文。
+
 ### 运行入口
 
 环境初始化、启动、状态和停止入口为：

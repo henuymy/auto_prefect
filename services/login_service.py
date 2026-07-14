@@ -16,7 +16,13 @@ from selenium.common.exceptions import TimeoutException
 
 from services.cookie_recorder import CookieRecorder, resolve_cookie_dump_path
 from services.otp_service import delete_message, prepare_wait_context, wait_for_otp
-from services.browser_session import browser_config, close_browser_session, record_browser_session
+from services.browser_session import (
+    browser_config,
+    close_browser_session,
+    format_browser_close_result,
+    record_browser_session,
+    summarize_browser_close_result,
+)
 from services.runtime_paths import runtime_path
 from services.session_manager import format_probe_validation_error, validate_existing_session
 from utils.config_loader import load_json_with_local_override
@@ -173,7 +179,12 @@ class AutoLogin:
             self.driver.save_screenshot(payload["screenshot_path"])
         except Exception as exc:
             payload["screenshot_error"] = str(exc)
-        print(f"[WARN] 登录页调试信息: {json.dumps(payload, ensure_ascii=False)}")
+        print(
+            "[WARN] 登录页调试材料已保存: "
+            f"reason={reason}，"
+            f"html_saved={'page_source_error' not in payload}，"
+            f"screenshot_saved={'screenshot_error' not in payload}"
+        )
         return payload
 
     def wait_for_login_entry_or_home(self, timeout=30, attempts=2):
@@ -181,7 +192,7 @@ class AutoLogin:
             try:
                 return WebDriverWait(self.driver, timeout).until(self.detect_login_entry_or_home)
             except TimeoutException:
-                debug = self.dump_login_page_debug(f"login_entry_timeout_attempt_{attempt}")
+                self.dump_login_page_debug(f"login_entry_timeout_attempt_{attempt}")
                 if attempt < attempts:
                     if self.is_ngboss_no_permission_page():
                         self.reset_ngboss_login_state("检测到系统异常页")
@@ -191,16 +202,13 @@ class AutoLogin:
                     continue
                 raise RuntimeError(
                     "打开登录页后未找到 loginName 输入框，也未检测到 NGBOSS 主页；"
-                    f"当前URL={debug.get('url')}, 标题={debug.get('title')}, "
-                    f"截图={debug.get('screenshot_path')}, HTML={debug.get('page_source_path')}"
+                    "登录页调试材料已保存"
                 )
             except Exception as exc:
-                debug = self.dump_login_page_debug(f"login_entry_error_attempt_{attempt}")
+                self.dump_login_page_debug(f"login_entry_error_attempt_{attempt}")
                 raise RuntimeError(
                     "检测登录页状态时 WebDriver 无响应或异常；"
-                    f"错误={type(exc).__name__}: {exc}, "
-                    f"当前URL={debug.get('url')}, 标题={debug.get('title')}, "
-                    f"截图={debug.get('screenshot_path')}, HTML={debug.get('page_source_path')}"
+                    f"错误类型={type(exc).__name__}，登录页调试材料已保存"
                 ) from exc
 
     def is_ngboss_no_permission_page(self):
@@ -220,10 +228,10 @@ class AutoLogin:
     def reset_ngboss_login_state(self, reason):
         logout_url = self.get_logout_url()
         login_url = self.get_login_url()
-        print(f"[WARN] {reason}，访问退出地址清理登录状态: {logout_url}")
+        print(f"[WARN] {reason}，正在清理登录状态")
         self.driver.get(logout_url)
         time.sleep(1)
-        print(f"[INFO] 重新打开登录页面: {login_url}")
+        print("[INFO] 已重新打开登录页面")
         self.driver.get(login_url)
 
     def detect_login_entry_or_home(self, driver):
@@ -325,10 +333,17 @@ class AutoLogin:
                     user_data_dir=browser["user_data_dir"],
                     wait_seconds=float(browser_options.get("close_wait_seconds", 10) or 10),
                 )
-                if close_result.get("stopped_pids"):
-                    print(f"[INFO] 启动前已关闭旧自动登录浏览器: {close_result}")
-                elif close_result.get("remaining_pids"):
-                    print(f"[WARN] 启动前旧自动登录浏览器仍有残留: {close_result}")
+                close_summary = summarize_browser_close_result(close_result)
+                if close_summary["stopped_count"]:
+                    print(
+                        "[INFO] 启动前已关闭旧自动登录浏览器: "
+                        f"{format_browser_close_result(close_result)}"
+                    )
+                elif close_summary["remaining_count"]:
+                    print(
+                        "[WARN] 启动前旧自动登录浏览器仍有残留: "
+                        f"{format_browser_close_result(close_result)}"
+                    )
             if browser_options.get("clear_profile_before_start", False):
                 shutil.rmtree(browser["user_data_dir"], ignore_errors=True)
                 print(f"[INFO] 启动前已删除自动登录浏览器 profile: {browser['user_data_dir']}")
@@ -424,11 +439,9 @@ class AutoLogin:
             self.driver.execute_script("arguments[0].focus();", login_password)
             self.set_input_value(login_password, self.config['credentials']['password'])
         except Exception as exc:
-            debug = self.dump_login_page_debug("password_input_timeout")
+            self.dump_login_page_debug("password_input_timeout")
             raise RuntimeError(
-                "输入密码失败，未找到可用的密码输入框；"
-                f"当前URL={debug.get('url')}, 标题={debug.get('title')}, "
-                f"截图={debug.get('screenshot_path')}, HTML={debug.get('page_source_path')}"
+                "输入密码失败，未找到可用的密码输入框；登录页调试材料已保存"
             ) from exc
 
     def find_password_input(self, driver):
@@ -730,7 +743,7 @@ class AutoLogin:
         try:
             WebDriverWait(self.driver, 30, poll_frequency=0.1).until(lambda d: usm_host in d.current_url)
         except TimeoutException as exc:
-            raise RuntimeError(f"应用登录后未进入 USM，当前URL={self.driver.current_url}") from exc
+            raise RuntimeError("应用登录后未进入 USM") from exc
         self.usm_window_handle = self.driver.current_window_handle
         self.usm_entry_url = self.driver.current_url
         try:
@@ -742,7 +755,7 @@ class AutoLogin:
             except Exception:
                 pass
         except Exception as e:
-            raise RuntimeError(f"访问 USM 控制台失败: {e}") from e
+            raise RuntimeError(f"访问 USM 控制台失败: 错误类型={type(e).__name__}") from e
 
     def enter_usm_app(self, app_config):
         handle = self.launch_usm_app(app_config)
@@ -794,10 +807,8 @@ class AutoLogin:
                 self.driver, timeout_seconds, poll_frequency=0.2
             ).until(find_target)
         except TimeoutException as exc:
-            urls = list(dict.fromkeys(seen_urls.values()))
             raise RuntimeError(
-                f"{app_config.get('name') or app_config.get('stage')} 未打开目标页面 "
-                f"{expected!r}，新窗口URL={urls or ['<none>']}"
+                f"{app_config.get('name') or app_config.get('stage')} 未打开目标页面"
             ) from exc
         self.driver.switch_to.window(handle)
         return handle
@@ -864,8 +875,7 @@ class AutoLogin:
         except TimeoutException as exc:
             if expected:
                 raise RuntimeError(
-                    f"{app_config.get('name') or app_config.get('stage')} 未进入目标页面 "
-                    f"{expected!r}，当前URL={self.driver.current_url}"
+                    f"{app_config.get('name') or app_config.get('stage')} 未进入目标页面"
                 ) from exc
             raise
 
@@ -924,8 +934,7 @@ class AutoLogin:
         except TimeoutException as exc:
             requirement = f"Cookie {cookie_name!r}" if cookie_name else f"至少 {min_cookie_count} 个 Cookie"
             raise RuntimeError(
-                f"{app_config.get('name') or app_config.get('stage')} 认证信息未就绪（{requirement}），"
-                f"当前URL={self.driver.current_url}"
+                f"{app_config.get('name') or app_config.get('stage')} 认证信息未就绪（{requirement}）"
             ) from exc
 
     def _switch_to_usm_app_list(self):
@@ -933,7 +942,7 @@ class AutoLogin:
             self.driver.switch_to.window(self.usm_window_handle)
         usm_host = self.get_usm_host()
         if usm_host not in self.driver.current_url:
-            raise RuntimeError(f"当前不在 USM，当前URL={self.driver.current_url}")
+            raise RuntimeError("当前不在 USM")
         self.driver.switch_to.default_content()
         self.driver.switch_to.frame(
             WebDriverWait(self.driver, 30, poll_frequency=0.1).until(EC.presence_of_element_located((By.ID, "iFrame1")))
