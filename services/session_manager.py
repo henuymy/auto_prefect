@@ -32,11 +32,6 @@ from services.method_service import (
     resolve_storage_references,
 )
 from services.runtime_paths import resolve_runtime_path
-from services.session_health_state import (
-    read_session_health,
-    session_health_is_fresh,
-    write_session_health_atomic,
-)
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -724,6 +719,33 @@ def publish_cookie_dump(source_path, target_path):
     return target
 
 
+def merge_cookie_dump_stages(existing_cookie_dump, refreshed_cookie_dump):
+    """Keep stages not included in a scoped login refresh."""
+    existing_cookie_dump = existing_cookie_dump or {}
+    refreshed_cookie_dump = refreshed_cookie_dump or {}
+    existing_stages = existing_cookie_dump.get("stages") or []
+    refreshed_stages = refreshed_cookie_dump.get("stages") or []
+    if not isinstance(existing_stages, list) or not isinstance(refreshed_stages, list):
+        return refreshed_cookie_dump
+
+    refreshed_by_name = {
+        str(stage.get("stage")): stage
+        for stage in refreshed_stages
+        if isinstance(stage, dict) and stage.get("stage")
+    }
+    merged_stages = []
+    for stage in existing_stages:
+        if not isinstance(stage, dict) or not stage.get("stage"):
+            continue
+        stage_name = str(stage["stage"])
+        merged_stages.append(refreshed_by_name.pop(stage_name, stage))
+    merged_stages.extend(refreshed_by_name.values())
+
+    merged_cookie_dump = dict(refreshed_cookie_dump)
+    merged_cookie_dump["stages"] = merged_stages
+    return merged_cookie_dump
+
+
 def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
     process_env = os.environ.copy()
     process_env.update(env or {})
@@ -846,14 +868,6 @@ def prepare_session(
         config.get("cookie_dump_path", "runtime/session/cookie_dump.json"),
         base_dir,
     )
-    session_health_state_path = resolve_runtime_path(
-        config.get("session_health_state_path", "runtime/session/session-health.json"),
-        project_dir=Path(base_dir),
-    )
-    freshness_seconds = int(
-        os.environ.get("AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS")
-        or config.get("session_freshness_seconds", 180)
-    )
     legacy_cookie_dump_path = resolve_path(config.get("legacy_cookie_dump_path"), base_dir)
     required_stages = config.get("required_stages") or []
     stage_probes = config.get("stage_probes") or {}
@@ -886,52 +900,14 @@ def prepare_session(
         if event_logger:
             event_logger.info(message, *args)
 
-    def write_healthy_state(cookie_hash):
-        return write_session_health_atomic(
-            session_health_state_path,
-            {
-                "healthy": True,
-                "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
-                "cookie_hash": cookie_hash,
-                "healthy_stages": sorted(required_stages),
-            },
-        )
-
-    def write_authentication_failure_state(cookie_hash):
-        return write_session_health_atomic(
-            session_health_state_path,
-            {
-                "healthy": False,
-                "verified_at": datetime.now(timezone.utc).astimezone().isoformat(),
-                "cookie_hash": cookie_hash,
-                "healthy_stages": [],
-                "failure_classification": PROBE_AUTHENTICATION_FAILURE,
-            },
-        )
-
-    cookie_dump, cookie_hash = load_cookie_snapshot_if_exists(cookie_dump_path)
+    cookie_dump, _ = load_cookie_snapshot_if_exists(cookie_dump_path)
     if not cookie_dump and legacy_cookie_dump_path and legacy_cookie_dump_path.exists():
         sync_cookie_dump(legacy_cookie_dump_path, cookie_dump_path)
-        cookie_dump, cookie_hash = load_cookie_snapshot_if_exists(cookie_dump_path)
+        cookie_dump, _ = load_cookie_snapshot_if_exists(cookie_dump_path)
 
     if cookie_dump and not force_refresh:
         validation = validate_cookie_dump(cookie_dump, required_stages, min_ttl_seconds=min_ttl_seconds, max_age_seconds=max_age_seconds)
         if validation["valid"]:
-            if session_health_is_fresh(
-                read_session_health(session_health_state_path),
-                cookie_hash=cookie_hash,
-                required_stages=required_stages,
-                freshness_seconds=freshness_seconds,
-            ):
-                info(
-                    "会话准备完成: source=health_cache elapsed_seconds=%.2f",
-                    time.monotonic() - started_at,
-                )
-                return {
-                    "status": "reused_fresh",
-                    "cookie_dump_path": str(cookie_dump_path),
-                    "validation": validation,
-                }
             probe_started_at = time.monotonic()
             probe_validation = validate_stage_probes(cookie_dump, required_stages, stage_probes)
             info(
@@ -941,7 +917,6 @@ def prepare_session(
             )
             validation["probe_validation"] = probe_validation
             if probe_validation["valid"]:
-                write_healthy_state(cookie_hash)
                 info(
                     "会话准备完成: source=stage_probe elapsed_seconds=%.2f",
                     time.monotonic() - started_at,
@@ -959,7 +934,6 @@ def prepare_session(
                         include_diagnostics=True,
                     )
                 )
-            write_authentication_failure_state(cookie_hash)
             warn(
                 "共享会话已失效，进入登录锁后执行一次刷新: %s",
                 format_probe_validation_error(probe_validation),
@@ -1031,7 +1005,7 @@ def prepare_session(
         )
         # Re-check under the login lock. Parallel flow runs may have refreshed
         # cookies between this run's first probe/download failure and lock acquisition.
-        locked_cookie_dump, locked_cookie_hash = load_cookie_snapshot_if_exists(
+        locked_cookie_dump, _ = load_cookie_snapshot_if_exists(
             cookie_dump_path
         )
         locked_validation, locked_probe_validation = validate_existing_session(
@@ -1042,7 +1016,6 @@ def prepare_session(
             max_age_seconds=max_age_seconds,
         )
         if locked_validation["valid"] and locked_probe_validation and locked_probe_validation["valid"]:
-            write_healthy_state(locked_cookie_hash)
             info(
                 "会话准备完成: source=lock_recheck elapsed_seconds=%.2f",
                 time.monotonic() - started_at,
@@ -1062,7 +1035,6 @@ def prepare_session(
                         include_diagnostics=True,
                     )
                 )
-            write_authentication_failure_state(locked_cookie_hash)
             warn(
                 "登录锁内会话仍失效，将执行一次刷新: %s",
                 format_probe_validation_error(locked_probe_validation),
@@ -1123,7 +1095,7 @@ def prepare_session(
                     timeout_seconds=login_timeout_seconds,
                     env=login_environment,
                 )
-                refreshed_cookie_dump, refreshed_cookie_hash = (
+                refreshed_cookie_dump, _ = (
                     load_cookie_snapshot_if_exists(attempt_snapshot_path)
                 )
                 refreshed_validation = validate_cookie_dump(
@@ -1152,14 +1124,17 @@ def prepare_session(
                                 include_diagnostics=True,
                             )
                         )
-                    write_authentication_failure_state(refreshed_cookie_hash)
                     raise RuntimeError(
                         "登录后 session 探活仍不可用: "
                         + format_probe_validation_error(refreshed_probe_validation)
                     )
                 refreshed_validation["probe_validation"] = refreshed_probe_validation
+                merged_cookie_dump = merge_cookie_dump_stages(
+                    locked_cookie_dump,
+                    refreshed_cookie_dump or {},
+                )
+                write_json(attempt_snapshot_path, merged_cookie_dump)
                 publish_cookie_dump(attempt_snapshot_path, cookie_dump_path)
-                write_healthy_state(refreshed_cookie_hash)
                 info(
                     "完整登录尝试成功: attempt=%s elapsed_seconds=%.2f",
                     attempt_number,

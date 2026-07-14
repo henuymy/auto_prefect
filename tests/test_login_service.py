@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from services import login_service
 from services.browser_session import browser_config
 
@@ -128,6 +130,29 @@ def test_login_scopes_usm_capture_and_validation_to_requested_stages(monkeypatch
     ]
 
 
+def test_capture_usm_app_cookies_logs_per_stage_elapsed_time(monkeypatch, capsys):
+    login = login_service.AutoLogin.__new__(login_service.AutoLogin)
+    login.usm_window_handle = None
+    login.opened_app_handles = {}
+    app_config = {
+        "stage": "city_ops",
+        "name": "地市作战平台",
+        "source_stage": "usm_console",
+    }
+
+    monkeypatch.setattr(login, "get_usm_cookie_apps", lambda: [app_config])
+    monkeypatch.setattr(login, "enter_usm_app_from_source", lambda _: "city-window")
+    monkeypatch.setattr(login, "wait_for_storage_ready", lambda _: None)
+    monkeypatch.setattr(login, "wait_for_cookie_ready", lambda _: None)
+    monkeypatch.setattr(login, "capture_cookies", lambda _: {"stage": "city_ops"})
+    monkeypatch.setattr(login_service.time, "monotonic", lambda: 100.0)
+
+    login.capture_usm_apps_cookies()
+
+    output = capsys.readouterr().out
+    assert "USM 应用 Cookie 捕获完成: stage=city_ops attempts=1 elapsed_seconds=0.00" in output
+
+
 def test_login_keeps_full_usm_capture_when_requested_stage_is_unknown(monkeypatch):
     login = login_service.AutoLogin.__new__(login_service.AutoLogin)
     login.config = {
@@ -142,6 +167,24 @@ def test_login_keeps_full_usm_capture_when_requested_stage_is_unknown(monkeypatc
         "report_analysis",
         "city_ops",
     ]
+
+
+def test_login_page_no_permission_retries_without_waiting_for_timeout(monkeypatch):
+    login = login_service.AutoLogin.__new__(login_service.AutoLogin)
+    login.driver = object()
+    states = iter(["no_permission", "login"])
+    reset_reasons = []
+
+    monkeypatch.setattr(login_service, "WebDriverWait", ImmediateWait)
+    monkeypatch.setattr(login, "detect_login_entry_or_home", lambda driver: next(states))
+    monkeypatch.setattr(
+        login,
+        "reset_ngboss_login_state",
+        lambda reason: reset_reasons.append(reason),
+    )
+
+    assert login.wait_for_login_entry_or_home() == "login"
+    assert reset_reasons == ["检测到系统异常页"]
 
 
 def test_init_driver_enables_headless_edge(monkeypatch, tmp_path):
@@ -343,6 +386,26 @@ def test_launched_app_window_ignores_about_blank(monkeypatch):
 
     assert handle == "report"
     assert driver.current_window_handle == "report"
+
+
+def test_launched_app_window_skips_blank_variants_and_restores_source(monkeypatch):
+    driver = FakeWindowDriver(
+        {
+            "usm": "https://usm.example/console/",
+            "blank": "about:blank#helper",
+        }
+    )
+    login = login_service.AutoLogin.__new__(login_service.AutoLogin)
+    login.driver = driver
+    monkeypatch.setattr(login_service, "WebDriverWait", ImmediateWait)
+
+    with pytest.raises(RuntimeError, match="新窗口 URL"):
+        login.wait_for_launched_app_window(
+            {"usm"},
+            {"stage": "report_analysis", "name": "报表分析系统", "url_contains": "/bicpreport/"},
+        )
+
+    assert driver.current_window_handle == "usm"
 
 
 def test_capture_cookies_returns_recorder_stage():

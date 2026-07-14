@@ -24,7 +24,6 @@ SESSION_EXPIRED_MARKERS = (
     "session expired",
     "session_expired",
     "session 已过期",
-    "http 302",
     "http 401",
     "http 403",
     "recode=1101",

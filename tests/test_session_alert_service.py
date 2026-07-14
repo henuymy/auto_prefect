@@ -1,12 +1,14 @@
 import json
 import multiprocessing
 import time
+from threading import Event
 from pathlib import Path
 
 import pytest
 
 from services import session_alert_service
 from services.session_alert_service import (
+    dispatch_session_notification,
     notify_session_failure,
     notify_session_recovery,
 )
@@ -22,6 +24,24 @@ def test_resolve_rebases_logical_runtime_paths(monkeypatch, tmp_path):
     ) == (
         runtime_root / "session" / "session-keeper" / "incident_state.json"
     ).resolve()
+
+
+def test_async_dispatch_does_not_wait_for_wecom_delivery():
+    started = Event()
+    release = Event()
+
+    def notification():
+        started.set()
+        release.wait(timeout=2)
+
+    started_at = time.monotonic()
+    thread = dispatch_session_notification(notification, notification_type="failure")
+
+    assert time.monotonic() - started_at < 0.1
+    assert started.wait(timeout=1)
+    assert thread.is_alive()
+    release.set()
+    thread.join(timeout=1)
 
 
 def alert_config(tmp_path: Path):
@@ -101,6 +121,8 @@ def test_failure_alert_is_sent_once_for_same_incident(tmp_path):
     assert second["suppressed"] is True
     assert len(messages) == 1
     assert "flow-123" in messages[0]
+    assert "判定依据:" in messages[0]
+    assert "Flow: 未提供" in messages[0]
 
 
 def test_concurrent_failure_alert_is_one_cross_process_transaction(tmp_path):

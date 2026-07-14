@@ -114,7 +114,7 @@ logs/、temp/                启动和工具按需产生的临时运行文件
 ```
 
 `session/` 包含 `cookie_dump.json`、`browser-profile/`、
-`browser-session.json`、`session-health.json` 与 `locks/`；其中 Cookie 和
+`browser-session.json` 与 `locks/`；其中 Cookie 和
 浏览器 Profile 是敏感登录态，不能提交、复制或随意删除。`processes/` 仅供
 `stop.ps1` 和 `status.ps1` 识别本项目进程，停止运行栈前不得手工删除其中的
 登记文件。`prefect/prefect_home/` 不随代码分支或 Worktree 切换，应与运行根目录

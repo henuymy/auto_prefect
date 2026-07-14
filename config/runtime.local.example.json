@@ -17,7 +17,6 @@
   "runtime": {
     "root": "C:\\AutoNotifyRuntime",
     "scheduled_notify_grace_seconds": 600,
-    "session_freshness_seconds": 180,
     "work_pools": {
       "session": {"name": "windows-session-pool", "limit": 1},
       "dashboard": {"name": "windows-dashboard-pool", "limit": 4},

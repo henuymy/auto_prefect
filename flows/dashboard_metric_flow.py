@@ -13,11 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from prefect import flow, get_run_logger
 
 from services.session_retry_service import is_session_expired_error
-from services.session_business_failure_service import (
-    report_business_session_failure,
-    report_business_session_recovery,
-    run_with_business_session_reporting,
-)
+from services.business_run_alert_service import report_current_business_run_failure
 from tasks.dashboard_tasks import run_dashboard_metric_task
 
 
@@ -45,13 +41,7 @@ def run_dashboard_metric_with_session_refresh(
                 raise
             return run_dashboard_metric_task(**{**parameters, "force_refresh": True})
 
-    return run_with_business_session_reporting(
-        run_collection,
-        trigger_source="dashboard-metric-flow",
-        reporter=report_business_session_failure,
-        recover_on_success=True,
-        recoverer=report_business_session_recovery,
-    )
+    return run_collection()
 
 
 @flow(name="dashboard-metric-flow")
@@ -69,12 +59,22 @@ def dashboard_metric_flow(
         trigger_type,
         force_refresh,
     )
-    result = run_dashboard_metric_with_session_refresh(
-        mode=normalized_mode,
-        config_path=config_path,
-        trigger_type=trigger_type,
-        force_refresh=force_refresh,
-    )
+    try:
+        result = run_dashboard_metric_with_session_refresh(
+            mode=normalized_mode,
+            config_path=config_path,
+            trigger_type=trigger_type,
+            force_refresh=force_refresh,
+        )
+    except Exception as exc:
+        report_current_business_run_failure(
+            exc,
+            workload_type="dashboard",
+            workload_id=f"{normalized_mode}:{Path(config_path).stem}",
+            flow_name="dashboard-metric-flow",
+            failed_stage="驾驶舱指标采集",
+        )
+        raise
     logger.info(
         "驾驶舱指标采集完成: mode=%s, batch_no=%s, stat_date=%s, "
         "nodes=%s, requests=%s, rows=%s, attempts=%s, total=%ss",

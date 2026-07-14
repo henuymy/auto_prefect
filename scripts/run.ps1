@@ -183,9 +183,16 @@ foreach ($pool in $Pools) {
 
 Write-Host "清理 Prefect 启动队列..."
 $ReconcileScript = Join-Path $PSScriptRoot "lib\prefect_startup_reconcile.py"
-$reconcileOutput = @(& $PythonExe $ReconcileScript `
-    --notify-grace-seconds ([int]$env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS) `
-    --notify-work-pool $env:PREFECT_NOTIFY_POOL_NAME)
+$ReconcileArgs = @(
+    "--notify-grace-seconds",
+    ([int]$env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS),
+    "--notify-work-pool",
+    $env:PREFECT_NOTIFY_POOL_NAME
+)
+if ($ForceRestart) {
+    $ReconcileArgs += "--cancel-in-flight"
+}
+$reconcileOutput = @(& $PythonExe $ReconcileScript @ReconcileArgs)
 $reconcileExitCode = $LASTEXITCODE
 $reconcileOutput | ForEach-Object { Write-Host $_ }
 if ($reconcileExitCode -ne 0) {

@@ -20,6 +20,7 @@ from services.dashboard_failure_report import (
     write_dashboard_failure_report,
 )
 from services.runtime_paths import resolve_runtime_path
+from services.session_broker import StageSessionBroker
 from services.session_manager import file_lock, prepare_session
 
 
@@ -153,9 +154,11 @@ def execute_session_phase(
         logger = event_logger or logging.getLogger(__name__)
         with lock_context as lock_result:
             prepare_started = perf_counter()
-            session_result = prepare_session(
-                login_config,
+            session_result = StageSessionBroker(
+                preparer=prepare_session,
                 base_dir=PROJECT_ROOT,
+            ).ensure(
+                login_config,
                 force_refresh=force_refresh,
                 event_logger=event_logger,
             )

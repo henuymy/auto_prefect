@@ -28,6 +28,7 @@ from services.dashboard_v2_trigger import (
 )
 from services.dashboard_v2_indicator_service import sync_v2_indicator_records
 from services.method_service import find_stage, load_json
+from services.session_broker import StageSessionBroker
 from services.session_manager import file_lock, prepare_session
 
 
@@ -68,9 +69,11 @@ def execute_dashboard_v2_indicator_sync(
             login_config = build_city_ops_login_config(
                 config, resolved_config_path.parent
             )
-            session_result = prepare_session(
-                login_config,
+            session_result = StageSessionBroker(
+                preparer=prepare_session,
                 base_dir=resolve_project_path("."),
+            ).ensure(
+                login_config,
                 force_refresh=force_refresh,
                 event_logger=event_logger,
             )

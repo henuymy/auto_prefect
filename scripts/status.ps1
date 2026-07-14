@@ -76,19 +76,6 @@ function Get-PrefectPoolStatuses {
     }
 }
 
-function Write-SessionState {
-    $path = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\session-health.json"
-    try {
-        $state = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
-        $verifiedAt = [DateTimeOffset]::Parse([string]$state.verified_at)
-        $ageSeconds = [math]::Max(0, [math]::Floor(([DateTimeOffset]::Now - $verifiedAt).TotalSeconds))
-        $health = if ($state.healthy -eq $true) { "healthy" } else { "unhealthy" }
-        Write-Host "Session state: $health / verified_at=$($verifiedAt.ToString('o')) / age_seconds=$ageSeconds"
-    } catch {
-        Write-Host "Session state: unavailable / verified_at=unknown / age_seconds=unknown"
-    }
-}
-
 function Write-LockStatus {
     param([string]$FileName)
     $path = Join-Path $env:AUTO_NOTIFY_RUNTIME_ROOT "session\locks\$FileName"
@@ -155,7 +142,6 @@ foreach ($pool in $pools) {
     }
 }
 
-Write-SessionState
 Write-LockStatus -FileName "login.lock"
 Write-LockStatus -FileName "excel_com.lock"
 

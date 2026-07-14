@@ -149,7 +149,6 @@ def test_runtime_json_template_exports_three_pool_topology_and_runtime_root():
 
     assert runtime["root"] == r"C:\AutoNotifyRuntime"
     assert runtime["scheduled_notify_grace_seconds"] == 600
-    assert runtime["session_freshness_seconds"] == 180
     assert runtime["work_pools"] == {
         "session": {"name": "windows-session-pool", "limit": 1},
         "dashboard": {"name": "windows-dashboard-pool", "limit": 4},
@@ -213,7 +212,6 @@ def test_runtime_loader_exports_three_pool_environment_contract():
         "PREFECT_NOTIFY_POOL_NAME",
         "PREFECT_NOTIFY_POOL_LIMIT",
         "AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS",
-        "AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS",
     ):
         assert variable in source
 
@@ -301,7 +299,6 @@ def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
         "runtime": {
             "root": r"C:\JsonRuntime",
             "scheduled_notify_grace_seconds": 601,
-            "session_freshness_seconds": 181,
             "work_pools": {
                 "session": {"name": "windows-session-pool", "limit": 2},
                 "dashboard": {"name": "windows-dashboard-pool", "limit": 5},
@@ -335,7 +332,6 @@ $ErrorActionPreference = 'Stop'
   notify_pool = $env:PREFECT_NOTIFY_POOL_NAME
   notify_pool_limit = $env:PREFECT_NOTIFY_POOL_LIMIT
   scheduled_notify_grace_seconds = $env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS
-  session_freshness_seconds = $env:AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS
   work_pool = $env:PREFECT_WORK_POOL_NAME
 }} | ConvertTo-Json -Compress
 """.format(script=(ROOT / "scripts" / "dev" / "env.ps1").as_posix())
@@ -383,9 +379,6 @@ $ErrorActionPreference = 'Stop'
             ),
             "scheduled_notify_grace_seconds": str(
                 json_config["runtime"]["scheduled_notify_grace_seconds"]
-            ),
-            "session_freshness_seconds": str(
-                json_config["runtime"]["session_freshness_seconds"]
             ),
             "work_pool": json_config["runtime"]["work_pools"]["notify"]["name"],
         }
@@ -452,7 +445,8 @@ def test_prefect_deployments_are_partitioned_across_three_pools():
     config = yaml.safe_load((ROOT / "prefect.yaml").read_text(encoding="utf-8"))
     pools = {row["name"]: row["work_pool"]["name"] for row in config["deployments"]}
 
-    assert pools["session-keeper"] == "windows-session-pool"
+    assert pools["session-keeper-report"] == "windows-session-pool"
+    assert pools["session-keeper-city"] == "windows-session-pool"
     assert pools["notify-daily"] == "windows-notify-pool"
     for name in (
         "dashboard-collection",
@@ -468,24 +462,40 @@ def test_legacy_notify_deployment_file_is_retired():
     assert not (ROOT / "deployments" / "notify_single_deployment.yaml").exists()
 
 
-def test_prefect_deploys_session_keeper_on_fixed_quarter_hours():
+def test_prefect_deploys_stage_specific_session_keepers():
     prefect_config = yaml.safe_load(
         (ROOT / "prefect.yaml").read_text(encoding="utf-8")
     )
     keeper_deployments = [
         deployment
         for deployment in prefect_config["deployments"]
-        if deployment["name"] == "session-keeper"
+        if deployment["name"].startswith("session-keeper-")
     ]
 
     assert keeper_deployments == [
         {
-            "name": "session-keeper",
+            "name": "session-keeper-report",
             "entrypoint": "flows/session_keeper_flow.py:session_keeper_flow",
-            "parameters": {"config_path": "config/modules/session_keeper.json"},
+            "parameters": {"config_path": "config/modules/session_keeper_report.json"},
             "schedules": [
                 {
-                    "cron": "*/15 * * * *",
+                    "cron": "*/10 * * * *",
+                    "timezone": "Asia/Shanghai",
+                    "active": True,
+                }
+            ],
+            "work_pool": {
+                "name": "windows-session-pool",
+                "work_queue_name": "default",
+            },
+        },
+        {
+            "name": "session-keeper-city",
+            "entrypoint": "flows/session_keeper_flow.py:session_keeper_flow",
+            "parameters": {"config_path": "config/modules/session_keeper_city.json"},
+            "schedules": [
+                {
+                    "cron": "0 */2 * * *",
                     "timezone": "Asia/Shanghai",
                     "active": True,
                 }
@@ -535,7 +545,7 @@ def test_run_script_resolves_reconcile_cli_from_script_root():
         'Join-Path $PSScriptRoot "lib\\prefect_startup_reconcile.py"'
         in source
     )
-    assert "& $PythonExe $ReconcileScript `" in source
+    assert "& $PythonExe $ReconcileScript @ReconcileArgs" in source
     assert "& $PythonExe scripts/lib/prefect_startup_reconcile.py" not in source
 
 
@@ -750,9 +760,6 @@ def test_status_reports_runtime_health_without_secret_values():
         "queued",
         "concurrency_limit",
         "overdue scheduled run",
-        "Session state",
-        "verified_at",
-        "age_seconds",
         "login.lock",
         "excel_com.lock",
         "owner PID",

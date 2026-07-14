@@ -106,14 +106,15 @@ def test_execute_session_phase_records_success(monkeypatch, tmp_path):
     config_path, _, _ = make_configs(tmp_path)
     run_store = MemoryRunStore()
     monkeypatch.setattr(dashboard_v2_trigger, "build_run_store", lambda _: run_store)
-    monkeypatch.setattr(
-        dashboard_v2_trigger,
-        "prepare_session",
-        lambda *args, **kwargs: {
-            "status": "reused",
-            "cookie_dump_path": "runtime/session/cookie_dump.json",
-        },
-    )
+    def prepare_session(config, **_kwargs):
+        cookie_path = Path(config["cookie_dump_path"])
+        cookie_path.write_text(
+            json.dumps({"stages": [{"stage": "city_ops", "cookies": [{"name": "city"}]}]}),
+            encoding="utf-8",
+        )
+        return {"status": "reused", "cookie_dump_path": str(cookie_path)}
+
+    monkeypatch.setattr(dashboard_v2_trigger, "prepare_session", prepare_session)
 
     result = dashboard_v2_trigger.execute_session_phase(
         config_path=config_path,

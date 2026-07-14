@@ -33,6 +33,7 @@ from services.dashboard_v2_hierarchy import load_v2_collection_targets
 from services.dashboard_v2_indicator_service import load_v2_metric_indicator_plan
 from services.dashboard_v2_orchestrator import collect_validate_metric_rows_v2
 from services.method_service import find_stage, load_json
+from services.session_broker import StageSessionBroker
 from services.session_manager import file_lock, prepare_session
 from services.dashboard_v2_trigger import now_shanghai
 
@@ -138,9 +139,11 @@ def dashboard_v2_batch(
                 resolved_config_path.parent,
             )
             session_started = perf_counter()
-            session_result = prepare_session(
-                login_config,
+            session_result = StageSessionBroker(
+                preparer=prepare_session,
                 base_dir=resolve_project_path("."),
+            ).ensure(
+                login_config,
                 force_refresh=force_refresh,
                 event_logger=event_logger,
             )

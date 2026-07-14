@@ -190,7 +190,16 @@ class AutoLogin:
     def wait_for_login_entry_or_home(self, timeout=30, attempts=2):
         for attempt in range(1, attempts + 1):
             try:
-                return WebDriverWait(self.driver, timeout).until(self.detect_login_entry_or_home)
+                page_state = WebDriverWait(self.driver, timeout).until(
+                    self.detect_login_entry_or_home
+                )
+                if page_state != "no_permission":
+                    return page_state
+
+                if attempt < attempts:
+                    self.reset_ngboss_login_state("检测到系统异常页")
+                    continue
+                raise RuntimeError("登录页持续显示系统异常，无法继续登录")
             except TimeoutException:
                 self.dump_login_page_debug(f"login_entry_timeout_attempt_{attempt}")
                 if attempt < attempts:
@@ -236,7 +245,7 @@ class AutoLogin:
 
     def detect_login_entry_or_home(self, driver):
         if self.is_ngboss_no_permission_page():
-            return False
+            return "no_permission"
         if self.confirm_terminal_tool_dialog_if_present() and self.terminal_tool_dialog_is_visible():
             return False
         if driver.find_elements(By.ID, "buttonList"):
@@ -785,30 +794,48 @@ class AutoLogin:
         expected = str(app_config.get("url_contains") or "").strip()
         timeout_seconds = float(app_config.get("navigation_timeout_seconds", 60) or 60)
         seen_urls = {}
+        source_handle = self.driver.current_window_handle
+
+        def is_blank_window_url(url):
+            normalized = (url or "").strip().lower()
+            return (
+                not normalized
+                or normalized == "about:blank"
+                or normalized.startswith("about:blank#")
+                or normalized.startswith("about:blank?")
+            )
 
         def find_target(driver):
-            for handle in list(driver.window_handles):
-                if handle in old_handles:
-                    continue
-                try:
-                    driver.switch_to.window(handle)
-                    current_url = driver.current_url or ""
-                    seen_urls[handle] = current_url
-                    if (expected and expected in current_url) or (
-                        not expected and current_url != "about:blank"
-                    ):
-                        return handle
-                except Exception:
-                    continue
-            return False
+            try:
+                for handle in list(driver.window_handles):
+                    if handle in old_handles:
+                        continue
+                    try:
+                        driver.switch_to.window(handle)
+                        current_url = driver.current_url or ""
+                        seen_urls[handle] = current_url
+                        if is_blank_window_url(current_url):
+                            continue
+                        if (expected and expected in current_url) or not expected:
+                            return handle
+                    except Exception:
+                        continue
+                return False
+            finally:
+                # A poll can inspect a transient blank helper window. Do not leave the
+                # driver focused on it while waiting for the real application window.
+                if source_handle in driver.window_handles:
+                    driver.switch_to.window(source_handle)
 
         try:
             handle = WebDriverWait(
                 self.driver, timeout_seconds, poll_frequency=0.2
             ).until(find_target)
         except TimeoutException as exc:
+            urls = list(dict.fromkeys(seen_urls.values()))
             raise RuntimeError(
-                f"{app_config.get('name') or app_config.get('stage')} 未打开目标页面"
+                f"{app_config.get('name') or app_config.get('stage')} 未打开目标页面 "
+                f"{expected!r}，新窗口 URL={urls or ['<none>']}"
             ) from exc
         self.driver.switch_to.window(handle)
         return handle
@@ -961,8 +988,10 @@ class AutoLogin:
             app_name = app_config["name"]
             max_attempts = int(app_config.get("capture_attempts", 3) or 3)
             last_error = None
+            stage_started_at = time.monotonic()
             for attempt in range(1, max_attempts + 1):
                 handle = None
+                attempt_started_at = time.monotonic()
                 print(
                     f"[INFO] 准备捕获 USM 应用 Cookie: {stage} / {app_name} "
                     f"(尝试 {attempt}/{max_attempts})"
@@ -979,10 +1008,19 @@ class AutoLogin:
                     if not captured:
                         raise RuntimeError(f"{app_name} Cookie/Storage 写入失败")
                     last_error = None
+                    print(
+                        "[INFO] USM 应用 Cookie 捕获完成: "
+                        f"stage={stage} attempts={attempt} "
+                        f"elapsed_seconds={time.monotonic() - stage_started_at:.2f}"
+                    )
                     break
                 except Exception as exc:
                     last_error = exc
-                    print(f"[WARN] {app_name} 捕获失败: {exc}")
+                    print(
+                        f"[WARN] {app_name} 捕获失败: {exc} "
+                        f"attempt={attempt} "
+                        f"elapsed_seconds={time.monotonic() - attempt_started_at:.2f}"
+                    )
                     self.close_app_window(handle)
                     self.opened_app_handles.pop(stage, None)
                     if attempt < max_attempts:

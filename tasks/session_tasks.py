@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from prefect import get_run_logger, task
 
-from services.session_manager import prepare_session
+from services.session_broker import StageSessionBroker
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
 @task
@@ -13,7 +18,7 @@ def prepare_session_task(
     force_refresh: bool = False,
     login_attempts: int | None = None,
 ) -> dict:
-    return prepare_session(
+    return StageSessionBroker(base_dir=PROJECT_DIR).ensure(
         config,
         force_refresh=force_refresh,
         event_logger=get_run_logger(),

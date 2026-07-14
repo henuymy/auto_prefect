@@ -370,6 +370,22 @@ def test_reconcile_reports_in_flight_blockers_and_still_restores_deployments():
     assert client.resumed == [SESSION_ID]
 
 
+def test_reconcile_force_restart_cancels_in_flight_runs():
+    blocker = scheduled_run(
+        run_id="running-run", deployment_id=SESSION_ID, state="RUNNING"
+    )
+    client = FakePrefectClient(
+        deployments=[deployment(SESSION_ID, "session-keeper")], blockers=[blocker]
+    )
+
+    result = asyncio.run(reconcile_client(client, NOW, 600, cancel_in_flight=True))
+
+    assert result.blockers == []
+    assert client.cancelled == [
+        ("running-run", "startup_force_restart", True)
+    ]
+
+
 def test_reconcile_restores_deployments_when_cancellation_fails():
     run = scheduled_run(deployment_id=NOTIFY_ID, minutes_late=11)
     client = FakePrefectClient(
@@ -466,9 +482,12 @@ class FakeClientContext:
 
 
 def test_cli_returns_two_and_lists_blockers(monkeypatch, capsys):
-    async def fake_reconcile(client, now, notify_grace_seconds, notify_work_pool):
+    async def fake_reconcile(
+        client, now, notify_grace_seconds, notify_work_pool, cancel_in_flight
+    ):
         assert notify_grace_seconds == 600
         assert notify_work_pool == "windows-notify-pool"
+        assert cancel_in_flight is False
         return ReconcileResult(
             cancelled=[],
             blockers=["session-keeper:run-1:RUNNING"],
@@ -502,8 +521,11 @@ def test_cli_returns_two_and_lists_blockers(monkeypatch, capsys):
 
 
 def test_main_returns_one_when_reconciliation_fails(monkeypatch, capsys):
-    async def fail_reconciliation(notify_grace_seconds, notify_work_pool):
+    async def fail_reconciliation(
+        notify_grace_seconds, notify_work_pool, cancel_in_flight
+    ):
         assert notify_work_pool == "windows-notify-pool"
+        assert cancel_in_flight is False
         primary_error = RuntimeError("api unavailable")
         restoration_error = RuntimeError("resume deployment failed")
         restoration_error.add_note(

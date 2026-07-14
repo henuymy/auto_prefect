@@ -191,6 +191,7 @@ async def reconcile_client(
     now: datetime,
     notify_grace_seconds: int,
     notify_work_pool: str = "windows-notify-pool",
+    cancel_in_flight: bool = False,
 ) -> ReconcileResult:
     deployments = await _read_deployments(client)
     managed = {
@@ -252,6 +253,18 @@ async def reconcile_client(
             list(managed),
             {StateType.RUNNING, StateType.CANCELLING, StateType.PAUSED},
         )
+        if cancel_in_flight:
+            for run in in_flight:
+                await client.set_flow_run_state(
+                    run.id,
+                    Cancelled(message="startup_force_restart"),
+                    force=True,
+                )
+                deployment_name = managed[run.deployment_id][0].name
+                cancelled.append(
+                    f"{deployment_name}:{run.id}:startup_force_restart"
+                )
+            in_flight = []
         blockers = [
             f"{managed[run.deployment_id][0].name}:{run.id}:{_state_type(run)}"
             for run in in_flight
@@ -337,16 +350,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--notify-work-pool",
         default="windows-notify-pool",
     )
+    parser.add_argument(
+        "--cancel-in-flight",
+        action="store_true",
+        help="Cancel active managed runs after their local Workers were stopped.",
+    )
     return parser.parse_args(argv)
 
 
-async def _run_cli(notify_grace_seconds: int, notify_work_pool: str) -> int:
+async def _run_cli(
+    notify_grace_seconds: int,
+    notify_work_pool: str,
+    cancel_in_flight: bool = False,
+) -> int:
     async with get_client() as client:
         result = await reconcile_client(
             client,
             datetime.now(timezone.utc),
             notify_grace_seconds,
             notify_work_pool,
+            cancel_in_flight,
         )
 
     for migrated in result.migrated:
@@ -368,7 +391,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         return asyncio.run(
-            _run_cli(args.notify_grace_seconds, args.notify_work_pool)
+            _run_cli(
+                args.notify_grace_seconds,
+                args.notify_work_pool,
+                args.cancel_in_flight,
+            )
         )
     except Exception as exc:
         print(f"reconciliation_failed:{type(exc).__name__}:{exc}", file=sys.stderr)

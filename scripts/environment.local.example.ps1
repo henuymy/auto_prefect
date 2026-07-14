@@ -1,4 +1,5 @@
 # Copy this file to scripts/environment.local.ps1 and fill in local secrets.
+$env:AUTO_NOTIFY_ENVIRONMENT = "development"
 # This file is ignored by Git. Do not commit real credentials.
 
 # Prefect PostgreSQL. This URL is passed directly to Prefect.

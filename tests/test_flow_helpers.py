@@ -82,6 +82,9 @@ def test_is_session_expired_error_matches_known_messages():
     assert is_session_expired_error(RuntimeError("reMsg=单点登录超时，请登录后重新跳转"))
     assert is_session_expired_error(RuntimeError("下载响应为 HTML（可能是登录页）"))
     assert not is_session_expired_error(RuntimeError("Connection timed out"))
+    assert not is_session_expired_error(
+        RuntimeError("下载接口返回重定向但不是明确登录地址: HTTP 302 GET")
+    )
 
 
 def test_select_downloaded_report_path_by_name():

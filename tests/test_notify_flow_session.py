@@ -67,7 +67,7 @@ def test_notify_initial_forced_mode_disables_later_active_refresh():
     assert refresh_calls == []
 
 
-def test_notify_reports_second_auth_failure_after_successful_refresh():
+def test_notify_does_not_alert_before_the_outer_flow_fails():
     second_failure = RuntimeError("session expired: HTTP 403")
     outcomes = iter([RuntimeError("session expired: HTTP 302"), second_failure])
     refresh_calls = []
@@ -87,10 +87,10 @@ def test_notify_reports_second_auth_failure_after_successful_refresh():
 
     assert exc_info.value is second_failure
     assert refresh_calls == [True]
-    assert reported == [(second_failure, {"trigger_source": "auto-notify-flow"})]
+    assert reported == []
 
 
-def test_notify_initial_forced_mode_reports_auth_failure_without_refresh():
+def test_notify_forced_mode_does_not_alert_before_the_outer_flow_fails():
     failure = RuntimeError("session expired: HTTP 401")
     refresh_calls = []
     reported = []
@@ -105,10 +105,10 @@ def test_notify_initial_forced_mode_reports_auth_failure_without_refresh():
 
     assert exc_info.value is failure
     assert refresh_calls == []
-    assert reported == [(failure, {"trigger_source": "auto-notify-flow"})]
+    assert reported == []
 
 
-def test_notify_successful_preparation_runs_shared_recovery():
+def test_notify_successful_preparation_does_not_send_shared_recovery():
     recoveries = []
 
     result = run_notify_session_preparation(
@@ -117,7 +117,7 @@ def test_notify_successful_preparation_runs_shared_recovery():
     )
 
     assert result == {"status": "refreshed"}
-    assert recoveries == [{"trigger_source": "auto-notify-flow"}]
+    assert recoveries == []
 
 
 def test_notify_invalid_preparation_does_not_recover_or_clear_active_incident(tmp_path):
@@ -166,7 +166,7 @@ def test_notify_invalid_preparation_does_not_recover_or_clear_active_incident(tm
 
     state = json.loads((tmp_path / "incident.json").read_text(encoding="utf-8"))
     assert state["active_incident_key"] == "authentication:shared-session"
-    assert not any(message.startswith("[自动登录恢复]") for message in messages)
+    assert not any(message.startswith("[共享会话恢复通知]") for message in messages)
 
 
 def test_notify_unknown_preparation_status_does_not_send_recovery():

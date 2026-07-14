@@ -1,5 +1,7 @@
 {
   "cookie_dump_path": "runtime/session/cookie_dump.json",
+  "stage_session_dir": "runtime/session/stages",
+  "stage_health_path": "runtime/session/stage_health.json",
   "legacy_cookie_dump_path": null,
   "required_stages": [
     "report_analysis",
@@ -15,8 +17,6 @@
   "login_lock_wait_seconds": 1440,
   "login_lock_poll_seconds": 5,
   "login_lock_stale_seconds": 900,
-  "session_health_state_path": "runtime/session/session-health.json",
-  "session_freshness_seconds": 180,
   "browser_session_state_path": "runtime/session/browser-session.json",
   "browser": {
     "user_data_dir": "runtime/session/browser-profile"

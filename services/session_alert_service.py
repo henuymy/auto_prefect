@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import socket
 from datetime import datetime
 from pathlib import Path
+from threading import Thread
 from uuid import uuid4
 
 from infrastructure.wecom_client import send_text
@@ -34,6 +36,7 @@ SENSITIVE_KEYWORDS = (
     "stderr",
 )
 REDACTED_SENSITIVE_DETAIL = "<redacted sensitive detail>"
+LOGGER = logging.getLogger(__name__)
 
 
 def _resolve(path_value, base_dir):
@@ -72,6 +75,12 @@ def _redact(value):
     return text
 
 
+def _display(value, default="未提供"):
+    if value is None or value == "":
+        return default
+    return _redact(value)
+
+
 def _require_send_success(result):
     if isinstance(result, dict) and result.get("errcode") not in (None, 0, "0"):
         raise RuntimeError("WeCom session alert send failed")
@@ -95,6 +104,30 @@ def _incident_transaction(config, state_path, base_dir):
     )
 
 
+def _run_notification_safely(notification, *, notification_type):
+    try:
+        return notification()
+    except Exception as exc:  # Alert delivery must not replace the primary Flow result.
+        LOGGER.warning(
+            "企业微信会话%s通知失败: notification_error_type=%s",
+            notification_type,
+            type(exc).__name__,
+        )
+        return None
+
+
+def dispatch_session_notification(notification, *, notification_type):
+    """Dispatch a session notification without blocking the calling Flow."""
+    thread = Thread(
+        target=_run_notification_safely,
+        kwargs={"notification": notification, "notification_type": notification_type},
+        daemon=True,
+        name=f"session-{notification_type}-notification",
+    )
+    thread.start()
+    return thread
+
+
 def notify_session_failure(config, incident, *, base_dir=PROJECT_DIR, sender=send_text):
     state_path = _resolve(config["incident_state_path"], base_dir)
     incident_key = _redact(incident["incident_key"])
@@ -104,17 +137,20 @@ def notify_session_failure(config, incident, *, base_dir=PROJECT_DIR, sender=sen
             return {"sent": False, "suppressed": True}
 
         host_name = _redact(config.get("host_name") or socket.gethostname())
-        errors = "；".join(_redact(item) for item in incident.get("errors", []))
-        failed_stages = ", ".join(_redact(item) for item in incident.get("failed_stages", []))
+        errors = "；".join(_redact(item) for item in incident.get("errors", [])) or "未提供"
+        failed_stages = ", ".join(_redact(item) for item in incident.get("failed_stages", [])) or "未提供"
         message = (
-            f"[自动登录告警]\n主机: {host_name}\n"
-            f"来源: {_redact(incident['trigger_source'])}\n"
-            f"分类: {_redact(incident['failure_category'])}\n"
-            f"阶段: {failed_stages}\n"
-            f"登录尝试: {_redact(incident.get('attempt_count', 0))}\n"
-            f"错误: {errors}\n"
-            f"Flow Run ID: {_redact(incident.get('flow_run_id'))}\n"
-            f"下次调度: {_redact(incident.get('next_scheduled_at'))}"
+            f"[共享会话故障告警]\n主机: {host_name}\n"
+            f"Flow: {_display(incident.get('flow_name'))}\n"
+            f"Flow Run: {_display(incident.get('flow_run_name'))}\n"
+            f"Flow Run ID: {_display(incident.get('flow_run_id'))}\n"
+            f"来源: {_display(incident.get('trigger_source'))}\n"
+            f"故障分类: {_display(incident.get('failure_category'))}\n"
+            f"判定依据: {_display(incident.get('failure_reason'))}\n"
+            f"受影响阶段: {failed_stages}\n"
+            f"登录尝试次数: {_display(incident.get('attempt_count', 0))}\n"
+            f"错误摘要: {errors}\n"
+            f"后续检查: {_display(incident.get('next_scheduled_at'))}"
         )
         result = _require_send_success(sender(config["webhook_url"], message, timeout=30))
         _write_state(
@@ -124,6 +160,13 @@ def notify_session_failure(config, incident, *, base_dir=PROJECT_DIR, sender=sen
                 "failed_at": datetime.now().astimezone().isoformat(),
                 "status": "active",
                 "failure_category": _redact(incident["failure_category"]),
+                "flow_name": _redact(incident.get("flow_name")),
+                "flow_run_name": _redact(incident.get("flow_run_name")),
+                "flow_run_id": _redact(incident.get("flow_run_id")),
+                "trigger_source": _redact(incident["trigger_source"]),
+                "failed_stages": failed_stages,
+                "failure_category": _redact(incident.get("failure_category")),
+                "failure_reason": _redact(incident.get("failure_reason")),
             },
         )
         return {"sent": True, "suppressed": False, "result": result}
@@ -131,15 +174,24 @@ def notify_session_failure(config, incident, *, base_dir=PROJECT_DIR, sender=sen
 
 def notify_session_recovery(config, recovery, *, base_dir=PROJECT_DIR, sender=send_text):
     state_path = _resolve(config["incident_state_path"], base_dir)
-    incident_key = _redact(recovery["incident_key"])
     with _incident_transaction(config, state_path, base_dir):
         state = _read_state(state_path)
+        incident_key = _redact(recovery.get("incident_key") or state.get("active_incident_key"))
         if state.get("active_incident_key") != incident_key:
             return {"sent": False, "suppressed": True}
 
         message = (
-            f"[自动登录恢复]\n故障: {incident_key}\n"
-            f"Flow Run ID: {_redact(recovery.get('flow_run_id'))}"
+            f"[共享会话恢复通知]\n"
+            f"原故障分类: {_display(state.get('failure_category'))}\n"
+            f"原判定依据: {_display(state.get('failure_reason'))}\n"
+            f"原故障 Flow: {_display(state.get('flow_name'))}\n"
+            f"原故障 Flow Run: {_display(state.get('flow_run_name'))}\n"
+            f"原故障 Flow Run ID: {_display(state.get('flow_run_id'))}\n"
+            f"受影响阶段: {_display(state.get('failed_stages'))}\n"
+            f"恢复确认来源: {_display(recovery.get('trigger_source'))}\n"
+            f"恢复确认 Flow: {_display(recovery.get('flow_name'))}\n"
+            f"恢复确认 Run: {_display(recovery.get('flow_run_name'))}\n"
+            f"恢复确认 Run ID: {_display(recovery.get('flow_run_id'))}"
         )
         result = _require_send_success(sender(config["webhook_url"], message, timeout=30))
         _write_state(

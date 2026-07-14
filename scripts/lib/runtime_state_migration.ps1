@@ -24,10 +24,6 @@ function Invoke-RuntimeStateMigration {
             (Join-Path $RuntimeRoot "cookies\cookie_dump.json"),
             (Join-Path $RepoRoot "runtime\cookies\cookie_dump.json")
         ); Target = Join-Path $RuntimeRoot "session\cookie_dump.json" },
-        [pscustomobject]@{ Name = "session_health"; Sources = @(
-            (Join-Path $RuntimeRoot "session\session_state.json"),
-            (Join-Path $RepoRoot "runtime\session\session_state.json")
-        ); Target = Join-Path $RuntimeRoot "session\session-health.json" },
         [pscustomobject]@{ Name = "browser_session"; Sources = @(
             (Join-Path $RuntimeRoot "browser_session\session.json"),
             (Join-Path $RepoRoot "runtime\browser_session\session.json")

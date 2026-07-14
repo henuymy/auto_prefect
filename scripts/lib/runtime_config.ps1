@@ -90,7 +90,6 @@ function Import-RuntimeConfig {
     $env:PREFECT_NOTIFY_POOL_NAME = Get-RuntimeConfigValue -Config $config -Path "runtime.work_pools.notify.name"
     $env:PREFECT_NOTIFY_POOL_LIMIT = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.work_pools.notify.limit"
     $env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.scheduled_notify_grace_seconds"
-    $env:AUTO_NOTIFY_SESSION_FRESHNESS_SECONDS = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.session_freshness_seconds"
 
     $poolNames = @(
         $env:PREFECT_SESSION_POOL_NAME,

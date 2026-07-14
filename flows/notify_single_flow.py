@@ -25,7 +25,7 @@ from services.session_retry_service import (
     is_session_expired_error,  # noqa: F401 - backward-compatible flow export
     run_with_session_refresh_once,
 )
-from services.session_business_failure_service import run_with_business_session_reporting
+from services.business_run_alert_service import report_current_business_run_failure
 from services.runtime_paths import resolve_runtime_path, runtime_root, validate_runtime_path
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
@@ -53,13 +53,8 @@ def run_notify_session_preparation(operation, recoverer=None):
             raise RuntimeError(f"会话不可用: {result.get('reason')}")
         return result
 
-    return run_with_business_session_reporting(
-        validate_preparation_result,
-        trigger_source="auto-notify-flow",
-        recover_on_success=True,
-        recoverer=recoverer,
-        recovery_predicate=notify_session_result_is_healthy,
-    )
+    del recoverer
+    return validate_preparation_result()
 
 
 def prepare_notify_session(login_config, *, force_refresh: bool):
@@ -79,15 +74,8 @@ def run_notify_download_with_session_refresh(
     refresh_budget,
     reporter=None,
 ):
-    return run_with_business_session_reporting(
-        lambda: run_with_session_refresh_once(
-            operation,
-            refresh_session,
-            refresh_budget=refresh_budget,
-        ),
-        trigger_source="auto-notify-flow",
-        reporter=reporter,
-    )
+    del reporter
+    return run_with_session_refresh_once(operation, refresh_session, refresh_budget=refresh_budget)
 
 
 def load_config(config_path=None):
@@ -424,8 +412,7 @@ def prepare_template_config(base_config_path, output_config_path, compare_config
     return str(write_json(output_config_path, template_config))
 
 
-@flow(name="auto-notify-flow")
-def auto_notify_flow(config_path=None):
+def run_auto_notify_pipeline(config_path=None):
     logger = get_run_logger()
     config, resolved_config_path = load_config(config_path)
     logger.info("读取流程配置: %s", resolved_config_path)
@@ -698,6 +685,21 @@ def auto_notify_flow(config_path=None):
                 commit_config[key] = commit_step[key]
         commit_template_task(commit_config)
     return {"status": "completed", "updated_template_path": update_manifest["output_path"]}
+
+
+@flow(name="auto-notify-flow")
+def auto_notify_flow(config_path=None):
+    try:
+        return run_auto_notify_pipeline(config_path)
+    except Exception as exc:
+        report_current_business_run_failure(
+            exc,
+            workload_type="report",
+            workload_id=Path(config_path or DEFAULT_CONFIG_PATH).stem,
+            flow_name="auto-notify-flow",
+            failed_stage="自动通报流程",
+        )
+        raise
 
 
 if __name__ == "__main__":

@@ -129,7 +129,6 @@ C:\AutoNotifyRuntime\
     cookie_dump.json
     browser-session.json
     browser-profile\
-    session-health.json
     locks\
       login.lock
       excel_com.lock
