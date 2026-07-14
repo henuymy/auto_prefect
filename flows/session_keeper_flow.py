@@ -29,10 +29,6 @@ def load_keeper_config(config_path, base_dir=PROJECT_ROOT):
         base_dir / keeper_config["alert_config_path"]
     )
     session_config["required_stages"] = keeper_config["required_stages"]
-    session_config["login_max_attempts"] = keeper_config["login_max_attempts"]
-    session_config["login_retry_delay_seconds"] = keeper_config[
-        "login_retry_delay_seconds"
-    ]
     return {
         "session": session_config,
         "alert": {
@@ -53,22 +49,10 @@ def current_flow_run_id():
     return str(flow_run.id or "manual")
 
 
-def retry_infrastructure_only(_task, _task_run, state):
-    try:
-        state.result()
-    except SessionInfrastructureError:
-        return True
-    except Exception:
-        return False
-    return False
-
-
 def run_prepare_session(config):
     return prepare_session_task.with_options(
-        retries=1,
-        retry_delay_seconds=60,
-        retry_condition_fn=retry_infrastructure_only,
-    )(config, force_refresh=False)
+        retries=0,
+    )(config, force_refresh=False, login_attempts=1)
 
 
 def notify_failure(alert_config, incident):

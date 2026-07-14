@@ -755,6 +755,7 @@ def test_prepare_session_allows_business_single_login_attempt_override(monkeypat
     )
 
     def fake_login(_command, **kwargs):
+        assert kwargs["env"]["AUTO_NOTIFY_REQUIRED_STAGES"] == "city_ops"
         write_json(
             Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"]),
             valid_city_ops_cookie_dump(),

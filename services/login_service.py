@@ -1,6 +1,7 @@
 """Selenium login flow for capturing NGBOSS/USM cookies."""
 import json
 import copy
+import os
 import shutil
 import time
 from datetime import datetime
@@ -22,6 +23,7 @@ from utils.config_loader import load_json_with_local_override
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+REQUIRED_STAGES_ENV = "AUTO_NOTIFY_REQUIRED_STAGES"
 
 
 def xpath_literal(value: str) -> str:
@@ -110,8 +112,29 @@ class AutoLogin:
             return self.config["usm_host"]
         return urlparse(self.config.get("urls", {}).get("usm_console", "")).hostname or ""
 
+    def requested_session_stages(self):
+        raw_value = os.environ.get(REQUIRED_STAGES_ENV, "")
+        return list(
+            dict.fromkeys(
+                stage.strip()
+                for stage in raw_value.split(",")
+                if stage.strip()
+            )
+        )
+
     def get_usm_cookie_apps(self):
-        return self.config.get("usm_cookie_apps") or [{"stage": "data_market", "name": "数据超市"}]
+        apps = self.config.get("usm_cookie_apps") or [
+            {"stage": "data_market", "name": "数据超市"}
+        ]
+        requested_stages = self.requested_session_stages()
+        available_stages = {str(app.get("stage") or "").strip() for app in apps}
+        if not requested_stages or not set(requested_stages).issubset(available_stages):
+            return apps
+        print(
+            "[INFO] 按调用阶段范围捕获 USM Cookie: "
+            + ", ".join(requested_stages)
+        )
+        return [app for app in apps if app.get("stage") in requested_stages]
 
     def ensure_ngboss_main_loaded(self):
         try:
@@ -974,7 +997,12 @@ class AutoLogin:
         if not source_path.is_absolute():
             source_path = PROJECT_DIR / source_path
         session_config, _ = load_json_with_local_override(source_path)
-        required_stages = validation_config.get("required_stages") or session_config.get("required_stages") or []
+        required_stages = (
+            self.requested_session_stages()
+            or validation_config.get("required_stages")
+            or session_config.get("required_stages")
+            or []
+        )
         cookie_dump = json.loads(self.cookie_recorder.output_path.read_text(encoding="utf-8"))
         validation, probe_validation = validate_existing_session(
             cookie_dump,

@@ -106,6 +106,44 @@ def test_auto_login_accepts_in_memory_config_without_reading_disk(monkeypatch):
     assert str(login.config_path) == "session-experiment"
 
 
+def test_login_scopes_usm_capture_and_validation_to_requested_stages(monkeypatch):
+    login = login_service.AutoLogin.__new__(login_service.AutoLogin)
+    login.config = {
+        "usm_cookie_apps": [
+            {"stage": "report_analysis", "name": "报表分析"},
+            {"stage": "smart_ops", "name": "智慧运营"},
+            {"stage": "city_ops", "name": "市级运营"},
+            {"stage": "data_market", "name": "数据超市"},
+        ]
+    }
+    monkeypatch.setenv(
+        login_service.REQUIRED_STAGES_ENV,
+        "city_ops, report_analysis, city_ops",
+    )
+
+    assert login.requested_session_stages() == ["city_ops", "report_analysis"]
+    assert [app["stage"] for app in login.get_usm_cookie_apps()] == [
+        "report_analysis",
+        "city_ops",
+    ]
+
+
+def test_login_keeps_full_usm_capture_when_requested_stage_is_unknown(monkeypatch):
+    login = login_service.AutoLogin.__new__(login_service.AutoLogin)
+    login.config = {
+        "usm_cookie_apps": [
+            {"stage": "report_analysis", "name": "报表分析"},
+            {"stage": "city_ops", "name": "市级运营"},
+        ]
+    }
+    monkeypatch.setenv(login_service.REQUIRED_STAGES_ENV, "city_ops, unknown_stage")
+
+    assert [app["stage"] for app in login.get_usm_cookie_apps()] == [
+        "report_analysis",
+        "city_ops",
+    ]
+
+
 def test_init_driver_enables_headless_edge(monkeypatch, tmp_path):
     captured = {}
     fake_driver = FakeDriver()

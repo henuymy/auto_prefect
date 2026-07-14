@@ -1070,11 +1070,18 @@ def prepare_session(
             if close_result.get("remaining_pids"):
                 warn("旧自动登录浏览器仍有残留进程，继续尝试登录: %s", close_result)
             try:
+                login_environment = {
+                    "AUTO_NOTIFY_COOKIE_DUMP_PATH": str(attempt_snapshot_path),
+                }
+                if required_stages:
+                    login_environment["AUTO_NOTIFY_REQUIRED_STAGES"] = ",".join(
+                        required_stages
+                    )
                 command_result = run_login_command(
                     command,
                     cwd=base_dir,
                     timeout_seconds=login_timeout_seconds,
-                    env={"AUTO_NOTIFY_COOKIE_DUMP_PATH": str(attempt_snapshot_path)},
+                    env=login_environment,
                 )
                 refreshed_cookie_dump, refreshed_cookie_hash = (
                     load_cookie_snapshot_if_exists(attempt_snapshot_path)

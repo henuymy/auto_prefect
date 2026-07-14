@@ -214,9 +214,10 @@ pwsh -File scripts/lib/start_web.ps1 -Mode both
 
 Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每小时 `00/15/30/45` 分运行。
 
-- 认证失效时立即在全局登录锁内执行登录；首次失败后等待 60 秒，仅再试一次。
-- 基础设施探活失败不触发登录，由 Prefect 重试后发送企业微信故障通知。
+- Session Keeper 和业务 Flow 在认证失效时仅在全局登录锁内执行一次完整登录；失败立即上报，由下一次 Session Keeper 调度恢复。
+- 基础设施探活失败不触发登录，当前 Session Keeper Run 立即发送企业微信故障通知。
 - 业务 Flow 仅在明确的会话失效时强刷新一次会话，并仅重试失败的业务步骤一次。
+- 完整登录仅捕获调用方声明的业务阶段 Cookie；未声明阶段范围的手工登录仍捕获全部阶段。
 - 故障去重状态保存在 `runtime/session_keeper/incident_state.json`。在 Prefect UI 中打开上述 Deployment 查看最新运行，或执行 `python -m prefect flow-run ls --flow-name session-keeper-flow --limit 1`。
 - 支持日志不得复制账号密码、Cookie、Token、Webhook 值或其他认证材料。
 
