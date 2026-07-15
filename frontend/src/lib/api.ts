@@ -3,6 +3,7 @@ import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAcc
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+const API_REQUEST_TIMEOUT_MS = 30_000;
 
 let logs: RunLog[] = [];
 
@@ -113,13 +114,22 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(API_REQUEST_TIMEOUT_MS),
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new Error("请求超时，请检查后端服务");
+    }
+    throw error;
+  }
   if (!response.ok) {
     const text = await response.text();
     try {
