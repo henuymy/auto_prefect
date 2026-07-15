@@ -103,13 +103,25 @@ def test_split_a1_range_respects_cell_limit():
     assert len(chunks) == 18
 
 
-def test_resolve_sheet_range_can_auto_detect_or_clamp_to_sheet_bounds():
+def test_resolve_sheet_range_prefers_used_bounds_and_preserves_explicit_range():
+    sheet_property = {
+        "rowTotal": 200,
+        "columnTotal": 26,
+        "rowCount": 2,
+        "columnCount": 1,
+    }
+
+    assert resolve_sheet_range("auto", sheet_property) == ("A1:A2", True)
+    assert resolve_sheet_range("", sheet_property) == ("A1:A2", True)
+    assert resolve_sheet_range("used", sheet_property) == ("A1:A2", True)
+    assert resolve_sheet_range("A1:Z1000", sheet_property) == ("A1:Z1000", False)
+    assert resolve_sheet_range("A1:B20", sheet_property) == ("A1:B20", False)
+
+
+def test_resolve_sheet_range_falls_back_to_total_bounds_when_used_bounds_are_missing():
     sheet_property = {"rowTotal": 200, "columnTotal": 26}
 
     assert resolve_sheet_range("auto", sheet_property) == ("A1:Z200", True)
-    assert resolve_sheet_range("", sheet_property) == ("A1:Z200", True)
-    assert resolve_sheet_range("A1:Z1000", sheet_property) == ("A1:Z200", True)
-    assert resolve_sheet_range("A1:B20", sheet_property) == ("A1:B20", False)
 
 
 def test_cell_to_value_handles_common_types():
@@ -153,7 +165,8 @@ def test_download_tencent_sheet_report_writes_workbook():
                 if "util/converter" in url:
                     return make_response({"ret": 0, "data": {"fileID": "300000000$ABC"}})
                 if url.endswith("/openapi/spreadsheet/v3/files/300000000$ABC"):
-                    return make_response({"ret": 0, "data": {"properties": [{"sheetId": "000002", "title": "日报", "rowTotal": 2, "columnTotal": 2}]}})
+                    assert kwargs["params"] == {"concise": 0}
+                    return make_response({"ret": 0, "data": {"properties": [{"sheetId": "000002", "title": "日报", "rowTotal": 200, "columnTotal": 26, "rowCount": 2, "columnCount": 2}]}})
                 if "/000002/A1:B2" in url:
                     return make_response(
                         {
@@ -178,7 +191,7 @@ def test_download_tencent_sheet_report_writes_workbook():
                 "source": "tencent_sheet",
                 "doc_url": "https://docs.qq.com/sheet/DY1h4R1Rmd0FwWFhF?tab=000002",
                 "tencent_config_path": str(config_path),
-                "sheets": [{"sheet_id": "000002", "range": "A1:B2", "output_sheet_name": "日报"}],
+                "sheets": [{"sheet_id": "000002", "range": "auto", "output_sheet_name": "日报"}],
             },
             work_dir / "downloads",
             session=FakeSession(),
@@ -236,6 +249,8 @@ def test_download_tencent_sheet_report_stops_when_later_chunk_exceeds_sheet():
                             },
                         }
                     )
+                if "/000002/A3:B4" in url:
+                    return make_response({"code": 400001, "message": "invalid param error: 'range' invalid"})
                 raise AssertionError(f"unexpected url: {url}")
 
         result = download_tencent_sheet_report(
@@ -258,11 +273,12 @@ def test_download_tencent_sheet_report_stops_when_later_chunk_exceeds_sheet():
         finally:
             workbook.close()
         assert result["sheets"][0]["configured_range"] == "A1:B4"
-        assert result["sheets"][0]["range"] == "A1:B2"
-        assert result["sheets"][0]["range_auto_adjusted"] is True
-        assert result["sheets"][0]["planned_chunks"] == 1
+        assert result["sheets"][0]["range"] == "A1:B4"
+        assert result["sheets"][0]["range_auto_adjusted"] is False
+        assert result["sheets"][0]["planned_chunks"] == 2
         assert result["sheets"][0]["fetched_chunks"] == 1
-        assert len(calls) == 3
+        assert result["sheets"][0]["stopped_reason"] == "range_invalid_after_data"
+        assert len(calls) == 4
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 

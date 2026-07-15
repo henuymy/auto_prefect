@@ -285,16 +285,15 @@ def split_a1_range(value: str, limits: dict[str, Any] | None = None) -> list[str
 def sheet_bounds_from_property(sheet_property: dict[str, Any] | None) -> tuple[int, int] | None:
     if not sheet_property:
         return None
-    row_total = sheet_property.get("rowTotal") or sheet_property.get("rowCount") or sheet_property.get("rows")
-    column_total = sheet_property.get("columnTotal") or sheet_property.get("columnCount") or sheet_property.get("columns")
-    try:
-        rows = int(row_total)
-        columns = int(column_total)
-    except (TypeError, ValueError):
-        return None
-    if rows < 1 or columns < 1:
-        return None
-    return rows, columns
+    for row_key, column_key in (("rowCount", "columnCount"), ("rowTotal", "columnTotal"), ("rows", "columns")):
+        try:
+            rows = int(sheet_property.get(row_key))
+            columns = int(sheet_property.get(column_key))
+        except (TypeError, ValueError):
+            continue
+        if rows >= 1 and columns >= 1:
+            return rows, columns
+    return None
 
 
 def find_sheet_property(spreadsheet: dict[str, Any], sheet_id: str) -> dict[str, Any] | None:
@@ -316,15 +315,7 @@ def resolve_sheet_range(range_address: str, sheet_property: dict[str, Any] | Non
         return format_a1_range(1, 1, columns, rows), True
 
     start_col, start_row, end_col, end_row = parse_a1_range(text)
-    if not bounds:
-        return format_a1_range(start_col, start_row, end_col, end_row), False
-    rows, columns = bounds
-    clamped_end_col = min(end_col, columns)
-    clamped_end_row = min(end_row, rows)
-    if clamped_end_col < start_col or clamped_end_row < start_row:
-        return format_a1_range(start_col, start_row, start_col, start_row), True
-    resolved = format_a1_range(start_col, start_row, clamped_end_col, clamped_end_row)
-    return resolved, resolved != format_a1_range(start_col, start_row, end_col, end_row)
+    return format_a1_range(start_col, start_row, end_col, end_row), False
 
 
 def safe_sheet_name(raw_name: str, used_names: set[str]) -> str:
@@ -583,7 +574,7 @@ def download_tencent_sheet_report(
     chunk_delay = float(report.get("chunk_request_interval_seconds") or module_config.get("chunk_request_interval_seconds") or module_config.get("request_interval_seconds") or 0)
     session = session or requests.Session()
     file_id = resolve_file_id(session, report, credentials, timeout, retry=retry)
-    spreadsheet = get_spreadsheet(session, file_id, credentials, timeout, concise=True, retry=retry)
+    spreadsheet = get_spreadsheet(session, file_id, credentials, timeout, concise=False, retry=retry)
 
     workbook = Workbook()
     default_sheet = workbook.active
