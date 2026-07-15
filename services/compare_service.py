@@ -18,7 +18,10 @@ from openpyxl.utils.exceptions import InvalidFileException
 
 from models.compare_result import CompareResult, WorkbookCompareResult
 from infrastructure.excel_client import get_sheet, open_excel, sheet_names as workbook_sheet_names
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import (
+    is_runtime_relative_path,
+    resolve_runtime_relative_path,
+)
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -36,9 +39,9 @@ def resolve_path(value, base_dir=PROJECT_DIR):
         return None
     path = Path(value)
     if path.parts and path.parts[0].lower() == "runtime":
-        resolved = resolve_runtime_path(path, project_dir=base_dir)
-        assert resolved is not None
-        return resolved
+        raise ValueError(f"运行根相对路径不得以 runtime/ 开头: {value}")
+    if is_runtime_relative_path(path):
+        return resolve_runtime_relative_path(path)
     if path.is_absolute():
         return path
     return (base_dir / path).resolve()

@@ -14,7 +14,7 @@
   "workbooks": [
     {
       "name": "通报工作簿",
-      "file": "runtime/modules/wecom_sender/output/input.xlsx",
+      "file": "modules/wecom_sender/output/input.xlsx",
       "excel_open": {
         "update_links": false,
         "refresh_before_capture": false,
@@ -28,7 +28,7 @@
     "webhook_url": ""
   },
   "output": {
-    "runtime_dir": "runtime/modules/wecom_sender/output",
+    "runtime_dir": "modules/wecom_sender/output",
     "image_dir": "images",
     "package_file": "message_package.json",
     "preview_image_file": "preview.png",

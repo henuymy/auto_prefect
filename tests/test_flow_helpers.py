@@ -18,8 +18,9 @@ from flows.notify_single_flow import (
     select_downloaded_report_path,
     should_send_when_same,
 )
+from services.runtime_paths import resolve_runtime_relative_path
 
-PROJECT_TEST_RUNTIME_DIR = Path("runtime/flow/test")
+PROJECT_TEST_RUNTIME_DIR = Path("flow/test")
 
 
 def test_read_json_accepts_absolute_file_under_shared_runtime_root(monkeypatch, tmp_path):
@@ -40,13 +41,25 @@ def test_notify_task_defaults_are_merged_and_runtime_paths_are_derived():
     assert config["steps"]["send_wecom"]["timeout"] == 30
     assert config["wait_for_change"]["enabled"] is False
 
-    runtime_dir = Path("runtime/flow/PK赛通报")
+    runtime_dir = Path("flow/PK赛通报")
     materialize_runtime_paths(config, runtime_dir)
 
     assert config["steps"]["update_template"]["output_dir"] == str(runtime_dir / "output" / "templates")
     assert config["steps"]["commit_template"]["send_result_path"] == str(
         runtime_dir / "output" / "wecom" / "send_result.json"
     )
+
+
+def test_materialized_flow_paths_are_root_relative_and_resolvable(monkeypatch, tmp_path):
+    shared_runtime_root = tmp_path / "shared"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(shared_runtime_root))
+    config, _ = load_config("config/tasks/PK赛通报.json")
+
+    materialize_runtime_paths(config, Path("flow/PK赛通报"))
+
+    output_dir = config["steps"]["update_template"]["output_dir"]
+    assert Path(output_dir) == Path("flow/PK赛通报/output/templates")
+    assert resolve_runtime_relative_path(output_dir).is_relative_to(shared_runtime_root)
 
 
 def test_notify_task_can_override_default_wait_strategy():
@@ -59,7 +72,7 @@ def test_notify_task_can_override_default_wait_strategy():
 def test_send_config_overrides_generic_module_workbook_with_report_content():
     base = {
         "workbooks": [
-            {"name": "通报工作簿", "file": "runtime/modules/wecom_sender/output/input.xlsx", "reports": []}
+            {"name": "通报工作簿", "file": "modules/wecom_sender/output/input.xlsx", "reports": []}
         ]
     }
     report = {
@@ -69,7 +82,7 @@ def test_send_config_overrides_generic_module_workbook_with_report_content():
         }
     }
 
-    config = build_send_config(base, report, "runtime/flow/测试/output/templates/latest.xlsx")
+    config = build_send_config(base, report, "flow/测试/output/templates/latest.xlsx")
 
     assert config["workbooks"][0]["name"] == "测试通报"
     assert config["workbooks"][0]["file"].endswith("latest.xlsx")
@@ -195,7 +208,7 @@ def test_resolve_dynamic_placeholders_supports_today_and_hour():
 
 def test_build_download_config_resolves_dynamic_tokens():
     base = {
-        "cookie_dump_path": "runtime/session/cookie_dump.json",
+        "cookie_dump_path": "session/cookie_dump.json",
         "report_defaults": {},
     }
     report_cfg = {

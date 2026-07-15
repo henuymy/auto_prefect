@@ -21,7 +21,7 @@ def test_resolve_project_path_rebases_logical_runtime_paths(monkeypatch, tmp_pat
     runtime_root = tmp_path / "shared-runtime"
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
 
-    assert resolve_project_path("runtime/flow/日报/debug/update_manifest.json") == (
+    assert resolve_project_path("flow/日报/debug/update_manifest.json") == (
         runtime_root / "flow" / "日报" / "debug" / "update_manifest.json"
     ).resolve()
 

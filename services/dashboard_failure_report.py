@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_FAILURE_DIRECTORY = "runtime/modules/dashboard/output/failure_reports"
+DEFAULT_FAILURE_DIRECTORY = "modules/dashboard/output/failure_reports"
 
 
 def write_dashboard_failure_report(

@@ -271,26 +271,27 @@ def test_prepare_session_reuses_existing_cookie_dump():
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def test_prepare_session_from_config_keeps_project_base_dir():
+def test_prepare_session_from_config_uses_runtime_root_for_session_state(monkeypatch):
     work_dir = make_work_dir()
     try:
         config_path = work_dir / "config" / "modules" / "autologin.json"
-        cookie_dump_path = work_dir / "state" / "cookies" / "cookie_dump.json"
+        cookie_dump_path = work_dir / "shared" / "session" / "cookie_dump.json"
         write_json(
             config_path,
             {
-                "cookie_dump_path": "state/cookies/cookie_dump.json",
-                "stage_session_dir": "state/stages",
-                "stage_health_path": "state/stage_health.json",
+                "cookie_dump_path": "session/cookie_dump.json",
+                "stage_session_dir": "session/stages",
+                "stage_health_path": "session/stage_health.json",
                 "required_stages": ["report_analysis"],
                 "allow_login": False,
             },
         )
         write_json(
-            work_dir / "state" / "stages" / "report_analysis.json",
+            work_dir / "shared" / "session" / "stages" / "report_analysis.json",
             {"stage": "report_analysis", "data": {"stage": "report_analysis", "cookies": [{"name": "sid", "value": "x"}]}},
         )
-        write_json(work_dir / "state" / "stage_health.json", {"report_analysis": {"status": "healthy"}})
+        write_json(work_dir / "shared" / "session" / "stage_health.json", {"report_analysis": {"status": "healthy"}})
+        monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(work_dir / "shared"))
 
         result = prepare_session_from_config(
             "config/modules/autologin.json",
@@ -310,9 +311,9 @@ def test_prepare_session_from_config_rebases_runtime_state(monkeypatch, tmp_path
     write_json(
         config_path,
         {
-            "cookie_dump_path": "runtime/session/cookie_dump.json",
-            "stage_session_dir": "runtime/session/stages",
-            "stage_health_path": "runtime/session/stage_health.json",
+                "cookie_dump_path": "session/cookie_dump.json",
+                "stage_session_dir": "session/stages",
+                "stage_health_path": "session/stage_health.json",
             "required_stages": ["report_analysis"],
             "allow_login": False,
         },

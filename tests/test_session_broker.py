@@ -45,7 +45,14 @@ def test_broker_persists_requested_stage_and_marks_other_stages_unknown(tmp_path
         base_dir=tmp_path,
     )
 
-    result = broker.ensure({"cookie_dump_path": str(cookie_dump_path), "required_stages": ["city_ops"]})
+    result = broker.ensure(
+        {
+            "cookie_dump_path": str(cookie_dump_path),
+            "stage_session_dir": str(stage_dir),
+            "stage_health_path": str(tmp_path / "stage_health.json"),
+            "required_stages": ["city_ops"],
+        }
+    )
 
     assert result["status"] == "refreshed"
     assert (tmp_path / "stages" / "city_ops.json").is_file()

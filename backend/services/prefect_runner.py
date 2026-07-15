@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from services.runtime_paths import display_path, resolve_runtime_path
+from services.runtime_paths import display_path, runtime_path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -261,12 +261,11 @@ def write_task_config(
     report_path = f"config/reports/{report_name}.json"
     if draft:
         report_suffix = suffix if suffix is not None else (".dry_run" if dry_run else "")
-        report_config_path = resolve_runtime_path(
-            f"runtime/config/drafts/{report_name}{report_suffix}.report.json"
+        report_config_path = runtime_path(
+            f"config/drafts/{report_name}{report_suffix}.report.json"
         )
-        assert report_config_path is not None
         _write_json(report_config_path, config)
-        report_path = f"runtime/config/drafts/{report_name}{report_suffix}.report.json"
+        report_path = f"config/drafts/{report_name}{report_suffix}.report.json"
     task_config = build_task_config(
         report_name,
         report_path,
@@ -276,7 +275,7 @@ def write_task_config(
         login_enabled=login_enabled,
     )
     if draft:
-        task_config["runtime_dir"] = f"runtime/flow/{report_name}"
+        task_config["runtime_dir"] = f"flow/{report_name}"
     wait_for_change = config.get("wait_for_change") or {}
     if wait_for_change.get("enabled"):
         wait_override = {"enabled": True}
@@ -285,7 +284,7 @@ def write_task_config(
                 wait_override[key] = wait_for_change[key]
         task_config["wait_for_change"] = wait_override
     target_dir = (
-        resolve_runtime_path("runtime/config/drafts") if draft else PROJECT_ROOT / "config/tasks"
+        runtime_path("config/drafts") if draft else PROJECT_ROOT / "config/tasks"
     )
     assert target_dir is not None
     file_suffix = suffix if suffix is not None else (".dry_run.task.json" if dry_run else ".json")
@@ -303,7 +302,7 @@ def _known_stages() -> set[str]:
     stages = set()
     for path in [
         PROJECT_ROOT / "config/modules/login_config.json",
-        resolve_runtime_path("runtime/session/cookie_dump.json"),
+        runtime_path("session/cookie_dump.json"),
     ]:
         if not path.exists():
             continue

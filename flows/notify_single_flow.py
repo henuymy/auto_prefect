@@ -26,7 +26,12 @@ from services.session_retry_service import (
     run_with_session_refresh_once,
 )
 from services.business_run_alert_service import report_current_business_run_failure
-from services.runtime_paths import resolve_runtime_path, runtime_root, validate_runtime_path
+from services.runtime_paths import (
+    is_runtime_relative_path,
+    resolve_runtime_relative_path,
+    runtime_root,
+    validate_runtime_relative_path,
+)
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
 
@@ -91,7 +96,7 @@ def load_config(config_path=None):
 
 def flow_runtime_path(flow_runtime_dir, area, *parts):
     path = Path(flow_runtime_dir) / area / Path(*parts)
-    validate_runtime_path(path)
+    validate_runtime_relative_path(path)
     return path
 
 
@@ -119,15 +124,15 @@ def materialize_runtime_paths(config, flow_runtime_dir):
 
 def resolve_project_path(path):
     value = Path(path)
-    if value.parts and value.parts[0].lower() == "runtime":
-        return resolve_runtime_path(value, project_dir=PROJECT_DIR)
+    if is_runtime_relative_path(value):
+        return resolve_runtime_relative_path(value)
     if value.is_absolute():
         resolved = value.resolve()
         try:
             runtime_relative = resolved.relative_to(runtime_root())
         except ValueError as exc:
             raise ValueError(f"不允许绝对路径或父目录路径: {path}") from exc
-        validate_runtime_path(Path("runtime") / runtime_relative)
+        validate_runtime_relative_path(runtime_relative)
         return resolved
     if ".." in value.parts:
         raise ValueError(f"不允许绝对路径或父目录路径: {path}")
@@ -418,8 +423,8 @@ def run_auto_notify_pipeline(config_path=None):
     logger.info("读取流程配置: %s", resolved_config_path)
 
     steps = config["steps"]
-    flow_runtime_dir = Path(config.get("runtime_dir", f"runtime/flow/{resolved_config_path.stem}"))
-    validate_runtime_path(flow_runtime_path(flow_runtime_dir, "output"))
+    flow_runtime_dir = Path(config.get("runtime_dir", f"flow/{resolved_config_path.stem}"))
+    validate_runtime_relative_path(flow_runtime_path(flow_runtime_dir, "output"))
     materialize_runtime_paths(config, flow_runtime_dir)
 
     report_cfg = read_json(config["report_config_path"]) if config.get("report_config_path") else {}

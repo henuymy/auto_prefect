@@ -74,8 +74,8 @@ def make_login(tmp_path: Path, **browser_overrides) -> login_service.AutoLogin:
         "browser": {
             "headless": True,
             "keep_open_after_login": False,
-            "user_data_dir": str(tmp_path / "profile"),
-            "session_state_path": str(tmp_path / "session.json"),
+            "user_data_dir": "session/profile",
+            "session_state_path": "session/session.json",
             "window_width": 1440,
             "window_height": 900,
             **browser_overrides,
@@ -287,8 +287,8 @@ def test_browser_runtime_paths_rebase_to_external_root(monkeypatch, tmp_path):
     config = browser_config(
         {
             "browser": {
-                "session_state_path": "runtime/session/browser-session.json",
-                "user_data_dir": "runtime/session/browser-profile",
+                "session_state_path": "session/browser-session.json",
+                "user_data_dir": "session/browser-profile",
             }
         },
         base_dir=tmp_path,
@@ -309,7 +309,7 @@ def test_cookie_dump_runtime_path_rebases_to_external_root(monkeypatch, tmp_path
             "credentials": {},
             "cookie_dump": {
                 "enabled": True,
-                "output_file": "runtime/session/cookie_dump.json",
+                "output_file": "session/cookie_dump.json",
             },
         },
         config_label="runtime-path-test",

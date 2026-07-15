@@ -10,7 +10,7 @@ from typing import Any, Callable
 from openpyxl import Workbook, load_workbook
 
 from services.method_service import download_reports
-from services.runtime_paths import display_path, resolve_runtime_path
+from services.runtime_paths import display_path, runtime_path
 from services.session_broker import StageSessionBroker
 from utils.config_loader import load_json_with_local_override
 from utils.date_placeholders import resolve_dynamic_structure
@@ -18,7 +18,7 @@ from utils.date_placeholders import resolve_dynamic_structure
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
-RUNTIME_DIR = resolve_runtime_path("runtime/starter_templates")
+RUNTIME_DIR = runtime_path("starter_templates")
 assert RUNTIME_DIR is not None
 ALLOWED_EXCEL_SUFFIXES = {".xlsx", ".xlsm"}
 

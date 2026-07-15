@@ -35,5 +35,5 @@ def test_v2_batch_defaults_use_controlled_module_output_paths():
     source = _source("services/dashboard_v2_batch_runner.py")
 
     assert "runtime/dashboard/" not in source
-    assert "runtime/modules/dashboard/output/area_anomalies" in source
-    assert "runtime/modules/dashboard/output/failure_reports" in source
+    assert "modules/dashboard/output/area_anomalies" in source
+    assert "modules/dashboard/output/failure_reports" in source

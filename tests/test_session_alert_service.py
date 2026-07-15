@@ -19,7 +19,7 @@ def test_resolve_rebases_logical_runtime_paths(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
 
     assert session_alert_service._resolve(
-        "runtime/session/session-alerts/incident_state.json",
+        "session/session-alerts/incident_state.json",
         tmp_path / "project",
     ) == (
         runtime_root / "session" / "session-alerts" / "incident_state.json"

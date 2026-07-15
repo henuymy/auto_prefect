@@ -1,7 +1,7 @@
 {
-  "cookie_dump_path": "runtime/session/cookie_dump.json",
-  "output_dir": "runtime/modules/report_downloader/output/downloads",
-  "manifest_path": "runtime/modules/report_downloader/output/download_manifest.json",
+  "cookie_dump_path": "session/cookie_dump.json",
+  "output_dir": "modules/report_downloader/output/downloads",
+  "manifest_path": "modules/report_downloader/output/download_manifest.json",
   "request_timeout_seconds": 120,
   "request_retries": 2,
   "request_retry_delay_seconds": 2,

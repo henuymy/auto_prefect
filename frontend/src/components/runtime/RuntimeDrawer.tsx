@@ -16,7 +16,7 @@ export function RuntimeDrawer(props: Props) {
     <aside className="ml-auto flex h-full w-full max-w-3xl flex-col border-l border-border bg-background shadow-2xl">
       <header className="flex items-center gap-2 border-b border-border p-4">
         <Button variant="ghost" size="icon" onClick={props.onBack} disabled={!props.currentPath}><ArrowLeft className="h-4 w-4" /></Button>
-        <div className="min-w-0 flex-1"><div className="font-black">Runtime 文件</div><div className="truncate text-xs text-muted-foreground">runtime/{props.currentPath}</div></div>
+        <div className="min-w-0 flex-1"><div className="font-black">Runtime 文件</div><div className="truncate text-xs text-muted-foreground">{props.currentPath || "."}</div></div>
         <Button variant="ghost" size="icon" onClick={props.onRefresh}><RefreshCw className={`h-4 w-4 ${props.loading ? "animate-spin" : ""}`} /></Button>
         <Button variant="ghost" size="icon" onClick={props.onClose}><X className="h-4 w-4" /></Button>
       </header>

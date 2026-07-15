@@ -189,7 +189,7 @@ def test_generate_starter_template_returns_logical_shared_runtime_manifest_path(
 
         assert result["status"] == "success"
         assert result["download_manifest_path"].startswith(
-            "runtime/starter_templates/共享目录模板/"
+        "starter_templates/共享目录模板/"
         )
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

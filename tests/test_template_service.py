@@ -36,7 +36,7 @@ def test_resolve_path_rebases_logical_runtime_paths(monkeypatch, tmp_path):
     runtime_root = tmp_path / "shared-runtime"
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
 
-    assert resolve_path("runtime/flow/日报/debug/compare_result.json") == (
+    assert resolve_path("flow/日报/debug/compare_result.json") == (
         runtime_root / "flow" / "日报" / "debug" / "compare_result.json"
     ).resolve()
 

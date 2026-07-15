@@ -20,10 +20,10 @@ class StageSessionBroker:
 
     def ensure(self, config: dict, **kwargs) -> dict:
         required_stages = [str(stage) for stage in config.get("required_stages") or []]
-        stage_dir = self._resolve(config.get("stage_session_dir", "stages"))
-        health_path = self._resolve(config.get("stage_health_path", "stage_health.json"))
+        stage_dir = self._resolve(config.get("stage_session_dir", "session/stages"))
+        health_path = self._resolve(config.get("stage_health_path", "session/stage_health.json"))
         legacy_cookie_dump_path = self._resolve(
-            config.get("cookie_dump_path", "runtime/session/cookie_dump.json")
+            config.get("cookie_dump_path", "session/cookie_dump.json")
         )
         broker_lock_path = self._resolve(
             config.get("stage_broker_lock_path", str(stage_dir / ".broker.lock"))
@@ -93,9 +93,7 @@ class StageSessionBroker:
 
     def _resolve(self, value: str) -> Path:
         path = Path(value)
-        if path.parts and path.parts[0].lower() == "runtime":
-            return resolve_path(value, self.base_dir)
-        return path if path.is_absolute() else self.base_dir / path
+        return path if path.is_absolute() else resolve_path(value, self.base_dir)
 
     @staticmethod
     def _read_json(path: Path, *, default):

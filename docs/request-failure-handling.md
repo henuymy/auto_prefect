@@ -58,8 +58,8 @@ Session Keeper 会立即发送基础设施故障告警，不在同一轮 Prefect
 
 | 现象 | 常见错误 | 处理方式 |
 | --- | --- | --- |
-| Flow 拒绝共享 Runtime 绝对路径 | `不允许绝对路径或父目录路径` | 检查是否经 `resolve_runtime_path()` 解析，Flow 生成的路径必须位于共享 Runtime 根目录 |
-| 仍读取仓库内旧 `runtime/` | `FileNotFoundError`，路径位于仓库 `runtime/flow/...` | 排查遗留配置或路径拼接，统一使用 `runtime/...` 逻辑路径或共享 Runtime 绝对路径 |
+| Flow 拒绝运行根相对路径 | `不允许绝对路径、父目录路径或 runtime/ 前缀` | 检查是否经 `resolve_runtime_relative_path()` 解析，Flow 生成的路径必须位于共享 Runtime 根目录 |
+| 仍读取仓库内旧 `runtime/` | `FileNotFoundError`，路径位于仓库 `runtime/flow/...` | 排查遗留配置或路径拼接，统一使用根相对路径，例如 `flow/<任务>/output/...` |
 | Excel 截图或分页初始化失败 | 无法设置稳定打印机、`ActivePrinter` COM 错误 | 检查 `Microsoft Print to PDF`、专用 Windows 会话和虚拟打印机干扰；不要重登或重试下载 |
 | 比对、模板更新、消息组装或发送失败 | 对应 Task/Flow 异常 | 按失败 Task 排查输入文件、模板结构、Excel 或企业微信配置；下载成功产物可作为诊断依据 |
 

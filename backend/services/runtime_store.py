@@ -69,7 +69,7 @@ def delete_runtime(relative_path: str) -> None:
         raise ValueError("不允许删除 runtime 根目录")
     if _is_protected(relative_path):
         top_level = Path(relative_path).parts[0]
-        raise ValueError(f"runtime/{top_level} 是受保护目录，不允许从页面删除")
+        raise ValueError(f"{top_level} 是受保护目录，不允许从页面删除")
     target = _resolve_runtime_path(relative_path)
     if not target.exists():
         raise FileNotFoundError(f"runtime 路径不存在: {relative_path}")

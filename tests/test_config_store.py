@@ -124,7 +124,7 @@ def test_delete_draft_returns_logical_shared_runtime_path(monkeypatch, tmp_path)
 
     deleted = config_store.delete_config("草稿", source="draft")
 
-    assert deleted == ["runtime/config/drafts/草稿.json"]
+    assert deleted == ["config/drafts/草稿.json"]
     assert not (config_store.DRAFTS_DIR / "草稿.json").exists()
 
 
@@ -137,7 +137,16 @@ def test_delete_published_config_returns_logical_path_for_shared_draft(monkeypat
     deleted = config_store.delete_config("正式")
 
     assert "config/reports/正式.json" in deleted
-    assert "runtime/config/drafts/正式.json" in deleted
+    assert "config/drafts/正式.json" in deleted
+
+
+def test_list_versions_returns_root_relative_paths(monkeypatch, tmp_path):
+    _patch_dirs(monkeypatch, tmp_path)
+    _write(config_store.VERSIONS_DIR / "日报" / "1.json", "日报")
+
+    versions = config_store.list_versions("日报")
+
+    assert versions[0]["path"] == "config/versions/日报/1.json"
 
 
 def test_create_config_rejects_duplicate_name(monkeypatch, tmp_path):

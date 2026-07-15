@@ -71,13 +71,13 @@ class DashboardV2BatchContext:
             anomaly_directory=resolve_project_path(
                 self.config.get(
                     "area_anomaly_directory",
-                    "runtime/modules/dashboard/output/area_anomalies",
+                    "modules/dashboard/output/area_anomalies",
                 )
             ),
             failure_directory=resolve_project_path(
                 self.config.get(
                     "failure_report_directory",
-                    "runtime/modules/dashboard/output/failure_reports",
+                    "modules/dashboard/output/failure_reports",
                 )
             ),
             event_logger=self.config.get("event_logger"),
@@ -103,7 +103,7 @@ def dashboard_v2_batch(
     lock_path = resolve_project_path(
         dashboard_config.get(
             "collection_lock_path",
-            "runtime/session/locks/dashboard_collection.lock",
+            "session/locks/dashboard_collection.lock",
         )
     )
     with file_lock(

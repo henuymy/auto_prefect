@@ -9,13 +9,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from services.runtime_paths import resolve_runtime_path, runtime_path
+from services.runtime_paths import resolve_runtime_relative_path, runtime_path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
-    return resolve_runtime_path(value, project_dir=Path(base_dir))
+    if not value:
+        return None
+    return resolve_runtime_relative_path(value)
 
 
 def default_session_state_path():

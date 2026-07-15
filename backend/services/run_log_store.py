@@ -5,9 +5,9 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import runtime_path
 
-LOG_PATH = resolve_runtime_path("runtime/logs/web_runs.jsonl")
+LOG_PATH = runtime_path("logs/web_runs.jsonl")
 assert LOG_PATH is not None
 MAX_LOGS = 200
 

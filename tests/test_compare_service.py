@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
 from services.compare_service import (
@@ -30,13 +31,26 @@ def create_workbook(path, sheets):
     workbook.close()
 
 
-def test_resolve_path_rebases_logical_runtime_paths(monkeypatch, tmp_path):
+def test_resolve_path_rebases_root_relative_flow_paths(monkeypatch, tmp_path):
     runtime_root = tmp_path / "shared-runtime"
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
 
-    assert resolve_path("runtime/flow/日报/tmp/compare_results/result.json") == (
+    assert resolve_path("flow/日报/tmp/compare_results/result.json") == (
         runtime_root / "flow" / "日报" / "tmp" / "compare_results" / "result.json"
     ).resolve()
+
+
+def test_resolve_path_keeps_project_relative_templates(tmp_path):
+    assert resolve_path("templates/日报.xlsx", base_dir=tmp_path) == (
+        tmp_path / "templates" / "日报.xlsx"
+    ).resolve()
+
+
+def test_resolve_path_rejects_legacy_runtime_prefix(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared-runtime"))
+
+    with pytest.raises(ValueError, match="不得以 runtime/"):
+        resolve_path("runtime/flow/日报/tmp/result.json")
 
 
 def test_compare_tables_same():

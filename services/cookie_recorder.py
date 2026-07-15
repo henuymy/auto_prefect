@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import resolve_runtime_relative_path
 
 
 def capture_web_storage(driver):
@@ -115,6 +115,6 @@ def resolve_cookie_dump_path(base_dir, config):
         return Path(override).resolve()
     cookie_dump_config = config.get("cookie_dump", {})
     output_file = cookie_dump_config.get(
-        "output_file", "runtime/session/cookie_dump.json"
+        "output_file", "session/cookie_dump.json"
     )
-    return resolve_runtime_path(output_file, project_dir=Path(base_dir))
+    return resolve_runtime_relative_path(output_file)

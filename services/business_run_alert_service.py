@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from infrastructure.wecom_client import send_text
 from prefect.runtime import flow_run
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import runtime_path
 from services.session_alert_service import _redact, _require_send_success
 from services.session_manager import file_lock
 from utils.config_loader import load_json_with_local_override
@@ -20,12 +20,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
 def business_alert_state_path(base_dir: Path = PROJECT_DIR) -> Path:
-    path = resolve_runtime_path(
-        "runtime/session/business-alerts/incident_state.json",
-        project_dir=base_dir,
-    )
-    assert path is not None
-    return path
+    return runtime_path("session/business-alerts/incident_state.json")
 
 
 def build_business_run_incident(

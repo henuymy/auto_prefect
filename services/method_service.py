@@ -23,7 +23,7 @@ from services.json_excel_service import (
     set_by_path,
 )
 from services.tencent_sheet_service import download_tencent_sheet_report
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import is_runtime_relative_path, resolve_runtime_relative_path
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
@@ -69,10 +69,8 @@ def load_json(path):
 
 def resolve_path(value, base_dir=PROJECT_DIR):
     path = Path(value)
-    if path.parts and path.parts[0].lower() == "runtime":
-        resolved = resolve_runtime_path(path, project_dir=base_dir)
-        assert resolved is not None
-        return resolved
+    if is_runtime_relative_path(path):
+        return resolve_runtime_relative_path(path)
     if path.is_absolute():
         return path
     return base_dir / path
@@ -642,8 +640,8 @@ def write_manifest(path, manifest):
 
 
 def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
-    output_dir = resolve_path(config.get("output_dir", "runtime/modules/report_downloader/output/downloads"), base_dir)
-    manifest_path = resolve_path(config.get("manifest_path", "runtime/modules/report_downloader/output/download_manifest.json"), base_dir)
+    output_dir = resolve_path(config.get("output_dir", "modules/report_downloader/output/downloads"), base_dir)
+    manifest_path = resolve_path(config.get("manifest_path", "modules/report_downloader/output/download_manifest.json"), base_dir)
     timeout = int(config.get("request_timeout_seconds", 120))
     request_retry = retry_settings(config)
     verify_ssl = bool(config.get("verify_ssl", True))

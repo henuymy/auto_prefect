@@ -1,10 +1,10 @@
 {
-  "compare_result_path": "runtime/modules/report_compare/output/compare_result.json",
+  "compare_result_path": "modules/report_compare/output/compare_result.json",
   "compare_config_path": "config/modules/report_compare.json",
   "source_report_path": null,
   "template_path": null,
-  "output_dir": "runtime/modules/template_updater/output/templates",
-  "manifest_path": "runtime/modules/template_updater/output/update_manifest.json",
+  "output_dir": "modules/template_updater/output/templates",
+  "manifest_path": "modules/template_updater/output/update_manifest.json",
   "engine": "hybrid",
   "write_sheets": "changed",
   "copy_mode": "all",

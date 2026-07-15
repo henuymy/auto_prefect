@@ -31,7 +31,7 @@ from services.method_service import (
     build_headers,
     resolve_storage_references,
 )
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import resolve_runtime_relative_path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -57,7 +57,10 @@ def _local_file_lock(path: Path) -> threading.Lock:
 
 
 def resolve_path(value, base_dir=PROJECT_DIR):
-    return resolve_runtime_path(value, project_dir=Path(base_dir))
+    if not value:
+        return None
+    path = Path(value)
+    return path.resolve() if path.is_absolute() else resolve_runtime_relative_path(path)
 
 
 def load_json(path):
@@ -865,7 +868,7 @@ def prepare_session(
     login_attempts: int | None = None,
 ):
     cookie_dump_path = resolve_path(
-        config.get("cookie_dump_path", "runtime/session/cookie_dump.json"),
+        config.get("cookie_dump_path", "session/cookie_dump.json"),
         base_dir,
     )
     legacy_cookie_dump_path = resolve_path(config.get("legacy_cookie_dump_path"), base_dir)
@@ -964,7 +967,7 @@ def prepare_session(
         raise ValueError("Cookie 无效且未配置 login_command")
     command = expand_login_command(command)
     browser_session_state_path = resolve_path(
-        config.get("browser_session_state_path", "runtime/session/browser-session.json"),
+        config.get("browser_session_state_path", "session/browser-session.json"),
         base_dir,
     )
     browser_config = config.get("browser") or {}
@@ -975,7 +978,7 @@ def prepare_session(
         or DEFAULT_LOGIN_TIMEOUT_SECONDS
     )
     lock_path = resolve_path(
-        config.get("login_lock_path", "runtime/session/locks/login.lock"),
+        config.get("login_lock_path", "session/locks/login.lock"),
         base_dir,
     )
     lock_wait_seconds = int(config.get("login_lock_wait_seconds", DEFAULT_LOCK_WAIT_SECONDS) or DEFAULT_LOCK_WAIT_SECONDS)
@@ -1187,7 +1190,10 @@ def prepare_session_from_config(
 ):
     from services.session_broker import StageSessionBroker
 
-    config_path = resolve_path(config_path, base_dir)
+    config_path = Path(config_path)
+    if not config_path.is_absolute():
+        config_path = Path(base_dir) / config_path
+    config_path = config_path.resolve()
     config, _ = load_json(config_path)
     return StageSessionBroker(base_dir=base_dir).ensure(
         config,

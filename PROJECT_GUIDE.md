@@ -90,7 +90,7 @@ config/runtime.local.example.json
 
 Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。运行根目录解析优先级为环境变量 `AUTO_NOTIFY_RUNTIME_ROOT`、`config/runtime.local.json` 中的 `runtime.root`、默认值 `C:\AutoNotifyRuntime`；生产环境应让后两者保持一致，环境变量只用于测试或受控诊断。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
 
-运行时目录固定为 `C:\AutoNotifyRuntime`。业务逻辑只允许使用受控逻辑路径：`runtime/session/...`（Cookie、会话健康状态、Edge Profile、锁与登录调试）、`runtime/config/{drafts,versions}/...`（未发布草稿与正式配置历史）、`runtime/{logs,health,starter_templates,temp}/...`（运行日志、健康探针、新手模板中间产物和工具临时文件）、`runtime/modules/<模块名>/output/...`（模块独立产物）和 `runtime/flow/<任务名>/{output,backup,debug,tmp}/...`（Flow 产物）。它们分别映射到共享目录的同名顶级目录。运行栈另外维护 `prefect/prefect_home`（本机 Prefect Home）和 `processes`（受管进程登记 JSON）；它们不是业务产物，禁止被 Flow 当作输入/输出目录。
+运行时目录固定为 `C:\AutoNotifyRuntime`。业务逻辑只允许使用相对运行根目录的受控路径：`session/...`（Cookie、会话健康状态、Edge Profile、锁与登录调试）、`config/{drafts,versions}/...`（未发布草稿与正式配置历史）、`{logs,health,starter_templates,temp}/...`（运行日志、健康探针、新手模板中间产物和工具临时文件）、`modules/<模块名>/output/...`（模块独立产物）和 `flow/<任务名>/{output,backup,debug,tmp}/...`（Flow 产物）。它们分别映射到共享目录的同名顶级目录。运行栈另外维护 `prefect/prefect_home`（本机 Prefect Home）和 `processes`（受管进程登记 JSON）；它们不是业务产物，禁止被 Flow 当作输入/输出目录。
 
 ```text
 C:\AutoNotifyRuntime\
@@ -124,7 +124,7 @@ C:\AutoNotifyRuntime\
   processes\
 ```
 
-这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、`runtime/cookies`、`runtime/browser_session` 或其他未分类路径。业务配置中的 `runtime/...` 必须通过统一路径服务映射到共享运行根目录；Flow 内部只可接受共享运行根目录下的绝对路径，并继续拒绝根目录外的绝对路径、`../` 与旧目录格式。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态、浏览器 Profile、草稿、配置版本、日志、健康检查、新手模板中间产物和登录调试文件；同名目标冲突时保留源目录，不自动覆盖。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
+这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、旧的 `cookies`、`browser_session` 或其他未分类路径。业务配置必须使用运行根相对路径并通过统一路径服务映射到共享运行根目录；Flow 内部只可接受受控的运行根相对路径，并继续拒绝绝对路径、`../` 与 `runtime/` 前缀。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态、浏览器 Profile、草稿、配置版本、日志、健康检查、新手模板中间产物和登录调试文件；同名目标冲突时保留源目录，不自动覆盖。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
 
 `setup_windows_env.ps1` 预建 `session\locks`、`config\{drafts,versions}`、`modules`、`flow`、`health`、`logs`、`starter_templates` 和 `temp` 骨架。首次登录由 Session Manager 在 `session\browser-profile` 创建 Profile；Stage SessionBroker 将已验证的阶段数据写入 `session\stages` 并维护 `stage_health.json`。全量 Cookie 快照只可作为 Broker 内部的临时兼容文件，方法结束后必须删除。
 
@@ -134,15 +134,15 @@ C:\AutoNotifyRuntime\
 
 - `config/task_defaults/notify.json` 保存通报任务的公共步骤、模块配置入口和默认等待参数。
 - 已发布的 `config/tasks/<任务名>.json` 默认只保存 `flow_name` 与 `report_config_path`；只有偏离公共默认值的等待或步骤参数才写入覆盖项，禁止重新复制整套默认配置。
-- 草稿、安全测试和真实试跑配置写入共享运行目录 `runtime/config/drafts`。API 返回路径时不得假设文件一定在仓库内；仓库外的共享运行文件使用可直接定位的绝对路径。
-- 提交、比较、模板更新、会话告警和驾驶舱服务读取 `runtime/...` 时必须复用统一运行路径解析，不得各自拼接仓库根目录。驾驶舱失败报告统一写入 `runtime/modules/dashboard/output/failure_reports`。
+- 草稿、安全测试和真实试跑配置写入共享运行目录的 `config/drafts`。API 返回路径时返回运行根相对路径，不得假设文件一定在仓库内。
+- 提交、比较、模板更新、会话告警和驾驶舱服务读取运行时文件时必须复用统一运行路径解析，不得各自拼接仓库根目录。驾驶舱失败报告统一写入 `modules/dashboard/output/failure_reports`。
 
 ### 驾驶舱数据库约定
 
 - 驾驶舱只保留 V2 数据模型、服务、运行记录与迁移链路，不支持 V1 运行时分派。
 - 数据库迁移唯一入口为：`alembic -c alembic_dashboard_v2.ini upgrade head`。
 - 运行状态使用 V2 collection-run 存储；状态接口和任务入口不得导入 V1 run store 或 V1 trigger 路径。
-- 驾驶舱模块产物写入 `runtime/modules/dashboard/output/...`；不保留历史 V2 迁移审核导出工具，历史追溯应使用版本库提交和已归档产物。
+- 驾驶舱模块产物写入 `modules/dashboard/output/...`；不保留历史 V2 迁移审核导出工具，历史追溯应使用版本库提交和已归档产物。
 
 ### 会话生命周期约定
 

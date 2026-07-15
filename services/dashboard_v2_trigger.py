@@ -19,7 +19,7 @@ from services.dashboard_failure_report import (
     DEFAULT_FAILURE_DIRECTORY,
     write_dashboard_failure_report,
 )
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import is_runtime_relative_path, resolve_runtime_relative_path
 from services.session_broker import StageSessionBroker
 from services.session_manager import file_lock, prepare_session
 
@@ -35,10 +35,8 @@ SENSITIVE_PATTERN = re.compile(
 
 def resolve_project_path(value: str | Path, base_dir: Path = PROJECT_ROOT) -> Path:
     path = Path(value)
-    if path.parts and path.parts[0].lower() == "runtime":
-        resolved = resolve_runtime_path(path, project_dir=base_dir)
-        assert resolved is not None
-        return resolved
+    if is_runtime_relative_path(path):
+        return resolve_runtime_relative_path(path)
     return path if path.is_absolute() else (base_dir / path).resolve()
 
 
@@ -127,7 +125,7 @@ def execute_session_phase(
         lock_path = resolve_project_path(
             dashboard_config.get(
                 "collection_lock_path",
-                "runtime/session/locks/dashboard_collection.lock",
+                "session/locks/dashboard_collection.lock",
             )
         )
         login_config = build_city_ops_login_config(

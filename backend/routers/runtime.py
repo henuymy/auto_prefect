@@ -21,7 +21,7 @@ def list_runtime(path: str = Query(default="")):
 def delete_runtime(path: str = Query(...)):
     try:
         runtime_store.delete_runtime(path)
-        append_log("success", "清理 runtime", f"已删除 runtime/{path}")
+        append_log("success", "清理 runtime", f"已删除 {path}")
         return {"ok": True}
     except (FileNotFoundError, ValueError) as exc:
         append_log("failed", "清理 runtime 失败", str(exc))

@@ -696,7 +696,7 @@ export async function listRuntime(path = "") {
 
 export async function deleteRuntime(path: string) {
   await request<{ ok: boolean }>(`/api/runtime?path=${encodeURIComponent(path)}`, { method: "DELETE" });
-  pushLog("success", "清理 runtime", `已删除 runtime/${path}`);
+  pushLog("success", "清理 runtime", `已删除 ${path}`);
 }
 
 export async function getSystemStatus() {

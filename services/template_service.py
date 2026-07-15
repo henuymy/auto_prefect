@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 
 
 from infrastructure.excel_client import get_sheet, open_excel
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import is_runtime_relative_path, resolve_runtime_relative_path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_UPDATE_ENGINES = {"hybrid", "com_copy"}
@@ -29,10 +29,8 @@ def resolve_path(value, base_dir=PROJECT_DIR):
     if not value:
         return None
     path = Path(value)
-    if path.parts and path.parts[0].lower() == "runtime":
-        resolved = resolve_runtime_path(path, project_dir=base_dir)
-        assert resolved is not None
-        return resolved
+    if is_runtime_relative_path(path):
+        return resolve_runtime_relative_path(path)
     if path.is_absolute():
         return path
     return (base_dir / path).resolve()
@@ -371,8 +369,8 @@ def write_manifest(path, payload):
 def update_template(config, base_dir=PROJECT_DIR):
     compare_result, source_report_path, template_path = load_compare_context(config, base_dir)
 
-    manifest_path = resolve_path(config.get("manifest_path", "runtime/modules/template_updater/output/update_manifest.json"), base_dir)
-    output_dir = resolve_path(config.get("output_dir", "runtime/modules/template_updater/output/templates"), base_dir)
+    manifest_path = resolve_path(config.get("manifest_path", "modules/template_updater/output/update_manifest.json"), base_dir)
+    output_dir = resolve_path(config.get("output_dir", "modules/template_updater/output/templates"), base_dir)
     engine = normalize_template_update_engine(config.get("engine"))
     write_sheets = config.get("write_sheets", "changed")
     update_condition = config.get("update_condition", "any_changed")

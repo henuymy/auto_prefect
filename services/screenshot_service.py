@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 from infrastructure.excel_client import get_sheet, open_excel, open_workbook
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import is_runtime_relative_path, resolve_runtime_relative_path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 XL_TYPE_PDF = 0
@@ -23,10 +23,8 @@ XL_QUALITY_STANDARD = 0
 
 def resolve_path(value, base_dir=PROJECT_DIR):
     path = Path(value)
-    if path.parts and path.parts[0].lower() == "runtime":
-        resolved = resolve_runtime_path(path, project_dir=base_dir)
-        assert resolved is not None
-        return resolved
+    if is_runtime_relative_path(path):
+        return resolve_runtime_relative_path(path)
     if not path.is_absolute():
         path = base_dir / path
     return path
@@ -35,7 +33,7 @@ def resolve_path(value, base_dir=PROJECT_DIR):
 def get_output_paths(config, base_dir=PROJECT_DIR):
     output_config = config.get("output", {})
     runtime_dir = resolve_path(
-        output_config.get("runtime_dir", "runtime/modules/wecom_sender/output"),
+        output_config.get("runtime_dir", "modules/wecom_sender/output"),
         base_dir,
     )
     image_dir = resolve_path(output_config.get("image_dir", "images"), runtime_dir)
@@ -47,7 +45,7 @@ def get_output_paths(config, base_dir=PROJECT_DIR):
 def get_intermediate_dir(config, base_dir=PROJECT_DIR):
     output_config = config.get("output", {})
     runtime_dir = resolve_path(
-        output_config.get("runtime_dir", "runtime/modules/wecom_sender/output"),
+        output_config.get("runtime_dir", "modules/wecom_sender/output"),
         base_dir,
     )
     return resolve_path(output_config.get("intermediate_dir", "intermediates"), runtime_dir)

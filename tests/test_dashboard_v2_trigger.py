@@ -15,7 +15,7 @@ def test_resolve_project_path_rebases_logical_runtime_paths(monkeypatch, tmp_pat
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
 
     assert dashboard_v2_trigger.resolve_project_path(
-        "runtime/session/locks/dashboard_collection.lock",
+        "session/locks/dashboard_collection.lock",
         base_dir=tmp_path / "project",
     ) == (runtime_root / "session" / "locks" / "dashboard_collection.lock").resolve()
 

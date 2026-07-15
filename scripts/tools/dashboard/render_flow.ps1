@@ -1,6 +1,6 @@
 # Render the dashboard execution flow diagram.
 param(
-    [string]$OutputPath = "runtime/diagrams/dashboard-flow.png"
+    [string]$OutputPath = "temp/diagrams/dashboard-flow.png"
 )
 
 Add-Type -AssemblyName System.Drawing

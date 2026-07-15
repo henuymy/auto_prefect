@@ -7,7 +7,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import is_runtime_relative_path, resolve_runtime_relative_path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -17,10 +17,8 @@ def resolve_project_path(value, base_dir=PROJECT_DIR):
     if value is None or value == "":
         return None
     path = Path(value)
-    if path.parts and path.parts[0].lower() == "runtime":
-        resolved = resolve_runtime_path(path, project_dir=base_dir)
-        assert resolved is not None
-        return resolved
+    if is_runtime_relative_path(path):
+        return resolve_runtime_relative_path(path)
     if path.is_absolute():
         return path
     return (base_dir / path).resolve()
@@ -105,8 +103,8 @@ def backup_template(template_path, backup_dir):
 def commit_template(config, base_dir=PROJECT_DIR):
     update_manifest_path = resolve_project_path(config.get("update_manifest_path"), base_dir)
     send_result_path = resolve_project_path(config.get("send_result_path"), base_dir)
-    backup_dir = resolve_project_path(config.get("backup_dir", "runtime/modules/template_commit/output/backup"), base_dir)
-    manifest_path = resolve_project_path(config.get("manifest_path", "runtime/modules/template_commit/output/commit_manifest.json"), base_dir)
+    backup_dir = resolve_project_path(config.get("backup_dir", "modules/template_commit/output/backup"), base_dir)
+    manifest_path = resolve_project_path(config.get("manifest_path", "modules/template_commit/output/commit_manifest.json"), base_dir)
 
     if not update_manifest_path:
         raise ValueError("缺少 update_manifest_path")

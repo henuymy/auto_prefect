@@ -1,7 +1,7 @@
 {
-  "cookie_dump_path": "runtime/session/cookie_dump.json",
-  "stage_session_dir": "runtime/session/stages",
-  "stage_health_path": "runtime/session/stage_health.json",
+  "cookie_dump_path": "session/cookie_dump.json",
+  "stage_session_dir": "session/stages",
+  "stage_health_path": "session/stage_health.json",
   "legacy_cookie_dump_path": null,
   "required_stages": [
     "report_analysis",
@@ -13,13 +13,13 @@
   "login_timeout_seconds": 600,
   "login_max_attempts": 2,
   "login_retry_delay_seconds": 60,
-  "login_lock_path": "runtime/session/locks/login.lock",
+  "login_lock_path": "session/locks/login.lock",
   "login_lock_wait_seconds": 1440,
   "login_lock_poll_seconds": 5,
   "login_lock_stale_seconds": 900,
-  "browser_session_state_path": "runtime/session/browser-session.json",
+  "browser_session_state_path": "session/browser-session.json",
   "browser": {
-    "user_data_dir": "runtime/session/browser-profile"
+    "user_data_dir": "session/browser-profile"
   },
   "stage_probes": {
     "report_analysis": {
