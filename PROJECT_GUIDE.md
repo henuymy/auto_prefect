@@ -126,6 +126,8 @@ C:\AutoNotifyRuntime\
 
 这是一次不兼容目录切换：禁止读取、复制或回退到仓库 `runtime/`、旧的 `cookies`、`browser_session` 或其他未分类路径。业务配置必须使用运行根相对路径并通过统一路径服务映射到共享运行根目录；Flow 内部只可接受受控的运行根相对路径，并继续拒绝绝对路径、`../` 与 `runtime/` 前缀。一次性迁移只在人工执行 `Invoke-RuntimeStateMigration` 时移动 Cookie、会话健康状态、浏览器 Profile、草稿、配置版本、日志、健康检查、新手模板中间产物和登录调试文件；同名目标冲突时保留源目录，不自动覆盖。`setup_windows_env.ps1` 与 `run.ps1` 不得自动迁移旧状态。
 
+旧 `runtime/...` 兼容解析已下线。运行时文件统一通过根相对解析接口处理，禁止再引入“项目相对路径、绝对路径和运行路径混用”的回退逻辑；比较服务中的 `flow/...` 同样必须解析到共享运行根，而项目自有模板等非运行文件继续按项目路径处理。
+
 `setup_windows_env.ps1` 预建 `session\locks`、`config\{drafts,versions}`、`modules`、`flow`、`health`、`logs`、`starter_templates` 和 `temp` 骨架。首次登录由 Session Manager 在 `session\browser-profile` 创建 Profile；Stage SessionBroker 将已验证的阶段数据写入 `session\stages` 并维护 `stage_health.json`。全量 Cookie 快照只可作为 Broker 内部的临时兼容文件，方法结束后必须删除。
 
 `pyproject.toml` 中的 FastAPI 必须保持在 `>=0.110.0,<0.116`。Prefect 3.7 与更高的 FastAPI/Starlette 路由接口不兼容；更新依赖时通过 `requirements.lock` 和 `requirements-dev.lock` 重建并安装精确版本。
@@ -143,6 +145,7 @@ C:\AutoNotifyRuntime\
 - 数据库迁移唯一入口为：`alembic -c alembic_dashboard_v2.ini upgrade head`。
 - 运行状态使用 V2 collection-run 存储；状态接口和任务入口不得导入 V1 run store 或 V1 trigger 路径。
 - 驾驶舱模块产物写入 `modules/dashboard/output/...`；不保留历史 V2 迁移审核导出工具，历史追溯应使用版本库提交和已归档产物。
+- 保留的 V2 配置导入与切换审计工具只接受运行根相对的 `--bundle` 和 `--approvals`，例如 `modules/dashboard/output/v2_migration`；不得传入绝对路径、`runtime/...` 前缀或项目相对替代路径。`--config` 仍是项目内驾驶舱配置路径。
 
 ### 会话生命周期约定
 
@@ -176,6 +179,15 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-15 - 运行根相对路径收敛与兼容层下线
+
+- 原因：运行目录已迁移至共享 `runtime.root`，但少量配置、运行记录和运维脚本仍保留 `runtime/...` 外部表示或旧解析 API，导致同一输入可能被误解为项目路径，并影响 Session Keeper 预检与业务 Flow 对共享会话状态的复用。
+- 修改内容：运行目录的外部表示统一为 `session/...`、`config/...`、`modules/...`、`flow/...` 等受控根相对路径；删除旧 `resolve_runtime_path()` 与 `validate_runtime_path()` 兼容层；比较服务正确解析 `flow/...`，并拒绝历史前缀；Dashboard V2 配置导入和切换审计的 `--bundle`、`--approvals` 统一从共享运行根解析；前端运行文件抽屉不再显示 `runtime/` 前缀。
+- 涉及文件：`services/runtime_paths.py`、`services/compare_service.py`、`flows/notify_single_flow.py`、运行目录相关后端服务与配置、`scripts/tools/dashboard/{import_v2_indicator_config,v2_cutover_audit}.py`、`frontend/src/components/runtime/RuntimeDrawer.tsx`、相关测试、README 与运行路径审计文档。
+- 配置或迁移：`runtime.root` 的环境变量、本机 JSON 配置和默认根目录优先级不变；所有模块 JSON、任务配置和运维参数必须去除 `runtime/` 前缀。已存在的旧运行状态只可通过人工迁移流程处理，程序不会兼容读取或自动回退。
+- 验证：`python -m pytest -p no:cacheprovider -q`，`550 passed, 9 skipped`；`rg -n 'resolve_runtime_path\\(|validate_runtime_path\\(' services scripts tests` 无匹配；`git diff --check` 通过。
+- 风险与回滚：这是不兼容收敛。旧脚本、手工命令或配置若继续传递 `runtime/...`、绝对路径或 `..` 会被拒绝；回滚必须整体恢复路径迁移和兼容层删除前的提交，禁止新旧路径契约混用。
 
 ### 2026-07-14 - 阶段会话收敛与脚本兼容层清理
 
