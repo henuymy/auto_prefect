@@ -69,23 +69,12 @@ deployments:
     work_pool:
       name: windows-dashboard-pool
       work_queue_name: default
-  - name: session-keeper-report
+  - name: session-keeper
     entrypoint: flows/session_keeper_flow.py:session_keeper_flow
     parameters:
-      config_path: config/modules/session_keeper_report.json
+      config_path: config/modules/session_keeper.json
     schedules:
       - cron: "*/10 * * * *"
-        timezone: Asia/Shanghai
-        active: true
-    work_pool:
-      name: windows-session-pool
-      work_queue_name: default
-  - name: session-keeper-city
-    entrypoint: flows/session_keeper_flow.py:session_keeper_flow
-    parameters:
-      config_path: config/modules/session_keeper_city.json
-    schedules:
-      - cron: "0 */2 * * *"
         timezone: Asia/Shanghai
         active: true
     work_pool:

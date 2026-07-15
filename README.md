@@ -216,15 +216,24 @@ pwsh -File scripts/lib/start_web.ps1 -Mode both
 
 ## Session Keeper
 
-Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每小时 `00/15/30/45` 分运行。
+Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每 10 分钟运行。
 
-- Session Keeper 与业务 Flow 都通过 `StageSessionBroker` 获取会话。Keeper 分别预热 `report_analysis` 与 `city_ops` 阶段，业务 Flow 复用已验证的阶段数据，避免在业务步骤中重复登录。
+- Session Keeper 与业务 Flow 都通过 `StageSessionBroker` 获取会话。Keeper 在同一个 Edge Profile 中预热 `report_analysis`、`smart_ops`、`city_ops` 与 `data_market` 阶段，业务 Flow 复用已验证的阶段数据；下载期间明确认证失效时仍可在全局登录锁内刷新一次，并仅重试失败下载一次。
 - 认证明确失效时只在全局登录锁内执行一次完整刷新，并仅重试失败的业务步骤一次；基础设施探活失败不触发登录。
 - Session Keeper 不发送会话失败或恢复通知。development 环境仅在最终业务 Run 失败时，按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
 - 完整登录仅持久化调用方声明的业务阶段会话；调用方只消费 Broker 返回的内存 `stage_data`，不得重新读取 Cookie 文件。
 - 请求状态码、探活原因与自动恢复边界见 [请求故障分类与处理](docs/request-failure-handling.md)。
 - 会话告警去重状态保存在 `session/session-alerts/incident_state.json`；开发环境业务 Run 告警状态保存在 `session/business-alerts/incident_state.json`。两者都会映射到共享运行根目录，而不会写入代码仓库。在 Prefect UI 中打开上述 Deployment 查看最新运行，或执行 `python -m prefect flow-run ls --flow-name session-keeper-flow --limit 1`。
 - 支持日志不得复制账号密码、Cookie、Token、Webhook 值或其他认证材料。
+
+发布统一 Keeper 后，必须在 Prefect UI 或命令行删除旧的远端部署及其调度；仅从 `prefect.yaml` 删除不会清理服务端已有对象：
+
+```powershell
+python -m prefect deployment delete "session-keeper-flow/session-keeper-report"
+python -m prefect deployment delete "session-keeper-flow/session-keeper-city"
+```
+
+先确认新的 `session-keeper-flow/session-keeper` 已发布并可运行，再执行上述一次性清理。`scripts/run.ps1` 不发布或删除 Deployment。
 
 ## 积压与故障恢复
 

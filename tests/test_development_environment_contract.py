@@ -442,8 +442,7 @@ def test_prefect_deployments_are_partitioned_across_three_pools():
     config = yaml.safe_load((ROOT / "prefect.yaml").read_text(encoding="utf-8"))
     pools = {row["name"]: row["work_pool"]["name"] for row in config["deployments"]}
 
-    assert pools["session-keeper-report"] == "windows-session-pool"
-    assert pools["session-keeper-city"] == "windows-session-pool"
+    assert pools["session-keeper"] == "windows-session-pool"
     assert pools["notify-daily"] == "windows-notify-pool"
     for name in (
         "dashboard-collection",
@@ -459,21 +458,21 @@ def test_legacy_notify_deployment_file_is_retired():
     assert not (ROOT / "deployments" / "notify_single_deployment.yaml").exists()
 
 
-def test_prefect_deploys_stage_specific_session_keepers():
+def test_prefect_deploys_one_all_stage_session_keeper():
     prefect_config = yaml.safe_load(
         (ROOT / "prefect.yaml").read_text(encoding="utf-8")
     )
     keeper_deployments = [
         deployment
         for deployment in prefect_config["deployments"]
-        if deployment["name"].startswith("session-keeper-")
+        if deployment["name"] == "session-keeper"
     ]
 
     assert keeper_deployments == [
         {
-            "name": "session-keeper-report",
+            "name": "session-keeper",
             "entrypoint": "flows/session_keeper_flow.py:session_keeper_flow",
-            "parameters": {"config_path": "config/modules/session_keeper_report.json"},
+            "parameters": {"config_path": "config/modules/session_keeper.json"},
             "schedules": [
                 {
                     "cron": "*/10 * * * *",
@@ -485,24 +484,34 @@ def test_prefect_deploys_stage_specific_session_keepers():
                 "name": "windows-session-pool",
                 "work_queue_name": "default",
             },
-        },
-        {
-            "name": "session-keeper-city",
-            "entrypoint": "flows/session_keeper_flow.py:session_keeper_flow",
-            "parameters": {"config_path": "config/modules/session_keeper_city.json"},
-            "schedules": [
-                {
-                    "cron": "0 */2 * * *",
-                    "timezone": "Asia/Shanghai",
-                    "active": True,
-                }
-            ],
-            "work_pool": {
-                "name": "windows-session-pool",
-                "work_queue_name": "default",
-            },
         }
     ]
+
+
+def test_unified_session_keeper_captures_every_supported_shared_stage():
+    config = json.loads(
+        (ROOT / "config" / "modules" / "session_keeper.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert config["required_stages"] == [
+        "report_analysis",
+        "smart_ops",
+        "city_ops",
+        "data_market",
+    ]
+
+
+def test_city_ops_uses_the_original_user_info_probe():
+    config = json.loads(
+        (ROOT / "config" / "modules" / "autologin.json").read_text(encoding="utf-8")
+    )
+    probe = config["stage_probes"]["city_ops"]
+
+    assert probe["url"] == "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/base/getUserInfo"
+    assert probe["headers_from_session_storage"] == {"Uaptoken": "uapToken"}
+    assert probe["data"] == {}
 
 
 def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():
