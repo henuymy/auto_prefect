@@ -124,7 +124,8 @@ config/runtime.local.json
 ```text
 C:\AutoNotifyRuntime\
   session\
-    cookie_dump.json
+    stages\                 已验证的业务阶段会话快照
+    stage_health.json        阶段会话健康状态
     browser-session.json
     browser-profile\
     locks\
@@ -150,8 +151,14 @@ C:\AutoNotifyRuntime\
   processes\                 受管 Server、Worker、后端和前端的进程登记 JSON
 ```
 
-`session/` 下的 `cookie_dump.json`、`browser-profile/` 和
-`browser-session.json` 是敏感登录态，不能提交、公开、复制或随意删除。
+所有配置、API 路径和运行文件记录都使用相对于 `runtime.root` 的受控路径，例如
+`session/...`、`config/...`、`modules/<模块名>/output/...` 或
+`flow/<任务名>/tmp/...`。不得传递绝对路径、`..` 或历史 `runtime/...` 前缀；
+这些值会被拒绝，而不会回退到仓库目录。
+
+`session/stages/`、`browser-profile/` 和 `browser-session.json` 是敏感登录态，
+不能提交、公开、复制或随意删除。`cookie_dump.json` 只可由 Session Broker 在
+内部兼容步骤中临时创建，并在操作结束后删除；业务 Flow 和运维脚本不得直接读取它。
 `processes/` 是 `scripts/stop.ps1` 安全识别本项目进程的依据；停止运行栈前
 不得手工删除登记文件。`prefect/prefect_home/` 与这些共享状态不随代码升级、
 分支或 Worktree 切换。旧仓库 `runtime/` 路径不再参与启动；如需迁移旧状态，
@@ -211,10 +218,10 @@ pwsh -File scripts/lib/start_web.ps1 -Mode both
 
 Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每小时 `00/15/30/45` 分运行。
 
-- Session Keeper 和业务 Flow 在认证失效时仅在全局登录锁内执行一次完整登录；失败立即上报，由下一次 Session Keeper 调度恢复。
-- 基础设施探活失败不触发登录，当前 Session Keeper Run 立即发送企业微信故障通知。
-- 业务 Flow 仅在明确的会话失效时强刷新一次会话，并仅重试失败的业务步骤一次。
-- 完整登录仅捕获调用方声明的业务阶段 Cookie；未声明阶段范围的手工登录仍捕获全部阶段。
+- Session Keeper 与业务 Flow 都通过 `StageSessionBroker` 获取会话。Keeper 分别预热 `report_analysis` 与 `city_ops` 阶段，业务 Flow 复用已验证的阶段数据，避免在业务步骤中重复登录。
+- 认证明确失效时只在全局登录锁内执行一次完整刷新，并仅重试失败的业务步骤一次；基础设施探活失败不触发登录。
+- Session Keeper 不发送会话失败或恢复通知。development 环境仅在最终业务 Run 失败时，按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
+- 完整登录仅持久化调用方声明的业务阶段会话；调用方只消费 Broker 返回的内存 `stage_data`，不得重新读取 Cookie 文件。
 - 请求状态码、探活原因与自动恢复边界见 [请求故障分类与处理](docs/request-failure-handling.md)。
 - 会话告警去重状态保存在 `session/session-alerts/incident_state.json`；开发环境业务 Run 告警状态保存在 `session/business-alerts/incident_state.json`。两者都会映射到共享运行根目录，而不会写入代码仓库。在 Prefect UI 中打开上述 Deployment 查看最新运行，或执行 `python -m prefect flow-run ls --flow-name session-keeper-flow --limit 1`。
 - 支持日志不得复制账号密码、Cookie、Token、Webhook 值或其他认证材料。
