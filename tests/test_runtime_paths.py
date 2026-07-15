@@ -164,15 +164,15 @@ def test_runtime_drawer_does_not_prepend_legacy_runtime_prefix():
     assert 'props.currentPath || "."' in source
 
 
-def test_runtime_compatibility_audit_records_remaining_callers():
+def test_runtime_compatibility_audit_records_retirement():
     project_root = Path(__file__).resolve().parents[1]
     audit = (project_root / "docs" / "runtime-path-compatibility-audit.md").read_text(
         encoding="utf-8"
     )
 
-    assert "services/runtime_paths.py" in audit
-    assert "scripts/tools/dashboard/import_v2_indicator_config.py" in audit
-    assert "scripts/tools/dashboard/v2_cutover_audit.py" in audit
-    assert "待迁移" in audit
+    assert "已下线" in audit
+    assert "待迁移" not in audit
+    assert "resolve_runtime_relative_path()" in audit
+    assert "rg -n 'resolve_runtime_path\\(|validate_runtime_path\\('" in audit
 
 
