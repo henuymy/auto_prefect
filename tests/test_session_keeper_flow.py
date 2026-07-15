@@ -4,6 +4,44 @@ from flows import session_keeper_flow as keeper_module
 from services.session_manager import SessionLoginError
 
 
+def test_format_session_health_confirmation_lists_prepared_stages():
+    assert keeper_module.format_session_health_confirmation(
+        {
+            "status": "reused",
+            "stages": ["report_analysis", "smart_ops", "city_ops", "data_market"],
+        }
+    ) == (
+        "共享会话健康状态确认: report_analysis=healthy, smart_ops=healthy, "
+        "city_ops=healthy, data_market=healthy"
+    )
+
+
+def test_keeper_logs_session_health_confirmation(monkeypatch):
+    messages = []
+
+    class Logger:
+        def info(self, message):
+            messages.append(message)
+
+    monkeypatch.setattr(keeper_module, "get_run_logger", Logger)
+    monkeypatch.setattr(
+        keeper_module,
+        "run_session_keeper",
+        lambda *_args: {
+            "status": "reused",
+            "stages": ["report_analysis", "smart_ops", "city_ops", "data_market"],
+        },
+    )
+
+    keeper_module.session_keeper_flow.fn()
+
+    assert messages == [
+        "检查共享登录会话",
+        "共享会话健康状态确认: report_analysis=healthy, smart_ops=healthy, "
+        "city_ops=healthy, data_market=healthy",
+    ]
+
+
 def test_keeper_reuses_healthy_session_without_notification(monkeypatch):
     monkeypatch.setattr(
         keeper_module,

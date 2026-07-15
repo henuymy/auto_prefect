@@ -20,3 +20,9 @@
 
 `autologin.json` 的 `login_command` 使用 `{python_executable}`。会话管理器会将
 其展开为当前 Worker 使用的 Python 解释器。
+
+`autologin.json` 的 `stage_probes.<stage>` 默认是一个探活对象。需要同一 stage
+执行多个探活时，可改为含 `probes` 数组的对象；所有启用的探活均成功才视为该
+stage 健康。每个探活对象可使用 `headers_from_cookies` 或
+`headers_from_session_storage` 动态引用当前 stage 的认证材料，禁止写入固定
+Cookie、Token 或账号密码。

@@ -219,6 +219,8 @@ pwsh -File scripts/lib/start_web.ps1 -Mode both
 Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每 10 分钟运行。
 
 - Session Keeper 与业务 Flow 都通过 `StageSessionBroker` 获取会话。Keeper 在同一个 Edge Profile 中预热 `report_analysis`、`smart_ops`、`city_ops` 与 `data_market` 阶段，业务 Flow 复用已验证的阶段数据；下载期间明确认证失效时仍可在全局登录锁内刷新一次，并仅重试失败下载一次。
+- 每次 Session Keeper 成功完成预热后，Flow 日志会按阶段记录共享会话健康确认，便于在 Prefect UI 中核验本轮健康状态。
+- `autologin.json` 中每个 stage 默认配置一个探活；需要更严格的鉴权校验时可配置 `probes` 数组，所有启用探活都成功才判定该 stage 健康。探活必须动态读取当前会话的 Cookie 或 Storage，不得提交固定认证材料。
 - 认证明确失效时只在全局登录锁内执行一次完整刷新，并仅重试失败的业务步骤一次；基础设施探活失败不触发登录。
 - Session Keeper 不发送会话失败或恢复通知。development 环境仅在最终业务 Run 失败时，按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
 - 完整登录仅持久化调用方声明的业务阶段会话；调用方只消费 Broker 返回的内存 `stage_data`，不得重新读取 Cookie 文件。

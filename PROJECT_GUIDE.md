@@ -153,6 +153,10 @@ Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通�
 
 当前登录使用无头模式并保留同一浏览器 Profile 与进程；业务请求明确认证失效时只允许强刷新一次并重试失败步骤一次。Session Keeper 每 10 分钟在同一个浏览器 Profile 中预热 `report_analysis`、`smart_ops`、`city_ops` 与 `data_market`，不发送会话失败或恢复通知。development 环境的最终业务 Run 失败由外层 Flow 按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
 
+每次 Session Keeper 成功完成预热后，Flow 日志必须按返回的阶段列表记录共享会话健康确认；阶段列表为空时不记录该确认信息。
+
+`autologin.json` 中 `stage_probes.<stage>` 默认配置单个探活对象；需要更严格的鉴权校验时可改用 `probes` 数组。所有启用探活均成功才判定该 stage 健康；探活的 Cookie、Token 和 Storage 值必须从当前 stage 快照动态注入，禁止在配置、日志或文档中写入固定认证材料。
+
 请求故障按认证失效、基础设施、接口契约和业务结果处理。302、401、403、登录页语义和 `reCode=1101` 的认证边界，以及 429、5xx、超时和 JSON 契约失败的处理规则，统一见 [docs/request-failure-handling.md](docs/request-failure-handling.md)。运行日志不得输出完整内部 URL、认证材料或响应正文。
 
 ### 运行入口
@@ -167,6 +171,8 @@ pwsh -File scripts/stop.ps1
 ```
 
 系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。该脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`，并主动提交一次 Session Keeper；它不发布、同步或修改任何 Prefect Deployment。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
+
+统一 `session-keeper` 发布并确认可运行后，必须在 Prefect UI 或命令行一次性删除历史 `session-keeper-flow/session-keeper-report` 与 `session-keeper-flow/session-keeper-city` Deployment；从 `prefect.yaml` 删除声明不会清理 Prefect 服务端已有的调度对象。不得由 `scripts/run.ps1` 自动删除 Deployment。
 
 自动调度的 Notify Run 比预计时间晚超过 10 分钟时取消，手工 Notify Run 保留。过期 Session Keeper 和高频 Dashboard Run 不补跑。处于 `RUNNING`、`CANCELLING` 或 `PAUSED` 的本项目 Run 会阻止替代 Worker 启动，必须人工处理。Worker 监督进程在崩溃 30 秒后重启 Worker；Prefect Server 需要手工执行 `scripts/run.ps1` 恢复。`scripts/stop.ps1` 只能停止 `C:\AutoNotifyRuntime\processes` 中已登记且身份匹配的进程。
 

@@ -13,6 +13,14 @@ from utils.config_loader import load_json_with_local_override
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def format_session_health_confirmation(result):
+    stages = result.get("stages") or []
+    if not stages:
+        return None
+    status_text = ", ".join(f"{stage}=healthy" for stage in stages)
+    return f"共享会话健康状态确认: {status_text}"
+
+
 def load_keeper_config(config_path, base_dir=PROJECT_ROOT):
     keeper_config, resolved = load_json_with_local_override(base_dir / config_path)
     session_config, _ = load_json_with_local_override(
@@ -35,5 +43,10 @@ def run_session_keeper(config_path="config/modules/session_keeper.json"):
 
 @flow(name="session-keeper-flow")
 def session_keeper_flow(config_path="config/modules/session_keeper.json"):
-    get_run_logger().info("检查共享登录会话")
-    return run_session_keeper(config_path)
+    logger = get_run_logger()
+    logger.info("检查共享登录会话")
+    result = run_session_keeper(config_path)
+    confirmation = format_session_health_confirmation(result)
+    if confirmation:
+        logger.info(confirmation)
+    return result
