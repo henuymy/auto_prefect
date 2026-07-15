@@ -47,16 +47,59 @@ def runtime_root(env: Mapping[str, str] | None = None) -> Path:
     return DEFAULT_RUNTIME_ROOT.resolve()
 
 
+def validate_runtime_relative_path(value: str | Path) -> Path:
+    raw = str(value).replace("\\", "/")
+    path = Path(raw)
+    if not raw or not path.parts:
+        raise ValueError(f"运行根相对路径不能为空: {value}")
+    if path.parts and path.parts[0].lower() == "runtime":
+        raise ValueError(f"运行根相对路径不得以 runtime/ 开头: {value}")
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"运行根相对路径必须是受控的相对路径: {value}")
+    parts = path.parts
+    if parts[0] == "session":
+        return Path(*parts)
+    if len(parts) >= 2 and parts[0] == "config" and parts[1] in _CONFIG_AREAS:
+        return Path(*parts)
+    if parts[0] in _OPERATIONAL_AREAS:
+        return Path(*parts)
+    if len(parts) >= 3 and parts[0] == "modules" and parts[2] == "output":
+        return Path(*parts)
+    if len(parts) >= 3 and parts[0] == "flow" and parts[2] in _FLOW_AREAS:
+        return Path(*parts)
+    raise ValueError(f"不允许未分类的运行根相对路径: {value}")
+
+
 def runtime_path(relative: str | Path) -> Path:
-    logical_path = validate_runtime_path(Path("runtime") / Path(relative))
-    return (runtime_root() / Path(*logical_path.parts[1:])).resolve()
+    logical_path = validate_runtime_relative_path(relative)
+    root = runtime_root()
+    resolved = (root / logical_path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"运行根相对路径解析后越出运行根: {relative}") from exc
+    return resolved
+
+
+def resolve_runtime_relative_path(value: str | Path) -> Path:
+    return runtime_path(value)
+
+
+def is_runtime_relative_path(value: str | Path | None) -> bool:
+    if not value:
+        return False
+    try:
+        validate_runtime_relative_path(value)
+    except ValueError:
+        return False
+    return True
 
 
 def display_path(value: str | Path, *, project_dir: Path = PROJECT_DIR) -> str:
     """Return a stable project or logical Runtime path for API responses and logs."""
     path = Path(value).resolve()
     try:
-        return "runtime/" + path.relative_to(runtime_root()).as_posix()
+        return path.relative_to(runtime_root()).as_posix()
     except ValueError:
         pass
     try:
@@ -65,45 +108,3 @@ def display_path(value: str | Path, *, project_dir: Path = PROJECT_DIR) -> str:
         return str(path)
 
 
-def validate_runtime_path(value: str | Path) -> Path:
-    """Validate a logical runtime path against the post-migration layout."""
-    raw = str(value).replace("\\", "/")
-    path = Path(raw)
-    if path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"运行时路径必须是受控的逻辑路径: {value}")
-    parts = path.parts
-    if len(parts) < 2 or parts[0].lower() != "runtime":
-        raise ValueError(f"运行时路径必须以 runtime/ 开头: {value}")
-    if len(parts) >= 2 and parts[:2] == ("runtime", "session"):
-        return Path(*parts)
-    if len(parts) >= 3 and parts[:2] == ("runtime", "config") and parts[2] in _CONFIG_AREAS:
-        return Path(*parts)
-    if len(parts) >= 2 and parts[0] == "runtime" and parts[1] in _OPERATIONAL_AREAS:
-        return Path(*parts)
-    if len(parts) >= 4 and parts[:3] == ("runtime", "modules", parts[2]) and parts[3] == "output":
-        return Path(*parts)
-    if len(parts) >= 4 and parts[:2] == ("runtime", "flow") and parts[3] in _FLOW_AREAS:
-        return Path(*parts)
-    raise ValueError(
-            "不允许旧或未分类的运行时路径: "
-            f"{value}；仅允许 runtime/session/、"
-            "runtime/config/{drafts,versions}/、runtime/{logs,health,starter_templates,temp}/、"
-            "runtime/modules/<module>/output/、"
-        "runtime/flow/<task>/{output,backup,debug,tmp}/"
-    )
-
-
-def resolve_runtime_path(
-    value: str | Path | None, *, project_dir: Path = PROJECT_DIR
-) -> Path | None:
-    if not value:
-        return None
-    path = Path(value)
-    if path.parts and path.parts[0].lower() == "runtime":
-        logical_path = validate_runtime_path(value)
-        return (runtime_root() / Path(*logical_path.parts[1:])).resolve()
-    if path.is_absolute():
-        return path.resolve()
-    if ".." in path.parts:
-        raise ValueError(f"不允许父目录路径: {value}")
-    return (Path(project_dir) / path).resolve()

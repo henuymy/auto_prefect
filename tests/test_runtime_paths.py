@@ -6,30 +6,62 @@ from pathlib import Path
 import pytest
 
 from services import runtime_paths
-from services.runtime_paths import display_path, resolve_runtime_path, runtime_path, runtime_root
+from services.runtime_paths import (
+    display_path,
+    resolve_runtime_relative_path,
+    runtime_path,
+    runtime_root,
+)
 
 
-def test_runtime_relative_paths_rebase_to_external_root(monkeypatch, tmp_path):
-    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+@pytest.mark.parametrize(
+    "logical_path",
+    [
+        "session/cookie_dump.json",
+        "config/drafts/日报.json",
+        "config/versions/日报/1.json",
+        "logs/web_runs.jsonl",
+        "health/probe",
+        "starter_templates/日报/run",
+        "temp/working.json",
+        "modules/dashboard/output/v2_migration",
+        "flow/日报/tmp/result.json",
+    ],
+)
+def test_root_relative_allow_list_rebases_to_external_root(
+    monkeypatch, tmp_path, logical_path
+):
+    runtime_root = tmp_path / "shared"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
 
-    assert resolve_runtime_path(
-        "runtime/session/cookie_dump.json", project_dir=tmp_path
-    ) == (tmp_path / "shared" / "session" / "cookie_dump.json").resolve()
-
-
-def test_non_runtime_relative_paths_remain_project_relative(monkeypatch, tmp_path):
-    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
-
-    assert resolve_runtime_path("config/tasks/demo.json", project_dir=tmp_path) == (
-        tmp_path / "config" / "tasks" / "demo.json"
+    assert resolve_runtime_relative_path(logical_path) == (
+        runtime_root / logical_path
     ).resolve()
 
 
-def test_absolute_paths_are_preserved_for_internal_callers(monkeypatch, tmp_path):
-    target = (tmp_path / "absolute.json").resolve()
+def test_root_relative_runtime_paths_reject_legacy_prefix(monkeypatch, tmp_path):
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
 
-    assert resolve_runtime_path(target, project_dir=tmp_path) == target
+    with pytest.raises(ValueError, match="不得以 runtime/"):
+        resolve_runtime_relative_path("runtime/session/cookie_dump.json")
+
+
+def test_root_relative_runtime_paths_reject_absolute_values(monkeypatch, tmp_path):
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+
+    with pytest.raises(ValueError, match="受控的相对路径"):
+        resolve_runtime_relative_path(tmp_path / "outside.json")
+
+
+@pytest.mark.parametrize("value", ["", ".", "./"])
+def test_root_relative_runtime_paths_reject_empty_values(value):
+    with pytest.raises(ValueError):
+        resolve_runtime_relative_path(value)
+
+
+def test_legacy_runtime_resolver_apis_are_removed():
+    assert not hasattr(runtime_paths, "validate_runtime_path")
+    assert not hasattr(runtime_paths, "resolve_runtime_path")
 
 
 def test_runtime_root_uses_local_runtime_config_when_environment_is_unset(monkeypatch, tmp_path):
@@ -107,11 +139,11 @@ def test_runtime_path_rejects_escape_and_legacy_directory(monkeypatch, tmp_path)
 
     with pytest.raises(ValueError, match="受控"):
         runtime_path("../outside")
-    with pytest.raises(ValueError, match="旧或未分类"):
+    with pytest.raises(ValueError, match="未分类"):
         runtime_path("dashboard/failures")
 
 
-def test_display_path_uses_logical_runtime_prefix(monkeypatch, tmp_path):
+def test_display_path_uses_runtime_root_relative_path(monkeypatch, tmp_path):
     runtime_dir = tmp_path / "shared"
     project_dir = tmp_path / "project"
     monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_dir))
@@ -119,24 +151,28 @@ def test_display_path_uses_logical_runtime_prefix(monkeypatch, tmp_path):
     assert display_path(
         runtime_dir / "config" / "drafts" / "日报.json",
         project_dir=project_dir,
-    ) == "runtime/config/drafts/日报.json"
+    ) == "config/drafts/日报.json"
 
 
-def test_runtime_config_and_operational_paths_rebase_to_shared_root(monkeypatch, tmp_path):
-    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "shared"))
+def test_runtime_drawer_does_not_prepend_legacy_runtime_prefix():
+    project_root = Path(__file__).resolve().parents[1]
+    source = (
+        project_root / "frontend" / "src" / "components" / "runtime" / "RuntimeDrawer.tsx"
+    ).read_text(encoding="utf-8")
 
-    assert resolve_runtime_path("runtime/config/drafts/日报.json", project_dir=tmp_path) == (
-        tmp_path / "shared" / "config" / "drafts" / "日报.json"
-    ).resolve()
-    assert resolve_runtime_path("runtime/config/versions/日报/1.json", project_dir=tmp_path) == (
-        tmp_path / "shared" / "config" / "versions" / "日报" / "1.json"
-    ).resolve()
-    assert resolve_runtime_path("runtime/logs/web_runs.jsonl", project_dir=tmp_path) == (
-        tmp_path / "shared" / "logs" / "web_runs.jsonl"
-    ).resolve()
-    assert resolve_runtime_path("runtime/health/probe", project_dir=tmp_path) == (
-        tmp_path / "shared" / "health" / "probe"
-    ).resolve()
-    assert resolve_runtime_path("runtime/starter_templates/日报/run", project_dir=tmp_path) == (
-        tmp_path / "shared" / "starter_templates" / "日报" / "run"
-    ).resolve()
+    assert "runtime/{props.currentPath}" not in source
+    assert 'props.currentPath || "."' in source
+
+
+def test_runtime_compatibility_audit_records_remaining_callers():
+    project_root = Path(__file__).resolve().parents[1]
+    audit = (project_root / "docs" / "runtime-path-compatibility-audit.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "services/runtime_paths.py" in audit
+    assert "scripts/tools/dashboard/import_v2_indicator_config.py" in audit
+    assert "scripts/tools/dashboard/v2_cutover_audit.py" in audit
+    assert "待迁移" in audit
+
+
