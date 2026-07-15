@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,31 @@ from infrastructure.dashboard_mysql import DashboardMySQLSettings
 from models.dashboard_v2 import IndicatorFormulaComponent, IndicatorV2
 from scripts.tools.dashboard import import_v2_indicator_config
 from tests.test_dashboard_v2_query_service import _engine
+
+
+def test_indicator_import_bundle_uses_runtime_root(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "shared-runtime"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
+
+    args = import_v2_indicator_config.parse_args([])
+
+    assert args.bundle == "modules/dashboard/output/v2_migration"
+    assert import_v2_indicator_config.resolve_bundle_path(args.bundle) == (
+        runtime_root / "modules/dashboard/output/v2_migration"
+    ).resolve()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "runtime/modules/dashboard/output/v2_migration",
+        "../outside",
+        "C:/outside",
+    ],
+)
+def test_indicator_import_rejects_non_runtime_relative_bundle(value):
+    with pytest.raises(ValueError):
+        import_v2_indicator_config.resolve_bundle_path(value)
 
 
 def test_import_v2_indicator_settings_and_custom_formulas(monkeypatch, tmp_path):

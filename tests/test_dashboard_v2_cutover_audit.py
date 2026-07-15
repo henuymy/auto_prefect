@@ -4,14 +4,43 @@ import asyncio
 import json
 from uuid import uuid4
 
+import pytest
 from prefect.client.schemas.objects import StateType
 
+from scripts.tools.dashboard import v2_cutover_audit
 from scripts.tools.dashboard.v2_cutover_audit import (
     ACTIVE_FLOW_STATE_TYPES,
     _approval_check,
     _bundle_check,
     _read_target_flow_runs,
 )
+
+
+def test_cutover_audit_runtime_inputs_use_runtime_root(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "shared-runtime"
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(runtime_root))
+
+    args = v2_cutover_audit.parse_args([])
+
+    assert v2_cutover_audit.resolve_runtime_artifact_path(args.bundle) == (
+        runtime_root / "modules/dashboard/output/v2_migration"
+    ).resolve()
+    assert v2_cutover_audit.resolve_runtime_artifact_path(args.approvals) == (
+        runtime_root / "modules/dashboard/output/v2_migration/cutover_approvals.json"
+    ).resolve()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "runtime/modules/dashboard/output/v2_migration",
+        "../outside",
+        "C:/outside",
+    ],
+)
+def test_cutover_audit_rejects_non_runtime_relative_artifact(value):
+    with pytest.raises(ValueError):
+        v2_cutover_audit.resolve_runtime_artifact_path(value)
 
 
 def test_cutover_audit_bundle_requires_pk_only_when_requested(tmp_path):

@@ -10,7 +10,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -35,7 +35,7 @@ from infrastructure.dashboard_mysql import (
 )
 from services.dashboard_v2_trigger import load_dashboard_config
 from services.dashboard_v2_readiness import check_dashboard_v2_schema
-from services.runtime_paths import resolve_runtime_path
+from services.runtime_paths import resolve_runtime_relative_path
 
 
 REQUIRED_DEPLOYMENTS = {
@@ -56,6 +56,10 @@ ACTIVE_FLOW_STATE_TYPES = {
 
 def _check(ok: bool, message: str, **details: Any) -> dict[str, Any]:
     return {"ok": bool(ok), "message": message, **details}
+
+
+def resolve_runtime_artifact_path(value: str | Path) -> Path:
+    return resolve_runtime_relative_path(value)
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -255,16 +259,18 @@ async def audit(args: argparse.Namespace) -> dict[str, Any]:
     connection, schema = _mysql_checks(args.expected_database)
     config, resolved_config = load_dashboard_config(args.config)
     schema_version = int(config.get("schema_version", 0) or 0)
+    bundle = resolve_runtime_artifact_path(args.bundle)
+    approvals = resolve_runtime_artifact_path(args.approvals)
     checks = {
         "git": _git_check(),
         "mysql_connection": connection,
         "dashboard_v2_schema": schema,
         "migration_bundle": _bundle_check(
-            resolve_runtime_path(args.bundle, project_dir=PROJECT_ROOT),
+            bundle,
             require_pk=args.require_pk_targets,
         ),
         "approval_evidence": _approval_check(
-            resolve_runtime_path(args.approvals, project_dir=PROJECT_ROOT)
+            approvals
         ),
         "dashboard_config": _check(
             schema_version == 2,
@@ -287,19 +293,19 @@ async def audit(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="只读审计驾驶舱 V2 切换门槛")
     parser.add_argument("--phase", choices=["cutover"], default="cutover")
     parser.add_argument("--expected-database", default="dashboard_v2")
     parser.add_argument("--config", default="config/dashboard/session.json")
-    parser.add_argument("--bundle", default="runtime/modules/dashboard/output/v2_migration")
+    parser.add_argument("--bundle", default="modules/dashboard/output/v2_migration")
     parser.add_argument(
         "--approvals",
-        default="runtime/modules/dashboard/output/v2_migration/cutover_approvals.json",
+        default="modules/dashboard/output/v2_migration/cutover_approvals.json",
     )
     parser.add_argument("--prefect-api-url", default="http://127.0.0.1:4200/api")
     parser.add_argument("--require-pk-targets", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> int:
