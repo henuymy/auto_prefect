@@ -151,7 +151,7 @@ C:\AutoNotifyRuntime\
 
 Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通过 `StageSessionBroker` 获取会话。Broker 使用独立状态锁与全局登录锁，按所需 stage 重建临时兼容快照、探活并持久化独立 stage 快照及健康状态；成功后删除遗留 `cookie_dump.json` 和临时快照。调用方只能消费返回的内存 `stage_data`，不得重新读取 Cookie 文件。
 
-当前登录使用无头模式并保留同一浏览器 Profile 与进程；业务请求明确认证失效时只允许强刷新一次并重试失败步骤一次。Session Keeper 仅作预热，分别调度 `report_analysis` 与 `city_ops`，不发送会话失败或恢复通知。development 环境的最终业务 Run 失败由外层 Flow 按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
+当前登录使用无头模式并保留同一浏览器 Profile 与进程；业务请求明确认证失效时只允许强刷新一次并重试失败步骤一次。Session Keeper 每 10 分钟在同一个浏览器 Profile 中预热 `report_analysis`、`smart_ops`、`city_ops` 与 `data_market`，不发送会话失败或恢复通知。development 环境的最终业务 Run 失败由外层 Flow 按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
 
 请求故障按认证失效、基础设施、接口契约和业务结果处理。302、401、403、登录页语义和 `reCode=1101` 的认证边界，以及 429、5xx、超时和 JSON 契约失败的处理规则，统一见 [docs/request-failure-handling.md](docs/request-failure-handling.md)。运行日志不得输出完整内部 URL、认证材料或响应正文。
 

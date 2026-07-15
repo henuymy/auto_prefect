@@ -431,6 +431,47 @@ def test_stage_probe_city_ops_accepts_recode_0000(monkeypatch):
     assert result["results"][0]["ok"] is True
 
 
+def test_stage_probe_city_ops_requires_all_configured_probes(monkeypatch):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.responses = [
+        FakeResponse(payload={"reCode": "0000"}),
+        FakeResponse(payload={"reCode": "0000"}),
+    ]
+    cookie_dump = {
+        "stages": [
+            {
+                "stage": "city_ops",
+                "cookies": [{"name": "JSESSIONID", "value": "sid", "domain": "example.com"}],
+                "session_storage": {"uapToken": "dynamic-token"},
+            }
+        ]
+    }
+    probe = {
+        "method": "POST",
+        "headers_from_session_storage": {"uapToken": "uapToken"},
+        "body_type": "json",
+        "data": {},
+        "success_json_path": "reCode",
+        "success_value": "0000",
+    }
+
+    result = validate_stage_probes(
+        cookie_dump,
+        ["city_ops"],
+        {
+            "city_ops": {
+                "probes": [
+                    {**probe, "url": "https://example/getUserInfo"},
+                    {**probe, "url": "https://example/getAreaList"},
+                ]
+            }
+        },
+    )
+
+    assert result["valid"] is True
+    assert [item["ok"] for item in result["results"]] == [True, True]
+
+
 def test_stage_probe_smart_ops_accepts_empty_200(monkeypatch):
     monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
     FakeSession.responses = [FakeResponse(status_code=200, text="")]

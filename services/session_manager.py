@@ -591,32 +591,54 @@ def execute_stage_probe(stage_name, probe, stage):
     return result
 
 
+def configured_stage_probes(stage_probe_config):
+    if not stage_probe_config:
+        return []
+    if isinstance(stage_probe_config, list):
+        return stage_probe_config
+    if not isinstance(stage_probe_config, dict):
+        raise ValueError("stage_probes 的 stage 配置必须是对象或对象列表")
+    if stage_probe_config.get("enabled", True) is False:
+        return []
+    if "probes" in stage_probe_config:
+        probes = stage_probe_config["probes"]
+        if not isinstance(probes, list):
+            raise ValueError("stage_probes.probes 必须是列表")
+        return probes
+    return [stage_probe_config]
+
+
 def validate_stage_probes(cookie_dump, required_stages=None, stage_probes=None):
     required_stages = required_stages or []
     stage_probes = stage_probes or {}
     results = []
     for stage_name in required_stages:
-        probe = stage_probes.get(stage_name) or {}
-        if not probe or probe.get("enabled", True) is False:
+        probes = configured_stage_probes(stage_probes.get(stage_name))
+        if not probes:
             results.append({"stage": stage_name, "enabled": False, "ok": True, "reason": "no_probe"})
             continue
         stage = find_stage(cookie_dump, stage_name)
         if not stage:
             results.append({"stage": stage_name, "enabled": True, "ok": False, "reason": "missing_stage"})
             continue
-        try:
-            results.append(execute_stage_probe(stage_name, probe, stage))
-        except AuthenticationMaterialMissingError:
-            results.append(
-                {
-                    "stage": stage_name,
-                    "enabled": True,
-                    "ok": False,
-                    "reason": "missing_authentication_material",
-                }
-            )
-        except Exception as exc:
-            results.append({"stage": stage_name, "enabled": True, "ok": False, "reason": "probe_error", "error": str(exc)})
+        for probe in probes:
+            if not isinstance(probe, dict):
+                raise ValueError("stage_probes.probes 的元素必须是对象")
+            if probe.get("enabled", True) is False:
+                continue
+            try:
+                results.append(execute_stage_probe(stage_name, probe, stage))
+            except AuthenticationMaterialMissingError:
+                results.append(
+                    {
+                        "stage": stage_name,
+                        "enabled": True,
+                        "ok": False,
+                        "reason": "missing_authentication_material",
+                    }
+                )
+            except Exception as exc:
+                results.append({"stage": stage_name, "enabled": True, "ok": False, "reason": "probe_error", "error": str(exc)})
     return {
         "valid": all(item.get("ok") for item in results),
         "results": results,
