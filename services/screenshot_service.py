@@ -479,7 +479,7 @@ def crop_png_whitespace(image_path, background=(255, 255, 255), tolerance=8):
 
 
 def resolve_pdf_dpi(capture):
-    configured = capture.get("pdf_dpi", capture.get("render_dpi", 300))
+    configured = capture.get("pdf_dpi", 300)
     return max(96, min(600, int(configured or 300)))
 
 

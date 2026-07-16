@@ -19,6 +19,7 @@ from services.screenshot_service import (
         ({"pdf_dpi": 600}, 600),
         ({"pdf_dpi": 1}, 96),
         ({"pdf_dpi": 999}, 600),
+        ({"render_dpi": 96}, 300),
         ({"pdf_dpi": 300, "export_scale": 1}, 300),
         ({"pdf_dpi": 300, "export_scale": 2}, 300),
     ],
