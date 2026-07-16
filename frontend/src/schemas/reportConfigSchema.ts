@@ -18,7 +18,7 @@ export const reportConfigJsonSchema = {
         required: ["name"],
         properties: {
           name: { type: "string", minLength: 1 },
-          source: { enum: ["http_api", "tencent_sheet"] },
+          source: { enum: ["http_api", "tencent_sheet", "tencent_smartbook"] },
           stage: { type: "string", minLength: 1 },
           auth_preset: { type: "string" },
           method: { enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] },
@@ -90,7 +90,7 @@ export const reportConfigJsonSchema = {
         },
         allOf: [
           {
-            if: { properties: { source: { const: "tencent_sheet" } }, required: ["source"] },
+            if: { properties: { source: { enum: ["tencent_sheet", "tencent_smartbook"] } }, required: ["source"] },
             then: {
               required: ["sheets"],
               anyOf: [
@@ -99,6 +99,16 @@ export const reportConfigJsonSchema = {
               ],
             },
             else: { required: ["stage", "method", "url", "body_type", "response_mode"] },
+          },
+          {
+            if: { properties: { source: { const: "tencent_smartbook" } }, required: ["source"] },
+            then: {
+              properties: {
+                sheets: {
+                  items: { not: { required: ["range"] } },
+                },
+              },
+            },
           },
           {
             if: { properties: { response_mode: { enum: ["json_to_excel", "json_drilldown_to_excel"] } }, required: ["response_mode"] },

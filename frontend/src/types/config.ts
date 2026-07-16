@@ -16,10 +16,17 @@ export interface TencentSheetConfig {
   output_sheet_name?: string;
 }
 
+export interface TencentSmartbookConfig {
+  sheet_name?: string;
+  sheet_id?: string;
+  output_sheet_name?: string;
+  range?: never;
+}
+
 export interface DownloadItem {
   name: string;
   enabled?: boolean;
-  source?: "http_api" | "tencent_sheet";
+  source?: "http_api" | "tencent_sheet" | "tencent_smartbook";
   stage?: string;
   auth_preset?: string;
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -27,7 +34,7 @@ export interface DownloadItem {
   file_id?: string;
   doc_url?: string;
   output_filename?: string;
-  sheets?: TencentSheetConfig[];
+  sheets?: Array<TencentSheetConfig | TencentSmartbookConfig>;
   headers: Record<string, string>;
   body_type?: BodyType;
   data?: Record<string, unknown>;

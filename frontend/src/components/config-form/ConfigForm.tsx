@@ -14,7 +14,7 @@ import { Tabs } from "@/components/ui/tabs";
 import { generateStarterTemplate, listTemplates, templateDownloadUrl, uploadTemplate } from "@/lib/api";
 import { collectQuickDateFields, DATE_PRESETS, formatCustomDate, updateQuickDateField, type QuickDateField } from "@/lib/quickDate";
 import { cn, parseJsonSafe, prettyJson } from "@/lib/utils";
-import type { CompareSource, DownloadItem, ExcelColumn, ReportConfig, SendItem } from "@/types/config";
+import type { CompareSource, DownloadItem, ExcelColumn, ReportConfig, SendItem, TencentSheetConfig, TencentSmartbookConfig } from "@/types/config";
 
 const basicSchema = z.object({
   name: z.string().min(1, "配置名称不能为空"),
@@ -394,8 +394,9 @@ function StarterTemplateProgress({ currentStep }: { currentStep: number }) {
   );
 }
 
-function sourceOf(item: DownloadItem) {
-  return item.source === "tencent_sheet" ? "tencent_sheet" : "http_api";
+function sourceOf(item: DownloadItem): "http_api" | "tencent_sheet" | "tencent_smartbook" {
+  if (item.source === "tencent_sheet" || item.source === "tencent_smartbook") return item.source;
+  return "http_api";
 }
 
 function defaultHttpDownload(index: number): DownloadItem {
@@ -425,6 +426,18 @@ function defaultTencentSheetDownload(index: number): DownloadItem {
   };
 }
 
+function defaultTencentSmartbookDownload(index: number): DownloadItem {
+  return {
+    source: "tencent_smartbook",
+    name: `智能表格-${index}`,
+    headers: {},
+    file_id: "",
+    doc_url: "",
+    output_filename: `智能表格-${index}.xlsx`,
+    sheets: [{ sheet_name: "汇总", sheet_id: "", output_sheet_name: "汇总" }],
+  };
+}
+
 function sheetIdFromDocUrl(value?: string) {
   if (!value) return "";
   try {
@@ -447,16 +460,31 @@ function applyDocUrlToTencentSheet(item: DownloadItem, docUrl: string): Download
   return { ...item, source: "tencent_sheet", doc_url: docUrl, sheets };
 }
 
+function applyDocUrlToTencentSmartbook(item: DownloadItem, docUrl: string): DownloadItem {
+  const parsedSheetId = sheetIdFromDocUrl(docUrl);
+  const currentSheets: TencentSmartbookConfig[] = item.sheets?.length
+    ? item.sheets.map(({ range: _range, ...sheet }) => sheet)
+    : [{ sheet_name: "汇总", sheet_id: "", output_sheet_name: "汇总" }];
+  const sheets = parsedSheetId
+    ? currentSheets.map((sheet, index) => (index === 0 && !sheet.sheet_id ? { ...sheet, sheet_id: parsedSheetId } : sheet))
+    : currentSheets;
+  return { ...item, source: "tencent_smartbook", doc_url: docUrl, sheets };
+}
+
 function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (config: ReportConfig) => void }) {
-  const [activeSource, setActiveSource] = useState<"http_api" | "tencent_sheet">("http_api");
+  const [activeSource, setActiveSource] = useState<"http_api" | "tencent_sheet" | "tencent_smartbook">("http_api");
   const entries = config.downloads.map((item, index) => ({ item, index }));
   const httpEntries = entries.filter(({ item }) => sourceOf(item) === "http_api");
   const tencentEntries = entries.filter(({ item }) => sourceOf(item) === "tencent_sheet");
-  const activeEntries = activeSource === "http_api" ? httpEntries : tencentEntries;
+  const smartbookEntries = entries.filter(({ item }) => sourceOf(item) === "tencent_smartbook");
+  const activeEntries = activeSource === "http_api" ? httpEntries : activeSource === "tencent_sheet" ? tencentEntries : smartbookEntries;
   const updateDownload = (index: number, next: DownloadItem) => onChange({ ...config, downloads: updateAt(config.downloads, index, next) });
   const deleteDownload = (index: number) => onChange({ ...config, downloads: config.downloads.filter((_, itemIndex) => itemIndex !== index) });
   const addHttp = () => onChange({ ...config, downloads: [...config.downloads, defaultHttpDownload(httpEntries.length + 1)] });
   const addTencent = () => onChange({ ...config, downloads: [...config.downloads, defaultTencentSheetDownload(tencentEntries.length + 1)] });
+  const addSmartbook = () => onChange({ ...config, downloads: [...config.downloads, defaultTencentSmartbookDownload(smartbookEntries.length + 1)] });
+  const addActive = activeSource === "http_api" ? addHttp : activeSource === "tencent_sheet" ? addTencent : addSmartbook;
+  const addLabel = activeSource === "http_api" ? "添加接口抓取" : activeSource === "tencent_sheet" ? "添加腾讯文档" : "添加智能表格";
 
   return (
     <Card>
@@ -466,9 +494,9 @@ function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (c
             <CardTitle>数据抓取</CardTitle>
             <CardDescription>按数据源分开配置，避免业务接口请求和腾讯文档范围读取混用。</CardDescription>
           </div>
-          <Button className="self-start sm:self-auto" variant="outline" onClick={activeSource === "http_api" ? addHttp : addTencent}>
+          <Button className="self-start sm:self-auto" variant="outline" onClick={addActive}>
             <Plus className="h-4 w-4" />
-            {activeSource === "http_api" ? "添加接口抓取" : "添加腾讯文档"}
+            {addLabel}
           </Button>
         </div>
         <div className="inline-flex w-full rounded-lg border border-border bg-muted/40 p-1 sm:w-auto">
@@ -486,6 +514,13 @@ function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (c
           >
             腾讯文档 <span className="ml-1 text-xs text-muted-foreground">{tencentEntries.length}</span>
           </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-md px-4 py-2 text-sm font-semibold transition sm:flex-none ${activeSource === "tencent_smartbook" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            onClick={() => setActiveSource("tencent_smartbook")}
+          >
+            智能表格 <span className="ml-1 text-xs text-muted-foreground">{smartbookEntries.length}</span>
+          </button>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -500,8 +535,17 @@ function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (c
               onDelete={() => deleteDownload(index)}
               deleteDisabled={config.downloads.length <= 1}
             />
-          ) : (
+          ) : activeSource === "tencent_sheet" ? (
             <TencentSheetDownloadCard
+              key={`${item.name}-${index}`}
+              item={item}
+              index={viewIndex}
+              onChange={(next) => updateDownload(index, next)}
+              onDelete={() => deleteDownload(index)}
+              deleteDisabled={config.downloads.length <= 1}
+            />
+          ) : (
+            <TencentSmartbookDownloadCard
               key={`${item.name}-${index}`}
               item={item}
               index={viewIndex}
@@ -513,7 +557,7 @@ function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (c
         ))}
         {!activeEntries.length && (
           <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-            {activeSource === "http_api" ? "还没有业务接口抓取项。" : "还没有腾讯文档抓取项。"}
+            {activeSource === "http_api" ? "还没有业务接口抓取项。" : activeSource === "tencent_sheet" ? "还没有腾讯文档抓取项。" : "还没有智能表格抓取项。"}
           </div>
         )}
       </CardContent>
@@ -757,8 +801,10 @@ function QuickDateEditor({ item, fields, onChange }: { item: DownloadItem; field
 
 function TencentSheetDownloadCard({ item, index, onChange, onDelete, deleteDisabled }: { item: DownloadItem; index: number; onChange: (item: DownloadItem) => void; onDelete: () => void; deleteDisabled?: boolean }) {
   const [open, setOpen] = useState(index === 0);
-  const sheets = item.sheets?.length ? item.sheets : [{ sheet_name: "日报", sheet_id: "", range: "auto", output_sheet_name: "日报" }];
-  const updateSheets = (nextSheets: NonNullable<DownloadItem["sheets"]>) => onChange({ ...item, source: "tencent_sheet", sheets: nextSheets });
+  const sheets: TencentSheetConfig[] = item.sheets?.length
+    ? item.sheets as TencentSheetConfig[]
+    : [{ sheet_name: "日报", sheet_id: "", range: "auto", output_sheet_name: "日报" }];
+  const updateSheets = (nextSheets: TencentSheetConfig[]) => onChange({ ...item, source: "tencent_sheet", sheets: nextSheets });
   const subtitle = item.doc_url || (item.file_id ? `file_id: ${item.file_id}` : "尚未填写腾讯文档完整链接");
 
   return (
@@ -812,6 +858,82 @@ function TencentSheetDownloadCard({ item, index, onChange, onDelete, deleteDisab
                   <DraftInput placeholder="Sheet 名称" value={sheet.sheet_name || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, sheet_name: value }))} />
                   <DraftInput placeholder="sheet_id" value={sheet.sheet_id || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, sheet_id: value }))} />
                   <DraftInput placeholder="auto 或 A1:Z1000" value={sheet.range || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, range: value || "auto" }))} />
+                  <DraftInput placeholder="输出 Sheet" value={sheet.output_sheet_name || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, output_sheet_name: value }))} />
+                  <div className="flex items-center justify-end gap-1">
+                    <Button variant="ghost" size="icon" title="复制" onClick={() => updateSheets([...sheets.slice(0, sheetIndex + 1), { ...sheet }, ...sheets.slice(sheetIndex + 1)])}>
+                      <FilePlus2 className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" title="删除" onClick={() => updateSheets(removeAt(sheets, sheetIndex))} disabled={sheets.length <= 1}>
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TencentSmartbookDownloadCard({ item, index, onChange, onDelete, deleteDisabled }: { item: DownloadItem; index: number; onChange: (item: DownloadItem) => void; onDelete: () => void; deleteDisabled?: boolean }) {
+  const [open, setOpen] = useState(index === 0);
+  const sheets: TencentSmartbookConfig[] = item.sheets?.length
+    ? item.sheets.map(({ range: _range, ...sheet }) => sheet)
+    : [{ sheet_name: "汇总", sheet_id: "", output_sheet_name: "汇总" }];
+  const updateSheets = (nextSheets: TencentSmartbookConfig[]) => onChange({ ...item, source: "tencent_smartbook", sheets: nextSheets });
+  const subtitle = item.doc_url || (item.file_id ? `file_id: ${item.file_id}` : "尚未填写腾讯智能表格完整链接");
+
+  return (
+    <div className="rounded-xl border border-border bg-muted/20 p-3 sm:p-4">
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <button type="button" onClick={() => setOpen((value) => !value)} className="min-w-0 flex-1 text-left">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">#{index + 1}</Badge>
+            <Badge>智能表格</Badge>
+            <Badge variant="outline">全字段、全记录</Badge>
+            <Badge variant="outline">{sheets.length} 个子表</Badge>
+            <ChevronDown className={`h-4 w-4 text-muted-foreground transition ${open ? "rotate-180" : ""}`} />
+          </div>
+          <h3 className="mt-2 text-base font-black">{item.name || "未命名智能表格"}</h3>
+          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{subtitle}</p>
+        </button>
+        <Button variant="ghost" size="icon" onClick={onDelete} disabled={deleteDisabled}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+      </div>
+      {open && (
+        <div className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Field label="下载标识 name"><DraftInput value={item.name} onCommit={(value) => onChange({ ...item, source: "tencent_smartbook", name: value })} /></Field>
+            <Field label="输出文件名"><DraftInput value={item.output_filename || ""} onCommit={(value) => onChange({ ...item, source: "tencent_smartbook", output_filename: value })} /></Field>
+            <Field label="腾讯智能表格完整链接 doc_url" hint="建议填写带 tab 的完整链接，例如 https://docs.qq.com/smartsheet/Dexample?tab=sheet-1；首个子表的 sheet_id 会自动带出。">
+              <DraftInput value={item.doc_url || ""} onCommit={(value) => onChange(applyDocUrlToTencentSmartbook(item, value))} />
+            </Field>
+            <Field label="高级：file_id（可选）" hint="通常留空；只有已拿到 OpenAPI 内部 file_id 时才填写。">
+              <DraftInput value={item.file_id || ""} onCommit={(value) => onChange({ ...item, source: "tencent_smartbook", file_id: value })} />
+            </Field>
+          </div>
+          <div className="rounded-xl border border-border bg-background/70 p-3">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-black">智能表格子表配置</div>
+                <p className="mt-1 text-xs text-muted-foreground">每个子表自动导出全部字段与全部分页记录，不配置 A1 读取范围。</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => updateSheets([...sheets, { sheet_name: "汇总", sheet_id: "", output_sheet_name: "汇总" }])}>
+                <Plus className="h-4 w-4" />添加子表
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <div className="hidden grid-cols-[1fr_1fr_1fr_auto] gap-2 px-2 text-xs font-semibold text-muted-foreground lg:grid">
+                <div>子表名称</div>
+                <div>sheet_id</div>
+                <div>输出 Sheet</div>
+                <div />
+              </div>
+              {sheets.map((sheet, sheetIndex) => (
+                <div key={sheetIndex} className="grid gap-2 rounded-lg border border-border bg-muted/10 p-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
+                  <DraftInput placeholder="子表名称" value={sheet.sheet_name || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, sheet_name: value }))} />
+                  <DraftInput placeholder="sheet_id" value={sheet.sheet_id || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, sheet_id: value }))} />
                   <DraftInput placeholder="输出 Sheet" value={sheet.output_sheet_name || ""} onCommit={(value) => updateSheets(updateAt(sheets, sheetIndex, { ...sheet, output_sheet_name: value }))} />
                   <div className="flex items-center justify-end gap-1">
                     <Button variant="ghost" size="icon" title="复制" onClick={() => updateSheets([...sheets.slice(0, sheetIndex + 1), { ...sheet }, ...sheets.slice(sheetIndex + 1)])}>
