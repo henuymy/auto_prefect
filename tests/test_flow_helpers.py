@@ -440,6 +440,42 @@ def test_build_download_config_rejects_smartbook_without_subtable_selector():
         )
 
 
+def test_build_download_config_rejects_smartbook_range():
+    with pytest.raises(ValueError, match="range"):
+        build_download_config(
+            {"report_defaults": {}},
+            {
+                "name": "智能表格通报",
+                "downloads": [
+                    {
+                        "source": "tencent_smartbook",
+                        "name": "智能表格日报",
+                        "file_id": "file-1",
+                        "sheets": [{"sheet_id": "sheet-1", "range": "A1:B2"}],
+                    }
+                ],
+            },
+        )
+
+
+def test_build_login_config_clears_default_stages_for_document_only_downloads():
+    config = build_login_config(
+        {"required_stages": ["report_analysis", "city_ops"]},
+        {
+            "downloads": [
+                {
+                    "source": "tencent_smartbook",
+                    "name": "智能表格日报",
+                    "file_id": "file-1",
+                    "sheets": [{"sheet_id": "sheet-1"}],
+                }
+            ]
+        },
+    )
+
+    assert config["required_stages"] == []
+
+
 
 def test_build_compare_source_configs_maps_download_outputs():
     manifest = {

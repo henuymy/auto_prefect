@@ -192,6 +192,8 @@ def assert_report_schema_contract(report_cfg):
                     raise ValueError(f"downloads[{index}] 腾讯智能表格至少需要一个子表")
                 raise ValueError(f"downloads[{index}] 腾讯文档至少需要一个 Sheet 范围")
             for sheet_index, sheet in enumerate(sheets, start=1):
+                if source == "tencent_smartbook" and "range" in sheet:
+                    raise ValueError(f"downloads[{index}].sheets[{sheet_index}] 智能表格不支持 range")
                 if not (sheet.get("sheet_id") or sheet.get("sheet_name")):
                     raise ValueError(f"downloads[{index}].sheets[{sheet_index}] 缺少 sheet_id 或 sheet_name")
             continue
@@ -262,8 +264,7 @@ def required_stages_for_report(report_cfg):
 def build_login_config(base_config, report_cfg):
     config = copy.deepcopy(base_config)
     stages = required_stages_for_report(report_cfg)
-    if stages:
-        config["required_stages"] = stages
+    config["required_stages"] = stages
     return config
 
 
@@ -436,10 +437,11 @@ def run_auto_notify_pipeline(config_path=None):
     report_cfg = read_json(config["report_config_path"]) if config.get("report_config_path") else {}
     assert_report_schema_contract(report_cfg)
     login_config = None
-    if steps.get("login", {}).get("enabled", False):
+    login_enabled = bool(steps.get("login", {}).get("enabled", False) and required_stages_for_report(report_cfg))
+    if login_enabled:
         login_config = build_login_config(read_json(steps["login"]["config_path"]), report_cfg)
 
-    if steps.get("login", {}).get("enabled", False):
+    if login_enabled:
         initial_force_refresh = bool(steps["login"].get("force_refresh", False))
         active_session = prepare_notify_session(
             login_config,
@@ -469,7 +471,7 @@ def run_auto_notify_pipeline(config_path=None):
                 debug=bool(steps["download"].get("debug", False)),
             )
 
-        if not steps.get("login", {}).get("enabled", False):
+        if not login_enabled:
             return download_operation()
 
         def refresh_session():

@@ -93,12 +93,12 @@ def response_has_more(data: dict[str, Any] | list[Any], count: int, offset: int,
 def response_next_offset(data: dict[str, Any] | list[Any], offset: int, count: int) -> int:
     if isinstance(data, dict):
         for key in ("next", "nextOffset", "next_offset"):
-            try:
-                next_offset = int(data[key])
-            except (KeyError, TypeError, ValueError):
+            if key not in data:
                 continue
-            if next_offset > offset:
-                return next_offset
+            try:
+                return int(data[key])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("腾讯智能表格分页响应包含无效 next 偏移量") from exc
     return offset + count
 
 
@@ -111,6 +111,19 @@ def smart_value_to_text(value: Any) -> Any:
     if isinstance(value, list):
         return ", ".join(str(item) for item in (smart_value_to_text(item) for item in value) if item not in (None, ""))
     if isinstance(value, dict):
+        if isinstance(value.get("options"), list) and "value" in value:
+            selected = value["value"]
+            selected_values = selected if isinstance(selected, list) else [selected]
+            option_labels = {
+                str(option.get("id")): option.get("text") or option.get("name") or option.get("title")
+                for option in value["options"]
+                if isinstance(option, dict) and option.get("id") is not None
+            }
+            return ", ".join(
+                str(item)
+                for item in (smart_value_to_text(option_labels.get(str(selected_value), selected_value)) for selected_value in selected_values)
+                if item not in (None, "")
+            )
         for key in ("text", "name", "title", "label", "url"):
             text = value.get(key)
             if text not in (None, ""):
@@ -177,7 +190,11 @@ class SmartbookClient:
         )
         items: list[dict[str, Any]] = []
         offset = 0
+        seen_offsets: set[int] = set()
         while True:
+            if offset in seen_offsets:
+                raise RuntimeError(f"腾讯智能表格{response_name}分页重复偏移量: {offset}")
+            seen_offsets.add(offset)
             payload = request_post_api_json(
                 self.session,
                 url,
@@ -190,9 +207,17 @@ class SmartbookClient:
             operation_data = data.get(request_name) if isinstance(data, dict) and isinstance(data.get(request_name), (dict, list)) else data
             page_items = response_items(operation_data, response_name, "items", "list")
             items.extend(page_items)
-            if not page_items or not response_has_more(operation_data, len(page_items), offset, self.page_size):
+            has_more = response_has_more(operation_data, len(page_items), offset, self.page_size)
+            if not page_items:
+                if has_more:
+                    raise RuntimeError(f"腾讯智能表格{response_name}分页返回空数据但仍标记 hasMore")
                 return items
-            offset = response_next_offset(operation_data, offset, len(page_items))
+            if not has_more:
+                return items
+            next_offset = response_next_offset(operation_data, offset, len(page_items))
+            if next_offset <= offset:
+                raise RuntimeError(f"腾讯智能表格{response_name}分页偏移量未前进: {next_offset}")
+            offset = next_offset
 
     def list_fields(self, file_id: str, sheet_id: str) -> list[dict[str, Any]]:
         return self._list_paged(file_id, sheet_id, "getFields", "fields")
@@ -209,6 +234,8 @@ def select_subtables(available: list[dict[str, Any]], configured: list[dict[str,
     selected: list[tuple[dict[str, Any], dict[str, Any]]] = []
     used_ids: set[str] = set()
     for selector in configured:
+        if "range" in selector:
+            raise ValueError("智能表格子表不支持 range；请使用 sheet_id 或 sheet_name 选择子表")
         configured_id = str(selector.get("sheet_id") or "").strip()
         configured_name = str(selector.get("sheet_name") or "").strip()
         if not configured_id and not configured_name:

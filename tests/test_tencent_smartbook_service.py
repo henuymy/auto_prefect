@@ -7,7 +7,12 @@ from pathlib import Path
 import requests
 from openpyxl import load_workbook
 
-from services.tencent_smartbook_service import SmartbookClient, download_tencent_smartbook_report
+from services.tencent_smartbook_service import (
+    SmartbookClient,
+    download_tencent_smartbook_report,
+    select_subtables,
+    smart_value_to_text,
+)
 
 
 def make_work_dir():
@@ -347,3 +352,54 @@ def test_cli_uses_production_smartbook_downloader(monkeypatch, tmp_path):
     assert received["source"] == "tencent_smartbook"
     assert received["file_id"] == "file-1"
     assert received["sheets"] == [{"sheet_id": "sheet-1"}]
+
+
+def test_smart_value_to_text_uses_option_labels_for_multi_select_values():
+    assert smart_value_to_text(
+        {
+            "value": ["first", "second"],
+            "options": [
+                {"id": "first", "text": "第一项"},
+                {"id": "second", "text": "第二项"},
+            ],
+        }
+    ) == "第一项, 第二项"
+
+
+def test_select_subtables_rejects_range_for_smartbook():
+    try:
+        select_subtables(
+            [{"sheetID": "sheet-1", "title": "汇总"}],
+            [{"sheet_id": "sheet-1", "range": "A1:B2"}],
+        )
+    except ValueError as exc:
+        assert "range" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_smartbook_client_rejects_empty_page_that_claims_more_records():
+    class InvalidPaginationSession:
+        def post(self, url, **kwargs):
+            return make_response(
+                {
+                    "ret": 0,
+                    "data": {"getRecords": {"records": [], "hasMore": True, "next": 1}},
+                }
+            )
+
+    client = SmartbookClient(
+        {
+            "credentials": {"client_id": "cid", "access_token": "token", "open_id": "openid"},
+            "retry": {"attempts": 1, "backoff_seconds": 0, "max_backoff_seconds": 0},
+        },
+        {},
+        session=InvalidPaginationSession(),
+    )
+
+    try:
+        client.list_records("file-1", "sheet-1")
+    except RuntimeError as exc:
+        assert "分页" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")

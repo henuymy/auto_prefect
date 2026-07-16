@@ -196,6 +196,23 @@ def test_normalize_config_initializes_smartbook_selector_without_range():
     assert download["sheets"] == [{"sheet_name": "汇总", "sheet_id": "", "output_sheet_name": "汇总"}]
 
 
+def test_normalize_config_removes_legacy_range_from_smartbook_selector():
+    normalized = config_store.normalize_config(
+        {
+            "name": "智能表格通报",
+            "downloads": [
+                {
+                    "source": "tencent_smartbook",
+                    "name": "智能日报",
+                    "sheets": [{"sheet_id": "sheet-1", "range": "A1:B2"}],
+                }
+            ],
+        }
+    )
+
+    assert normalized["downloads"][0]["sheets"] == [{"sheet_id": "sheet-1"}]
+
+
 def test_atomic_write_preserves_previous_file_when_replace_fails(
     monkeypatch, tmp_path
 ):

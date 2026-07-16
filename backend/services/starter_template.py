@@ -103,6 +103,8 @@ def _validate_downloads(downloads: list[dict[str, Any]]) -> list[dict[str, str]]
                 message = "腾讯智能表格至少需要一个子表" if source == "tencent_smartbook" else "腾讯文档至少需要一个 Sheet 范围"
                 issues.append({"path": f"/downloads/{index}/sheets", "message": message})
             for sheet_index, sheet in enumerate(sheets):
+                if source == "tencent_smartbook" and "range" in sheet:
+                    issues.append({"path": f"/downloads/{index}/sheets/{sheet_index}/range", "message": "智能表格不支持 range"})
                 if not (sheet.get("sheet_id") or sheet.get("sheet_name")):
                     issues.append({"path": f"/downloads/{index}/sheets/{sheet_index}/sheet_id", "message": "Sheet 必须填写 sheet_id 或 Sheet 名称"})
             continue
