@@ -59,10 +59,6 @@ def classify_deployment(name: str) -> DeploymentPolicy | None:
     return None
 
 
-def is_manual_run(run: Any) -> bool:
-    return not bool(getattr(run, "auto_scheduled", False))
-
-
 def _state_type(run: Any) -> str:
     state = getattr(run, "state", None)
     state_type = getattr(state, "type", None)
@@ -86,66 +82,25 @@ def _is_overdue(run: Any, now: datetime) -> bool:
 
 def should_cancel_run(
     run: Any,
-    policy: DeploymentPolicy,
     now: datetime,
-    notify_grace_seconds: int,
 ) -> tuple[bool, str]:
     expected_start = getattr(run, "expected_start_time", None)
     if expected_start is None or not _is_overdue(run, now):
         return False, "scheduled_run_preserved"
-
-    if policy is DeploymentPolicy.NOTIFY:
-        if is_manual_run(run):
-            return False, "manual_notify_preserved"
-        lateness = (_as_utc(now) - _as_utc(expected_start)).total_seconds()
-        if lateness > notify_grace_seconds:
-            return True, "scheduled_notify_expired"
-        return False, "scheduled_notify_within_grace"
-
-    if policy is DeploymentPolicy.SESSION:
-        return True, "scheduled_session_expired"
-    if policy is DeploymentPolicy.DASHBOARD_HIGH_FREQUENCY:
-        return True, "scheduled_dashboard_high_frequency_expired"
-
-    return False, "scheduled_dashboard_singleton_candidate"
+    return True, "startup_overdue_run"
 
 
 def select_runs_to_cancel(
     runs: Iterable[Any],
     deployment_policies: Mapping[Any, DeploymentPolicy],
     now: datetime,
-    notify_grace_seconds: int,
 ) -> list[tuple[Any, str]]:
-    selected: list[tuple[Any, str]] = []
-    singleton_runs: dict[Any, list[Any]] = {}
-
-    for run in runs:
-        policy = deployment_policies.get(getattr(run, "deployment_id", None))
-        if policy is None:
-            continue
-        if policy is DeploymentPolicy.DASHBOARD_SINGLETON:
-            if not is_manual_run(run) and _is_overdue(run, now):
-                singleton_runs.setdefault(run.deployment_id, []).append(run)
-            continue
-
-        cancel, reason = should_cancel_run(
-            run, policy, now, notify_grace_seconds
-        )
-        if cancel:
-            selected.append((run, reason))
-
-    for candidates in singleton_runs.values():
-        newest_first = sorted(
-            candidates,
-            key=lambda run: _as_utc(run.expected_start_time),
-            reverse=True,
-        )
-        selected.extend(
-            (run, "scheduled_dashboard_singleton_duplicate")
-            for run in newest_first[1:]
-        )
-
-    return selected
+    return [
+        (run, "startup_overdue_run")
+        for run in runs
+        if getattr(run, "deployment_id", None) in deployment_policies
+        and should_cancel_run(run, now)[0]
+    ]
 
 
 async def _read_deployments(client: Any) -> list[Any]:
@@ -189,7 +144,6 @@ async def _read_runs(
 async def reconcile_client(
     client: Any,
     now: datetime,
-    notify_grace_seconds: int,
     notify_work_pool: str = "windows-notify-pool",
     cancel_in_flight: bool = False,
 ) -> ReconcileResult:
@@ -235,9 +189,7 @@ async def reconcile_client(
             deployment_id: policy
             for deployment_id, (_, policy) in managed.items()
         }
-        selected = select_runs_to_cancel(
-            queued, policies, now, notify_grace_seconds
-        )
+        selected = select_runs_to_cancel(queued, policies, now)
         selected_ids = {run.id for run, _ in selected}
         for run, reason in selected:
             await client.set_flow_run_state(
@@ -330,21 +282,9 @@ async def reconcile_client(
     return result
 
 
-def _positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be a positive integer")
-    return parsed
-
-
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Reconcile stale managed Prefect runs before Worker startup."
-    )
-    parser.add_argument(
-        "--notify-grace-seconds",
-        type=_positive_int,
-        default=600,
     )
     parser.add_argument(
         "--notify-work-pool",
@@ -359,7 +299,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 async def _run_cli(
-    notify_grace_seconds: int,
     notify_work_pool: str,
     cancel_in_flight: bool = False,
 ) -> int:
@@ -367,7 +306,6 @@ async def _run_cli(
         result = await reconcile_client(
             client,
             datetime.now(timezone.utc),
-            notify_grace_seconds,
             notify_work_pool,
             cancel_in_flight,
         )
@@ -392,7 +330,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return asyncio.run(
             _run_cli(
-                args.notify_grace_seconds,
                 args.notify_work_pool,
                 args.cancel_in_flight,
             )
