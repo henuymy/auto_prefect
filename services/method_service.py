@@ -23,9 +23,12 @@ from services.json_excel_service import (
     set_by_path,
 )
 from services.tencent_sheet_service import download_tencent_sheet_report
+from services.tencent_smartbook_service import download_tencent_smartbook_report
 from services.runtime_paths import is_runtime_relative_path, resolve_runtime_relative_path
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+
+TENCENT_DOCUMENT_SOURCES = {"tencent_sheet", "tencent_smartbook"}
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -652,11 +655,12 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
     provided_stages = config.get("stage_data") or {}
     for report in reports:
         name = report.get("name", report.get("url", "未命名报表"))
-        if report.get("source") == "tencent_sheet":
+        source = report.get("source")
+        if source in TENCENT_DOCUMENT_SOURCES:
             if dry_run:
                 payload = {
                     "name": name,
-                    "source": "tencent_sheet",
+                    "source": source,
                     "doc_url": report.get("doc_url"),
                     "file_id": report.get("file_id"),
                     "sheets": report.get("sheets") or [],
@@ -664,13 +668,16 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
                 }
                 if debug:
                     payload["request_summary"] = {
-                        "source": "tencent_sheet",
+                        "source": source,
                         "sheet_count": len(report.get("sheets") or []),
                         "credential_source": "config/modules/tencent_docs.local.json",
                     }
                 results.append(payload)
                 continue
-            results.append(download_tencent_sheet_report(report, output_dir, base_dir=base_dir))
+            if source == "tencent_smartbook":
+                results.append(download_tencent_smartbook_report(report, output_dir, base_dir=base_dir))
+            else:
+                results.append(download_tencent_sheet_report(report, output_dir, base_dir=base_dir))
             continue
 
         stage_name = report.get("stage")
@@ -710,7 +717,7 @@ def download_reports_from_config(config_path, base_dir=PROJECT_DIR, dry_run=Fals
         {
             str(report.get("stage") or "").strip()
             for report in config.get("reports") or []
-            if report.get("enabled", True) and report.get("source") != "tencent_sheet"
+            if report.get("enabled", True) and report.get("source") not in TENCENT_DOCUMENT_SOURCES
         }
         - {""}
     )

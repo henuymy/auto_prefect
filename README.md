@@ -126,6 +126,38 @@ config/modules/wecom_sender.local.json
 config/runtime.local.json
 ```
 
+### 腾讯文档与智能表格
+
+前端“数据抓取”分为“业务接口”“腾讯文档”和“智能表格”三个独立标签。普通腾讯 Sheet
+继续按 `sheets[].range` 读取指定 A1 范围；智能表格始终导出指定子表的全部字段和全部分页记录，
+因此其 `sheets[]` 只填写 `sheet_id` 或 `sheet_name`，不得填写 `range`。
+
+腾讯文档 OpenAPI 凭据仅存放在被 Git 忽略的
+`config/modules/tencent_docs.local.json`，必须包含 `client_id`、`access_token` 与 `open_id`；
+前端不会读取或上传这些凭据。智能表格配置示例：
+
+```json
+{
+  "source": "tencent_smartbook",
+  "name": "智能表格日报",
+  "doc_url": "https://docs.qq.com/smartsheet/Dexample?tab=sheet-1",
+  "output_filename": "智能表格日报.xlsx",
+  "sheets": [
+    {
+      "sheet_id": "sheet-1",
+      "sheet_name": "汇总",
+      "output_sheet_name": "汇总"
+    }
+  ]
+}
+```
+
+可在不改动业务配置的情况下手动诊断一个子表；命令只输出导出结果的摘要，不会打印凭据：
+
+```powershell
+python scripts/dev/test_tencent_smartbook_export.py --doc-url "https://docs.qq.com/smartsheet/Dexample?tab=sheet-1" --sheet "id:sheet-1" --output "temp/smartbook.xlsx"
+```
+
 ### 统一运行配置
 
 将 `config/runtime.local.example.json` 复制为 `config/runtime.local.json`，在该文件中统一维护 Prefect PostgreSQL、驾驶舱 MySQL、Prefect API 地址和 Work Pool。该本地文件已被 Git 忽略，不能提交。

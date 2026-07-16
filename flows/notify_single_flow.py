@@ -163,6 +163,9 @@ def deep_merge(base, override):
     return result
 
 
+TENCENT_DOCUMENT_SOURCES = {"tencent_sheet", "tencent_smartbook"}
+
+
 def assert_report_schema_contract(report_cfg):
     if "download" in report_cfg:
         raise ValueError("report config 仍包含旧字段 download，请保存为 schema 新结构")
@@ -177,15 +180,20 @@ def assert_report_schema_contract(report_cfg):
     for index, item in enumerate(report_cfg.get("downloads") or [], start=1):
         if "csrf_headers_from_cookies" in item:
             raise ValueError(f"downloads[{index}] 包含旧字段 csrf_headers_from_cookies，请使用 headers_from_cookies 或动态认证字段")
-        if item.get("source") == "tencent_sheet":
+        source = item.get("source")
+        if source in TENCENT_DOCUMENT_SOURCES:
             if not item.get("name"):
                 raise ValueError(f"downloads[{index}] 缺少必填字段 name")
             if not (item.get("doc_url") or item.get("file_id")):
                 raise ValueError(f"downloads[{index}] 腾讯文档缺少 doc_url 或 file_id")
             sheets = item.get("sheets") or []
             if not sheets:
+                if source == "tencent_smartbook":
+                    raise ValueError(f"downloads[{index}] 腾讯智能表格至少需要一个子表")
                 raise ValueError(f"downloads[{index}] 腾讯文档至少需要一个 Sheet 范围")
             for sheet_index, sheet in enumerate(sheets, start=1):
+                if source == "tencent_smartbook" and "range" in sheet:
+                    raise ValueError(f"downloads[{index}].sheets[{sheet_index}] 智能表格不支持 range")
                 if not (sheet.get("sheet_id") or sheet.get("sheet_name")):
                     raise ValueError(f"downloads[{index}].sheets[{sheet_index}] 缺少 sheet_id 或 sheet_name")
             continue
@@ -244,7 +252,7 @@ def required_stages_for_report(report_cfg):
     stages = []
     seen = set()
     for item in enabled_downloads(report_cfg):
-        if item.get("source") == "tencent_sheet":
+        if item.get("source") in TENCENT_DOCUMENT_SOURCES:
             continue
         stage = str(item.get("stage") or "").strip()
         if stage and stage not in seen:
@@ -256,8 +264,7 @@ def required_stages_for_report(report_cfg):
 def build_login_config(base_config, report_cfg):
     config = copy.deepcopy(base_config)
     stages = required_stages_for_report(report_cfg)
-    if stages:
-        config["required_stages"] = stages
+    config["required_stages"] = stages
     return config
 
 
@@ -430,10 +437,11 @@ def run_auto_notify_pipeline(config_path=None):
     report_cfg = read_json(config["report_config_path"]) if config.get("report_config_path") else {}
     assert_report_schema_contract(report_cfg)
     login_config = None
-    if steps.get("login", {}).get("enabled", False):
+    login_enabled = bool(steps.get("login", {}).get("enabled", False) and required_stages_for_report(report_cfg))
+    if login_enabled:
         login_config = build_login_config(read_json(steps["login"]["config_path"]), report_cfg)
 
-    if steps.get("login", {}).get("enabled", False):
+    if login_enabled:
         initial_force_refresh = bool(steps["login"].get("force_refresh", False))
         active_session = prepare_notify_session(
             login_config,
@@ -463,7 +471,7 @@ def run_auto_notify_pipeline(config_path=None):
                 debug=bool(steps["download"].get("debug", False)),
             )
 
-        if not steps.get("login", {}).get("enabled", False):
+        if not login_enabled:
             return download_operation()
 
         def refresh_session():

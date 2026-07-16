@@ -19,6 +19,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_NOTIFY_WORK_POOL = "windows-notify-pool"
 FLOW_ENTRYPOINT = "flows/notify_single_flow.py:auto_notify_flow"
 FLOW_NAME = "auto-notify-flow"
+TENCENT_DOCUMENT_SOURCES = {"tencent_sheet", "tencent_smartbook"}
+
+
+def document_only_downloads(config: dict[str, Any]) -> bool:
+    downloads = [item for item in config.get("downloads") or [] if item.get("enabled", True) is not False]
+    return bool(downloads) and all((item.get("source") or "http_api") in TENCENT_DOCUMENT_SOURCES for item in downloads)
 
 
 def _safe_name(value: str) -> str:
@@ -266,6 +272,8 @@ def write_task_config(
         )
         _write_json(report_config_path, config)
         report_path = f"config/drafts/{report_name}{report_suffix}.report.json"
+    if login_enabled is None and document_only_downloads(config):
+        login_enabled = False
     task_config = build_task_config(
         report_name,
         report_path,
@@ -350,13 +358,16 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
         else:
             download_names.add(str(item["name"]))
         source = item.get("source") or "http_api"
-        if source == "tencent_sheet":
+        if source in TENCENT_DOCUMENT_SOURCES:
             if not (str(item.get("file_id") or "").strip() or str(item.get("doc_url") or "").strip()):
                 issues.append({"path": f"/downloads/{index}/file_id", "message": "腾讯文档必须填写 file_id 或 doc_url"})
             sheets = item.get("sheets") or []
             if not sheets:
-                issues.append({"path": f"/downloads/{index}/sheets", "message": "腾讯文档至少需要一个 Sheet 范围"})
+                message = "腾讯智能表格至少需要一个子表" if source == "tencent_smartbook" else "腾讯文档至少需要一个 Sheet 范围"
+                issues.append({"path": f"/downloads/{index}/sheets", "message": message})
             for sheet_index, sheet in enumerate(sheets):
+                if source == "tencent_smartbook" and "range" in sheet:
+                    issues.append({"path": f"/downloads/{index}/sheets/{sheet_index}/range", "message": "智能表格不支持 range"})
                 if not (str(sheet.get("sheet_id") or "").strip() or str(sheet.get("sheet_name") or "").strip()):
                     issues.append({"path": f"/downloads/{index}/sheets/{sheet_index}/sheet_id", "message": "Sheet 必须填写 sheet_id 或 Sheet 名称"})
             continue
@@ -484,7 +495,6 @@ def real_test_run_config(config: dict[str, Any], progress: Callable[[str, str], 
         dry_run=False,
         send_dry_run=False,
         commit_enabled=False,
-        login_enabled=True,
         suffix=".real_test.task.json",
     )
     if progress:

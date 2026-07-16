@@ -195,6 +195,15 @@ pwsh -File scripts/stop.ps1
 - 验证：`python -m pytest tests/test_tencent_sheet_service.py -k resolve_sheet_range -v`；`python -m pytest tests/test_tencent_sheet_service.py -v`；`git diff --check`。
 - 风险与回滚：显式范围不再预先裁剪，超出实际数据区时会额外发起分块请求，并在接口返回无效范围后停止；若需恢复旧的容量边界和预裁剪行为，须整体回滚该服务与测试变更。
 
+### 2026-07-16 - 腾讯智能表格导出与前端配置
+
+- 原因：腾讯智能表格的子表、字段和记录接口与普通腾讯 Sheet 不同，不能用 A1 范围读取；此前只能通过一次性诊断脚本导出，无法在通报配置中使用。
+- 修改内容：新增 `tencent_smartbook` 数据源及正式导出服务，按配置顺序导出指定子表的全部字段和分页记录，过滤空 `values` 记录并保留抓取/导出计数；支持 OpenAPI 的 `getSheet`、`getFields`、`getRecords` 响应包装和 `next` 分页游标。下载调度、Flow、配置标准化、新手模板、Prefect 校验及 React“智能表格”第三标签同步支持该来源；诊断脚本改为调用正式服务。
+- 涉及文件：`services/tencent_smartbook_service.py`、`services/method_service.py`、`flows/notify_single_flow.py`、`backend/services/{config_store,starter_template,prefect_runner}.py`、`frontend/src/{types/config.ts,schemas/reportConfigSchema.ts,components/config-form/ConfigForm.tsx}`、`scripts/dev/test_tencent_smartbook_export.py`、README 与相关测试。
+- 配置或迁移：使用 `source: "tencent_smartbook"`；外层字段沿用腾讯 Sheet 的 `name`、`doc_url`/`file_id`、`output_filename` 与 `sheets`，但子表只使用 `sheet_id` 或 `sheet_name` 和可选 `output_sheet_name`，不得配置 `range`。凭据只保留在被忽略的 `config/modules/tencent_docs.local.json`，前端不处理凭据。
+- 验证：执行 Smartbook、腾讯 Sheet、下载、Flow、配置、新手模板和 Prefect 聚焦测试；运行 Ruff、前端类型检查和生产构建；手工探针只核验工作表名、表头数和行数。
+- 风险与回滚：OpenAPI 权限、访问令牌或子表 ID 无效会使该下载项失败，但不会读取业务 Cookie Stage；回滚时须同时移除该数据源的前后端、调度和诊断脚本变更，不能将智能表格配置改作普通 Sheet 范围配置。
+
 ### 2026-07-15 - 运行根相对路径收敛与兼容层下线
 
 - 原因：运行目录已迁移至共享 `runtime.root`，但少量配置、运行记录和运维脚本仍保留 `runtime/...` 外部表示或旧解析 API，导致同一输入可能被误解为项目路径，并影响 Session Keeper 预检与业务 Flow 对共享会话状态的复用。

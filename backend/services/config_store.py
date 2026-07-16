@@ -124,6 +124,17 @@ def normalize_config(data: dict[str, Any], config_id: str | None = None, updated
             next_item["sheets"] = next_item.get("sheets") or [
                 {"sheet_name": "日报", "sheet_id": "", "range": "A1:Z1000", "output_sheet_name": "日报"}
             ]
+        elif next_item.get("source") == "tencent_smartbook":
+            next_item["headers"] = next_item.get("headers") or {}
+            next_item["sheets"] = next_item.get("sheets") or [
+                {"sheet_name": "汇总", "sheet_id": "", "output_sheet_name": "汇总"}
+            ]
+            next_item["sheets"] = [
+                {key: value for key, value in sheet.items() if key != "range"}
+                if isinstance(sheet, dict)
+                else sheet
+                for sheet in next_item["sheets"]
+            ]
         else:
             next_item["source"] = next_item.get("source") or "http_api"
             next_item["stage"] = next_item.get("stage") or "report_analysis"
