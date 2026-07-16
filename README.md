@@ -128,13 +128,32 @@ config/runtime.local.json
 
 ### 腾讯文档与智能表格
 
-前端“数据抓取”分为“业务接口”“腾讯文档”和“智能表格”三个独立标签。普通腾讯 Sheet
-继续按 `sheets[].range` 读取指定 A1 范围；智能表格始终导出指定子表的全部字段和全部分页记录，
-因此其 `sheets[]` 只填写 `sheet_id` 或 `sheet_name`，不得填写 `range`。
+前端“数据抓取”分为“业务接口”“腾讯文档”和“智能表格”三个独立标签；后两个标签共用
+腾讯文档 OpenAPI 凭据，但配置契约不同：
+
+| 数据源 | `source` | 子表选择 | 读取方式 |
+| --- | --- | --- | --- |
+| 普通腾讯 Sheet | `tencent_sheet` | `sheet_id` 或 `sheet_name` | `range` 为 `auto` 或显式 A1 范围 |
+| 腾讯智能表格 | `tencent_smartbook` | `sheet_id` 或 `sheet_name` | 导出全部字段与全部分页记录，禁止设置 `range` |
+
+智能表格的 `sheet_id` 可直接使用链接中 `tab` 参数的值；同时填写 `sheet_id` 和
+`sheet_name` 时以 ID 为准。`sheets[]` 的配置顺序就是导出工作簿中各输出 Sheet 的顺序，
+`output_sheet_name` 可改写输出 Sheet 名。字段标题写入表头，选项、人员、链接等富值会转换为
+可读文本；没有 `values` 的记录不会写入工作簿。
 
 腾讯文档 OpenAPI 凭据仅存放在被 Git 忽略的
 `config/modules/tencent_docs.local.json`，必须包含 `client_id`、`access_token` 与 `open_id`；
 前端不会读取或上传这些凭据。智能表格配置示例：
+
+```json
+{
+  "credentials": {
+    "client_id": "<Client-Id>",
+    "access_token": "<Access-Token>",
+    "open_id": "<Open-Id>"
+  }
+}
+```
 
 ```json
 {
@@ -145,7 +164,6 @@ config/runtime.local.json
   "sheets": [
     {
       "sheet_id": "sheet-1",
-      "sheet_name": "汇总",
       "output_sheet_name": "汇总"
     }
   ]

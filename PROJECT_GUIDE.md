@@ -198,9 +198,9 @@ pwsh -File scripts/stop.ps1
 ### 2026-07-16 - 腾讯智能表格导出与前端配置
 
 - 原因：腾讯智能表格的子表、字段和记录接口与普通腾讯 Sheet 不同，不能用 A1 范围读取；此前只能通过一次性诊断脚本导出，无法在通报配置中使用。
-- 修改内容：新增 `tencent_smartbook` 数据源及正式导出服务，按配置顺序导出指定子表的全部字段和分页记录，过滤空 `values` 记录并保留抓取/导出计数；支持 OpenAPI 的 `getSheet`、`getFields`、`getRecords` 响应包装和 `next` 分页游标。下载调度、Flow、配置标准化、新手模板、Prefect 校验及 React“智能表格”第三标签同步支持该来源；诊断脚本改为调用正式服务。
+- 修改内容：新增 `tencent_smartbook` 数据源及正式导出服务，按配置顺序导出指定子表的全部字段和分页记录，过滤空 `values` 记录并保留抓取/导出计数；选项、人员、链接等富值转换为可读文本。支持 OpenAPI 的 `getSheet`、`getFields`、`getRecords` 响应包装和 `next` 分页游标。下载调度、Flow、配置标准化、新手模板、Prefect 校验及 React“智能表格”第三标签同步支持该来源；诊断脚本改为调用正式服务。
 - 涉及文件：`services/tencent_smartbook_service.py`、`services/method_service.py`、`flows/notify_single_flow.py`、`backend/services/{config_store,starter_template,prefect_runner}.py`、`frontend/src/{types/config.ts,schemas/reportConfigSchema.ts,components/config-form/ConfigForm.tsx}`、`scripts/dev/test_tencent_smartbook_export.py`、README 与相关测试。
-- 配置或迁移：使用 `source: "tencent_smartbook"`；外层字段沿用腾讯 Sheet 的 `name`、`doc_url`/`file_id`、`output_filename` 与 `sheets`，但子表只使用 `sheet_id` 或 `sheet_name` 和可选 `output_sheet_name`，不得配置 `range`。凭据只保留在被忽略的 `config/modules/tencent_docs.local.json`，前端不处理凭据。
+- 配置或迁移：使用 `source: "tencent_smartbook"`；外层字段沿用腾讯 Sheet 的 `name`、`doc_url`/`file_id`、`output_filename` 与 `sheets`，但子表只使用 `sheet_id` 或 `sheet_name` 和可选 `output_sheet_name`，不得配置 `range`。`sheet_id` 可从链接的 `tab` 参数取得，若同时配置名称则 ID 优先；`sheets` 配置顺序决定输出 Sheet 顺序。凭据只保留在被忽略的 `config/modules/tencent_docs.local.json`，前端不处理凭据。
 - 验证：执行 Smartbook、腾讯 Sheet、下载、Flow、配置、新手模板和 Prefect 聚焦测试；运行 Ruff、前端类型检查和生产构建；手工探针只核验工作表名、表头数和行数。
 - 风险与回滚：OpenAPI 权限、访问令牌或子表 ID 无效会使该下载项失败，但不会读取业务 Cookie Stage；回滚时须同时移除该数据源的前后端、调度和诊断脚本变更，不能将智能表格配置改作普通 Sheet 范围配置。
 
