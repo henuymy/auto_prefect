@@ -526,12 +526,16 @@ def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():
     session_worker = "-WorkPool $env:PREFECT_SESSION_POOL_NAME"
     online_wait = "Wait-WorkerOnline -WorkPool $env:PREFECT_SESSION_POOL_NAME"
     keeper_command = 'prefect deployment run "session-keeper-flow/session-keeper"'
+    dashboard_worker = "-WorkPool $env:PREFECT_DASHBOARD_POOL_NAME"
+    notify_worker = "-WorkPool $env:PREFECT_NOTIFY_POOL_NAME"
     web_marker = "if (-not $SkipWeb)"
     keeper_line = next(line for line in source.splitlines() if keeper_command in line)
 
     assert source.count(keeper_command) == 1
     assert source.index(session_worker) < source.index(online_wait)
     assert source.index(online_wait) < source.index(keeper_command)
+    assert source.index(keeper_command) < source.index(dashboard_worker)
+    assert source.index(keeper_command) < source.index(notify_worker)
     assert source.index(keeper_command) < source.index(web_marker)
     assert "--watch" not in keeper_line
 

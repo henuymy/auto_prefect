@@ -208,6 +208,14 @@ Write-Host "启动 Session Prefect Worker..."
     -WorkerLimit ([int]$env:PREFECT_SESSION_POOL_LIMIT) `
     -UseSqliteDebug:$UseSqliteDebug
 
+Wait-WorkerOnline -WorkPool $env:PREFECT_SESSION_POOL_NAME
+
+Write-Host "触发首次 Session Keeper 检查..."
+& $PythonExe -m prefect deployment run "session-keeper-flow/session-keeper"
+if ($LASTEXITCODE -ne 0) {
+    throw "首次 Session Keeper Flow 提交失败"
+}
+
 Write-Host "启动 Dashboard Prefect Worker..."
 & (Join-Path $PSScriptRoot "lib\prefect_start.ps1") `
     -Mode worker `
@@ -227,14 +235,6 @@ Write-Host "启动 Notify Prefect Worker..."
     -PrefectHome $PrefectHome `
     -WorkerLimit ([int]$env:PREFECT_NOTIFY_POOL_LIMIT) `
     -UseSqliteDebug:$UseSqliteDebug
-
-Wait-WorkerOnline -WorkPool $env:PREFECT_SESSION_POOL_NAME
-
-Write-Host "触发首次 Session Keeper 检查..."
-& $PythonExe -m prefect deployment run "session-keeper-flow/session-keeper"
-if ($LASTEXITCODE -ne 0) {
-    throw "首次 Session Keeper Flow 提交失败"
-}
 
 if (-not $SkipWeb) {
     Write-Host "启动管理端..."
