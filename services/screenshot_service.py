@@ -478,14 +478,18 @@ def crop_png_whitespace(image_path, background=(255, 255, 255), tolerance=8):
         return cropped.size
 
 
+def resolve_pdf_dpi(capture):
+    configured = capture.get("pdf_dpi", capture.get("render_dpi", 300))
+    return max(96, min(600, int(configured or 300)))
+
+
 def render_pdf_to_png(pdf_path, output_path, capture):
     try:
         import fitz  # type: ignore
     except ImportError as exc:
         raise RuntimeError("高清 PDF 截图需要 PyMuPDF，请先安装: pip install PyMuPDF") from exc
 
-    dpi = int(capture.get("pdf_dpi", capture.get("render_dpi", 300)) or 300)
-    dpi = max(96, min(600, dpi))
+    dpi = resolve_pdf_dpi(capture)
     matrix = fitz.Matrix(dpi / 72, dpi / 72)
     with fitz.open(str(pdf_path)) as document:
         if document.page_count < 1:
