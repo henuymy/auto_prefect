@@ -5,6 +5,26 @@ on:
   pull_request:
 
 jobs:
+  verify-dependency-locks:
+    name: Verify dependency locks
+    # Locks are generated on Windows with Python 3.13 so conditional dependencies
+    # such as pywin32 remain reproducible.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.lock
+      - run: |
+          python -m piptools compile pyproject.toml --output-file requirements.lock --strip-extras --quiet
+          python -m piptools compile pyproject.toml --extra dev --output-file requirements-dev.lock --strip-extras --quiet
+          git diff --exit-code -- requirements.lock requirements-dev.lock
+
   test:
     runs-on: ubuntu-latest
     services:
@@ -36,11 +56,6 @@ jobs:
           cache-dependency-path: requirements-dev.lock
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.lock
-      - name: Verify dependency locks
-        run: |
-          python -m piptools compile pyproject.toml --output-file requirements.lock --strip-extras --quiet
-          python -m piptools compile pyproject.toml --extra dev --output-file requirements-dev.lock --strip-extras --quiet
-          git diff --exit-code -- requirements.lock requirements-dev.lock
       - run: ruff check backend infrastructure models services tasks flows tests migrations
       - run: pytest -q
       - uses: actions/setup-node@v4
