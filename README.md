@@ -95,6 +95,29 @@ pwsh -File scripts/setup_windows_env.ps1
 - `config/dashboard/session.json`：驾驶舱采集、数据库、并发与留存策略。
 - `scripts/tools/dashboard/`：驾驶舱导入、导出、审计与迁移等低频工具。
 
+### 腾讯文档表格下载
+
+下载配置中的报表可设为 `source: "tencent_sheet"`，并指定 `doc_url`（或
+`file_id`）和至少一个 `sheets` 项。腾讯文档凭据保存在被 Git 忽略的
+`config/modules/tencent_docs.local.json`；可提交的
+`config/modules/tencent_docs.json` 仅保留字段模板，不能填入真实凭据。
+
+`sheets[].range` 支持显式 A1 范围和自动范围。使用空值、`auto`、`used` 或
+`used_range` 时，系统优先按腾讯文档返回的实际数据行列边界下载；缺少该边界时
+才回退到工作表容量。填写 `A1:Z1000` 等显式范围时会按原范围请求，不会被元数据
+预先截断；若后续分块超出数据区，接口返回无效范围后将停止继续读取该 Sheet。
+
+```json
+{
+  "source": "tencent_sheet",
+  "name": "腾讯文档日报",
+  "doc_url": "https://docs.qq.com/sheet/<文档标识>?tab=<Sheet ID>",
+  "sheets": [
+    {"sheet_id": "<Sheet ID>", "range": "auto", "output_sheet_name": "日报"}
+  ]
+}
+```
+
 常用本地覆盖示例：
 
 ```text

@@ -186,6 +186,15 @@ pwsh -File scripts/stop.ps1
 
 ## 四、变更记录
 
+### 2026-07-15 - 腾讯文档自动读取范围优化
+
+- 原因：腾讯 Sheet 元数据同时包含实际数据边界和工作表容量边界；原逻辑优先使用容量边界，导致自动下载空白单元格，并会将用户指定的显式 A1 范围截断。
+- 修改内容：自动范围（空值、`auto`、`used`、`used_range`）优先采用 `rowCount` 与 `columnCount`，缺失时回退至 `rowTotal` 与 `columnTotal`；显式 A1 范围只做语法规范化，按原范围请求。下载元数据请求改为完整模式，以获得实际数据边界；后续分块若超出实际数据区，继续按既有无效范围逻辑停止读取。
+- 涉及文件：`services/tencent_sheet_service.py`、`tests/test_tencent_sheet_service.py`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无新增配置或依赖。现有任务将范围设为 `auto` 即可使用实际数据边界；需要固定读取区间时使用显式 A1 范围。
+- 验证：`python -m pytest tests/test_tencent_sheet_service.py -k resolve_sheet_range -v`；`python -m pytest tests/test_tencent_sheet_service.py -v`；`git diff --check`。
+- 风险与回滚：显式范围不再预先裁剪，超出实际数据区时会额外发起分块请求，并在接口返回无效范围后停止；若需恢复旧的容量边界和预裁剪行为，须整体回滚该服务与测试变更。
+
 ### 2026-07-15 - 运行根相对路径收敛与兼容层下线
 
 - 原因：运行目录已迁移至共享 `runtime.root`，但少量配置、运行记录和运维脚本仍保留 `runtime/...` 外部表示或旧解析 API，导致同一输入可能被误解为项目路径，并影响 Session Keeper 预检与业务 Flow 对共享会话状态的复用。
