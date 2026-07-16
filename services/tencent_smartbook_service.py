@@ -90,6 +90,18 @@ def response_has_more(data: dict[str, Any] | list[Any], count: int, offset: int,
     return count >= limit
 
 
+def response_next_offset(data: dict[str, Any] | list[Any], offset: int, count: int) -> int:
+    if isinstance(data, dict):
+        for key in ("next", "nextOffset", "next_offset"):
+            try:
+                next_offset = int(data[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if next_offset > offset:
+                return next_offset
+    return offset + count
+
+
 def smart_value_to_text(value: Any) -> Any:
     """Turn Smartbook's rich field values into readable spreadsheet text."""
     if value is None:
@@ -121,11 +133,18 @@ def subtable_name(item: dict[str, Any]) -> str:
 
 
 def field_id(item: dict[str, Any]) -> str:
-    return str(item.get("fieldID") or item.get("fieldId") or item.get("field_id") or item.get("id") or "").strip()
+    return str(item.get("fieldID") or item.get("fieldId") or item.get("field_id") or item.get("id") or item.get("fieldTitle") or "").strip()
 
 
 def field_name(item: dict[str, Any]) -> str:
-    return str(item.get("title") or item.get("name") or item.get("fieldName") or field_id(item)).strip()
+    return str(item.get("fieldTitle") or item.get("title") or item.get("name") or item.get("fieldName") or field_id(item)).strip()
+
+
+def record_value(values: dict[str, Any], field: dict[str, Any]) -> Any:
+    for key in (field_id(field), field_name(field)):
+        if key in values:
+            return values[key]
+    return None
 
 
 class SmartbookClient:
@@ -149,7 +168,7 @@ class SmartbookClient:
             self.timeout,
             retry=self.retry,
         )
-        return response_items(response_data(payload), "sheets", "items", "list")
+        return response_items(response_data(payload), "getSheet", "sheets", "items", "list")
 
     def _list_paged(self, file_id: str, sheet_id: str, request_name: str, response_name: str) -> list[dict[str, Any]]:
         url = (
@@ -168,11 +187,12 @@ class SmartbookClient:
                 retry=self.retry,
             )
             data = response_data(payload)
-            page_items = response_items(data, response_name, "items", "list")
+            operation_data = data.get(request_name) if isinstance(data, dict) and isinstance(data.get(request_name), (dict, list)) else data
+            page_items = response_items(operation_data, response_name, "items", "list")
             items.extend(page_items)
-            if not page_items or not response_has_more(data, len(page_items), offset, self.page_size):
+            if not page_items or not response_has_more(operation_data, len(page_items), offset, self.page_size):
                 return items
-            offset += len(page_items)
+            offset = response_next_offset(operation_data, offset, len(page_items))
 
     def list_fields(self, file_id: str, sheet_id: str) -> list[dict[str, Any]]:
         return self._list_paged(file_id, sheet_id, "getFields", "fields")
@@ -239,7 +259,7 @@ def write_smartbook_workbook(
                 values = record.get("values")
                 if not isinstance(values, dict) or not values:
                     continue
-                worksheet.append([smart_value_to_text(values.get(field_id(item))) for item in fields])
+                worksheet.append([smart_value_to_text(record_value(values, item)) for item in fields])
                 exported_records += 1
             sheet_results.append(
                 {
