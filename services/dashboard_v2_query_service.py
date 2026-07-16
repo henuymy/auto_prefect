@@ -14,11 +14,12 @@ from hashlib import sha256
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Engine, bindparam, func, or_, select, text
+from sqlalchemy import Date, Engine, bindparam, func, or_, select, text
 from sqlalchemy.orm import Session, aliased
 
 from models.dashboard_v2 import (
     CollectionRunV2,
+    DATETIME_MS,
     HierarchyNode,
     HierarchyParentHistory,
     IndicatorFormulaComponent,
@@ -644,6 +645,11 @@ def _change_value_rows_at(
     """).bindparams(
         bindparam("node_ids", expanding=True),
         bindparam("indicator_ids", expanding=True),
+        bindparam("stat_date", type_=Date()),
+        bindparam("baseline_start", type_=DATETIME_MS),
+        bindparam("near_lower", type_=DATETIME_MS),
+        bindparam("upper_bound", type_=DATETIME_MS),
+        bindparam("cutoff", type_=DATETIME_MS),
     )
     return session.execute(
         query,

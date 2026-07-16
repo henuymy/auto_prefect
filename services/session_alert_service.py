@@ -155,7 +155,6 @@ def notify_session_failure(config, incident, *, base_dir=PROJECT_DIR, sender=sen
                 "active_incident_key": incident_key,
                 "failed_at": datetime.now().astimezone().isoformat(),
                 "status": "active",
-                "failure_category": _redact(incident["failure_category"]),
                 "flow_name": _redact(incident.get("flow_name")),
                 "flow_run_name": _redact(incident.get("flow_run_name")),
                 "flow_run_id": _redact(incident.get("flow_run_id")),

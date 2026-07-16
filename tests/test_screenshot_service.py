@@ -7,8 +7,25 @@ from services.screenshot_service import (
     capture_range_to_png,
     prepare_excel_for_capture,
     render_pdf_to_png,
+    resolve_pdf_dpi,
     used_range_bounds,
 )
+
+
+@pytest.mark.parametrize(
+    ("capture", "expected"),
+    [
+        ({}, 300),
+        ({"pdf_dpi": 600}, 600),
+        ({"pdf_dpi": 1}, 96),
+        ({"pdf_dpi": 999}, 600),
+        ({"render_dpi": 96}, 300),
+        ({"pdf_dpi": 300, "export_scale": 1}, 300),
+        ({"pdf_dpi": 300, "export_scale": 2}, 300),
+    ],
+)
+def test_resolve_pdf_dpi_uses_only_pdf_dpi(capture, expected):
+    assert resolve_pdf_dpi(capture) == expected
 
 
 class Collection:

@@ -25,7 +25,9 @@ def test_business_run_alert_sends_once_per_development_flow_run(tmp_path):
         "incident_state_path": str(tmp_path / "business-runs.json"),
     }
 
-    sender = lambda _url, message, timeout=30: messages.append(message) or {"errcode": 0}
+    def sender(_url, message, timeout=30):
+        messages.append(message)
+        return {"errcode": 0}
 
     assert notify_business_run_failure(config, incident(), sender=sender)["sent"] is True
     assert notify_business_run_failure(config, incident(), sender=sender)["suppressed"] is True

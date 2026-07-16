@@ -9,6 +9,7 @@ from sqlalchemy import (
     CheckConstraint,
     Computed,
     Date,
+    DateTime,
     ForeignKey,
     Index,
     PrimaryKeyConstraint,
@@ -22,9 +23,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from models.dashboard_v2_base import DashboardV2Base
 
 
+DATETIME_MS = mysql.DATETIME(fsp=3).with_variant(DateTime(), "sqlite")
+
+
 def _created_at_column() -> Mapped[datetime]:
     return mapped_column(
-        mysql.DATETIME(fsp=3),
+        DATETIME_MS,
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP(3)"),
     )
@@ -32,7 +36,7 @@ def _created_at_column() -> Mapped[datetime]:
 
 def _updated_at_column() -> Mapped[datetime]:
     return mapped_column(
-        mysql.DATETIME(fsp=3),
+        DATETIME_MS,
         nullable=False,
         server_default=text(
             "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
@@ -77,9 +81,9 @@ class CollectionRunV2(DashboardV2Base):
     session_status: Mapped[str | None] = mapped_column(String(32))
     stat_date: Mapped[date | None] = mapped_column(Date)
     started_at: Mapped[datetime] = mapped_column(
-        mysql.DATETIME(fsp=3), nullable=False
+        DATETIME_MS, nullable=False
     )
-    finished_at: Mapped[datetime | None] = mapped_column(mysql.DATETIME(fsp=3))
+    finished_at: Mapped[datetime | None] = mapped_column(DATETIME_MS)
     request_count: Mapped[int] = mapped_column(
         mysql.INTEGER(unsigned=True), nullable=False, server_default=text("0")
     )
@@ -162,7 +166,7 @@ class HierarchyNode(DashboardV2Base):
     sort_order: Mapped[int] = mapped_column(
         mysql.INTEGER(unsigned=True), nullable=False, server_default=text("0")
     )
-    last_seen_at: Mapped[datetime | None] = mapped_column(mysql.DATETIME(fsp=3))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DATETIME_MS)
     missing_count: Mapped[int] = mapped_column(
         mysql.INTEGER(unsigned=True), nullable=False, server_default=text("0")
     )
@@ -212,9 +216,9 @@ class HierarchyParentHistory(DashboardV2Base):
         nullable=False,
     )
     valid_from: Mapped[datetime] = mapped_column(
-        mysql.DATETIME(fsp=3), nullable=False
+        DATETIME_MS, nullable=False
     )
-    valid_to: Mapped[datetime | None] = mapped_column(mysql.DATETIME(fsp=3))
+    valid_to: Mapped[datetime | None] = mapped_column(DATETIME_MS)
     collection_run_id: Mapped[int | None] = mapped_column(
         mysql.BIGINT(unsigned=True),
         ForeignKey("collection_run.id", ondelete="SET NULL"),
@@ -270,7 +274,7 @@ class IndicatorV2(DashboardV2Base):
     sort_order: Mapped[int] = mapped_column(
         mysql.INTEGER(unsigned=True), nullable=False, server_default=text("0")
     )
-    removed_at: Mapped[datetime | None] = mapped_column(mysql.DATETIME(fsp=3))
+    removed_at: Mapped[datetime | None] = mapped_column(DATETIME_MS)
     created_at: Mapped[datetime] = _created_at_column()
     updated_at: Mapped[datetime] = _updated_at_column()
 
@@ -362,8 +366,8 @@ class TargetPlan(DashboardV2Base):
         mysql.BIGINT(unsigned=True),
         ForeignKey("target_plan.id", ondelete="RESTRICT"),
     )
-    activated_at: Mapped[datetime | None] = mapped_column(mysql.DATETIME(fsp=3))
-    retired_at: Mapped[datetime | None] = mapped_column(mysql.DATETIME(fsp=3))
+    activated_at: Mapped[datetime | None] = mapped_column(DATETIME_MS)
+    retired_at: Mapped[datetime | None] = mapped_column(DATETIME_MS)
     created_at: Mapped[datetime] = _created_at_column()
     updated_at: Mapped[datetime] = _updated_at_column()
 
@@ -439,7 +443,7 @@ class MetricCurrentV2(DashboardV2Base):
     )
     stat_date: Mapped[date] = mapped_column(Date, nullable=False)
     collected_at: Mapped[datetime] = mapped_column(
-        mysql.DATETIME(fsp=3), nullable=False
+        DATETIME_MS, nullable=False
     )
     updated_at: Mapped[datetime] = _updated_at_column()
 
@@ -468,7 +472,7 @@ class MetricSnapshotV2(DashboardV2Base):
         mysql.BIGINT(unsigned=True), nullable=False, autoincrement=True
     )
     collected_at: Mapped[datetime] = mapped_column(
-        mysql.DATETIME(fsp=3), nullable=False
+        DATETIME_MS, nullable=False
     )
     collection_run_id: Mapped[int] = mapped_column(
         mysql.BIGINT(unsigned=True), nullable=False
@@ -537,7 +541,7 @@ class MetricAccV2(DashboardV2Base):
         mysql.DECIMAL(20, 4), nullable=False
     )
     collected_at: Mapped[datetime] = mapped_column(
-        mysql.DATETIME(fsp=3), nullable=False
+        DATETIME_MS, nullable=False
     )
     updated_at: Mapped[datetime] = _updated_at_column()
 
