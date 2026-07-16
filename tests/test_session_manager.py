@@ -4,7 +4,6 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest

@@ -1,7 +1,6 @@
 import pytest
 
 from flows import dashboard_metric_flow as dashboard_flow
-from services.session_manager import SessionInfrastructureError, SessionLoginError
 
 
 def test_dashboard_flow_retries_collection_once_with_force_refresh(monkeypatch):
