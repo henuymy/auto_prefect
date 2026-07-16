@@ -384,3 +384,28 @@ def test_validate_config_requires_explicit_send_ranges():
 
     assert "/send/items/0/capture/range" in paths
     assert "/send/items/1/text/range" in paths
+
+
+def test_validate_config_accepts_smartbook_without_cookie_stage_or_range():
+    issues = prefect_runner.validate_config(
+        {
+            "name": "智能表格通报",
+            "template_path": "",
+            "enabled": False,
+            "downloads": [
+                {
+                    "source": "tencent_smartbook",
+                    "name": "智能日报",
+                    "file_id": "file-1",
+                    "sheets": [{"sheet_id": "sheet-1"}],
+                }
+            ],
+            "compare_sources": [],
+            "send": {"items": [{"type": "text", "sheet": "汇总", "text": {"mode": "all_used"}}]},
+        }
+    )
+
+    paths = {issue["path"] for issue in issues}
+    assert "/downloads/0/source" not in paths
+    assert "/downloads/0/stage" not in paths
+    assert "/downloads/0/url" not in paths

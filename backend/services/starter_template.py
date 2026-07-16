@@ -21,6 +21,7 @@ TEMPLATES_DIR = PROJECT_ROOT / "templates"
 RUNTIME_DIR = runtime_path("starter_templates")
 assert RUNTIME_DIR is not None
 ALLOWED_EXCEL_SUFFIXES = {".xlsx", ".xlsm"}
+TENCENT_DOCUMENT_SOURCES = {"tencent_sheet", "tencent_smartbook"}
 
 
 def _safe_name(value: str) -> str:
@@ -53,7 +54,7 @@ def _enabled_downloads(config: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _normalize_download_auth(item: dict[str, Any]) -> dict[str, Any]:
     next_item = copy.deepcopy(item)
-    if next_item.get("source") == "tencent_sheet":
+    if next_item.get("source") in TENCENT_DOCUMENT_SOURCES:
         return next_item
     preset = str(next_item.get("auth_preset") or "")
     if preset == "报表分析 Ssr-token":
@@ -75,7 +76,7 @@ def _required_stages(downloads: list[dict[str, Any]]) -> list[str]:
     stages = []
     seen = set()
     for item in downloads:
-        if item.get("source") == "tencent_sheet":
+        if item.get("source") in TENCENT_DOCUMENT_SOURCES:
             continue
         stage = str(item.get("stage") or "").strip()
         if stage and stage not in seen:
@@ -91,14 +92,16 @@ def _validate_downloads(downloads: list[dict[str, Any]]) -> list[dict[str, str]]
 
     required_fields = ("name", "stage", "method", "url", "body_type", "response_mode")
     for index, item in enumerate(downloads):
-        if item.get("source") == "tencent_sheet":
+        source = item.get("source")
+        if source in TENCENT_DOCUMENT_SOURCES:
             if not item.get("name"):
                 issues.append({"path": f"/downloads/{index}/name", "message": "抓取项缺少 name"})
             if not (item.get("doc_url") or item.get("file_id")):
                 issues.append({"path": f"/downloads/{index}/doc_url", "message": "腾讯文档必须填写 doc_url 或 file_id"})
             sheets = item.get("sheets") or []
             if not sheets:
-                issues.append({"path": f"/downloads/{index}/sheets", "message": "腾讯文档至少需要一个 Sheet 范围"})
+                message = "腾讯智能表格至少需要一个子表" if source == "tencent_smartbook" else "腾讯文档至少需要一个 Sheet 范围"
+                issues.append({"path": f"/downloads/{index}/sheets", "message": message})
             for sheet_index, sheet in enumerate(sheets):
                 if not (sheet.get("sheet_id") or sheet.get("sheet_name")):
                     issues.append({"path": f"/downloads/{index}/sheets/{sheet_index}/sheet_id", "message": "Sheet 必须填写 sheet_id 或 Sheet 名称"})

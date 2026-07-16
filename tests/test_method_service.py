@@ -514,6 +514,51 @@ def test_download_reports_tencent_sheet_uses_openapi_downloader(monkeypatch):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def test_download_reports_tencent_smartbook_uses_openapi_downloader_without_stage(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        manifest_path = work_dir / "manifest.json"
+        output_dir = work_dir / "downloads"
+        output_path = output_dir / "智能表格日报.xlsx"
+
+        def fake_download(report, output_dir_arg, base_dir):
+            assert report["source"] == "tencent_smartbook"
+            Path(output_dir_arg).mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"PK\x03\x04xlsx")
+            return {
+                "name": report["name"],
+                "source": "tencent_smartbook",
+                "output_path": str(output_path),
+                "bytes": output_path.stat().st_size,
+            }
+
+        monkeypatch.setattr(
+            "services.method_service.download_tencent_smartbook_report",
+            fake_download,
+            raising=False,
+        )
+        manifest = download_reports(
+            {
+                "cookie_dump_path": str(work_dir / "missing-cookie-dump.json"),
+                "manifest_path": str(manifest_path),
+                "output_dir": str(output_dir),
+                "reports": [
+                    {
+                        "source": "tencent_smartbook",
+                        "name": "智能表格日报",
+                        "file_id": "file-1",
+                        "sheets": [{"sheet_id": "sheet-1"}],
+                    }
+                ],
+            },
+        )
+
+        assert manifest["results"][0]["source"] == "tencent_smartbook"
+        assert Path(manifest["results"][0]["output_path"]).exists()
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def test_download_reports_json_to_excel_writes_output(monkeypatch):
     work_dir = make_work_dir()
     try:

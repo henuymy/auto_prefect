@@ -265,3 +265,15 @@ def test_generate_starter_template_relogs_once_when_session_expired(monkeypatch)
         assert download_calls["count"] == 2
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_smartbook_download_does_not_require_cookie_stage():
+    download = {
+        "source": "tencent_smartbook",
+        "name": "智能日报",
+        "file_id": "file-1",
+        "sheets": [{"sheet_id": "sheet-1"}],
+    }
+
+    assert starter_template._required_stages([download]) == []
+    assert starter_template._validate_downloads([download]) == []

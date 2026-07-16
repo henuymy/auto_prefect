@@ -163,6 +163,9 @@ def deep_merge(base, override):
     return result
 
 
+TENCENT_DOCUMENT_SOURCES = {"tencent_sheet", "tencent_smartbook"}
+
+
 def assert_report_schema_contract(report_cfg):
     if "download" in report_cfg:
         raise ValueError("report config 仍包含旧字段 download，请保存为 schema 新结构")
@@ -177,13 +180,16 @@ def assert_report_schema_contract(report_cfg):
     for index, item in enumerate(report_cfg.get("downloads") or [], start=1):
         if "csrf_headers_from_cookies" in item:
             raise ValueError(f"downloads[{index}] 包含旧字段 csrf_headers_from_cookies，请使用 headers_from_cookies 或动态认证字段")
-        if item.get("source") == "tencent_sheet":
+        source = item.get("source")
+        if source in TENCENT_DOCUMENT_SOURCES:
             if not item.get("name"):
                 raise ValueError(f"downloads[{index}] 缺少必填字段 name")
             if not (item.get("doc_url") or item.get("file_id")):
                 raise ValueError(f"downloads[{index}] 腾讯文档缺少 doc_url 或 file_id")
             sheets = item.get("sheets") or []
             if not sheets:
+                if source == "tencent_smartbook":
+                    raise ValueError(f"downloads[{index}] 腾讯智能表格至少需要一个子表")
                 raise ValueError(f"downloads[{index}] 腾讯文档至少需要一个 Sheet 范围")
             for sheet_index, sheet in enumerate(sheets, start=1):
                 if not (sheet.get("sheet_id") or sheet.get("sheet_name")):
@@ -244,7 +250,7 @@ def required_stages_for_report(report_cfg):
     stages = []
     seen = set()
     for item in enabled_downloads(report_cfg):
-        if item.get("source") == "tencent_sheet":
+        if item.get("source") in TENCENT_DOCUMENT_SOURCES:
             continue
         stage = str(item.get("stage") or "").strip()
         if stage and stage not in seen:

@@ -182,6 +182,20 @@ def test_normalize_config_fills_compare_defaults():
     assert source["max_workers"] == 4
 
 
+def test_normalize_config_initializes_smartbook_selector_without_range():
+    normalized = config_store.normalize_config(
+        {
+            "name": "智能表格通报",
+            "downloads": [{"source": "tencent_smartbook", "name": "智能日报"}],
+        }
+    )
+
+    download = normalized["downloads"][0]
+    assert download["source"] == "tencent_smartbook"
+    assert "stage" not in download
+    assert download["sheets"] == [{"sheet_name": "汇总", "sheet_id": "", "output_sheet_name": "汇总"}]
+
+
 def test_atomic_write_preserves_previous_file_when_replace_fails(
     monkeypatch, tmp_path
 ):

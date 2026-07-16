@@ -400,6 +400,46 @@ def test_build_download_config_accepts_tencent_sheet_source_without_stage():
     assert "stage" not in report
 
 
+def test_build_download_config_accepts_tencent_smartbook_source_without_stage():
+    config = build_download_config(
+        {"report_defaults": {}, "output_dir": "runtime/downloads"},
+        {
+            "name": "智能表格通报",
+            "downloads": [
+                {
+                    "source": "tencent_smartbook",
+                    "name": "智能表格日报",
+                    "doc_url": "https://docs.qq.com/smartsheet/Dexample?tab=sheet-1",
+                    "sheets": [{"sheet_id": "sheet-1", "output_sheet_name": "日报"}],
+                }
+            ],
+        },
+    )
+
+    report = config["reports"][0]
+    assert report["source"] == "tencent_smartbook"
+    assert report["sheets"][0]["sheet_id"] == "sheet-1"
+    assert "stage" not in report
+
+
+def test_build_download_config_rejects_smartbook_without_subtable_selector():
+    with pytest.raises(ValueError, match="至少需要一个子表"):
+        build_download_config(
+            {"report_defaults": {}},
+            {
+                "name": "智能表格通报",
+                "downloads": [
+                    {
+                        "source": "tencent_smartbook",
+                        "name": "智能表格日报",
+                        "file_id": "file-1",
+                        "sheets": [],
+                    }
+                ],
+            },
+        )
+
+
 
 def test_build_compare_source_configs_maps_download_outputs():
     manifest = {
