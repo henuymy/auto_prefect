@@ -170,7 +170,7 @@ pwsh -File scripts/status.ps1
 pwsh -File scripts/stop.ps1
 ```
 
-系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。启动时脚本先取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，再启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker；提交不会等待 Session Keeper Flow 完成。脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`；它不发布、同步或修改任何 Prefect Deployment。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
+系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。启动时脚本先取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，再启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker；提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`；它不发布、同步或修改任何 Prefect Deployment。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
 
 统一 `session-keeper` 发布并确认可运行后，必须在 Prefect UI 或命令行一次性删除历史 `session-keeper-flow/session-keeper-report` 与 `session-keeper-flow/session-keeper-city` Deployment；从 `prefect.yaml` 删除声明不会清理 Prefect 服务端已有的调度对象。不得由 `scripts/run.ps1` 自动删除 Deployment。
 

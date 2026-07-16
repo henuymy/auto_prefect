@@ -191,7 +191,7 @@ python scripts/dev/test_tencent_smartbook_export.py --doc-url "https://docs.qq.c
 | `windows-dashboard-pool` | 4 | 驾驶舱采集、同步和维护 Flow |
 | `windows-notify-pool` | 6 | 完整通报 Flow |
 
-每次启动会先取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，再启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker；提交不会等待 Session Keeper Flow 完成。`RUNNING`、`CANCELLING` 或 `PAUSED` 的 Run 仍只会在 `scripts/run.ps1 -ForceRestart` 时取消。
+每次启动会先取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，再启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker；提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。`RUNNING`、`CANCELLING` 或 `PAUSED` 的 Run 仍只会在 `scripts/run.ps1 -ForceRestart` 时取消。
 
 运行时目录由 `config/runtime.local.json` 的 `runtime.root` 指定，默认是
 `C:\AutoNotifyRuntime`：
@@ -258,7 +258,7 @@ pwsh -File scripts/status.ps1
 pwsh -File scripts/stop.ps1
 ```
 
-`scripts/run.ps1` 先取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，再启动并确认 Session Worker，唯一一次提交新的 Session Keeper Run，随后启动 Dashboard 和 Notify Worker；该提交不等待 Flow 完成。脚本不会发布、同步或修改 Prefect Deployment；通报和驾驶舱采集仍由既有 Cron 调度执行，不会自动触发全部通报。`scripts/status.ps1` 从 Prefect API 读取配置中的三个 Pool 名称和实际并发上限，因此验收期 Notify 上限为 2 时会显示 2；它也逐条标识排队超过 10 分钟的自动调度 Run。锁文件当前不记录等待者，状态只显示所有者和持有时长，并明确显示 `waiters=unavailable`。`scripts/stop.ps1` 仅停止 `C:\AutoNotifyRuntime\processes` 中登记且进程身份匹配的本项目进程。
+`scripts/run.ps1` 先取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，再启动并确认 Session Worker，唯一一次提交新的 Session Keeper Run，随后启动 Dashboard 和 Notify Worker；该提交不等待 Flow 完成。预计开始时间仍在未来的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。脚本不会发布、同步或修改 Prefect Deployment；通报和驾驶舱采集仍由既有 Cron 调度执行，不会自动触发全部通报。`scripts/status.ps1` 从 Prefect API 读取配置中的三个 Pool 名称和实际并发上限，因此验收期 Notify 上限为 2 时会显示 2；它也逐条标识排队超过 10 分钟的自动调度 Run。锁文件当前不记录等待者，状态只显示所有者和持有时长，并明确显示 `waiters=unavailable`。`scripts/stop.ps1` 仅停止 `C:\AutoNotifyRuntime\processes` 中登记且进程身份匹配的本项目进程。
 
 升级时若旧 Notify Pool 仍有未过期的保留 Run，启动脚本会列出 Deployment、Run ID、状态和旧 Pool 并拒绝启动。Prefect 3.7 不支持安全改派单个已排队 Run，且启动旧 Pool Worker 可能执行同 Pool 的无关工作；运维人员应先在受控条件下用旧 Pool Worker 排空或取消列出的 Run。此时 Prefect Server 已注册，处理后先执行 `scripts/stop.ps1` 再运行 `scripts/run.ps1`。`scripts/run.ps1 -ForceRestart` 只取消运行中的 Run，不能绕过未过期旧队列的失败关闭。不得删除历史 Run 或把它们静默遗留在无 Worker 的 Pool。
 
