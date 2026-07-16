@@ -170,3 +170,49 @@ All six Important final-review findings were resolved without conflict with the 
 
 - The full suite still emits the same 718 pre-existing SQLAlchemy adapter deprecation warnings under Python 3.13.
 - No live credentialed login or WeCom delivery was executed.
+
+## Prefect Stale-Run Cleanup Final Review Follow-ups (2026-07-17)
+
+### Root Cause and Scope
+
+- `scripts/run.ps1` only delegated duplicate-worker detection to the per-worker launch path. A live registered Worker could therefore survive a normal startup far enough for a new Prefect Server startup and reconciliation to begin.
+- The unexpired legacy Notify queue failure message incorrectly advertised `scripts/run.ps1 -ForceRestart` as a recovery route, although that flag only permits cancellation of in-flight states and cannot resolve an old-pool queued Run.
+- The two Task 1 reconciliation test names said cancellation occurred before migration, while the safe implementation migrates the Notify Deployment first and then cancels eligible overdue queued Runs.
+
+### TDD Evidence
+
+- RED command:
+  `python -m pytest -q tests/test_development_environment_contract.py -k 'startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed or run_script_rejects_registered_workers_before_starting_prefect_server'`
+  - Result: 2 failed, 51 deselected.
+  - Expected failures: the legacy error text contained `scripts\\run.ps1 -ForceRestart`; `Assert-ManagedPrefectWorkersAvailable` did not exist.
+- GREEN focused commands:
+  - The same development-environment command: 2 passed, 51 deselected.
+  - `python -m pytest -q tests/test_prefect_startup_reconcile.py -k 'migrates_notify_deployment_then_cancels'`: 2 passed, 16 deselected.
+
+### Implementation and Self-Review
+
+- Added `Assert-ManagedPrefectWorkersAvailable` in `scripts/run.ps1`. It checks exactly `prefect-worker-session`, `prefect-worker-dashboard`, and `prefect-worker-notify` through the existing `Assert-ManagedProcessAvailable` process-registry primitive.
+- The guard runs after the optional `stop.ps1` call for `-ForceRestart`, before `Test-RuntimeDatabaseConnections`, and before the Prefect Server launch. No online-worker API query or change to `scripts/lib/prefect_start.ps1` was added.
+- Updated the failure-closed legacy Notify instruction to drain or cancel the listed old-pool Runs, run `scripts\\stop.ps1`, then normally rerun `scripts\\run.ps1`; it no longer presents `-ForceRestart` as a remedy.
+- Preserved the published README and PROJECT_GUIDE `-ForceRestart` assertions, which correctly state that it is limited to in-flight Runs.
+- Renamed the two Task 1 tests only; their existing assertions remain unchanged. The Session Worker -> one non-blocking Keeper submission -> Dashboard/Notify Worker order and stale/in-flight reconciliation behavior were not modified.
+
+### Files Changed
+
+- `scripts/run.ps1`
+- `tests/test_development_environment_contract.py`
+- `tests/test_prefect_startup_reconcile.py`
+- `.superpowers/sdd/final-review-fix-report.md`
+
+### Final Verification
+
+- `python -m pytest -q`
+  - Result: 579 passed, 9 skipped in 42.78s.
+- `ruff check backend infrastructure models services tasks flows tests migrations`
+  - Result: All checks passed.
+- `git diff --check`
+  - Result: passed with no whitespace errors.
+
+### Concerns
+
+- No live Prefect stack was started because this review follow-up is covered by source-contract and reconciliation tests; the existing process-registry primitive remains the sole runtime duplicate authority.

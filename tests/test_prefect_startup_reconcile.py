@@ -224,7 +224,7 @@ def test_reconcile_does_not_rewrite_notify_deployment_already_on_target_pool():
     assert client.updated == []
 
 
-def test_reconcile_cancels_overdue_manual_notify_run_before_pool_migration():
+def test_reconcile_migrates_notify_deployment_then_cancels_overdue_manual_run():
     manual = scheduled_run(
         run_id="manual-run",
         deployment_id=NOTIFY_ID,
@@ -254,7 +254,7 @@ def test_reconcile_cancels_overdue_manual_notify_run_before_pool_migration():
     assert result.legacy_notify_runs == []
 
 
-def test_reconcile_cancels_overdue_pending_notify_run_before_pool_migration():
+def test_reconcile_migrates_notify_deployment_then_cancels_overdue_pending_run():
     pending = scheduled_run(
         run_id="pending-run",
         deployment_id=NOTIFY_ID,

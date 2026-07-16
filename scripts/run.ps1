@@ -132,9 +132,22 @@ if not asyncio.run(wait_for_online_worker(sys.argv[1], int(sys.argv[2]))):
     }
 }
 
+function Assert-ManagedPrefectWorkersAvailable {
+    $workerNames = @(
+        "prefect-worker-session",
+        "prefect-worker-dashboard",
+        "prefect-worker-notify"
+    )
+    foreach ($workerName in $workerNames) {
+        Assert-ManagedProcessAvailable -Name $workerName
+    }
+}
+
 if ($ForceRestart) {
     & (Join-Path $PSScriptRoot "stop.ps1") -BackendPort $BackendPort -FrontendPort $FrontendPort
 }
+
+Assert-ManagedPrefectWorkersAvailable
 
 Test-RuntimeDatabaseConnections
 
@@ -195,7 +208,7 @@ $LegacyNotifyRuns = @(
 )
 if ($LegacyNotifyRuns.Count -gt 0) {
     $runSummary = $LegacyNotifyRuns -join "; "
-    throw "旧 Notify Pool 仍有保留 Run，Prefect 3.7 不支持安全改派单个排队 Run，已拒绝启动避免遗漏或执行无关工作。请先用旧 Pool Worker 排空或取消这些 Run。Prefect Server 已注册；处理后请执行 scripts\stop.ps1 再重新运行 scripts\run.ps1，或直接执行 scripts\run.ps1 -ForceRestart。Runs: $runSummary"
+    throw "旧 Notify Pool 仍有保留 Run，Prefect 3.7 不支持安全改派单个排队 Run，已拒绝启动避免遗漏或执行无关工作。请先用旧 Pool Worker 排空或取消列出的 Run，然后执行 scripts\stop.ps1，最后正常重新运行 scripts\run.ps1。Runs: $runSummary"
 }
 
 Write-Host "启动 Session Prefect Worker..."

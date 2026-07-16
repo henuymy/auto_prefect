@@ -810,7 +810,7 @@ def test_startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed():
     assert "legacy_notify_run:" in run
     assert "旧 Notify Pool 仍有保留 Run" in run
     assert "scripts\\stop.ps1" in run
-    assert "scripts\\run.ps1 -ForceRestart" in run
+    assert "scripts\\run.ps1 -ForceRestart" not in run
     assert "$LegacyNotifyPools" not in run
     assert "prefect-worker-notify-legacy" not in run
     assert "prefect_legacy_drain.py" not in run
@@ -822,6 +822,33 @@ def test_startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed():
     for document in (readme, guide):
         assert "scripts/stop.ps1" in document
         assert "scripts/run.ps1 -ForceRestart" in document
+
+
+def test_run_script_rejects_registered_workers_before_starting_prefect_server():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    helper = "Assert-ManagedPrefectWorkersAvailable"
+    helper_start = source.index(f"function {helper}")
+    force_restart = source.index("if ($ForceRestart)")
+    helper_source = source[helper_start:force_restart]
+    guarded_workers = [
+        line.strip().strip('",')
+        for line in helper_source.splitlines()
+        if line.strip().startswith('"prefect-worker-')
+    ]
+
+    assert guarded_workers == [
+        "prefect-worker-session",
+        "prefect-worker-dashboard",
+        "prefect-worker-notify",
+    ]
+    assert "Assert-ManagedProcessAvailable -Name $workerName" in helper_source
+
+    stop = source.index('Join-Path $PSScriptRoot "stop.ps1"', force_restart)
+    guard_call = source.index(helper, force_restart)
+    database_check = source.index("Test-RuntimeDatabaseConnections", guard_call)
+    prefect_server = source.index("-Mode server", database_check)
+    assert force_restart < stop < guard_call < database_check < prefect_server
 
 
 def test_runtime_state_migration_is_not_invoked_during_service_startup():
