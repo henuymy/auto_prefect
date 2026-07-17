@@ -1,6 +1,7 @@
 param(
     [int]$BackendPort = 8000,
-    [int]$FrontendPort = 5173
+    [int]$FrontendPort = 5173,
+    [int]$DashboardPort = 5174
 )
 
 $ErrorActionPreference = "Continue"
@@ -102,14 +103,16 @@ foreach ($name in @(
     "prefect-worker-dashboard",
     "prefect-worker-notify",
     "web-backend",
-    "web-frontend"
+    "web-frontend",
+    "web-dashboard"
 )) {
     Write-ManagedProcessStatus -Name $name
 }
 
 Write-HttpStatus -Label "Prefect API" -Url "$($env:PREFECT_API_URL.TrimEnd('/'))/health"
 Write-HttpStatus -Label "Backend API" -Url "http://127.0.0.1:$BackendPort/api/health"
-Write-HttpStatus -Label "Frontend" -Url "http://127.0.0.1:$FrontendPort"
+Write-HttpStatus -Label "Config Center" -Url "http://127.0.0.1:$FrontendPort"
+Write-HttpStatus -Label "Dashboard" -Url "http://127.0.0.1:$DashboardPort"
 
 try {
     $postgresUri = [uri]$env:AUTO_NOTIFY_PREFECT_DATABASE_URL
@@ -120,7 +123,7 @@ try {
 }
 Write-TcpStatus -Label "MySQL" -HostName $env:DASHBOARD_MYSQL_HOST -Port ([int]$env:DASHBOARD_MYSQL_PORT)
 
-foreach ($port in @(4200, $BackendPort, $FrontendPort) | Select-Object -Unique) {
+foreach ($port in @(4200, $BackendPort, $FrontendPort, $DashboardPort) | Select-Object -Unique) {
     Write-PortStatus -Port $port
 }
 

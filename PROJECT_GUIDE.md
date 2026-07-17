@@ -179,7 +179,7 @@ pwsh -File scripts/status.ps1
 pwsh -File scripts/stop.ps1
 ```
 
-系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。旧 Worker 预检通过并启动 Prefect Server 后，脚本会在启动任何新 Worker 前取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run；随后启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker。提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来、缺少预计开始时间的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`；它不发布、删除或同步仓库中的 Deployment 定义，但会在清理期间临时暂停并恢复原本未暂停的受管 Deployment，并将 Notify Deployment 的 Work Pool 校正为运行配置指定的 Pool。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
+系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。旧 Worker 预检通过并启动 Prefect Server 后，脚本会在启动任何新 Worker 前取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run；随后启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker。提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来、缺少预计开始时间的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。脚本启动一个 Server、三个 Worker、FastAPI，以及两个独立的 Vite 前端服务，应用 Pool 上限 `1 / 4 / 6`；它不发布、删除或同步仓库中的 Deployment 定义，但会在清理期间临时暂停并恢复原本未暂停的受管 Deployment，并将 Notify Deployment 的 Work Pool 校正为运行配置指定的 Pool。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
 
 普通启动会在启动 Prefect Server 前检查进程登记中的 Session、Dashboard 和 Notify Worker，避免旧 Worker 在启动清理前领取排队任务。任一已登记 Worker 仍在运行时必须失败关闭；运维人员应先执行 `scripts/stop.ps1`，确认旧进程停止后再正常运行 `scripts/run.ps1`。`-ForceRestart` 同时会取消运行中的本项目 Run，不能作为绕过该检查的常规手段。
 
@@ -189,6 +189,13 @@ pwsh -File scripts/stop.ps1
 
 `scripts/status.ps1` 从 Prefect API 读取配置中的 Pool 名称和实际并发上限，并列出排队超过 10 分钟的自动调度 Run。锁协议当前不记录等待者，状态输出必须明确显示 `waiters=unavailable`，不得声称能展示等待数量。
 
+### 前端端口与云电脑 FRP
+
+- 配置中心服务固定监听 `127.0.0.1:5173`，入口为 `http://127.0.0.1:5173/`。
+- 数据驾驶舱服务固定监听 `127.0.0.1:5174`，其根路径会映射到驾驶舱页面，入口为 `http://127.0.0.1:5174/`；不得要求用户输入 `dashboard.html`。
+- 为避免入口混用，配置中心的 `/dashboard.html` 和驾驶舱的 `/index.html` 必须返回 `404`。这只隔离 Web 页面入口，不替代 API 鉴权。
+- 云电脑使用 FRP 时，配置中心应采用 `5173 -> 15173`，数据驾驶舱采用 `5174 -> 15176`；外部访问地址分别为 `http://服务器地址:15173/` 与 `http://服务器地址:15176/`。
+
 旧 Notify Pool 上若仍有预计开始时间未到或缺失的保留 Run，启动必须列出 Run 身份并失败关闭。Prefect 3.7 无法安全改派单个已排队 Run，也不能为共享旧 Pool 自动启动不受 Run ID 约束的 Worker；运维人员应先受控排空或取消列出的旧 Run。由于 Prefect Server 已注册，随后必须执行 `scripts/stop.ps1` 再运行 `scripts/run.ps1`。`scripts/run.ps1 -ForceRestart` 只取消运行中的 Run，不能绕过旧队列的失败关闭。禁止删除 Run 强行完成切换。
 
 所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\session\locks\excel_com.lock` 串行，登录刷新通过 `C:\AutoNotifyRuntime\session\locks\login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
@@ -196,6 +203,14 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-17 - 前端双端口与驾驶舱根路径入口
+
+- 原因：配置中心和数据驾驶舱共享单个 Vite 端口，云电脑的 FRP 无法为两个界面提供独立入口，且驾驶舱 URL 需要暴露 `dashboard.html`。
+- 修改内容：启动、状态和停止脚本分别管理配置中心 `5173` 与驾驶舱 `5174`；驾驶舱 Vite 模式将根路径映射到驾驶舱页面，配置中心拒绝 `/dashboard.html`，驾驶舱拒绝 `/index.html`。README 与本指南记录 FRP 的 `15173`、`15176` 映射。
+- 配置或迁移：云电脑 FRP 配置应将 `localPort = 5173` 映射到 `remotePort = 15173`，将 `localPort = 5174` 映射到 `remotePort = 15176`；无需数据库迁移。
+- 验证：运行前端类型检查、生产构建、开发环境契约测试与完整 Pytest；临时启动两个 Vite 端口，验证配置中心根路径和驾驶舱根路径为 `200`，交叉入口为 `404`。
+- 风险与回滚：该隔离仅限制前端入口路径；如需回滚，整体回退前端脚本、Vite 配置、文档与契约测试，恢复单端口入口。
 
 ### 2026-07-17 - 生产与开发数据库拓扑及数据迁移对齐
 
