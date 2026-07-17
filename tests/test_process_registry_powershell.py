@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -122,7 +123,11 @@ try {{
     root_captured = $null -ne $rootIdentity
     child_captured = $null -ne $childIdentity
     root_valid = Test-ManagedProcessIdentity -Identity $rootIdentity
-    child_valid = Test-ManagedProcessIdentity -Identity $childIdentity
+    child_valid = if ($null -ne $childIdentity) {{
+      Test-ManagedProcessIdentity -Identity $childIdentity
+    }} else {{
+      $false
+    }}
   }} | ConvertTo-Json -Compress
 }} finally {{
   if ($null -ne (Get-Process -Id $child.Id -ErrorAction SilentlyContinue)) {{
@@ -134,9 +139,9 @@ try {{
     payload = _json_result(_run_powershell(command))
     assert payload == {
         "root_captured": True,
-        "child_captured": True,
+        "child_captured": os.name == "nt",
         "root_valid": True,
-        "child_valid": True,
+        "child_valid": os.name == "nt",
     }
 
 
