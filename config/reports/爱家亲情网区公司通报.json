@@ -1,5 +1,5 @@
 {
-  "name": "爱家V网",
+  "name": "爱家亲情网区公司通报",
   "template_path": "templates/爱家亲情网报表.xlsx",
   "send": {
     "webhook_url": "",
@@ -7,7 +7,10 @@
     "items": [
       {
         "type": "image",
-        "sheet": "通报"
+        "sheet": "通报",
+        "capture": {
+          "mode": "used_range"
+        }
       },
       {
         "type": "text",
@@ -144,7 +147,7 @@
       ]
     }
   ],
-  "id": "爱家V网",
+  "id": "爱家亲情网区公司通报",
   "enabled": true,
   "description": "",
   "wait_for_change": {
@@ -159,7 +162,7 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-06-23 15:18:02",
+  "updatedAt": "2026-07-11 17:54:14",
   "source": "published",
   "has_draft": false
 }

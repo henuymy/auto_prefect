@@ -289,11 +289,17 @@
     "items": [
       {
         "type": "image",
-        "sheet": "区公司PK赛"
+        "sheet": "区公司PK赛",
+        "capture": {
+          "mode": "used_range"
+        }
       },
       {
         "type": "image",
-        "sheet": "市公司PK赛"
+        "sheet": "市公司PK赛",
+        "capture": {
+          "mode": "used_range"
+        }
       }
     ]
   },
@@ -320,7 +326,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-04 20:32:21",
+  "updatedAt": "2026-07-17 10:54:27",
   "source": "published",
   "has_draft": false
 }

@@ -140,8 +140,8 @@
       {
         "type": "image",
         "sheet": "通报",
-        "text": {
-          "mode": "none"
+        "capture": {
+          "mode": "used_range"
         }
       },
       {
@@ -154,8 +154,8 @@
       {
         "type": "image",
         "sheet": "整体通报",
-        "text": {
-          "mode": "none"
+        "capture": {
+          "mode": "used_range"
         }
       }
     ]
@@ -179,7 +179,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-04 20:15:07",
+  "updatedAt": "2026-07-11 17:52:53",
   "source": "published",
   "has_draft": false
 }
