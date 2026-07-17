@@ -1,6 +1,7 @@
 param(
     [int]$BackendPort = 8000,
-    [int]$FrontendPort = 5173
+    [int]$FrontendPort = 5173,
+    [int]$DashboardPort = 5174
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,7 @@ Import-ProjectRuntimeConfig | Out-Null
     "prefect-worker-notify",
     "prefect-worker-dashboard",
     "prefect-worker-session",
+    "web-dashboard",
     "web-frontend",
     "web-backend",
     "prefect-server"
