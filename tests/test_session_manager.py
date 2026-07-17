@@ -88,7 +88,7 @@ def session_config(cookie_dump_path, **overrides):
 
 
 def test_expand_login_command_uses_current_python_executable(monkeypatch):
-    monkeypatch.setattr(session_manager.sys, "executable", r"C:\\Program Files\\Python\\python.exe")
+    monkeypatch.setattr(session_manager.sys, "executable", r"C:\Program Files\Python\python.exe")
 
     command = expand_login_command('{python_executable} -c "print(1)"')
 
