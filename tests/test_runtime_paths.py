@@ -94,7 +94,7 @@ def test_runtime_root_rejects_relative_local_config(monkeypatch, tmp_path):
 def test_runtime_root_uses_machine_shared_default_without_override(monkeypatch):
     monkeypatch.delenv("AUTO_NOTIFY_RUNTIME_ROOT", raising=False)
 
-    assert runtime_root() == Path(r"C:\AutoNotifyRuntime").resolve()
+    assert runtime_root() == runtime_paths.DEFAULT_RUNTIME_ROOT.resolve()
 
 
 def test_runtime_root_direct_launch_is_independent_of_working_directory(
@@ -119,7 +119,7 @@ def test_runtime_root_direct_launch_is_independent_of_working_directory(
         check=True,
     )
 
-    assert Path(completed.stdout.strip()) == Path(r"C:\AutoNotifyRuntime").resolve()
+    assert Path(completed.stdout.strip()) == runtime_paths.DEFAULT_RUNTIME_ROOT.resolve()
 
 
 def test_runtime_path_is_resolved_lazily(monkeypatch, tmp_path):

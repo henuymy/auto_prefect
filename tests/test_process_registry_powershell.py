@@ -99,9 +99,17 @@ def test_process_tree_snapshot_captures_root_and_child_start_identities(tmp_path
 $ErrorActionPreference = 'Stop'
 $env:AUTO_NOTIFY_RUNTIME_ROOT = '{runtime_root}'
 . '{REGISTRY}'
-$child = Start-Process -FilePath 'pwsh' -ArgumentList @(
+$startProcessArgs = @{{
+  FilePath = 'pwsh'
+  ArgumentList = @(
   '-NoProfile', '-Command', 'Start-Sleep -Seconds 30'
-) -PassThru -WindowStyle Hidden
+  )
+  PassThru = $true
+}}
+if ($IsWindows) {{
+  $startProcessArgs.WindowStyle = 'Hidden'
+}}
+$child = Start-Process @startProcessArgs
 try {{
   Start-Sleep -Milliseconds 300
   $root = Get-Process -Id $PID

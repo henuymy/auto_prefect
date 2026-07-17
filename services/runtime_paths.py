@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Mapping
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_RUNTIME_ROOT = Path(r"C:\AutoNotifyRuntime")
+DEFAULT_RUNTIME_ROOT = (
+    Path(r"C:\AutoNotifyRuntime")
+    if os.name == "nt"
+    else Path(tempfile.gettempdir()) / "auto-notify-runtime"
+)
 _FLOW_AREAS = {"output", "backup", "debug", "tmp"}
 _CONFIG_AREAS = {"drafts", "versions"}
 _OPERATIONAL_AREAS = {"logs", "health", "starter_templates", "temp"}
