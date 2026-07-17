@@ -152,7 +152,7 @@ def test_runtime_json_template_exports_three_pool_topology_and_runtime_root():
     runtime = template["runtime"]
 
     assert runtime["root"] == r"C:\AutoNotifyRuntime"
-    assert runtime["scheduled_notify_grace_seconds"] == 600
+    assert "scheduled_notify_grace_seconds" not in runtime
     assert runtime["work_pools"] == {
         "session": {"name": "windows-session-pool", "limit": 1},
         "dashboard": {"name": "windows-dashboard-pool", "limit": 4},
@@ -203,10 +203,11 @@ def test_windows_setup_serializes_shared_initialization_with_runtime_startup():
     assert claim < shared_init < release
 
 
-def test_runtime_loader_exports_three_pool_environment_contract():
-    source = (ROOT / "scripts" / "lib" / "runtime_config.ps1").read_text(
+def test_runtime_loader_exports_three_pool_environment_contract_without_scheduled_notify_grace():
+    loader_source = (ROOT / "scripts" / "lib" / "runtime_config.ps1").read_text(
         encoding="utf-8"
     )
+    run_source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
     for variable in (
         "AUTO_NOTIFY_RUNTIME_ROOT",
         "PREFECT_SESSION_POOL_NAME",
@@ -215,9 +216,19 @@ def test_runtime_loader_exports_three_pool_environment_contract():
         "PREFECT_DASHBOARD_POOL_LIMIT",
         "PREFECT_NOTIFY_POOL_NAME",
         "PREFECT_NOTIFY_POOL_LIMIT",
-        "AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS",
     ):
-        assert variable in source
+        assert variable in loader_source
+
+    assert "AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS" not in loader_source
+    assert "AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS" not in run_source
+    assert "--notify-grace-seconds" not in run_source
+    assert (
+        '$ReconcileArgs = @(\n'
+        '    "--notify-work-pool",\n'
+        '    $env:PREFECT_NOTIFY_POOL_NAME\n'
+        ')' in run_source
+    )
+    assert '$ReconcileArgs += "--cancel-in-flight"' in run_source
 
 
 def _run_runtime_config_import(config_path):
@@ -302,7 +313,6 @@ def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
         },
         "runtime": {
             "root": r"C:\JsonRuntime",
-            "scheduled_notify_grace_seconds": 601,
             "work_pools": {
                 "session": {"name": "windows-session-pool", "limit": 2},
                 "dashboard": {"name": "windows-dashboard-pool", "limit": 5},
@@ -335,7 +345,6 @@ $ErrorActionPreference = 'Stop'
   dashboard_pool_limit = $env:PREFECT_DASHBOARD_POOL_LIMIT
   notify_pool = $env:PREFECT_NOTIFY_POOL_NAME
   notify_pool_limit = $env:PREFECT_NOTIFY_POOL_LIMIT
-  scheduled_notify_grace_seconds = $env:AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS
   work_pool = $env:PREFECT_WORK_POOL_NAME
 }} | ConvertTo-Json -Compress
 """.format(script=(ROOT / "scripts" / "dev" / "env.ps1").as_posix())
@@ -380,9 +389,6 @@ $ErrorActionPreference = 'Stop'
             "notify_pool": json_config["runtime"]["work_pools"]["notify"]["name"],
             "notify_pool_limit": str(
                 json_config["runtime"]["work_pools"]["notify"]["limit"]
-            ),
-            "scheduled_notify_grace_seconds": str(
-                json_config["runtime"]["scheduled_notify_grace_seconds"]
             ),
             "work_pool": json_config["runtime"]["work_pools"]["notify"]["name"],
         }
@@ -520,12 +526,16 @@ def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():
     session_worker = "-WorkPool $env:PREFECT_SESSION_POOL_NAME"
     online_wait = "Wait-WorkerOnline -WorkPool $env:PREFECT_SESSION_POOL_NAME"
     keeper_command = 'prefect deployment run "session-keeper-flow/session-keeper"'
+    dashboard_worker = "-WorkPool $env:PREFECT_DASHBOARD_POOL_NAME"
+    notify_worker = "-WorkPool $env:PREFECT_NOTIFY_POOL_NAME"
     web_marker = "if (-not $SkipWeb)"
     keeper_line = next(line for line in source.splitlines() if keeper_command in line)
 
     assert source.count(keeper_command) == 1
     assert source.index(session_worker) < source.index(online_wait)
     assert source.index(online_wait) < source.index(keeper_command)
+    assert source.index(keeper_command) < source.index(dashboard_worker)
+    assert source.index(keeper_command) < source.index(notify_worker)
     assert source.index(keeper_command) < source.index(web_marker)
     assert "--watch" not in keeper_line
 
@@ -800,7 +810,7 @@ def test_startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed():
     assert "legacy_notify_run:" in run
     assert "旧 Notify Pool 仍有保留 Run" in run
     assert "scripts\\stop.ps1" in run
-    assert "scripts\\run.ps1 -ForceRestart" in run
+    assert "scripts\\run.ps1 -ForceRestart" not in run
     assert "$LegacyNotifyPools" not in run
     assert "prefect-worker-notify-legacy" not in run
     assert "prefect_legacy_drain.py" not in run
@@ -812,6 +822,33 @@ def test_startup_claim_is_machine_wide_and_legacy_notify_runs_fail_closed():
     for document in (readme, guide):
         assert "scripts/stop.ps1" in document
         assert "scripts/run.ps1 -ForceRestart" in document
+
+
+def test_run_script_rejects_registered_workers_before_starting_prefect_server():
+    source = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+
+    helper = "Assert-ManagedPrefectWorkersAvailable"
+    helper_start = source.index(f"function {helper}")
+    force_restart = source.index("if ($ForceRestart)")
+    helper_source = source[helper_start:force_restart]
+    guarded_workers = [
+        line.strip().strip('",')
+        for line in helper_source.splitlines()
+        if line.strip().startswith('"prefect-worker-')
+    ]
+
+    assert guarded_workers == [
+        "prefect-worker-session",
+        "prefect-worker-dashboard",
+        "prefect-worker-notify",
+    ]
+    assert "Assert-ManagedProcessAvailable -Name $workerName" in helper_source
+
+    stop = source.index('Join-Path $PSScriptRoot "stop.ps1"', force_restart)
+    guard_call = source.index(helper, force_restart)
+    database_check = source.index("Test-RuntimeDatabaseConnections", guard_call)
+    prefect_server = source.index("-Mode server", database_check)
+    assert force_restart < stop < guard_call < database_check < prefect_server
 
 
 def test_runtime_state_migration_is_not_invoked_during_service_startup():
