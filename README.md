@@ -181,8 +181,7 @@ python scripts/dev/test_tencent_smartbook_export.py --doc-url "https://docs.qq.c
 将 `config/runtime.local.example.json` 复制为 `config/runtime.local.json`，在该文件中统一维护 Prefect PostgreSQL、驾驶舱 MySQL、Prefect API 地址和 Work Pool。该本地文件已被 Git 忽略，不能提交。
 
 启动脚本只读取 JSON 配置。
-`prefect.postgres.url` 指定 Prefect 直接使用的 PostgreSQL 数据库；测试环境可使用
-`prefect_test`，正式环境可切换为新的干净数据库。
+`prefect.postgres.url` 指定 Prefect 直接使用的 PostgreSQL 数据库；必须与当前机器所属环境一致，不能复用其他环境的库。
 运行配置必须声明固定共享目录 `C:\AutoNotifyRuntime` 和三个 Process Work Pool：
 
 | Work Pool | 并发上限 | 运行内容 |
@@ -190,6 +189,20 @@ python scripts/dev/test_tencent_smartbook_export.py --doc-url "https://docs.qq.c
 | `windows-session-pool` | 1 | Session Keeper |
 | `windows-dashboard-pool` | 4 | 驾驶舱采集、同步和维护 Flow |
 | `windows-notify-pool` | 6 | 完整通报 Flow |
+
+### 环境数据库拓扑
+
+| 环境 | Prefect PostgreSQL | 驾驶舱 MySQL | 用途 |
+| --- | --- | --- | --- |
+| 云电脑 / 生产 | `prefect_prod` | `dashboard_prod` | 正式调度、生产 Worker 与驾驶舱服务。 |
+| 本机开发 | `prefect_dev` | `dashboard_dev` | 本地开发、调试和验收。 |
+| 保留源库 | `prefect_test` | `dashboard_v2` | 旧数据留存与迁移审计；不再作为新环境的运行库。 |
+
+本机的 `config/runtime.local.json` 应配置为 `prefect_dev` 和 `dashboard_dev`；云电脑上的同名本地配置应配置为 `prefect_prod` 和 `dashboard_prod`。两份配置都属于被 Git 忽略的机密运行配置，严禁提交凭据。
+
+Prefect 的生产库与开发库在初始迁移时使用同一份完整快照，保留 Deployment、Work Pool、运行记录和日志。两个环境开始运行后，调度和运行状态自然分叉；不得建立双向同步，也不得将开发库回灌生产库。
+
+驾驶舱 MySQL 仅迁移组织树、指标定义、公式组件和目标方案等配置数据；采集运行、实时值、累计值和指标快照由各环境自行生成。旧库应保留，直到完成切换验收与回滚窗口。
 
 在旧 Worker 预检通过并启动 Prefect Server 后，脚本会在启动任何新 Worker 前取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run；随后启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker。提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来、缺少预计开始时间的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。`RUNNING`、`CANCELLING` 或 `PAUSED` 的 Run 仍只会在 `scripts/run.ps1 -ForceRestart` 时取消。
 
@@ -348,6 +361,8 @@ alembic -c alembic_dashboard_v2.ini upgrade head
 ```
 
 执行迁移前必须确认连接的是目标环境，并先完成数据库备份。
+
+Prefect PostgreSQL 的结构由 Prefect Server 迁移命令维护。迁移或全量恢复前，先停止或隔离会写入源库的 Server 与 Worker；恢复目标库后至少核验数据库迁移版本、各表行数、Deployment、Work Pool 与外键完整性。严禁用开发环境的状态覆盖生产库。
 
 ## 测试与质量检查
 

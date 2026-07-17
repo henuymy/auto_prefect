@@ -69,7 +69,7 @@
 - 前端：NVM 管理 Node.js 20 LTS，React、Vite、TypeScript。
 - 任务调度：Prefect 3.7。
 - API：FastAPI 0.115 系列、Starlette 0.46 系列、Uvicorn。
-- 数据库：Prefect PostgreSQL（测试库使用 `prefect_test`）；驾驶舱 MySQL V2（`dashboard_v2`）。
+- 数据库：Prefect PostgreSQL 使用 `prefect_prod`（云电脑/生产）和 `prefect_dev`（本机开发）；驾驶舱 MySQL V2 使用 `dashboard_prod` 与 `dashboard_dev`。旧 `prefect_test`、`dashboard_v2` 仅保留作迁移审计源库。
 - 本机组件：Microsoft Edge 用于自动登录与采集；Microsoft Excel 用于 COM 比对、模板更新和截图。
 
 ### 统一运行配置
@@ -86,7 +86,15 @@ config/runtime.local.json
 config/runtime.local.example.json
 ```
 
-其中维护 Prefect PostgreSQL 与驾驶舱 MySQL V2 的地址、端口、数据库、账号和密码。`prefect.postgres.url` 直接指定 Prefect 使用的数据库，不再从 `/prefect` 派生 `/prefect_dev`。当前测试库名为 `prefect_test`；后续正式切换时创建新的空库并只修改该 URL。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2` 和 `dashboard_v2`；配置值不应写入 README、本文件或 Git 提交。
+其中维护 Prefect PostgreSQL 与驾驶舱 MySQL V2 的地址、端口、数据库、账号和密码。`prefect.postgres.url` 直接指定 Prefect 使用的数据库，不从 `/prefect` 派生其他库名；驾驶舱实际连接也只读取该本地运行配置。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2`；配置值不应写入 README、本文件或 Git 提交。
+
+| 所在环境 | Prefect PostgreSQL | 驾驶舱 MySQL | 约定 |
+| --- | --- | --- | --- |
+| 云电脑 / 生产 | `prefect_prod` | `dashboard_prod` | 仅由云电脑的被忽略运行配置连接，用于正式调度与服务。 |
+| 本机开发 | `prefect_dev` | `dashboard_dev` | 仅由本机的被忽略运行配置连接，用于开发和验收。 |
+| 保留源库 | `prefect_test` | `dashboard_v2` | 不再接入新运行栈；保留至切换验收和回滚窗口结束。 |
+
+Prefect 生产与开发库使用同一份全量快照完成初始化，包含 Deployment、Work Pool、运行记录和日志；两个环境开始运行后允许状态自然分叉，禁止双向同步或从开发库回灌生产库。MySQL 只迁移组织树、指标、公式和目标方案等配置，不迁移采集运行和指标历史；这些数据由各环境独立生成。
 
 Windows 运行时固定使用 `C:\AutoNotifyRuntime`，避免代码升级、分支或 Worktree 切换产生多套 Cookie、Edge Profile、锁和进程注册。运行根目录解析优先级为环境变量 `AUTO_NOTIFY_RUNTIME_ROOT`、`config/runtime.local.json` 中的 `runtime.root`、默认值 `C:\AutoNotifyRuntime`；生产环境应让后两者保持一致，环境变量只用于测试或受控诊断。Prefect 拓扑固定为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`，并发上限分别为 `1 / 4 / 6`；`prefect.yaml`、Deployment 和 `runtime.work_pools` 必须保持一致。
 
@@ -146,6 +154,7 @@ C:\AutoNotifyRuntime\
 - 运行状态使用 V2 collection-run 存储；状态接口和任务入口不得导入 V1 run store 或 V1 trigger 路径。
 - 驾驶舱模块产物写入 `modules/dashboard/output/...`；不保留历史 V2 迁移审核导出工具，历史追溯应使用版本库提交和已归档产物。
 - 保留的 V2 配置导入与切换审计工具只接受运行根相对的 `--bundle` 和 `--approvals`，例如 `modules/dashboard/output/v2_migration`；不得传入绝对路径、`runtime/...` 前缀或项目相对替代路径。`--config` 仍是项目内驾驶舱配置路径。
+- MySQL 配置迁移完成后，生产与开发库必须分别连接 `dashboard_prod`、`dashboard_dev`；旧 `dashboard_v2` 保持只读留存，禁止让新采集任务继续写入。
 
 ### 会话生命周期约定
 
@@ -187,6 +196,15 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-17 - 生产与开发数据库拓扑及数据迁移对齐
+
+- 原因：原有维护约定仍将 `prefect_test` 与 `dashboard_v2` 描述为当前运行库，无法反映云电脑生产环境与本机开发环境的隔离需求。
+- 修改内容：确定 `prefect_prod/dashboard_prod` 为云电脑生产库、`prefect_dev/dashboard_dev` 为本机开发库；旧库转为迁移审计源库。Prefect PostgreSQL 使用同一份全量快照初始化两个目标库；MySQL 仅迁移组织树、指标、公式与目标方案配置。
+- 涉及文件：`README.md`、`PROJECT_GUIDE.md`。
+- 配置或迁移：各机器只在被 Git 忽略的 `config/runtime.local.json` 中指向所属环境数据库；不得提交凭据、将开发库回灌生产库，或对两个运行库建立双向同步。
+- 验证：Prefect 两个目标库均核验 36 张表、72,283 行、迁移版本 `7218aad17905` 和 33 个外键；MySQL 两个目标库均核验基础组织树、指标、公式、目标方案以及无历史指标数据；`git diff --check` 通过。
+- 风险与回滚：两个环境一旦运行会自然产生不同的调度与运行记录；回滚应切换回保留源库或已验证快照，不得用任一环境的后续状态覆盖另一环境。
 
 ### 2026-07-17 - Prefect 过期 Run 统一清理与首次 Keeper 启动顺序
 
