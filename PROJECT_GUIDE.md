@@ -170,15 +170,17 @@ pwsh -File scripts/status.ps1
 pwsh -File scripts/stop.ps1
 ```
 
-系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。启动时脚本先取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，再启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker；提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`；它不发布、同步或修改任何 Prefect Deployment。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
+系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。旧 Worker 预检通过并启动 Prefect Server 后，脚本会在启动任何新 Worker 前取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run；随后启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker。提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来、缺少预计开始时间的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。脚本启动一个 Server、三个 Worker、FastAPI 和 React 前端，应用 Pool 上限 `1 / 4 / 6`；它不发布、删除或同步仓库中的 Deployment 定义，但会在清理期间临时暂停并恢复原本未暂停的受管 Deployment，并将 Notify Deployment 的 Work Pool 校正为运行配置指定的 Pool。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
+
+普通启动会在启动 Prefect Server 前检查进程登记中的 Session、Dashboard 和 Notify Worker，避免旧 Worker 在启动清理前领取排队任务。任一已登记 Worker 仍在运行时必须失败关闭；运维人员应先执行 `scripts/stop.ps1`，确认旧进程停止后再正常运行 `scripts/run.ps1`。`-ForceRestart` 同时会取消运行中的本项目 Run，不能作为绕过该检查的常规手段。
 
 统一 `session-keeper` 发布并确认可运行后，必须在 Prefect UI 或命令行一次性删除历史 `session-keeper-flow/session-keeper-report` 与 `session-keeper-flow/session-keeper-city` Deployment；从 `prefect.yaml` 删除声明不会清理 Prefect 服务端已有的调度对象。不得由 `scripts/run.ps1` 自动删除 Deployment。
 
-每次启动都会取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，不区分自动或手工触发，也不补跑 Dashboard 等历史批次。处于 `RUNNING`、`CANCELLING` 或 `PAUSED` 的本项目 Run 会阻止替代 Worker 启动；只有 `scripts/run.ps1 -ForceRestart` 才会取消这些运行中的 Run。Worker 监督进程在崩溃 30 秒后重启 Worker；Prefect Server 需要手工执行 `scripts/run.ps1` 恢复。`scripts/stop.ps1` 只能停止 `C:\AutoNotifyRuntime\processes` 中已登记且身份匹配的进程。
+每次启动都会取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run，不区分自动或手工触发；预计开始时间在未来或缺失的排队 Run 会保留，也不补跑 Dashboard 等历史批次。处于 `RUNNING`、`CANCELLING` 或 `PAUSED` 的本项目 Run 会阻止替代 Worker 启动；只有 `scripts/run.ps1 -ForceRestart` 才会取消这些运行中的 Run。Worker 监督进程在崩溃 30 秒后重启 Worker；Prefect Server 需要手工执行 `scripts/run.ps1` 恢复。`scripts/stop.ps1` 只能停止 `C:\AutoNotifyRuntime\processes` 中已登记且身份匹配的进程。
 
 `scripts/status.ps1` 从 Prefect API 读取配置中的 Pool 名称和实际并发上限，并列出排队超过 10 分钟的自动调度 Run。锁协议当前不记录等待者，状态输出必须明确显示 `waiters=unavailable`，不得声称能展示等待数量。
 
-旧 Notify Pool 上若仍有未过期的保留 Run，启动必须列出 Run 身份并失败关闭。Prefect 3.7 无法安全改派单个已排队 Run，也不能为共享旧 Pool 自动启动不受 Run ID 约束的 Worker；运维人员应先受控排空或取消列出的旧 Run。由于 Prefect Server 已注册，随后必须执行 `scripts/stop.ps1` 再运行 `scripts/run.ps1`。`scripts/run.ps1 -ForceRestart` 只取消运行中的 Run，不能绕过未过期旧队列的失败关闭。禁止删除 Run 强行完成切换。
+旧 Notify Pool 上若仍有预计开始时间未到或缺失的保留 Run，启动必须列出 Run 身份并失败关闭。Prefect 3.7 无法安全改派单个已排队 Run，也不能为共享旧 Pool 自动启动不受 Run ID 约束的 Worker；运维人员应先受控排空或取消列出的旧 Run。由于 Prefect Server 已注册，随后必须执行 `scripts/stop.ps1` 再运行 `scripts/run.ps1`。`scripts/run.ps1 -ForceRestart` 只取消运行中的 Run，不能绕过旧队列的失败关闭。禁止删除 Run 强行完成切换。
 
 所有 Excel COM 阶段通过 `C:\AutoNotifyRuntime\session\locks\excel_com.lock` 串行，登录刷新通过 `C:\AutoNotifyRuntime\session\locks\login.lock` 串行；提高 Notify 并发不得绕过这两个锁。
 
@@ -189,7 +191,7 @@ pwsh -File scripts/stop.ps1
 ### 2026-07-17 - Prefect 过期 Run 统一清理与首次 Keeper 启动顺序
 
 - 原因：不同 Deployment 过去采用不同的过期处理策略，Notify 还保留十分钟宽限期配置，导致启动后可能执行过期的 Dashboard 补跑或保留无效队列。
-- 修改内容：启动清理统一取消本项目所有已过期的 `SCHEDULED` / `PENDING` Run，取消 Dashboard 历史补跑；Session Worker 在线后仅提交一次新的 Session Keeper Run，再启动 Dashboard 和 Notify Worker，且不等待该 Flow 完成。
+- 修改内容：启动清理统一取消本项目所有预计开始时间已过的 `SCHEDULED` / `PENDING` Run，保留未来或缺少预计开始时间的排队 Run，并取消 Dashboard 历史补跑；普通启动会先拒绝仍有已登记旧 Worker 的状态，以保证清理先于任何 Worker 领取任务；Session Worker 在线后仅提交一次新的 Session Keeper Run，再启动 Dashboard 和 Notify Worker，且不等待该 Flow 完成。
 - 配置或迁移：删除 Notify 宽限期配置 `AUTO_NOTIFY_SCHEDULED_NOTIFY_GRACE_SECONDS`；运行中的 Run 仍仅在 `scripts/run.ps1 -ForceRestart` 时取消。
 - 验证：运行启动顺序与启动清理契约测试、完整 pytest 和 `git diff --check`。
 - 风险与回滚：普通启动会放弃所有已过期的排队批次；如需保留某个批次，应先调整其预计开始时间或在启动前手工处置。回滚必须同时恢复清理策略、启动顺序和文档，避免新旧运维规则混用。
@@ -309,7 +311,7 @@ pwsh -File scripts/stop.ps1
 ### 2026-07-13 - 启动不再同步 Prefect Deployment
 
 - 原因：自动通报后续新增的 Deployment 不保证同步写入 `prefect.yaml`，日常启动覆盖部署会导致配置漂移。
-- 修改内容：移除 `scripts/run.ps1` 的 `prefect deploy --all`；启动只恢复服务和 Worker，不修改现有 Deployment。
+- 修改内容：移除 `scripts/run.ps1` 的 `prefect deploy --all`；启动不再发布或同步仓库中的 Deployment 定义。当前启动清理会临时暂停并恢复受管 Deployment，并校正 Notify Deployment 的 Work Pool。
 - 涉及文件：`scripts/run.ps1`、`README.md`、`PROJECT_GUIDE.md`、启动环境契约测试。
 - 配置或迁移：无。需要按仓库配置新建或更新 Deployment 时，人工执行 `prefect deploy --all`。
 - 验证：`python -m pytest -p no:cacheprovider tests/test_development_environment_contract.py -q`。
