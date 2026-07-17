@@ -734,6 +734,7 @@ def test_managed_components_are_registered_and_stopped_in_fixed_order():
         "prefect-worker-dashboard",
         "prefect-worker-notify",
         "web-backend",
+        "web-dashboard",
         "web-frontend",
     ):
         assert name in prefect_start + start_web + stop
@@ -742,6 +743,7 @@ def test_managed_components_are_registered_and_stopped_in_fixed_order():
         "prefect-worker-notify",
         "prefect-worker-dashboard",
         "prefect-worker-session",
+        "web-dashboard",
         "web-frontend",
         "web-backend",
         "prefect-server",
@@ -899,6 +901,50 @@ def test_deprecated_scheduled_backlog_deletion_script_is_retired():
         for path in (ROOT / "scripts").rglob("*.ps1")
     )
     assert "clear_scheduled_backlog.ps1" not in public_sources
+
+
+def test_frontend_servers_use_separate_ports_for_config_center_and_dashboard():
+    package = (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
+    start_web = (ROOT / "scripts" / "lib" / "start_web.ps1").read_text(
+        encoding="utf-8"
+    )
+    stop = (ROOT / "scripts" / "stop.ps1").read_text(encoding="utf-8")
+    status = (ROOT / "scripts" / "status.ps1").read_text(encoding="utf-8")
+
+    assert '"dev": "vite --host 127.0.0.1 --port 5173"' in package
+    assert '"dashboard": "vite --mode dashboard --host 127.0.0.1 --port 5174"' in package
+    assert "[int]$DashboardPort = 5174" in start_web
+    assert "npm run dashboard -- --host 127.0.0.1 --port $DashboardPort" in start_web
+    assert '"web-dashboard"' in stop
+    assert '"web-dashboard"' in status
+    assert "http://127.0.0.1:$DashboardPort" in status
+
+
+def test_vite_modes_block_the_other_frontend_entry_point():
+    package = (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
+    vite_config = (ROOT / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
+
+    assert '"dashboard": "vite --mode dashboard --host 127.0.0.1 --port 5174"' in package
+    assert "defineConfig(({ mode })" in vite_config
+    assert 'mode === "dashboard"' in vite_config
+    assert '"/dashboard.html"' in vite_config
+    assert '"/index.html"' in vite_config
+    assert 'req.url = "/dashboard.html"' in vite_config
+    assert "res.statusCode = 404" in vite_config
+
+
+def test_project_guide_documents_separate_frontend_ports_and_frp_mapping():
+    guide = (ROOT / "PROJECT_GUIDE.md").read_text(encoding="utf-8")
+
+    for marker in (
+        "127.0.0.1:5173",
+        "127.0.0.1:5174",
+        "5173 -> 15173",
+        "5174 -> 15176",
+        "/dashboard.html",
+        "/index.html",
+    ):
+        assert marker in guide
 
 
 def test_legacy_dev_entry_points_are_removed():
