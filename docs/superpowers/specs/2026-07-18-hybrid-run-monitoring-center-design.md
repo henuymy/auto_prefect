@@ -10,7 +10,7 @@
 
 - 同时覆盖 Prefect Flow（通报、Session Keeper、驾驶舱等）和网页后台操作（保存、发布、安全测试、真实试跑、运行时清理等）。
 - 页面通过 WebSocket 实时更新任务状态、步骤、日志和异常。
-- 同时服务业务人员与技术人员：业务人员看摘要，技术人员在自建页面查看脱敏后的技术详情；不提供 Prefect UI 跳转。
+- 同时服务业务人员与技术人员：业务人员看摘要，技术人员看脱敏后的技术详情并可跳转 Prefect 原始运行。
 - 第一阶段只在页面显示异常，不发送企业微信或 Gotify 告警。
 - 仅保留最近 7 天的监控历史。
 - 使用现有驾驶舱 MySQL，不采用 SQLite，也不直接向 Prefect PostgreSQL 写入自有业务表。
@@ -31,7 +31,7 @@ Prefect 继续负责 Flow 与 Task 的状态、日志、重试和调度。监控
 ## 组件边界
 
 - `backend/services/monitor_event_service.py`：创建运行、追加步骤、日志和异常；执行脱敏、持久化、广播与保留清理。
-- `backend/services/prefect_monitor_adapter.py`：读取 Prefect Flow Run 状态与日志，并转换为监控事件；保留内部关联用的 `prefect_flow_run_id`，但不向页面返回 Prefect UI 地址。
+- `backend/services/prefect_monitor_adapter.py`：读取 Prefect Flow Run 状态与日志，并转换为监控事件；保留 `prefect_flow_run_id` 和 Prefect UI 跳转地址。
 - `backend/routers/monitor.py`：提供概览、运行列表、运行详情 REST 接口与 WebSocket 端点。
 - 前端 `monitor/` 页面：业务概览、运行列表、运行详情、实时日志与异常展示。
 - 现有 `backend.services.run_log_store`：过渡期可继续写兼容日志文件；新的页面数据以监控事件服务为准，不再依赖每 3 秒轮询 `web_runs.jsonl`。
@@ -42,7 +42,7 @@ Prefect 继续负责 Flow 与 Task 的状态、日志、重试和调度。监控
 
 在现有 `dashboard_dev` / `dashboard_prod` MySQL 数据库中，通过 Alembic 新增以下项目自有表：
 
-- `monitor_runs`：一次运行的主记录。字段包括 `id`、`source`（`prefect` 或 `web`）、`task_name`、`status`、`started_at`、`finished_at`、`current_step`、内部关联用的 `prefect_flow_run_id`、`business_error_summary` 与 `technical_error_summary`。
+- `monitor_runs`：一次运行的主记录。字段包括 `id`、`source`（`prefect` 或 `web`）、`task_name`、`status`、`started_at`、`finished_at`、`current_step`、`prefect_flow_run_id`、`prefect_ui_url`、`business_error_summary` 与 `technical_error_summary`。
 - `monitor_steps`：运行的业务阶段。字段包括 `run_id`、`name`、`sequence`、`status`、`started_at`、`finished_at`、`message`。
 - `monitor_events`：按时间追加的日志、状态变化和异常。字段包括 `id`、全局单调递增的 `stream_sequence`、`run_id`、运行内 `run_sequence`、`event_type`、`level`、`message`、`details` 与 `created_at`。
 
@@ -74,7 +74,7 @@ Prefect 适配器接入以下信息：
 2. Flow / Task 的日志及失败信息。
 3. 关键业务阶段：会话探活、下载报表、数据比对、生成截图、发送通知和驾驶舱采集等。
 
-Flow 内仍使用 `get_run_logger()` 记录 Prefect 原生日志。监控事件仅补充对业务可读的阶段与摘要，不复制全部调度逻辑。`prefect_flow_run_id` 仅用于后端关联与系统管理员的受限运维，不作为监控页面的跳转入口。
+Flow 内仍使用 `get_run_logger()` 记录 Prefect 原生日志。监控事件仅补充对业务可读的阶段与摘要，不复制全部调度逻辑。每一条 Prefect 来源的监控运行都必须可跳转到对应 Prefect Flow Run。
 
 ## 网页后台操作接入
 
@@ -108,14 +108,13 @@ REST 接口负责首屏和历史查询：
 - 时间线：开始、阶段变更、重试、结束。
 - 日志流：按级别筛选、自动滚动、实时追加。
 - 异常卡片：失败阶段、分类、业务摘要和技术摘要。
-- Prefect 来源显示运行来源与内部运行编号，但不显示 Prefect UI 链接或管理操作。
+- Prefect 来源显示“打开 Prefect 原始运行”链接。
 
-业务人员只能查看摘要、进度、结果和可理解的异常；技术人员在自建页面查看脱敏后的日志、步骤、异常类型和重试信息。两类用户都不能从监控页面进入 Prefect UI。Prefect 后台只允许系统管理员通过受限网络或独立账号手工使用。若后续需要真正的角色权限，必须另行引入认证与授权；本期只实现信息分层，不把监控页面暴露到不可信网络。
+业务视图默认不显示 Python 堆栈、请求响应或运行秘密。若后续需要真正的角色权限，必须另行引入认证与授权；本期只实现信息分层，不把监控页面暴露到不可信网络。
 
 ## 安全和保留策略
 
 - 监控事件进入 MySQL 与 WebSocket 前必须脱敏：禁止记录密码、Cookie、Token、Webhook、完整内部 URL 和完整响应正文。
-- 监控 API 和 WebSocket 不返回 Prefect UI 地址、Prefect 管理令牌或可执行重试、取消、暂停等编排操作的参数。
 - 每日清理 `finished_at` 超过 7 天的已结束运行，以及关联步骤和事件；运行中的记录不得清理。长时间运行的任务会在结束后继续保留 7 天。
 - Prefect 原始日志继续由 Prefect 的既有保留策略管理；监控中心只保存面向页面的 7 天副本和摘要。
 - 失败写入、WebSocket 断开和 Prefect 暂时不可用不得阻断业务 Flow 主流程。监控写入失败应降级记录应用日志，并在服务恢复后继续接收新事件。
@@ -126,7 +125,7 @@ REST 接口负责首屏和历史查询：
 2. 新增 WebSocket 广播、重连补发与服务级测试。
 3. 接入网页后台操作，替换日志抽屉的轮询数据来源。
 4. 接入 Prefect Flow 状态、日志与业务阶段。
-5. 新增业务概览、运行详情、异常展示和 Prefect 来源标识。
+5. 新增业务概览、运行详情、异常展示和 Prefect 跳转。
 6. 执行集成验收和安全脱敏检查。
 
 ## 验收标准
@@ -134,8 +133,7 @@ REST 接口负责首屏和历史查询：
 - Prefect Flow 与网页后台操作均能出现在同一监控中心。
 - 页面可实时收到状态、步骤、日志和异常更新。
 - 业务人员无需进入 Prefect 即可判断任务是否完成和失败原因。
-- 技术人员无需进入 Prefect 即可在自建页面查看脱敏后的日志、步骤、异常类型和重试信息。
-- 监控页面不返回或展示 Prefect UI 跳转链接；Prefect 后台仅由系统管理员在受限环境中独立访问。
+- 技术人员可从详情跳转到关联的 Prefect 原始运行。
 - MySQL 监控记录仅保留最近 7 天，清理不影响运行中的任务。
 - 日志、异常、接口响应和 WebSocket 消息不包含认证秘密。
 - 不改变现有 Prefect Deployment、Work Pool、Windows Edge 会话、Excel 自动化和企业微信发送逻辑。
