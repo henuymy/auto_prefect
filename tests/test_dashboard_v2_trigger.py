@@ -161,3 +161,24 @@ def test_load_dashboard_config_rejects_non_v2_schema(tmp_path):
 
     with pytest.raises(ValueError, match="只支持.*2"):
         dashboard_v2_trigger.load_dashboard_config(config_path)
+
+
+def test_load_dashboard_config_merges_local_environment_lock_overrides(tmp_path):
+    config_path, _, _ = make_configs(tmp_path)
+    write_json(
+        config_path.with_name("session.local.json"),
+        {
+            "collection_database_lock_name": "auto_notify_dashboard_collection_dev",
+            "partition_database_lock_name": "auto_notify_dashboard_partition_maintenance_dev",
+        },
+    )
+
+    config, resolved = dashboard_v2_trigger.load_dashboard_config(config_path)
+
+    assert resolved == config_path.resolve()
+    assert config["schema_version"] == 2
+    assert config["collection_database_lock_name"] == "auto_notify_dashboard_collection_dev"
+    assert (
+        config["partition_database_lock_name"]
+        == "auto_notify_dashboard_partition_maintenance_dev"
+    )

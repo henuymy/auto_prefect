@@ -60,6 +60,7 @@ tenxunwendang*.local.*
 config/tasks/local.json
 config/tasks/*.local.json
 config/modules/*.local.json
+config/dashboard/*.local.json
 config/runtime.local.json
 scripts/*.local.ps1
 scripts/**/*.local.ps1

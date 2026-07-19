@@ -82,7 +82,7 @@ pwsh -File scripts/setup_windows_env.ps1
 
 ### 为什么忽略本地配置
 
-`.gitignore` 会忽略 `config/runtime.local.json`、`config/modules/*.local.json`、`config/tasks/*.local.json` 和其他本地凭据文件。它们会因电脑、环境或账号不同而变化，并可能包含数据库连接信息、Prefect API 地址、Webhook、访问令牌和 Cookie；提交这些文件会泄露凭据，也会让其他环境错误继承本机配置。
+`.gitignore` 会忽略 `config/runtime.local.json`、`config/modules/*.local.json`、`config/tasks/*.local.json`、`config/dashboard/*.local.json` 和其他本地凭据文件。它们会因电脑、环境或账号不同而变化，并可能包含数据库连接信息、Prefect API 地址、Webhook、访问令牌和 Cookie；提交这些文件会泄露凭据，也会让其他环境错误继承本机配置。
 
 应提交不含真实凭据的 `*.example.json` 或普通配置模板；每台机器自行创建对应的 `*.local.json`。不要使用 `git add -f` 强制提交被忽略的本地配置。
 
@@ -107,6 +107,8 @@ pwsh -File scripts/setup_windows_env.ps1
 - `config/modules/*.json`：登录、下载、比对、模板和发送模块配置。
 - `config/dashboard/session.json`：驾驶舱采集、数据库、并发与留存策略。
 - `scripts/tools/dashboard/`：驾驶舱导入、导出、审计与迁移等低频工具。
+
+`config/dashboard/session.local.json` 会覆盖同名基础驾驶舱配置，且被 Git 忽略。当开发库与生产库位于同一 MySQL 服务实例时，两边必须分别配置不同的 `collection_database_lock_name` 和 `partition_database_lock_name`，例如名称后缀使用 `_dev`、`_prod`；同一环境中所有机器必须保留相同锁名，避免同一套数据被并发采集或维护。
 
 ### 腾讯文档表格下载
 
