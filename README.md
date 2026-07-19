@@ -56,13 +56,20 @@ conda activate base
 python -m pip install -r requirements-dev.lock
 ```
 
+若默认清华 PyPI 镜像返回 `HTTP 403`，可临时改用官方 PyPI：
+
+```text
+python -m pip install -r requirements-dev.lock -i https://pypi.org/simple
+```
+
+初始化脚本只安装 Python 依赖，不会安装前端 npm 依赖。即使脚本最后输出“完成”，仍应确认基础自检出现 `smoke_ok`；依赖安装或自检报错时不能视为初始化成功。
+
 通过 NVM 安装并启用前端所需的 Node.js 20 LTS，再安装前端依赖：
 
 ```powershell
 nvm install 20.20.1
 nvm use 20.20.1
-cd frontend
-npm install
+npm --prefix frontend ci
 ```
 
 也可以使用项目初始化脚本完成 Python 依赖、运行目录和本机组件检查：
@@ -72,6 +79,12 @@ pwsh -File scripts/setup_windows_env.ps1
 ```
 
 私密配置使用同名 `.local.json` 或 `.local.ps1` 文件覆盖，切勿把账号、Cookie、Webhook、数据库密码写入受版本控制的文件。
+
+### 为什么忽略本地配置
+
+`.gitignore` 会忽略 `config/runtime.local.json`、`config/modules/*.local.json`、`config/tasks/*.local.json` 和其他本地凭据文件。它们会因电脑、环境或账号不同而变化，并可能包含数据库连接信息、Prefect API 地址、Webhook、访问令牌和 Cookie；提交这些文件会泄露凭据，也会让其他环境错误继承本机配置。
+
+应提交不含真实凭据的 `*.example.json` 或普通配置模板；每台机器自行创建对应的 `*.local.json`。不要使用 `git add -f` 强制提交被忽略的本地配置。
 
 ## 依赖文件职责
 
@@ -355,9 +368,11 @@ frontend/src/dashboard-main.tsx               数据驾驶舱前端
 
 需要用仓库配置新建或更新部署时，手工发布 Prefect 部署：
 
-```powershell
-prefect deploy --all
+```text
+python -X utf8 -m prefect deploy --all
 ```
+
+执行前必须确保当前环境已加载 `config/runtime.local.json` 对应的 Prefect API 配置。UTF-8 模式可避免 Windows 默认 GBK 编码读取包含中文的 `prefect.yaml` 时发生解码失败。Deployment 会保存发布时的代码加载路径；迁移电脑或项目目录后必须在新目录重新发布，否则 Worker 可能继续访问旧路径并报 `WinError 3`。该命令只创建或更新 `prefect.yaml` 中声明的 Deployment，不会恢复已经删除且未在该文件中声明的动态 Deployment。
 
 ## 数据库迁移
 
@@ -368,6 +383,14 @@ alembic -c alembic_dashboard_v2.ini upgrade head
 ```
 
 执行迁移前必须确认连接的是目标环境，并先完成数据库备份。
+
+驾驶舱 V2 分区维护直接运行前，必须先确保当前进程环境已加载 `config/runtime.local.json` 中的 `DASHBOARD_MYSQL_*` 配置；否则会报缺少 MySQL 环境变量。配置就绪后执行：
+
+```text
+python flows/dashboard_partition_maintenance_flow.py
+```
+
+若维护任务报 MySQL `1205 Lock wait timeout exceeded`，表示驾驶舱采集或其他事务正在锁定 `collection_run`。优先等待采集结束后重试；反复出现时，在确认没有必须保留的业务 Run 后停止运行栈，再运行维护任务并重新启动。不要把调大锁等待时间或直接终止未知数据库连接作为首选处理方式。
 
 Prefect PostgreSQL 的结构由 Prefect Server 迁移命令维护。迁移或全量恢复前，先停止或隔离会写入源库的 Server 与 Worker；恢复目标库后至少核验数据库迁移版本、各表行数、Deployment、Work Pool 与外键完整性。严禁用开发环境的状态覆盖生产库。
 
@@ -399,6 +422,8 @@ npm run build
 3. 查看 `C:\AutoNotifyRuntime\logs` 和 Prefect Flow Run 日志。
 4. 登录失败时检查共享会话状态、Cookie 有效期和被忽略的本地登录配置，不输出认证材料。
 5. 驾驶舱异常时检查 MySQL 连接、Alembic 版本和最近一次采集运行状态。
+6. 配置中心或数据驾驶舱无法打开时，检查 `frontend/node_modules` 是否存在，并确认 `npm --prefix frontend ci` 成功；配置中心和驾驶舱端口分别为 `5173`、`5174`。
+7. `/api/health` 返回 `503` 时读取响应 JSON 的失败项；MySQL 可连接但 `dashboard_schema` 未就绪时，先运行驾驶舱 V2 分区维护。
 
 ## 安全边界
 

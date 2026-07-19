@@ -1,16 +1,10 @@
 __pycache__/
 **/__pycache__/
 *.py[cod]
-.venv/
-venv/
 
 # IDE settings
 .vscode/
 .idea/
-
-# Frontend dependencies and build output
-node_modules/
-dist/
 
 # Python environments and build artifacts
 .venv/
@@ -27,7 +21,8 @@ env/
 node_modules/
 dist/
 
-# Local credentials and session artifacts
+# Local credentials and session artifacts. These files are machine-specific
+# and may contain account credentials, access tokens, cookies, or runtime state.
 .claude/settings.local.json
 legacy_modules/modules/*/config.json
 legacy_modules/modules/*/runtime/
@@ -60,6 +55,8 @@ cookie*.json
 tenxunwendang.txt
 tenxunwendang*.local.*
 *tencent*token*.txt
+# Keep local JSON overrides out of Git: they contain environment-specific
+# database, Prefect, webhook, or module credentials. Commit only templates.
 config/tasks/local.json
 config/tasks/*.local.json
 config/modules/*.local.json
@@ -80,3 +77,6 @@ frp/frpc.exe
 frp/frps.exe
 frp/frpc.toml
 frp/frps.toml
+/frp.zip
+/config/modules/modules.zip
+/templates.zip
