@@ -82,6 +82,7 @@ function Import-RuntimeConfig {
     $env:DASHBOARD_MYSQL_DATABASE = Get-RuntimeConfigValue -Config $config -Path "dashboard.mysql.database"
     $env:DASHBOARD_MYSQL_USER = Get-RuntimeConfigValue -Config $config -Path "dashboard.mysql.user"
     $env:DASHBOARD_MYSQL_PASSWORD = Get-RuntimeConfigValue -Config $config -Path "dashboard.mysql.password"
+    $env:PREFECT_MONITOR_WEBHOOK_SECRET = Get-RuntimeConfigValue -Config $config -Path "monitor.prefect_webhook_secret"
     $env:AUTO_NOTIFY_RUNTIME_ROOT = Get-RuntimeConfigValue -Config $config -Path "runtime.root"
     $env:PREFECT_SESSION_POOL_NAME = Get-RuntimeConfigValue -Config $config -Path "runtime.work_pools.session.name"
     $env:PREFECT_SESSION_POOL_LIMIT = Get-RuntimeConfigPositiveInt -Config $config -Path "runtime.work_pools.session.limit"

@@ -204,6 +204,24 @@ pwsh -File scripts/stop.ps1
 
 ## 四、变更记录
 
+### 2026-07-19 - 通报待执行队列筛选
+
+- 原因：待执行队列同时展示会话维护、驾驶舱采集和通报计划，无法作为通报排程视图使用。
+- 修改内容：`MonitorCenter` 仅从完整 `PendingQueue` 中派生 `targetId` 以 `report-` 开头的计划，并以该派生队列驱动按钮、无障碍标签和抽屉。
+- 涉及文件：`frontend/src/monitor/MonitorCenter.tsx`、`frontend/src/monitor/MonitorCenter.test.tsx`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无；API 和实时流继续传输完整待执行队列。
+- 验证：运行 MonitorCenter 聚焦测试、前端类型检查、生产构建和浏览器交互检查。
+- 风险与回滚：筛选依赖 `targetId` 的 `report-` 命名契约；如需恢复完整运维队列，回退 `MonitorCenter` 的派生队列改动即可。
+
+### 2026-07-21 - 通报运行监控中心实时投影与可用性收口
+
+- 原因：早期监控页仍混合 7 天历史、非通报任务和周期性全量同步，页面连接状态也容易被误读为 Prefect 数据正常；失败运行缺少按需可查的真实步骤与日志。
+- 修改内容：新增以 MySQL 为持久化投影的通报监控中心。Prefect Automation 通过带密钥的 Webhook 提交 Flow Run 状态，服务端按事件 ID 去重、按发生时间拒绝旧状态覆盖，并在事务提交后仅广播对应 `run.updated` 增量。首屏和重连使用 REST 快照；后台每 5 分钟调用 Prefect 官方 REST API 对账补漏。页面仅保留近 30 天的通报成功、运行中和失败记录；待执行独立为全局通报 `Scheduled` 队列，返回真实 `targetId` 与 `nextStep`。
+- 交互与信息层级：运行记录支持 10、20、50 条分页，时间线可按日期收起展开并分批加载。记录详情默认展示业务摘要；点击 Prefect 运行后按需读取 Task Run 和脱敏日志。抽屉支持对话框语义、初始焦点、`Escape` 关闭与 Tab/Shift+Tab 焦点循环。页面分别显示 WebSocket 连接、上游事件时间和最近对账时间。
+- 数据与迁移：驾驶舱 MySQL 新增 `monitor_runs`、`monitor_steps`、`monitor_events`，并通过 `20260718_0002`、`20260719_0003`、`20260719_0004` 迁移补齐通报身份、状态发生时间和事件幂等键；已结束通报记录保留 30 天。Prefect PostgreSQL 仍只通过官方 API 读取，禁止直接写入内部表。
+- 涉及文件：`backend/routers/monitor.py`、`backend/services/monitor_*`、`backend/services/prefect_monitor_*`、`models/monitor.py`、`migrations/dashboard_v2/versions/20260718_0002_monitor_center.py` 至 `20260719_0004_monitor_event_idempotency.py`、`frontend/monitor.html`、`frontend/src/monitor/`、相关 pytest/Vitest 测试以及运行监控文档。
+- 配置与运维：`config/runtime.local.json` 必须配置且仅在本机保存 `monitor.prefect_webhook_secret`；启动配置会导出 `PREFECT_MONITOR_WEBHOOK_SECRET`。还需在 Prefect 中人工创建只匹配 `auto-notify-flow` 和 `notify-` Deployment 的 Automation，具体步骤见 `docs/operations/prefect-monitor-webhook.md`。当前 `scripts/run.ps1` 不托管独立监控前端端口。
+- 验证与风险：单元、路由、流、同步、迁移与前端回归测试用于覆盖契约；真实 Automation 端到端延迟须在目标环境按至少 20 次状态变化测量，P95 不超过 5 秒才可认定达到实时目标。单 FastAPI 进程以进程内 Hub 广播，扩展为多进程或多实例前必须引入共享消息总线。
 ### 2026-07-17 - 前端双端口与驾驶舱根路径入口
 
 - 原因：配置中心和数据驾驶舱共享单个 Vite 端口，云电脑的 FRP 无法为两个界面提供独立入口，且驾驶舱 URL 需要暴露 `dashboard.html`。

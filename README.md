@@ -311,6 +311,26 @@ pwsh -File scripts/lib/start_web.ps1 -Mode both
 - 后端健康检查：`http://127.0.0.1:8000/api/health`
 - Prefect UI：`http://127.0.0.1:4200`
 
+## 运行监控中心
+
+运行监控中心是面向通报任务的业务运行页，不替代 Prefect UI。它只展示真实通报 Deployment 的运行记录和待执行计划：Session Keeper、驾驶舱采集以及网页后台操作不会进入时间线、运行记录或待执行汇总。
+
+在标准前端服务已启动时，可访问 `http://127.0.0.1:5173/monitor.html`。本机独立验收时也可以在 `frontend` 目录启动一个未被进程登记托管的 Vite 服务：
+
+```powershell
+npm run dev -- --port 5175
+```
+
+然后访问 `http://127.0.0.1:5175/monitor.html`。当前 `scripts/run.ps1` 只托管配置中心和数据驾驶舱；监控页独立端口仅用于本地开发和验收，若要作为长期入口，需要把该进程登记和端口映射纳入启动脚本后再发布。
+
+- 运行记录和时间线保留最近 30 天，且只显示成功、运行中和失败；历史 `Scheduled` 记录不会混入这两个区域。
+- 待执行是独立的全局通报 `Scheduled` 队列，展示真实的 `targetId`、下次计划时间和 `nextStep`（通常为“尚未开始”），不受运行记录筛选条件影响。
+- 运行记录支持按对象、触发方式、状态和日期筛选，并支持每页 10、20、50 条；时间线按日期分组，可逐日收起或展开并分批加载。
+- 点击记录会按需向 Prefect 官方 API 查询 Task Run 与脱敏日志。Prefect 暂不可用时，抽屉保留已同步的失败摘要并提示详情暂不可用。
+- “页面实时”仅表示浏览器 WebSocket 状态；“上游事件”和“最近对账”分别反映 Prefect Automation Webhook 的最后接收时间与 REST 对账的最后成功时间，不能互相替代。
+
+实时主链路为 Prefect Automation Webhook -> FastAPI -> MySQL -> WebSocket。MySQL 是页面持久化投影，浏览器首次连接和断线重连均先读取 REST 快照；后台每 5 分钟通过 Prefect 官方 REST API 补漏和对账。当前为单 FastAPI 进程，WebSocket 广播仅覆盖该进程；扩展为多进程或多实例时才需要 Redis Pub/Sub 或 Streams。详细接口、密钥和验收方法见 [Prefect 通报监控 Webhook 运维手册](docs/operations/prefect-monitor-webhook.md)，完整架构见 [运行监控中心设计](docs/run-monitoring-center-design.md)。
+
 ## Session Keeper
 
 Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每 10 分钟运行。

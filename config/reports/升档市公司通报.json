@@ -2,7 +2,7 @@
   "id": "升档市公司通报",
   "name": "升档市公司通报",
   "template_path": "templates/升档市公司通报.xlsx",
-  "enabled": true,
+  "enabled": false,
   "description": "",
   "downloads": [
     {
@@ -384,7 +384,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-11 17:52:53",
+  "updatedAt": "2026-07-20 10:01:24",
   "source": "published",
   "has_draft": false
 }

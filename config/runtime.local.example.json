@@ -14,6 +14,9 @@
       "password": "<password>"
     }
   },
+  "monitor": {
+    "prefect_webhook_secret": "replace-with-a-long-random-local-secret"
+  },
   "runtime": {
     "root": "C:\\AutoNotifyRuntime",
     "work_pools": {

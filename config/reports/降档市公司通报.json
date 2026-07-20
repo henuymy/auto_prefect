@@ -2,7 +2,7 @@
   "id": "降档市公司通报",
   "name": "降档市公司通报",
   "template_path": "templates/降档市公司通报.xlsx",
-  "enabled": true,
+  "enabled": false,
   "description": "",
   "downloads": [
     {
@@ -258,7 +258,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-11 17:52:53",
+  "updatedAt": "2026-07-17 10:52:31",
   "source": "published",
   "has_draft": false
 }

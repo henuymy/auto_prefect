@@ -2,7 +2,7 @@
   "id": "离网市公司通报",
   "name": "离网市公司通报",
   "template_path": "templates/离网市公司通报_新手模板_20260708_232927.xlsx",
-  "enabled": true,
+  "enabled": false,
   "description": "",
   "downloads": [
     {
@@ -258,7 +258,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-11 17:52:53",
+  "updatedAt": "2026-07-17 10:52:51",
   "source": "published",
   "has_draft": false
 }

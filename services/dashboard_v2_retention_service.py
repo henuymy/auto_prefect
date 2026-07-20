@@ -18,6 +18,7 @@ from models.dashboard_v2 import (
     MetricCurrentV2,
     MetricSnapshotV2,
 )
+from models.monitor import MonitorRun
 
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,7 @@ def cleanup_v2_expired_data(
     now: datetime | None = None,
     snapshot_retention_days: int = 7,
     run_retention_days: int = 30,
+    monitor_run_retention_days: int = 30,
     acc_retention_days: int = 90,
     active_run_timeout_minutes: int = 120,
     partition_ahead_days: int = 30,
@@ -189,6 +191,12 @@ def cleanup_v2_expired_data(
     run_days = _bounded_int(
         run_retention_days, "run_retention_days", 1, _MAX_RETENTION_DAYS
     )
+    monitor_run_days = _bounded_int(
+        monitor_run_retention_days,
+        "monitor_run_retention_days",
+        1,
+        _MAX_RETENTION_DAYS,
+    )
     acc_days = _bounded_int(
         acc_retention_days, "acc_retention_days", 1, _MAX_RETENTION_DAYS
     )
@@ -199,6 +207,7 @@ def cleanup_v2_expired_data(
         hour=0, minute=0, second=0, microsecond=0
     )
     run_cutoff = resolved_now - timedelta(days=run_days)
+    monitor_run_cutoff = resolved_now - timedelta(days=monitor_run_days)
     acc_cutoff = (resolved_now - timedelta(days=acc_days)).date()
     partition = maintain_v2_snapshot_partitions(
         session,
@@ -254,6 +263,15 @@ def cleanup_v2_expired_data(
         )
     else:
         run_deleted = 0
+    monitor_run_deleted = int(
+        session.execute(
+            delete(MonitorRun).where(
+                MonitorRun.finished_at < monitor_run_cutoff,
+                MonitorRun.status.in_(["succeeded", "failed", "cancelled"]),
+            )
+        ).rowcount
+        or 0
+    )
     session.commit()
     result = {
         **partition,
@@ -262,6 +280,7 @@ def cleanup_v2_expired_data(
         "stale_run_recovered": stale_recovered,
         "run_reference_cleared": references_cleared,
         "run_deleted": run_deleted,
+        "monitor_run_deleted": monitor_run_deleted,
     }
     logger.info("驾驶舱 V2 分区与保留维护完成 result=%s", result)
     return result
@@ -280,6 +299,7 @@ def execute_v2_retention_maintenance(
             now=now,
             snapshot_retention_days=config.get("snapshot_retention_days", 7),
             run_retention_days=config.get("run_retention_days", 30),
+            monitor_run_retention_days=config.get("monitor_run_retention_days", 30),
             acc_retention_days=config.get("acc_retention_days", 90),
             active_run_timeout_minutes=config.get(
                 "active_run_timeout_minutes", 120

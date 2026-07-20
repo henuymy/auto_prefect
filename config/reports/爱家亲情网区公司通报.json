@@ -148,7 +148,7 @@
     }
   ],
   "id": "爱家亲情网区公司通报",
-  "enabled": true,
+  "enabled": false,
   "description": "",
   "wait_for_change": {
     "enabled": false,
@@ -162,7 +162,7 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-07-11 17:54:14",
+  "updatedAt": "2026-07-20 10:02:04",
   "source": "published",
   "has_draft": false
 }

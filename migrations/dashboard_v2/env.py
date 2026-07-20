@@ -19,6 +19,7 @@ from models.dashboard_v2 import (  # noqa: F401
     TargetPlan,
 )
 from models.dashboard_v2_base import DashboardV2Base
+from models.monitor import MonitorEvent, MonitorRun, MonitorStep  # noqa: F401
 
 
 config = context.config

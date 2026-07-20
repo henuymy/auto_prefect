@@ -35,7 +35,10 @@ export default defineConfig(({ mode }) => {
   ],
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:8000",
+      "/api": {
+        target: "http://127.0.0.1:8000",
+        ws: true,
+      },
     },
   },
   resolve: {
@@ -47,6 +50,7 @@ export default defineConfig(({ mode }) => {
     rollupOptions: {
       input: {
         dashboard: path.resolve(__dirname, "dashboard.html"),
+        monitor: path.resolve(__dirname, "monitor.html"),
       },
       output: {
         manualChunks: {

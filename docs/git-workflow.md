@@ -18,23 +18,26 @@
 
 ```mermaid
 flowchart TD
-    DEV["development\n日常集成"] --> SYNC["同步 development"]
-    SYNC --> CODEX["创建 codex/功能名"]
-    CODEX --> WORK["开发、测试、提交、推送"]
-    WORK --> PRDEV["PR：codex/* → development"]
-    PRDEV --> MERGEDEV["CI、审核、合并"]
-    MERGEDEV --> CLEAN["删除 codex 分支"]
-    CLEAN --> DEV
+    DEV["development<br/>日常集成分支"] --> SYNC["同步 development"]
+    SYNC --> FEATURE["创建功能或普通修复分支<br/>codex/功能名 或 codex/fix-问题名"]
+    FEATURE --> WORK["开发、测试、提交、推送"]
+    WORK --> PR_DEV["PR：codex/* → development"]
+    PR_DEV --> MERGE_DEV["CI、审核、合并"]
+    MERGE_DEV --> CLEAN_FEATURE["删除已合并的 codex 分支"]
+    CLEAN_FEATURE --> DEV
 
-    DEV -. "准备发布" .-> RELEASE["创建 release/版本号"]
-    RELEASE --> PRMAIN["PR：release/* → main"]
-    PRMAIN --> MAIN["CI、审核、合并\n生产版本"]
+    DEV -. "准备发布" .-> RELEASE["创建发布分支<br/>release/版本号"]
+    RELEASE --> PR_MAIN["PR：release/* → main"]
+    PR_MAIN --> PROD["CI、审核、合并<br/>main = 线上稳定版本"]
+    PROD --> CLEAN_RELEASE["删除 release 分支"]
+    CLEAN_RELEASE --> DEV
 
-    MAIN -. "线上紧急故障" .-> HOTFIX["创建 hotfix/问题名"]
-    HOTFIX --> HOTMAIN["PR：hotfix/* → main"]
-    HOTFIX --> HOTDEV["PR：hotfix/* → development"]
-    HOTMAIN --> MAIN
-    HOTDEV --> MERGEDEV
+    MAIN["main<br/>仅同步、核对线上版本、创建热修复"] --> HOTFIX["创建紧急修复分支<br/>hotfix/问题名"]
+    HOTFIX --> FIX_WORK["修复、测试、提交、推送"]
+    FIX_WORK --> PR_HOT_MAIN["PR：hotfix/* → main"]
+    FIX_WORK --> PR_HOT_DEV["PR：hotfix/* → development"]
+    PR_HOT_MAIN --> PROD
+    PR_HOT_DEV --> MERGE_DEV
 ```
 
 ## 日常开发循环
@@ -165,6 +168,12 @@ flowchart TD
     H --> I["同步已合并结果<br/>git pull --ff-only origin development"]
     I --> J["删除已合并的 codex 分支"]
     J --> C
+
+    I -. "需要发布时" .-> K["创建 release/版本号"]
+    K --> L["PR：release/版本号 → main"]
+    L --> M["CI 通过后合并发布"]
+    M --> N["删除 release 分支"]
+    N --> H
 ```
 
 | 步骤 | 操作 | 目的 |

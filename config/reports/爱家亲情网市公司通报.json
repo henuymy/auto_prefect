@@ -2,7 +2,7 @@
   "id": "爱家亲情网市公司通报",
   "name": "爱家亲情网市公司通报",
   "template_path": "templates/爱家亲情网市公司通报.xlsx",
-  "enabled": true,
+  "enabled": false,
   "description": "",
   "downloads": [
     {
@@ -134,7 +134,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-11 17:52:53",
+  "updatedAt": "2026-07-20 10:04:11",
   "source": "published",
   "has_draft": false
 }

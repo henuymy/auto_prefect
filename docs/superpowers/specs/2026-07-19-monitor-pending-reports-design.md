@@ -1,4 +1,7 @@
 # 通报待执行队列筛选设计
+> **归档状态：** 本文记录当时的需求、设计或实施计划；当前有效的运行契约以 [运行监控中心设计](../../run-monitoring-center-design.md) 和 [Webhook 运维手册](../../operations/prefect-monitor-webhook.md) 为准。
+>
+
 
 ## 目标
 

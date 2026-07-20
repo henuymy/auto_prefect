@@ -30,6 +30,7 @@
   "retention": {
     "snapshot_retention_days": 7,
     "run_retention_days": 30,
+    "monitor_run_retention_days": 30,
     "acc_retention_days": 90,
     "active_run_timeout_minutes": 120,
     "partition_ahead_days": 30

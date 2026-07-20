@@ -2,7 +2,7 @@
   "id": "家客和存量通报",
   "name": "家客和存量通报",
   "template_path": "templates/家客存量通报模板.xlsx",
-  "enabled": true,
+  "enabled": false,
   "description": "",
   "downloads": [
     {
@@ -146,7 +146,8 @@
       },
       "headers_from_session_storage": {
         "Uaptoken": "uapToken"
-      }
+      },
+      "source": "http_api"
     }
   ],
   "compare_sources": [
@@ -172,7 +173,10 @@
     "items": [
       {
         "type": "image",
-        "sheet": "家客通报"
+        "sheet": "家客通报",
+        "capture": {
+          "mode": "used_range"
+        }
       },
       {
         "type": "text",
@@ -183,7 +187,10 @@
       },
       {
         "type": "image",
-        "sheet": "存量通报"
+        "sheet": "存量通报",
+        "capture": {
+          "mode": "used_range"
+        }
       },
       {
         "type": "text",
@@ -213,7 +220,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-06-15 17:10:52",
+  "updatedAt": "2026-07-20 10:02:51",
   "source": "published",
   "has_draft": false
 }

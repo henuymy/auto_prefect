@@ -129,6 +129,7 @@ def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment(
 
     assert config["prefect"]["postgres"]["url"]
     assert config["dashboard"]["mysql"]["host"]
+    assert config["monitor"]["prefect_webhook_secret"]
 
     assert "config/runtime.local.json" in gitignore
     assert "function Import-RuntimeConfig" in loader_source
@@ -140,6 +141,7 @@ def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment(
         "DASHBOARD_MYSQL_USER",
         "DASHBOARD_MYSQL_PASSWORD",
         "PREFECT_API_URL",
+        "PREFECT_MONITOR_WEBHOOK_SECRET",
         "PREFECT_WORK_POOL_NAME",
     ):
         assert variable in loader_source
@@ -310,6 +312,9 @@ def test_runtime_json_is_preferred_and_legacy_local_files_remain_fallbacks():
                 "user": "json_user",
                 "password": "json_password",
             }
+        },
+        "monitor": {
+            "prefect_webhook_secret": "json-monitor-webhook-secret",
         },
         "runtime": {
             "root": r"C:\JsonRuntime",

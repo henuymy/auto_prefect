@@ -10,8 +10,20 @@ from services.dashboard_v2_retention_service import cleanup_v2_expired_data
 from tests.test_dashboard_v2_query_service import _engine
 
 
+def _create_monitor_runs_table(engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE monitor_runs (
+                id TEXT PRIMARY KEY, source TEXT NOT NULL, external_run_id TEXT NOT NULL,
+                task_name TEXT NOT NULL, trigger TEXT NOT NULL, status TEXT NOT NULL,
+                finished_at DATETIME, current_step TEXT NOT NULL
+            )
+        """))
+
+
 def test_v2_cleanup_removes_expired_data_and_clears_run_references():
     engine = _engine()
+    _create_monitor_runs_table(engine)
     with engine.begin() as connection:
         connection.execute(text("""
             INSERT INTO collection_run
@@ -71,3 +83,31 @@ def test_run_retention_cannot_be_shorter_than_snapshot_retention():
                 snapshot_retention_days=30,
                 run_retention_days=7,
             )
+
+
+def test_v2_cleanup_keeps_active_monitor_runs_and_removes_finished_monitor_runs_after_30_days():
+    engine = _engine()
+    _create_monitor_runs_table(engine)
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO monitor_runs (id, source, external_run_id, task_name, trigger, status, finished_at, current_step)
+            VALUES
+                ('expired', 'prefect', 'expired', '通报 · 过期日报', '定时调度', 'succeeded', '2026-05-31 11:00:00', '已完成'),
+                ('active', 'prefect', 'active', '通报 · 仍在运行', '定时调度', 'running', NULL, '下载报表')
+        """))
+
+    with Session(engine) as session:
+        result = cleanup_v2_expired_data(
+            session,
+            now=datetime(2026, 6, 30, 12),
+            monitor_run_retention_days=30,
+        )
+
+    assert result["monitor_run_deleted"] == 1
+    with engine.connect() as connection:
+        assert connection.scalar(text(
+            "SELECT COUNT(*) FROM monitor_runs WHERE id = 'expired'"
+        )) == 0
+        assert connection.scalar(text(
+            "SELECT COUNT(*) FROM monitor_runs WHERE id = 'active'"
+        )) == 1
