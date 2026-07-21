@@ -36,16 +36,23 @@ def test_business_run_alert_sends_once_per_development_flow_run(tmp_path):
     assert "报表下载" in messages[0]
 
 
-def test_business_run_alert_is_disabled_outside_development(tmp_path):
+def test_business_run_alert_sends_in_production(tmp_path):
+    messages = []
     config = {
         "environment": "production",
         "webhook_url": "https://example.invalid/webhook",
         "incident_state_path": str(tmp_path / "business-runs.json"),
     }
 
-    result = notify_business_run_failure(config, incident(), sender=lambda *_args, **_kwargs: None)
+    result = notify_business_run_failure(
+        config,
+        incident(),
+        sender=lambda _url, message, timeout=30: messages.append(message) or {"errcode": 0},
+    )
 
-    assert result == {"sent": False, "suppressed": True, "reason": "environment"}
+    assert result["sent"] is True
+    assert len(messages) == 1
+    assert "[业务 Run 失败]" in messages[0]
 
 
 def test_business_alert_state_is_written_under_external_runtime_root(monkeypatch, tmp_path):

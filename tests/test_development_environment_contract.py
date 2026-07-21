@@ -97,8 +97,7 @@ def test_readme_declares_install_commands_and_feature_prerequisites():
         "python -m pip install -r requirements-dev.lock",
         "nvm install 20.20.1",
         "nvm use 20.20.1",
-        "cd frontend",
-        "npm install",
+        "npm --prefix frontend ci",
     ):
         assert command in source
 
@@ -444,12 +443,12 @@ def test_prefect_runtime_uses_a_fastapi_release_compatible_with_prefect_3_7():
     assert "fastapi>=0.110.0,<0.116" in dependencies
 
 
-def test_prefect_deployments_are_partitioned_across_three_pools():
+def test_prefect_deployments_use_session_and_dashboard_pools():
     config = yaml.safe_load((ROOT / "prefect.yaml").read_text(encoding="utf-8"))
     pools = {row["name"]: row["work_pool"]["name"] for row in config["deployments"]}
 
     assert pools["session-keeper"] == "windows-session-pool"
-    assert pools["notify-daily"] == "windows-notify-pool"
+    assert "notify-daily" not in pools
     for name in (
         "dashboard-collection",
         "dashboard-daily-acc",

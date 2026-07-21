@@ -2,13 +2,6 @@ name: auto-notify
 prefect-version: "3.0"
 
 deployments:
-  - name: notify-daily
-    entrypoint: flows/notify_single_flow.py:auto_notify_flow
-    parameters:
-      config_path: config/tasks/爱家亲情网营业厅每日盯控.json
-    work_pool:
-      name: windows-notify-pool
-      work_queue_name: default
   - name: dashboard-collection
     entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
     parameters:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -46,9 +45,6 @@ def build_business_run_incident(
 
 
 def notify_business_run_failure(config: dict, incident: dict, *, sender=send_text) -> dict:
-    if str(config.get("environment") or os.getenv("AUTO_NOTIFY_ENVIRONMENT") or "production").lower() != "development":
-        return {"sent": False, "suppressed": True, "reason": "environment"}
-
     state_path = Path(config["incident_state_path"])
     lock_path = state_path.with_suffix(state_path.suffix + ".lock")
     with file_lock(lock_path, wait_seconds=120, poll_seconds=0.05, stale_seconds=300, lock_label="业务告警锁"):
@@ -58,7 +54,7 @@ def notify_business_run_failure(config: dict, incident: dict, *, sender=send_tex
             return {"sent": False, "suppressed": True, "reason": "duplicate"}
 
         message = (
-            "[Development 业务 Run 失败]\n"
+            "[业务 Run 失败]\n"
             f"业务类型: {_redact(incident['workload_type'])}\n"
             f"业务名称: {_redact(incident['workload_id'])}\n"
             f"失败环节: {_redact(incident['failed_stage'])}\n"
@@ -101,7 +97,6 @@ def report_current_business_run_failure(
     return notify_business_run_failure(
         {
             "webhook_url": sender_config["wecom"]["webhook_url"],
-            "environment": os.getenv("AUTO_NOTIFY_ENVIRONMENT", "production"),
             "incident_state_path": business_alert_state_path(base_dir),
         },
         incident,

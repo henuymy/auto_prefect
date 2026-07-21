@@ -6,6 +6,7 @@ from pathlib import Path
 
 from prefect import flow, get_run_logger
 
+from services.session_business_failure_service import run_with_business_session_reporting
 from tasks.session_tasks import prepare_session_task
 from utils.config_loader import load_json_with_local_override
 
@@ -45,7 +46,13 @@ def run_session_keeper(config_path="config/modules/session_keeper.json"):
 def session_keeper_flow(config_path="config/modules/session_keeper.json"):
     logger = get_run_logger()
     logger.info("检查共享登录会话")
-    result = run_session_keeper(config_path)
+    result = run_with_business_session_reporting(
+        lambda: run_session_keeper(config_path),
+        trigger_source="session-keeper",
+        flow_name="session-keeper-flow",
+        affected_stage="共享会话",
+        recover_on_success=True,
+    )
     confirmation = format_session_health_confirmation(result)
     if confirmation:
         logger.info(confirmation)
