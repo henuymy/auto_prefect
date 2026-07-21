@@ -60,6 +60,28 @@ function Get-RuntimeConfigPositiveInt {
     return [int]$numericValue
 }
 
+function Assert-OptionalRuntimeConfigObject {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Config,
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $value = $Config
+    foreach ($segment in $Path.Split('.')) {
+        $property = $value.PSObject.Properties[$segment]
+        if ($null -eq $property) {
+            return
+        }
+        $value = $property.Value
+    }
+
+    if ($value -isnot [pscustomobject]) {
+        throw "运行配置必须为对象: $Path"
+    }
+}
+
 function Import-RuntimeConfig {
     param(
         [string]$ConfigPath = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "config\runtime.local.json")
@@ -74,6 +96,10 @@ function Import-RuntimeConfig {
     } catch {
         throw "无法解析运行配置 JSON: $ConfigPath。$($_.Exception.Message)"
     }
+
+    Assert-OptionalRuntimeConfigObject -Config $config -Path "dashboard.session_overrides"
+    Assert-OptionalRuntimeConfigObject -Config $config -Path "module_overrides"
+    Assert-OptionalRuntimeConfigObject -Config $config -Path "task_overrides"
 
     $env:AUTO_NOTIFY_PREFECT_DATABASE_URL = Get-RuntimeConfigValue -Config $config -Path "prefect.postgres.url"
     $env:PREFECT_API_URL = Get-RuntimeConfigValue -Config $config -Path "prefect.api_url"

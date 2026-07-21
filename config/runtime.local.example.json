@@ -1,4 +1,12 @@
 {
+  "runtime": {
+    "root": "C:\\AutoNotifyRuntime",
+    "work_pools": {
+      "session": {"name": "windows-session-pool", "limit": 1},
+      "dashboard": {"name": "windows-dashboard-pool", "limit": 4},
+      "notify": {"name": "windows-notify-pool", "limit": 6}
+    }
+  },
   "prefect": {
     "postgres": {
       "url": "postgresql+asyncpg://<user>:<url-encoded-password>@49.233.78.70:5432/prefect_test"
@@ -12,17 +20,38 @@
       "database": "dashboard_v2",
       "user": "<user>",
       "password": "<password>"
+    },
+    "session_overrides": {
+      "collection_database_lock_name": "auto_notify_dashboard_collection_<environment>",
+      "partition_database_lock_name": "auto_notify_dashboard_partition_maintenance_<environment>"
     }
   },
   "monitor": {
     "prefect_webhook_secret": "replace-with-a-long-random-local-secret"
   },
-  "runtime": {
-    "root": "C:\\AutoNotifyRuntime",
-    "work_pools": {
-      "session": {"name": "windows-session-pool", "limit": 1},
-      "dashboard": {"name": "windows-dashboard-pool", "limit": 4},
-      "notify": {"name": "windows-notify-pool", "limit": 6}
+  "module_overrides": {
+    "login_config": {
+      "credentials": {
+        "username": "<username>",
+        "password": "<password>"
+      },
+      "otp_config": {
+        "gotify_url": "<gotify-url>",
+        "client_token": "<token>"
+      }
+    },
+    "tencent_docs": {
+      "credentials": {
+        "client_id": "<client-id>",
+        "access_token": "<token>",
+        "open_id": "<open-id>"
+      }
+    },
+    "wecom_sender": {
+      "wecom": {
+        "webhook_url": "<webhook-url>"
+      }
     }
-  }
+  },
+  "task_overrides": {}
 }
