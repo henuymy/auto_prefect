@@ -283,58 +283,104 @@ Starlette 路由接口不兼容。安装或更新依赖时请使用 `requirement
 
 启动必须由专用 Windows 用户手工执行。该用户需要保持登录和交互式桌面会话；主机重启或用户重新登录后，必须再次执行 `scripts/run.ps1`。Prefect Server 停止后也不会自动恢复，需要人工重新运行启动脚本。
 
-### 迁移到 C 盘并恢复运行栈
+### C 盘完整恢复操作手册
 
-将项目从桌面目录迁移到稳定路径时，推荐重新克隆已验证的发布分支到 `C:\AutoNotify`，并保持运行状态目录 `C:\AutoNotifyRuntime` 不变。不要把仓库放入 `C:\AutoNotifyRuntime`；该目录仅保存 Cookie、锁、日志、Prefect Home 和受管进程登记。
+本节是将已验证的 `release/v1.1.0` 部署到 `C:\AutoNotify` 的完整连续流程。它适用于两类情况：将原桌面目录迁移到 C 盘，或在新 Windows 机器上恢复同一环境。执行过程中只使用 PowerShell，除特别说明外，所有命令均在 `C:\AutoNotify` 运行。
 
-先在旧目录停止运行栈，再克隆发布分支：
+| 阶段 | 会修改的对象 | 完成标志 |
+| --- | --- | --- |
+| 停旧栈与克隆 | 受管进程、C 盘代码目录 | 旧进程停止，新目录位于 `release/v1.1.0` |
+| 私有配置与依赖 | 本机被忽略配置、`node_modules`、运行目录 | `smoke_ok` |
+| 数据库与分区 | 当前环境的驾驶舱 MySQL | Alembic 为 `head`，未来分区完整 |
+| Prefect 重建 | 当前 Prefect API 的 Deployment | YAML 中 19 个 Deployment 均存在 |
+| 统一启动与验收 | Server、三个 Worker、后端和三个前端页面 | `status.ps1` 和 HTTP 健康检查正常 |
+
+这套流程不会把数据库数据、Flow Run 历史、Cookie、Edge Profile 或 `C:\AutoNotifyRuntime` 放入 Git。代码仓库必须位于 `C:\AutoNotify`，运行状态目录固定为 `C:\AutoNotifyRuntime`；不要把仓库克隆到运行状态目录中。
+
+#### 0. 确认环境并停止旧运行栈
+
+先决定本次操作属于开发环境还是生产环境。开发环境只能连接 `prefect_dev` 与 `dashboard_dev`；云电脑生产环境只能连接 `prefect_prod` 与 `dashboard_prod`。二者的 `runtime.local.json`、Cookie、数据库、监控密钥和 MySQL 锁名必须隔离，不能相互复制。
+
+在旧项目目录先停止受管进程。不要手工删除 `C:\AutoNotifyRuntime\processes` 中的登记文件，也不要直接结束未知的 Python、Node 或浏览器进程：
 
 ```powershell
 pwsh -File scripts/stop.ps1
-git clone --branch release/v1.1.0 https://github.com/henuymy/auto_prefect.git C:\AutoNotify
-Set-Location C:\AutoNotify
-git log -1 --oneline
 ```
 
-标准 `git clone` 会保留该分支完整提交历史；远端其他分支可通过 `git fetch origin` 和 `git branch -r` 查看。不会随 Git 克隆的内容包括 `config/runtime.local.json`、`C:\AutoNotifyRuntime`、本地模板、数据库数据和 Flow Run 历史。
+若旧 Worker 仍持有任务，先在 Prefect UI 确认其不再执行关键业务后再停止。普通恢复不要使用 `-ForceRestart`；该选项会取消本项目正在运行的 Flow Run。
 
-在新目录创建本环境的私有运行配置。全新环境从模板创建；同一环境仅变更代码目录时，可在本机安全迁移原有私有文件。开发和生产环境绝不能互相复制该文件，也不能提交它：
+#### 1. 克隆已验证的发布分支
+
+标准克隆会保留该分支的全部提交历史；不会丢失 Git 内容。若需要查看其他远端分支，可在克隆后执行 `git fetch origin` 和 `git branch -r`：
+
+```powershell
+git clone --branch release/v1.1.0 https://github.com/henuymy/auto_prefect.git C:\AutoNotify
+Set-Location C:\AutoNotify
+git branch --show-current
+git log -1 --oneline
+git status --short
+```
+
+预期当前分支为 `release/v1.1.0`，工作区没有受版本控制的改动。`config/runtime.local.json`、本地 Excel 模板、`node_modules`、`C:\AutoNotifyRuntime`、数据库和 Prefect 历史都不随克隆出现，这是正常的安全边界。
+
+#### 2. 创建或安全迁移本机运行配置
+
+全新环境从模板创建私有配置：
 
 ```powershell
 Copy-Item config\runtime.local.example.json config\runtime.local.json
 ```
 
-在 `runtime.local.json` 中填写当前环境的 Prefect PostgreSQL、驾驶舱 MySQL、运行目录、三个 Work Pool、监控密钥和模块凭据。启动前只检查目标数据库名，不输出连接串或密码：
+同一台机器仅更换代码目录时，可以从旧目录迁移该环境自己的私有文件；此操作只允许在同一开发环境内或同一生产环境内进行，绝不能把开发文件带到云电脑生产环境，反之亦然：
+
+```powershell
+Copy-Item '<旧项目根目录>\config\runtime.local.json' .\config\runtime.local.json
+```
+
+编辑 `config\runtime.local.json`，按固定顺序填写：`runtime`、`prefect`、`dashboard`、`monitor`、`module_overrides`、`task_overrides`。其中必须包含运行根目录、三个 Work Pool、Prefect PostgreSQL、驾驶舱 MySQL、环境独有的 `monitor.prefect_webhook_secret` 和本环境模块凭据。不要在命令行、截图、README 或 Git 中输出这些值。
+
+加载配置后，只显示非敏感的目标库名以确认环境：
 
 ```powershell
 . .\scripts\lib\runtime_config.ps1
 Import-ProjectRuntimeConfig | Out-Null
-$env:DASHBOARD_MYSQL_DATABASE
+Write-Host "Dashboard database: $env:DASHBOARD_MYSQL_DATABASE"
 ```
 
-本机开发应使用 `prefect_dev` 与 `dashboard_dev`；云电脑生产环境应使用 `prefect_prod` 与 `dashboard_prod`。`collection_database_lock_name` 和 `partition_database_lock_name` 必须按环境使用不同后缀，例如 `_dev`、`_prod`。
+`collection_database_lock_name` 与 `partition_database_lock_name` 必须在开发、生产之间使用不同后缀，例如 `_dev`、`_prod`；同一环境中的所有机器必须使用同一把锁名。
 
-安装锁定依赖并初始化运行目录。先选择 Node 20.20.1，再执行前端安装；Python 初始化脚本会安装锁定 Python 依赖、创建运行目录并输出 `smoke_ok`：
+#### 3. 安装锁定依赖并初始化运行目录
+
+项目要求 Conda `base` 中的 Python 3.13 和 Node 20.20.1。先安装或切换 Node，再安装前端锁定依赖；然后运行 Python 初始化脚本。脚本会创建 `C:\AutoNotifyRuntime` 所需目录、检查 Edge/Excel，并进行 Python 基础自检：
 
 ```powershell
+conda activate base
 nvm install 20.20.1
 nvm use 20.20.1
+node --version
 npm --prefix frontend ci
 pwsh -File scripts/setup_windows_env.ps1
 ```
 
-若 `nvm use 20.20.1` 报版本未安装，先修复或重新安装该 Node 版本，再执行 `node --version` 和 `npm --prefix frontend ci`；不要把 `node_modules` 纳入 Git。
+预期 `node --version` 为 `v20.20.1`，`npm ci` 按锁文件成功完成，初始化末尾输出 `smoke_ok`。若 `nvm use 20.20.1` 报版本未安装或版本目录缺少 `node.exe`，先修复或重新安装该 Node 版本，再执行 `npm ci`；不要通过提交 `frontend/node_modules` 绕过问题。若 Python 镜像返回 `HTTP 403`，可按“安装”章节临时使用官方 PyPI。
 
-然后执行驾驶舱 MySQL 迁移。`current` 为只读检查，`upgrade head` 只执行尚未应用的 Alembic 迁移，可重复运行：
+`setup_windows_env.ps1` 与 `run.ps1` 共享机器级互斥锁，禁止并发执行。初始化失败时，不能继续数据库迁移或启动 Worker。
+
+#### 4. 迁移驾驶舱数据库并维护未来分区
+
+确认目标数据库正确后，先读取当前 Alembic 版本，再执行幂等升级。生产库操作前必须已有可用备份；不要用开发库数据覆盖生产库：
 
 ```powershell
 . .\scripts\lib\runtime_config.ps1
 Import-ProjectRuntimeConfig | Out-Null
 python -m alembic -c .\alembic_dashboard_v2.ini current
 python -m alembic -c .\alembic_dashboard_v2.ini upgrade head
+python -m alembic -c .\alembic_dashboard_v2.ini current
 ```
 
-数据库版本到达 `head` 后仍需准备未来日期分区。尤其当 `/api/health` 返回 `503`，且 `dashboard_schema` 显示 `missing_snapshot_partitions` 时，加载运行配置后执行一次分区维护：
+预期最后一条显示当前版本为 `head`。这条命令只处理项目自有的驾驶舱 MySQL 结构；Prefect PostgreSQL 结构由 Prefect Server 自己维护。
+
+Alembic 到达 `head` 不代表驾驶舱可用。系统要求提前创建未来日期的 `metric_snapshot` 分区。首次部署、长期停机恢复，或后端 `/api/health` 返回 `503` 且响应中 `dashboard_schema.missing_snapshot_partitions` 非空时，执行一次独立分区维护：
 
 ```powershell
 . .\scripts\lib\runtime_config.ps1
@@ -342,39 +388,80 @@ Import-ProjectRuntimeConfig | Out-Null
 python flows/dashboard_partition_maintenance_flow.py
 ```
 
-该 Flow 只维护驾驶舱分区和留存策略；目标必须是已核对的当前环境数据库。维护完成后，`/api/health` 应显示 `dashboard_schema.ok: true`。
+该 Flow 只创建缺失分区、清理过期数据并回收陈旧运行引用，不采集报表或发送通报。若出现 MySQL `1205 Lock wait timeout exceeded`，说明采集或其他事务正在占用锁；优先等待其结束，必要时先停止 Worker，再重新执行维护，不要终止未知数据库连接。
 
-首次恢复或更换代码目录时，必须从新目录重新发布 `prefect.yaml` 中的全部 19 个 Deployment。先仅启动 Prefect Server，等待 API 健康检查成功后发布；完成发布后停止这个引导 Server，由统一启动脚本接管：
+#### 5. 从 YAML 重建 Prefect Deployment
+
+`prefect.yaml` 是当前 19 个 Deployment 的声明来源，包含 Session Keeper、5 个驾驶舱任务和 13 个通报任务。每次更换项目目录后都必须从新目录发布，保证 Flow 入口和相对 `config_path` 指向 `C:\AutoNotify`。
+
+先只启动 Prefect Server，等待 API 返回 200：
 
 ```powershell
 pwsh -File scripts/lib/prefect_start.ps1 -Mode server -Detached
 Invoke-WebRequest -Uri http://127.0.0.1:4200/api/health -UseBasicParsing
+```
+
+常规目录迁移不需要删除已有 Deployment，直接重新发布即可。只有在确认当前 `PREFECT_API_URL` 不包含任何其他项目，并且需要彻底重建 Deployment 元数据时，才按下面的完整重建流程执行；`--all` 会删除该 API 的所有 Deployment，不能撤销：
+
+```powershell
+. .\scripts\lib\runtime_config.ps1
+Import-ProjectRuntimeConfig | Out-Null
+python -m prefect deployment ls
+python -m prefect deployment delete --all --no-prompt
+python -m prefect deployment ls
+```
+
+发布全部 YAML 声明并核对清单：
+
+```powershell
 . .\scripts\lib\runtime_config.ps1
 Import-ProjectRuntimeConfig | Out-Null
 python -X utf8 -m prefect deploy --all
+python -m prefect deployment ls
+```
+
+预期远端有 19 个 Deployment，Pool 分别为 `windows-session-pool`、`windows-dashboard-pool`、`windows-notify-pool`。YAML 是 Cron、`Asia/Shanghai` 时区和 `schedules[].active` 状态的唯一来源；发布不会绕过暂停状态，也不会立即发送所有通报。
+
+发布结束后关闭仅用于引导的 Server，让下一步的统一启动脚本重新接管受管进程：
+
+```powershell
 pwsh -File scripts/stop.ps1
 ```
 
-发布命令会使用新目录的 Flow 入口和相对 `config_path` 创建或更新 19 个 Deployment。YAML 中的 Cron、`Asia/Shanghai` 时区和 `schedules[].active` 状态是唯一准则；发布不等于立即发送通报。
+#### 6. 统一启动完整运行栈
 
-最后由统一入口启动完整运行栈并验收：
+不要分别手工启动 Worker、后端或 Vite 页面。统一入口会校验 PostgreSQL 与 MySQL、启动 Prefect Server、创建或校正三个 Process Work Pool、清理过期队列、启动三个 Worker 和四个 Web 进程：
 
 ```powershell
 pwsh -File scripts/run.ps1
 pwsh -File scripts/status.ps1
 ```
 
-`run.ps1` 会依次验证 PostgreSQL 与 MySQL、启动 Prefect Server、建立或校正三个 Work Pool、启动三个 Worker 和 Web 服务，并提交一次 Session Keeper 检查。验收时应确认 Prefect API、后端健康检查、配置中心、驾驶舱和运行监控中心均返回 `200`；首次 Session Keeper Run 应最终为 `Completed`：
+`run.ps1` 会提交一次 `session-keeper-flow/session-keeper` 检查，但不会等待它结束。它不会自动执行全部通报；通报是否排队由 YAML 中各 Deployment 的 Cron 和 `active` 状态决定。若普通启动发现已登记的旧 Worker，先执行 `scripts/stop.ps1`，不要为绕过这一保护直接使用 `-ForceRestart`。
+
+#### 7. 启动后验收和故障分流
+
+`status.ps1` 应显示 Prefect Server、Session/Dashboard/Notify Worker、后端、配置中心、驾驶舱和监控中心均为运行状态；三个 Pool 应各有一个在线 Worker。再逐个检查 HTTP 入口：
 
 ```powershell
+Invoke-WebRequest -Uri http://127.0.0.1:4200/api/health -UseBasicParsing
 Invoke-WebRequest -Uri http://127.0.0.1:8000/api/health -UseBasicParsing
 Invoke-WebRequest -Uri http://127.0.0.1:5173/ -UseBasicParsing
 Invoke-WebRequest -Uri http://127.0.0.1:5174/ -UseBasicParsing
 Invoke-WebRequest -Uri http://127.0.0.1:5175/ -UseBasicParsing
 python -m prefect deployment ls
+python -m prefect flow-run ls --flow-name session-keeper-flow --limit 1
 ```
 
-若 `status.ps1` 显示已登记的旧 Worker，先运行 `pwsh -File scripts/stop.ps1` 再正常启动；除非已确认所有运行中任务可中断，否则不要使用 `scripts/run.ps1 -ForceRestart`。
+验收标准如下：
+
+- Prefect API、后端健康检查、5173 配置中心、5174 驾驶舱和 5175 运行监控中心均返回 `200`。
+- `/api/health` 的顶层 `ok` 为 `true`，`dashboard_schema` 版本为 `head`，且没有缺失分区。
+- 首次 Session Keeper Flow 最终为 `Completed`；登录锁在运行结束后释放。
+- Prefect 中有 19 个 Deployment，名称、Pool、Cron、时区和暂停状态与 `prefect.yaml` 一致。
+- 运行监控中心可打开，但其“上游事件”和“最近对账”只有在符合过滤条件的通报运行后才会更新；页面 WebSocket 已连接不等于 Prefect Webhook 已成功投递。
+
+常见故障按以下顺序处理：Node 版本无法切换时先修复 NVM；`/api/health` 为 503 且仅缺分区时运行分区维护；Worker 提示旧路径时在 C 盘目录重新执行 `prefect deploy --all`；旧 Worker 或活动 Run 阻止启动时先在 Prefect UI 核对真实状态，再停止或按批准范围取消。任何情况下都不要提交 `runtime.local.json`、Cookie、数据库密码、Webhook、Token 或证书。
 
 标准操作顺序：
 
