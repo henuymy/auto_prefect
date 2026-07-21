@@ -27,8 +27,8 @@
 
 ## Deployment 管理原则
 
-- `prefect deploy --all` 只会创建或更新 `prefect.yaml` 中声明的 Deployment。
-- 删除远端 Deployment 前必须导出或记录清单。未写入 `prefect.yaml` 的动态 Notify Deployment 被删除后不会自动恢复。
+- `prefect deploy --all` 会创建或更新 `prefect.yaml` 中声明的全部 19 个 Deployment，包含当前通报任务。
+- 删除远端 Deployment 前必须导出或记录清单。新增通报或调整 Cron 后必须同步更新 `prefect.yaml`，否则环境重建时不会恢复该变更。
 - 生产目录、机器账户或 Worktree 变化后，应重新发布受影响的 Deployment，避免 Worker 使用已失效的保存路径。
 - `scripts/run.ps1` 负责启动和队列保护，不负责自动发布或删除 Deployment。
 

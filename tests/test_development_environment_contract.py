@@ -506,7 +506,7 @@ def test_prefect_deploys_one_all_stage_session_keeper():
                 {
                     "cron": "*/10 * * * *",
                     "timezone": "Asia/Shanghai",
-                    "active": True,
+                    "active": False,
                 }
             ],
             "work_pool": {

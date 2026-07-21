@@ -12,7 +12,7 @@ deployments:
     schedules:
       - cron: "*/5 * * * *"
         timezone: Asia/Shanghai
-        active: true
+        active: false
     work_pool:
       name: windows-dashboard-pool
       work_queue_name: default
@@ -69,7 +69,158 @@ deployments:
     schedules:
       - cron: "*/10 * * * *"
         timezone: Asia/Shanghai
-        active: true
+        active: false
     work_pool:
       name: windows-session-pool
+      work_queue_name: default
+  - name: notify-PK赛通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/PK赛通报.json
+    schedules:
+      - cron: "0 9-13 * * *"
+        timezone: Asia/Shanghai
+        active: false
+      - cron: "0,30 14-15 * * *"
+        timezone: Asia/Shanghai
+        active: false
+      - cron: "*/10 16 * * *"
+        timezone: Asia/Shanghai
+        active: false
+      - cron: "0,30 17-18 * * *"
+        timezone: Asia/Shanghai
+        active: false
+      - cron: "0 19 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-升档市公司通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/升档市公司通报.json
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-家客和存量通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/家客和存量通报.json
+    schedules:
+      - cron: "0 11,15,17,18 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-日常进度
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/日常进度.json
+    schedules:
+      - cron: "0 9-13 * * *"
+        timezone: Asia/Shanghai
+        active: false
+      - cron: "0,30 14-15 * * *"
+        timezone: Asia/Shanghai
+        active: false
+      - cron: "*/10 16 * * *"
+        timezone: Asia/Shanghai
+        active: false
+      - cron: "0,30 17-18 * * *"
+        timezone: Asia/Shanghai
+        active: false
+      - cron: "0 19 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-流量市公司通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/流量市公司通报.json
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-爱家亲情网区公司通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/爱家亲情网区公司通报.json
+    schedules:
+      - cron: "0 16 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-爱家亲情网市公司通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/爱家亲情网市公司通报.json
+    schedules:
+      - cron: "0 14 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-爱家亲情网每日盯控
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/爱家亲情网每日盯控.json
+    schedules:
+      - cron: "0 9-18 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-爱家亲情网每日盯控-网格-渠道经理
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/爱家亲情网每日盯控-网格-渠道经理.json
+    schedules:
+      - cron: "0 9-18 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-爱家亲情网营业厅每日盯控
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/爱家亲情网营业厅每日盯控.json
+    schedules:
+      - cron: "0 9-18 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-离网市公司通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/离网市公司通报.json
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-网格区公司PK赛通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/网格区公司PK赛通报.json
+    schedules:
+      - cron: "23 9-19 * * *"
+        timezone: Asia/Shanghai
+        active: false
+    work_pool:
+      name: windows-notify-pool
+      work_queue_name: default
+  - name: notify-降档市公司通报
+    entrypoint: flows/notify_single_flow.py:auto_notify_flow
+    parameters:
+      config_path: config/tasks/降档市公司通报.json
+    work_pool:
+      name: windows-notify-pool
       work_queue_name: default

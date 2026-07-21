@@ -36,7 +36,7 @@ Prefect Flow
 └── templates/        # 本地业务模板，不纳入版本控制
 ```
 
-运行时 Cookie、会话、日志和临时报表位于 `C:\AutoNotifyRuntime`，不要提交、公开或随意清空。自动通报 Deployment 由前端“发布到调度”按钮直接发布到 Prefect，不使用独立 `deployments/` 文件。
+运行时 Cookie、会话、日志和临时报表位于 `C:\AutoNotifyRuntime`，不要提交、公开或随意清空。当前 19 个系统和通报 Deployment 统一声明在 `prefect.yaml`；前端新增或调整通报调度后，必须同步更新该文件，避免环境重建时遗漏调度。
 
 ## 环境要求
 
@@ -396,7 +396,7 @@ frontend/src/dashboard-main.tsx               数据驾驶舱前端
 python -X utf8 -m prefect deploy --all
 ```
 
-执行前必须确保当前环境已加载 `config/runtime.local.json` 对应的 Prefect API 配置。UTF-8 模式可避免 Windows 默认 GBK 编码读取包含中文的 `prefect.yaml` 时发生解码失败。Deployment 会保存发布时的代码加载路径；迁移电脑或项目目录后必须在新目录重新发布，否则 Worker 可能继续访问旧路径并报 `WinError 3`。该命令只创建或更新 `prefect.yaml` 中声明的 Deployment，不会恢复已经删除且未在该文件中声明的动态 Deployment。
+执行前必须确保当前环境已加载 `config/runtime.local.json` 对应的 Prefect API 配置。UTF-8 模式可避免 Windows 默认 GBK 编码读取包含中文的 `prefect.yaml` 时发生解码失败。Deployment 会保存发布时的代码加载路径；迁移电脑或项目目录后必须在新目录重新发布，否则 Worker 可能继续访问旧路径并报 `WinError 3`。该命令会创建或更新 `prefect.yaml` 中声明的全部 19 个 Deployment；新增通报或调整 Cron 后，也必须先同步更新 YAML。
 
 ## 数据库迁移
 
