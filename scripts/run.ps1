@@ -4,6 +4,7 @@ param(
     [int]$BackendPort = 8000,
     [int]$FrontendPort = 5173,
     [int]$DashboardPort = 5174,
+    [int]$MonitorPort = 5175,
     [switch]$ForceRestart,
     [switch]$UseSqliteDebug,
     [switch]$SkipWeb
@@ -145,7 +146,7 @@ function Assert-ManagedPrefectWorkersAvailable {
 }
 
 if ($ForceRestart) {
-    & (Join-Path $PSScriptRoot "stop.ps1") -BackendPort $BackendPort -FrontendPort $FrontendPort -DashboardPort $DashboardPort
+    & (Join-Path $PSScriptRoot "stop.ps1") -BackendPort $BackendPort -FrontendPort $FrontendPort -DashboardPort $DashboardPort -MonitorPort $MonitorPort
 }
 
 Assert-ManagedPrefectWorkersAvailable
@@ -257,6 +258,7 @@ if (-not $SkipWeb) {
         -BackendPort $BackendPort `
         -FrontendPort $FrontendPort `
         -DashboardPort $DashboardPort `
+        -MonitorPort $MonitorPort `
         -PrefectApiUrl $ApiUrl
 }
 

@@ -1,9 +1,10 @@
 param(
-    [ValidateSet("backend", "frontend", "dashboard", "both")]
+    [ValidateSet("backend", "frontend", "dashboard", "monitor", "both")]
     [string]$Mode = "both",
     [int]$BackendPort = 8000,
     [int]$FrontendPort = 5173,
     [int]$DashboardPort = 5174,
+    [int]$MonitorPort = 5175,
     [string]$PrefectApiUrl = ""
 )
 
@@ -51,6 +52,12 @@ function Start-Dashboard {
     npm run dashboard -- --host 127.0.0.1 --port $DashboardPort
 }
 
+function Start-Monitor {
+    Set-Location (Join-Path $RepoRoot "frontend")
+    $env:VITE_API_BASE = ""
+    npm run monitor -- --host 127.0.0.1 --port $MonitorPort
+}
+
 function Start-ManagedWebProcess {
     param(
         [string]$Name,
@@ -79,12 +86,14 @@ switch ($Mode) {
     "backend" { Start-Backend }
     "frontend" { Start-Frontend }
     "dashboard" { Start-Dashboard }
+    "monitor" { Start-Monitor }
     "both" {
         $reloadArgs = "--reload-dir backend --reload-dir services --reload-dir models --reload-dir infrastructure --reload-dir utils --reload-dir flows --reload-dir tasks"
         $backendCommand = "cd '$RepoRoot'; `$env:PYTHONUTF8='1'; `$env:PYTHONIOENCODING='utf-8'; `$env:PREFECT_API_URL='$PrefectApiUrl'; & '$PythonExe' -m uvicorn backend.app:app --reload $reloadArgs --host 127.0.0.1 --port $BackendPort"
         $frontendDir = Join-Path $RepoRoot "frontend"
         $frontendCommand = "cd '$frontendDir'; npm run dev -- --host 127.0.0.1 --port $FrontendPort"
         $dashboardCommand = "cd '$frontendDir'; npm run dashboard -- --host 127.0.0.1 --port $DashboardPort"
+        $monitorCommand = "cd '$frontendDir'; npm run monitor -- --host 127.0.0.1 --port $MonitorPort"
 
         Start-ManagedWebProcess `
             -Name "web-backend" `
@@ -98,10 +107,15 @@ switch ($Mode) {
             -Name "web-dashboard" `
             -Command $dashboardCommand `
             -RegisteredCommand "npm run dashboard -- --host 127.0.0.1 --port $DashboardPort"
-        Write-Host "已启动后端、配置中心和数据驾驶舱窗口。"
+        Start-ManagedWebProcess `
+            -Name "web-monitor" `
+            -Command $monitorCommand `
+            -RegisteredCommand "npm run monitor -- --host 127.0.0.1 --port $MonitorPort"
+        Write-Host "已启动后端、配置中心、数据驾驶舱和运行监控中心窗口。"
         Write-Host "后端: http://127.0.0.1:$BackendPort/api/health"
         Write-Host "配置中心: http://127.0.0.1:$FrontendPort"
         Write-Host "数据驾驶舱: http://127.0.0.1:$DashboardPort"
+        Write-Host "运行监控中心: http://127.0.0.1:$MonitorPort"
         Write-Host "Prefect API: $PrefectApiUrl"
     }
 }

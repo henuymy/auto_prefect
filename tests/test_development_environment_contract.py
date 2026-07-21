@@ -924,6 +924,35 @@ def test_frontend_servers_use_separate_ports_for_config_center_and_dashboard():
     assert "http://127.0.0.1:$DashboardPort" in status
 
 
+def test_monitor_server_is_managed_on_port_5175():
+    package = (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
+    run = (ROOT / "scripts" / "run.ps1").read_text(encoding="utf-8")
+    start_web = (ROOT / "scripts" / "lib" / "start_web.ps1").read_text(
+        encoding="utf-8"
+    )
+    stop = (ROOT / "scripts" / "stop.ps1").read_text(encoding="utf-8")
+    status = (ROOT / "scripts" / "status.ps1").read_text(encoding="utf-8")
+
+    assert '"monitor": "vite --mode monitor --host 127.0.0.1 --port 5175"' in package
+    assert "[int]$MonitorPort = 5175" in run
+    assert "[int]$MonitorPort = 5175" in start_web
+    assert "npm run monitor -- --host 127.0.0.1 --port $MonitorPort" in start_web
+    assert '"web-monitor"' in start_web
+    assert '"web-monitor"' in stop
+    assert '"web-monitor"' in status
+    assert "http://127.0.0.1:$MonitorPort" in status
+    assert "-MonitorPort $MonitorPort" in run
+
+
+def test_monitor_vite_mode_serves_the_monitor_entry_at_root():
+    vite_config = (ROOT / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
+
+    assert 'mode === "monitor"' in vite_config
+    assert 'enforce: "pre"' in vite_config
+    assert 'req.url = "/monitor.html"' in vite_config
+    assert '"/monitor.html"' in vite_config
+
+
 def test_vite_modes_block_the_other_frontend_entry_point():
     package = (ROOT / "frontend" / "package.json").read_text(encoding="utf-8")
     vite_config = (ROOT / "frontend" / "vite.config.ts").read_text(encoding="utf-8")

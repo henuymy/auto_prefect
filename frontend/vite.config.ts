@@ -4,8 +4,13 @@ import path from "node:path";
 
 export default defineConfig(({ mode }) => {
   const isDashboard = mode === "dashboard";
+  const isMonitor = mode === "monitor";
   const blockedPaths = new Set(
-    isDashboard ? ["/index.html"] : ["/dashboard.html"],
+    isDashboard
+      ? ["/index.html"]
+      : isMonitor
+        ? ["/index.html", "/dashboard.html"]
+        : ["/dashboard.html"],
   );
 
   return {
@@ -13,11 +18,18 @@ export default defineConfig(({ mode }) => {
     react(),
     {
       name: "separate-frontend-entry-points",
+      enforce: "pre",
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
           if (isDashboard && pathname === "/") {
             req.url = "/dashboard.html";
+            next();
+            return;
+          }
+
+          if (isMonitor && pathname === "/") {
+            req.url = "/monitor.html";
             next();
             return;
           }
