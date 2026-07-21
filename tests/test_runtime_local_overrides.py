@@ -216,3 +216,7 @@ def test_runtime_import_rejects_non_object_override_section(tmp_path: Path) -> N
 
     assert result.returncode != 0
     assert "运行配置必须为对象: module_overrides" in result.stdout + result.stderr
+
+
+def test_legacy_sidecar_loader_is_not_available() -> None:
+    assert not hasattr(config_loader, "load_json_with_local_override")

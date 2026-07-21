@@ -14,7 +14,7 @@ from urllib.parse import quote, urlparse
 import requests
 from openpyxl import Workbook
 
-from utils.config_loader import load_json_with_local_override
+from utils.config_loader import load_json_with_runtime_override
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -57,7 +57,7 @@ def resolve_path(value: str | Path | None, base_dir: Path = PROJECT_DIR) -> Path
 
 def load_tencent_docs_config(config_path: str | Path | None = None, base_dir: Path = PROJECT_DIR) -> dict[str, Any]:
     path = resolve_path(config_path, base_dir=base_dir)
-    payload, _ = load_json_with_local_override(path)
+    payload, _ = load_json_with_runtime_override(path)
     return payload
 
 
@@ -76,7 +76,10 @@ def load_credentials(config: dict[str, Any]) -> TencentDocsCredentials:
         if not value
     ]
     if missing:
-        raise ValueError(f"腾讯文档凭据缺少字段: {missing}，请检查 config/modules/tencent_docs.local.json")
+        raise ValueError(
+            f"腾讯文档凭据缺少字段: {missing}，请检查 "
+            "config/runtime.local.json 的 module_overrides.tencent_docs"
+        )
     return TencentDocsCredentials(client_id=client_id, access_token=access_token, open_id=open_id)
 
 

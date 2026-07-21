@@ -25,7 +25,7 @@ from services.browser_session import (
 )
 from services.runtime_paths import runtime_path
 from services.session_manager import format_probe_validation_error, validate_existing_session
-from utils.config_loader import load_json_with_local_override
+from utils.config_loader import load_json_with_runtime_override
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -64,7 +64,7 @@ class AutoLogin:
             self.config = copy.deepcopy(config)
         else:
             self.config_path = Path(config_path).resolve() if config_path else PROJECT_DIR / "config/modules/login_config.json"
-            self.config, _ = load_json_with_local_override(self.config_path)
+            self.config, _ = load_json_with_runtime_override(self.config_path)
         self.driver = None
         self.pending_otp_message_id = None
         self.otp_wait_context = None
@@ -1043,7 +1043,7 @@ class AutoLogin:
         source_path = Path(source_path)
         if not source_path.is_absolute():
             source_path = PROJECT_DIR / source_path
-        session_config, _ = load_json_with_local_override(source_path)
+        session_config, _ = load_json_with_runtime_override(source_path)
         required_stages = (
             self.requested_session_stages()
             or validation_config.get("required_stages")

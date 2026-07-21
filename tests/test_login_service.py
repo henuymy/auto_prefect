@@ -94,7 +94,7 @@ def test_login_source_does_not_print_actual_username():
 def test_auto_login_accepts_in_memory_config_without_reading_disk(monkeypatch):
     monkeypatch.setattr(
         login_service,
-        "load_json_with_local_override",
+        "load_json_with_runtime_override",
         lambda path: (_ for _ in ()).throw(AssertionError(f"unexpected read: {path}")),
     )
     config = {

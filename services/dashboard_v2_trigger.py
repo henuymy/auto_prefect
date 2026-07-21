@@ -22,7 +22,7 @@ from services.dashboard_failure_report import (
 from services.runtime_paths import is_runtime_relative_path, resolve_runtime_relative_path
 from services.session_broker import StageSessionBroker
 from services.session_manager import file_lock, prepare_session
-from utils.config_loader import load_json_with_local_override
+from utils.config_loader import load_json_with_runtime_override
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -70,7 +70,7 @@ def sanitize_error(value: object, limit: int = 2000) -> str:
 
 def load_dashboard_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> tuple[dict[str, Any], Path]:
     resolved = resolve_project_path(config_path)
-    dashboard_config, _ = load_json_with_local_override(resolved)
+    dashboard_config, _ = load_json_with_runtime_override(resolved)
     if dashboard_config.get("schema_version") != 2:
         raise ValueError("dashboard schema_version 只支持 2")
     return dashboard_config, resolved

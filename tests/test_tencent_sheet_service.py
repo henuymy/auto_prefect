@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import pytest
 import requests
 from openpyxl import load_workbook
 
@@ -11,6 +12,7 @@ from services.tencent_sheet_service import (
     cell_to_value,
     download_tencent_sheet_report,
     extract_encoded_id,
+    load_credentials,
     parse_api_json,
     resolve_sheet_range,
     sheet_id_from_doc_url,
@@ -34,6 +36,11 @@ def make_response_with_status(status_code, payload):
     response = make_response(payload)
     response.status_code = status_code
     return response
+
+
+def test_missing_credentials_refer_to_runtime_local_override() -> None:
+    with pytest.raises(ValueError, match=r"module_overrides\.tencent_docs"):
+        load_credentials({"credentials": {}})
 
 
 def test_parse_api_json_excludes_response_body_from_errors():
@@ -140,21 +147,14 @@ def test_download_tencent_sheet_report_writes_workbook():
     work_dir = make_work_dir()
     try:
         config_path = work_dir / "tencent_docs.json"
-        local_path = work_dir / "tencent_docs.local.json"
         write_json(
             config_path,
             {
-                "credentials": {"client_id": "", "access_token": "", "open_id": ""},
+                "credentials": {"client_id": "cid", "access_token": "token", "open_id": "openid"},
                 "request_timeout_seconds": 10,
                 "chunk_request_interval_seconds": 0,
                 "retry": {"attempts": 1, "backoff_seconds": 0, "max_backoff_seconds": 0},
                 "read_limits": {"max_rows_per_request": 1000, "max_columns_per_request": 200, "max_cells_per_request": 10000},
-            },
-        )
-        write_json(
-            local_path,
-            {
-                "credentials": {"client_id": "cid", "access_token": "token", "open_id": "openid"},
             },
         )
         calls = []

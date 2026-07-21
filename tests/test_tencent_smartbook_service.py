@@ -37,15 +37,11 @@ def write_tencent_config(work_dir):
     write_json(
         config_path,
         {
-            "credentials": {"client_id": "", "access_token": "", "open_id": ""},
+            "credentials": {"client_id": "cid", "access_token": "token", "open_id": "openid"},
             "request_timeout_seconds": 10,
             "retry": {"attempts": 1, "backoff_seconds": 0, "max_backoff_seconds": 0},
             "smartbook_read_limits": {"page_size": 1},
         },
-    )
-    write_json(
-        work_dir / "tencent_docs.local.json",
-        {"credentials": {"client_id": "cid", "access_token": "token", "open_id": "openid"}},
     )
     return config_path
 

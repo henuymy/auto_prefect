@@ -20,23 +20,6 @@ def deep_merge(base, override):
     return result
 
 
-def local_override_path(path):
-    resolved = Path(path)
-    return resolved.with_name(f"{resolved.stem}.local{resolved.suffix}")
-
-
-def load_json_with_local_override(path):
-    resolved = Path(path).resolve()
-    with resolved.open("r", encoding="utf-8") as f:
-        payload = json.load(f)
-
-    local_path = local_override_path(resolved)
-    if local_path.exists():
-        with local_path.open("r", encoding="utf-8") as f:
-            payload = deep_merge(payload, json.load(f))
-    return payload, resolved
-
-
 def _read_json_object(path):
     with Path(path).open("r", encoding="utf-8") as f:
         payload = json.load(f)

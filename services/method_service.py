@@ -670,7 +670,7 @@ def download_reports(config, base_dir=PROJECT_DIR, dry_run=False, debug=False):
                     payload["request_summary"] = {
                         "source": source,
                         "sheet_count": len(report.get("sheets") or []),
-                        "credential_source": "config/modules/tencent_docs.local.json",
+                        "credential_source": "config/runtime.local.json:module_overrides.tencent_docs",
                     }
                 results.append(payload)
                 continue

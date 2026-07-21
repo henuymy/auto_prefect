@@ -8,7 +8,7 @@ from prefect import flow, get_run_logger
 
 from services.session_business_failure_service import run_with_business_session_reporting
 from tasks.session_tasks import prepare_session_task
-from utils.config_loader import load_json_with_local_override
+from utils.config_loader import load_json_with_runtime_override
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,8 +23,8 @@ def format_session_health_confirmation(result):
 
 
 def load_keeper_config(config_path, base_dir=PROJECT_ROOT):
-    keeper_config, resolved = load_json_with_local_override(base_dir / config_path)
-    session_config, _ = load_json_with_local_override(
+    keeper_config, resolved = load_json_with_runtime_override(base_dir / config_path)
+    session_config, _ = load_json_with_runtime_override(
         base_dir / keeper_config["autologin_config_path"]
     )
     session_config["required_stages"] = keeper_config["required_stages"]

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from services import dashboard_v2_trigger
+from utils import config_loader
 
 
 def test_resolve_project_path_rebases_logical_runtime_paths(monkeypatch, tmp_path):
@@ -163,15 +164,21 @@ def test_load_dashboard_config_rejects_non_v2_schema(tmp_path):
         dashboard_v2_trigger.load_dashboard_config(config_path)
 
 
-def test_load_dashboard_config_merges_local_environment_lock_overrides(tmp_path):
-    config_path, _, _ = make_configs(tmp_path)
+def test_load_dashboard_config_merges_runtime_session_overrides(monkeypatch, tmp_path):
+    project_root = tmp_path / "project"
+    config_path, _, _ = make_configs(project_root / "config" / "dashboard")
     write_json(
-        config_path.with_name("session.local.json"),
+        project_root / "config" / "runtime.local.json",
         {
-            "collection_database_lock_name": "auto_notify_dashboard_collection_dev",
-            "partition_database_lock_name": "auto_notify_dashboard_partition_maintenance_dev",
+            "dashboard": {
+                "session_overrides": {
+                    "collection_database_lock_name": "auto_notify_dashboard_collection_dev",
+                    "partition_database_lock_name": "auto_notify_dashboard_partition_maintenance_dev",
+                }
+            }
         },
     )
+    monkeypatch.setattr(config_loader, "PROJECT_ROOT", project_root)
 
     config, resolved = dashboard_v2_trigger.load_dashboard_config(config_path)
 

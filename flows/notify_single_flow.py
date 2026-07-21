@@ -32,7 +32,7 @@ from services.runtime_paths import (
     runtime_root,
     validate_runtime_relative_path,
 )
-from utils.config_loader import load_json_with_local_override
+from utils.config_loader import load_json_with_runtime_override
 from utils.date_placeholders import resolve_dynamic_placeholders, resolve_dynamic_structure  # noqa: F401
 
 try:
@@ -141,7 +141,7 @@ def resolve_project_path(path):
 
 def read_json(path):
     resolved = resolve_project_path(path)
-    payload, _ = load_json_with_local_override(resolved)
+    payload, _ = load_json_with_runtime_override(resolved)
     return payload
 
 

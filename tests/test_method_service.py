@@ -468,6 +468,10 @@ def test_download_reports_tencent_sheet_dry_run_does_not_require_cookie_dump():
         assert manifest["dry_run"] is True
         assert manifest["results"][0]["source"] == "tencent_sheet"
         assert manifest["results"][0]["request_summary"]["sheet_count"] == 1
+        assert (
+            manifest["results"][0]["request_summary"]["credential_source"]
+            == "config/runtime.local.json:module_overrides.tencent_docs"
+        )
         assert manifest_path.exists()
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

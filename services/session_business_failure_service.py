@@ -20,7 +20,7 @@ from services.session_manager import (
     summarize_login_failure,
 )
 from services.session_retry_service import is_session_expired_error
-from utils.config_loader import load_json_with_local_override
+from utils.config_loader import load_json_with_runtime_override
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -96,8 +96,8 @@ def report_business_session_failure(
     base_dir=PROJECT_DIR,
     keeper_config_path=DEFAULT_KEEPER_CONFIG_PATH,
 ):
-    keeper, _ = load_json_with_local_override(base_dir / keeper_config_path)
-    alert_source, _ = load_json_with_local_override(base_dir / keeper["alert_config_path"])
+    keeper, _ = load_json_with_runtime_override(base_dir / keeper_config_path)
+    alert_source, _ = load_json_with_runtime_override(base_dir / keeper["alert_config_path"])
     alert_config = {
         "webhook_url": alert_source["wecom"]["webhook_url"],
         "incident_state_path": keeper["incident_state_path"],
@@ -132,8 +132,8 @@ def report_business_session_recovery(
     base_dir=PROJECT_DIR,
     keeper_config_path=DEFAULT_KEEPER_CONFIG_PATH,
 ):
-    keeper, _ = load_json_with_local_override(base_dir / keeper_config_path)
-    alert_source, _ = load_json_with_local_override(base_dir / keeper["alert_config_path"])
+    keeper, _ = load_json_with_runtime_override(base_dir / keeper_config_path)
+    alert_source, _ = load_json_with_runtime_override(base_dir / keeper["alert_config_path"])
     return recover_business_session_incidents(
         {
             "webhook_url": alert_source["wecom"]["webhook_url"],

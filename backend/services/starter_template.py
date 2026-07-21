@@ -12,7 +12,7 @@ from openpyxl import Workbook, load_workbook
 from services.method_service import download_reports
 from services.runtime_paths import display_path, runtime_path
 from services.session_broker import StageSessionBroker
-from utils.config_loader import load_json_with_local_override
+from utils.config_loader import load_json_with_runtime_override
 from utils.date_placeholders import resolve_dynamic_structure
 
 
@@ -30,7 +30,7 @@ def _safe_name(value: str) -> str:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    payload, _ = load_json_with_local_override(path)
+    payload, _ = load_json_with_runtime_override(path)
     return payload
 
 

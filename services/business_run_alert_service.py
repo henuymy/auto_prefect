@@ -12,7 +12,7 @@ from prefect.runtime import flow_run
 from services.runtime_paths import runtime_path
 from services.session_alert_service import _redact, _require_send_success
 from services.session_manager import file_lock
-from utils.config_loader import load_json_with_local_override
+from utils.config_loader import load_json_with_runtime_override
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -83,8 +83,8 @@ def report_current_business_run_failure(
     failed_stage: str,
     base_dir: Path = PROJECT_DIR,
 ) -> dict:
-    keeper, _ = load_json_with_local_override(base_dir / "config/modules/session_keeper.json")
-    sender_config, _ = load_json_with_local_override(base_dir / keeper["alert_config_path"])
+    keeper, _ = load_json_with_runtime_override(base_dir / "config/modules/session_keeper.json")
+    sender_config, _ = load_json_with_runtime_override(base_dir / keeper["alert_config_path"])
     incident = build_business_run_incident(
         exc,
         workload_type=workload_type,
