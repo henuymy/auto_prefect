@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  ArrowLeftRight,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
@@ -193,7 +194,8 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
 
       <section className="record-panel monitor-panel" aria-label="运行记录">
         <div className="panel-title record-title"><div><h2>运行记录 <span>· {hasFilters ? "筛选结果" : "全部运行记录"}</span></h2><p>{hasFilters ? "已应用筛选条件" : "最近 30 天"} · 共 {filteredRuns.length} 次</p></div><div className="record-header-actions"><div className="record-overview" aria-label="运行概况"><button aria-label={`成功 ${summary.succeeded}`} onClick={() => openStatusSummary("succeeded")}><CheckCircle2 size={15} /><span>成功</span><b>{summary.succeeded}</b></button><button aria-label={`运行中 ${summary.running}`} onClick={() => openStatusSummary("running")}><LoaderCircle size={15} /><span>运行中</span><b>{summary.running}</b></button><button aria-label={`失败 ${summary.failed}`} onClick={() => openStatusSummary("failed")}><AlertCircle size={15} /><span>失败</span><b>{summary.failed}</b></button><button className="pending-queue-button" aria-label={`待执行（全局） ${reportPendingQueue?.total ?? 0}，${reportPendingQueue?.scopeLabel ?? "通报当前 Scheduled"}`} onClick={() => { setSelectedId(null); setSummaryStatus(null); setPendingQueueOpen(true); }}><Clock3 size={15} /><span>待执行（全局）</span><b>{reportPendingQueue?.total ?? 0}</b></button></div><span className="count-note">点击记录查看详情</span></div></div>
-        <div className="table-wrap"><table><thead><tr><th>运行对象</th><th>触发方式</th><th>状态</th><th>计划/开始时间</th><th>当前环节</th><th>耗时</th></tr></thead><tbody>
+        <p className="table-scroll-hint" aria-hidden="true"><ArrowLeftRight size={14} />左右滑动查看全部列</p>
+        <div className="table-wrap" tabIndex={0} aria-label="运行记录表格，可左右滑动查看全部列"><table><thead><tr><th>运行对象</th><th>触发方式</th><th>状态</th><th>计划/开始时间</th><th>当前环节</th><th>耗时</th></tr></thead><tbody>
           {connection === "loading" ? Array.from({ length: 6 }).map((_, index) => <tr className="skeleton-row" key={index}><td colSpan={6}><i /></td></tr>) : pagedTableRuns.map((run) => <tr key={run.id} className={selectedId === run.id ? "selected" : ""} tabIndex={0} onClick={() => openRunDetail(run)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") openRunDetail(run); }}><td><strong>{run.target}</strong><small className="source-label">{run.source === "prefect" ? "调度服务" : "网页操作"}</small></td><td>{triggerLabels[run.trigger]}</td><td><StatusPill status={run.status} /></td><td>{formatMonitorDateTime(referenceTime(run))}</td><td>{presentMonitorCurrentStep(run.currentStep, run.error)}</td><td>{duration(run.durationSeconds)}</td></tr>)}
         </tbody></table></div>
         <div className="record-pagination" aria-label="运行记录分页">

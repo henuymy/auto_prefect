@@ -219,6 +219,13 @@ describe("MonitorCenter live state", () => {
     expect(screen.getAllByRole("row")).toHaveLength(21);
   });
 
+  it("keeps the full run table available for horizontal mobile scrolling", async () => {
+    render(<MonitorCenter service={mockService} />);
+
+    expect(await screen.findByLabelText("运行记录表格，可左右滑动查看全部列")).toBeTruthy();
+    expect(screen.getByText("左右滑动查看全部列")).toBeTruthy();
+  });
+
   it("collapses historical timeline days while keeping today expanded by default", async () => {
     const user = userEvent.setup();
     const snapshot = await getMonitorSnapshot();
