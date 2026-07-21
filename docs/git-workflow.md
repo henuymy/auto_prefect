@@ -1,210 +1,141 @@
 # Git 分支、测试与发布流程
 
-本文定义自动通报项目的日常开发、发布和线上紧急修复流程。远程受保护分支只能通过 Pull Request（PR）合并，不能直接推送。
+本文定义自动通报项目的日常开发、测试、发布和紧急修复流程。
+
+## 目标
+
+- `main` 始终对应已验证、可部署生产的代码。
+- `development` 是日常功能集成与测试的分支。
+- 每项改动通过短生命周期分支和 Pull Request（PR）进入受保护分支。
+- 每次生产发布都可以通过 Git tag 精确回溯。
 
 ## 分支职责
 
 | 分支 | 用途 | 生命周期 |
 | --- | --- | --- |
-| `main` | 已发布、可部署到生产环境的稳定版本 | 长期保留 |
-| `development` | 日常功能集成与下一次待发布版本 | 长期保留 |
-| `codex/<short-description>` | 一项功能、普通缺陷修复或文档改动 | 合并到 `development` 后删除 |
-| `release/<version>` | 一次发布的候选版本，例如 `release/1.0.2` | 合并到 `main` 后删除 |
-| `hotfix/<short-description>` | 已上线生产故障的紧急修复 | 同时合入 `main` 和 `development` 后删除 |
+| `main` | 生产环境基线和正式发布版本 | 长期保留 |
+| `development` | 日常集成、测试和下一次待发布版本 | 长期保留 |
+| `feature/<issue-id>-<short-description>` | 新功能或需求开发 | 合并后删除 |
+| `bugfix/<issue-id>-<short-description>` | 测试阶段发现的缺陷修复 | 合并后删除 |
+| `release/v<version>` | 发版验收期间仍需并行开发下一版时的版本冻结分支 | 发布后删除 |
+| `hotfix/<incident-id>-<short-description>` | 生产环境紧急故障修复 | 合并后删除 |
 
-本地 `main` 是远程 `origin/main` 的镜像：用于核对线上版本、创建热修复和验证发布结果。日常功能开发不需要切换或同步本地 `main`。
+## 日常开发
 
-## 总体流程
-
-```mermaid
-flowchart TD
-    DEV["development\n日常集成"] --> SYNC["同步 development"]
-    SYNC --> CODEX["创建 codex/功能名"]
-    CODEX --> WORK["开发、测试、提交、推送"]
-    WORK --> PRDEV["PR：codex/* → development"]
-    PRDEV --> MERGEDEV["CI、审核、合并"]
-    MERGEDEV --> CLEAN["删除 codex 分支"]
-    CLEAN --> DEV
-
-    DEV -. "准备发布" .-> RELEASE["创建 release/版本号"]
-    RELEASE --> PRMAIN["PR：release/* → main"]
-    PRMAIN --> MAIN["CI、审核、合并\n生产版本"]
-
-    MAIN -. "线上紧急故障" .-> HOTFIX["创建 hotfix/问题名"]
-    HOTFIX --> HOTMAIN["PR：hotfix/* → main"]
-    HOTFIX --> HOTDEV["PR：hotfix/* → development"]
-    HOTMAIN --> MAIN
-    HOTDEV --> MERGEDEV
-```
-
-## 日常开发循环
-
-每个新需求、普通缺陷或文档改动都从最新 `development` 创建独立的 `codex/*` 分支。不要从上一个 `codex/*` 分支继续创建下一个功能分支。
-
-### 1. 同步集成分支并创建功能分支
+所有日常开发从最新的 `development` 创建功能分支：
 
 ```powershell
 git switch development
 git pull --ff-only origin development
-git switch -c codex/add-dashboard-export
+git switch -c feature/PROJ-123-notification-retry
 ```
 
-### 2. 开发、验证、提交和推送
+完成开发后，在功能分支执行测试、提交并推送：
 
 ```powershell
-# 执行与改动相匹配的测试
-git add <文件路径>
-git commit -m "feat: add dashboard export"
-git push -u origin codex/add-dashboard-export
+git add <files>
+git commit -m "feat(notify): add retry handling"
+git push -u origin feature/PROJ-123-notification-retry
 ```
 
-### 3. 创建并合并 PR
-
-在 GitHub 创建：
+在 GitHub 创建 PR：
 
 ```text
-codex/add-dashboard-export → development
+feature/PROJ-123-notification-retry -> development
 ```
 
-CI 通过并完成审核后，在 GitHub 合并 PR；不要直接推送 `development`。
+功能分支不得直接合并或推送到 `main`。
 
-### 4. 清理并开始下一个循环
+## 测试与常规发布
+
+当前项目优先使用简化流程。测试开始后，暂时不要将新的功能需求合入 `development`，以保证测试对象稳定。
+
+```text
+feature/* -> development -> 测试/预发布环境 -> main -> 生产环境
+```
+
+1. 功能通过 PR 合入 `development`。
+2. 选择待发布的 `development` 提交，部署到测试或预发布环境。
+3. 执行自动化测试、接口和集成测试、人工回归测试及业务验收。
+4. 若发现问题，从 `development` 创建 `bugfix/<issue-id>-<short-description>`，修复后通过 PR 合回 `development`，重新部署测试环境并回归。
+5. 验收通过后，创建 PR：`development -> main`。
+6. `main` 合并后打版本标签，例如 `v1.3.0`，创建 GitHub Release，并部署生产环境。
+
+测试环境必须运行确定的提交或构建产物；不能让环境在验收期间自动跟随不断变化的 `development`。
+
+## 使用发布分支的条件和流程
+
+当测试验收需要数天、但团队还需要同时开发下一版本功能时，创建发布分支：
+
+```text
+development -> release/v1.3.0 -> 测试/预发布环境 -> main
+```
 
 ```powershell
 git switch development
 git pull --ff-only origin development
-git branch -d codex/add-dashboard-export
-git push origin --delete codex/add-dashboard-export
-
-git switch -c codex/next-feature
+git switch -c release/v1.3.0
+git push -u origin release/v1.3.0
 ```
 
-如果 GitHub 合并 PR 时已自动删除远程分支，最后一条删除远程分支的命令会提示分支不存在，可直接跳过。
+- `release/v1.3.0` 只允许修复验收缺陷、调整版本号、发布说明和部署配置；不加入新功能。
+- 测试缺陷从 `release/v1.3.0` 拉出 `bugfix/<issue-id>-<short-description>`，并通过 PR 合回该 release 分支。
+- 验收通过后创建 PR：`release/v1.3.0 -> main`。
+- 生产发布完成后创建 PR：`release/v1.3.0 -> development`，带回发版期间的修复。
 
-## 常规发布
+若测试期间不需要继续开发下一版，不必创建 `release/*`，直接冻结并测试 `development` 即可。
 
-发布从已同步的 `development` 创建 `release/*` 分支，而不是在本地将 `development` 直接合并到 `main`。
+## 紧急生产修复
 
-```powershell
-git switch development
-git pull --ff-only origin development
-git switch -c release/1.0.2
-git push -u origin release/1.0.2
-```
-
-创建发布 PR：
+线上故障从 `main` 创建热修复分支：
 
 ```text
-release/1.0.2 → main
+main -> hotfix/INC-123-authentication-timeout -> main
+                                                -> development
 ```
 
-发布分支只接受发布验证期间必要的修复、版本说明和部署调整，不加入新功能。CI 和审核通过后，由 GitHub 合并到受保护的 `main`。
+热修复只处理当前生产故障，修复后：
 
-发布完成后：
-
-```powershell
-git switch main
-git pull --ff-only origin main
-```
-
-若发布分支上发生了修复，且这些修复不在 `development`，还要创建：
-
-```text
-release/1.0.2 → development
-```
-
-完成后删除本地和远程 `release/1.0.2` 分支。
-
-## 线上紧急修复
-
-只有已上线的生产问题才从 `main` 创建 `hotfix/*`：
-
-```powershell
-git switch main
-git pull --ff-only origin main
-git switch -c hotfix/fix-login-timeout
-```
-
-修复、测试、提交并推送后，创建两个 PR：
-
-```text
-hotfix/fix-login-timeout → main
-hotfix/fix-login-timeout → development
-```
-
-第一个 PR 用于紧急发布，第二个 PR 将同一修复带回下一版本，避免后续发布覆盖该修复。两个 PR 都合并后再删除 `hotfix/*` 分支。
+1. 创建 PR：`hotfix/<incident-id>-<short-description> -> main`，验证后紧急发布。
+2. 创建 PR：`hotfix/<incident-id>-<short-description> -> development`，避免后续版本丢失该修复。
 
 ## PR 对照表
 
-| 场景 | 来源分支 | PR 目标 |
+| 场景 | PR 来源 | PR 目标 |
 | --- | --- | --- |
-| 新功能、普通修复、文档更新 | `codex/<short-description>` | `development` |
-| 常规发布 | `release/<version>` | `main` |
-| 发布期间修复回流 | `release/<version>` | `development`（仅在需要时） |
-| 线上紧急修复 | `hotfix/<short-description>` | `main` 和 `development` |
+| 新功能开发 | `feature/<issue-id>-<short-description>` | `development` |
+| 常规测试缺陷修复 | `bugfix/<issue-id>-<short-description>` | `development` |
+| 常规发布 | `development` | `main` |
+| 发布分支的验收缺陷修复 | `bugfix/<issue-id>-<short-description>` | `release/v<version>` |
+| 使用发布分支时正式上线 | `release/v<version>` | `main` |
+| 带回发布期间的修复 | `release/v<version>` | `development` |
+| 线上紧急修复 | `hotfix/<incident-id>-<short-description>` | `main` |
+| 带回线上紧急修复 | `hotfix/<incident-id>-<short-description>` | `development` |
 
-## 保护规则和提交约定
+`git pull` 只是更新当前本地分支，不是创建 PR，也不替代代码审查。
 
-- `main` 与 `development` 禁止直接推送和强制推送。
-- 合并前必须通过 CI；单人维护时至少保留 CI 门禁。
-- 必须使用 PR 合并受保护分支。
-- 使用清晰的提交前缀：`feat:`、`fix:`、`docs:`、`test:`、`refactor:`、`chore:`。
-- `git pull` 只同步当前本地分支，不创建 PR，也不替代代码审查。
+## 分支保护与合并要求
 
-## 附录：日常 `codex` 开发循环
+为 `main` 和 `development` 配置 GitHub Branch Protection：
 
-```mermaid
-flowchart TD
-    A["切到 development"] --> B["同步远程<br/>git pull --ff-only origin development"]
-    B --> C["创建功能分支<br/>git switch -c codex/功能名"]
-    C --> D["开发、测试、提交"]
-    D --> E["推送功能分支"]
-    E --> F["创建 PR：codex/功能名 → development"]
-    F --> G["CI 通过、审核、合并 PR"]
-    G --> H["切回 development"]
-    H --> I["同步已合并结果<br/>git pull --ff-only origin development"]
-    I --> J["删除已合并的 codex 分支"]
-    J --> C
-```
+- 禁止直接推送和强制推送。
+- 必须通过 PR 合并。
+- 必须通过 CI，例如单元测试、构建、代码检查。
+- 至少一名审阅者批准；单人维护时至少保留 CI 门禁。
+- 要求分支在合并前与目标分支保持最新。
 
-| 步骤 | 操作 | 目的 |
-| --- | --- | --- |
-| 1 | 切到 `development` | 确保新工作从团队当前的集成基线开始。 |
-| 2 | `git pull --ff-only origin development` | 获取已合并的其他功能；`--ff-only` 会在本地历史意外分叉时停止，避免自动制造合并提交。 |
-| 3 | 创建 `codex/<short-description>` | 将一项需求或普通修复隔离，避免未完成工作影响 `development`。 |
-| 4 | 开发、运行测试、提交 | 在功能分支内完成改动并留下可审查的提交记录。 |
-| 5 | 推送功能分支 | 把分支发布到远程，供 CI 和 PR 使用。 |
-| 6 | 创建 `codex/* → development` PR | 让变更经过差异审查，并让 CI 在目标分支规则下验证。 |
-| 7 | 合并 PR | 只有 CI 和审核满足要求时，功能才进入日常集成分支。 |
-| 8 | 切回并同步 `development` | 让本地分支包含刚合并的功能和同期其他人的改动。 |
-| 9 | 删除已合并的 `codex/*` 分支 | 清理短生命周期分支；下一个功能必须从更新后的 `development` 新建。 |
+建议使用 Conventional Commits 风格的提交信息：`feat:`、`fix:`、`refactor:`、`test:`、`docs:`、`chore:`。
 
-## 附录：发布与线上热修复循环
+## GitHub Release 与 release 分支的区别
 
-```mermaid
-flowchart TD
-    DEV["development<br/>日常集成"] -. "准备发布" .-> RELEASE["创建 release/版本号"]
-    RELEASE --> VERIFY["发布验证、仅修复发布问题"]
-    VERIFY --> PRMAIN["PR：release/* → main"]
-    PRMAIN --> MAIN["CI、审核、合并<br/>main = 线上稳定版本"]
-    MAIN --> CLEANREL["同步 main 并删除 release 分支"]
-    CLEANREL --> DEV
+- `release/v1.3.0`：为测试和发版准备而创建的临时 Git 分支。
+- `v1.3.0`：指向发布代码的永久 Git tag。
+- GitHub Release：基于 `v1.3.0` tag 的发布记录，可包含更新说明、安装包和校验信息。
 
-    MAIN -. "线上紧急故障" .-> HOTFIX["创建 hotfix/问题名"]
-    HOTFIX --> FIX["修复、测试、提交、推送"]
-    FIX --> HOTMAIN["PR：hotfix/* → main"]
-    FIX --> HOTDEV["PR：hotfix/* → development"]
-    HOTMAIN --> MAIN
-    HOTDEV --> DEV
-```
+## 当前仓库迁移建议
 
-| 步骤 | 操作 | 目的 |
-| --- | --- | --- |
-| 1 | 从 `development` 创建 `release/<version>` | 冻结这次发布的内容，让 `development` 可以继续接收下一版本的功能。 |
-| 2 | 在 `release/*` 验证并仅修复发布问题 | 保持发布范围可控；不在发布候选中加入新需求。 |
-| 3 | 创建 `release/* → main` PR | 受保护的 `main` 只能通过 PR、CI 和审核接收生产版本。 |
-| 4 | 合并后同步本地 `main` | 本地 `main` 跟随线上稳定版本，用于核对生产版本或创建热修复。 |
-| 5 | 删除已完成的 `release/*` | 发布分支是临时分支；若它包含 `development` 没有的修复，应先创建回流 PR。 |
-| 6 | 从 `main` 创建 `hotfix/*` | 仅在生产故障时使用，确保修复基于实际在线版本。 |
-| 7 | 创建 `hotfix/* → main` PR | 将紧急修复尽快、安全地发布到生产。 |
-| 8 | 创建 `hotfix/* → development` PR | 将同一修复带回下一版本，避免以后发布时把线上修复覆盖掉。 |
+1. 先确认哪个分支是生产稳定基线，再将其规范为 `main`。
+2. 从当前集成基线创建并推送 `development`，将 GitHub 默认分支切换为 `development`。
+3. 为 `main` 和 `development` 启用分支保护和 CI 门禁。
+4. 现有集成分支不直接改名为 `development`；整理、测试后创建 PR：`<legacy-integration-branch> -> development`。
+5. 后续所有新改动从 `development` 创建 `feature/<issue-id>-<short-description>` 或 `bugfix/<issue-id>-<short-description>` 分支。
