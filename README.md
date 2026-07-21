@@ -283,6 +283,99 @@ Starlette 路由接口不兼容。安装或更新依赖时请使用 `requirement
 
 启动必须由专用 Windows 用户手工执行。该用户需要保持登录和交互式桌面会话；主机重启或用户重新登录后，必须再次执行 `scripts/run.ps1`。Prefect Server 停止后也不会自动恢复，需要人工重新运行启动脚本。
 
+### 迁移到 C 盘并恢复运行栈
+
+将项目从桌面目录迁移到稳定路径时，推荐重新克隆已验证的发布分支到 `C:\AutoNotify`，并保持运行状态目录 `C:\AutoNotifyRuntime` 不变。不要把仓库放入 `C:\AutoNotifyRuntime`；该目录仅保存 Cookie、锁、日志、Prefect Home 和受管进程登记。
+
+先在旧目录停止运行栈，再克隆发布分支：
+
+```powershell
+pwsh -File scripts/stop.ps1
+git clone --branch release/v1.1.0 https://github.com/henuymy/auto_prefect.git C:\AutoNotify
+Set-Location C:\AutoNotify
+git log -1 --oneline
+```
+
+标准 `git clone` 会保留该分支完整提交历史；远端其他分支可通过 `git fetch origin` 和 `git branch -r` 查看。不会随 Git 克隆的内容包括 `config/runtime.local.json`、`C:\AutoNotifyRuntime`、本地模板、数据库数据和 Flow Run 历史。
+
+在新目录创建本环境的私有运行配置。全新环境从模板创建；同一环境仅变更代码目录时，可在本机安全迁移原有私有文件。开发和生产环境绝不能互相复制该文件，也不能提交它：
+
+```powershell
+Copy-Item config\runtime.local.example.json config\runtime.local.json
+```
+
+在 `runtime.local.json` 中填写当前环境的 Prefect PostgreSQL、驾驶舱 MySQL、运行目录、三个 Work Pool、监控密钥和模块凭据。启动前只检查目标数据库名，不输出连接串或密码：
+
+```powershell
+. .\scripts\lib\runtime_config.ps1
+Import-ProjectRuntimeConfig | Out-Null
+$env:DASHBOARD_MYSQL_DATABASE
+```
+
+本机开发应使用 `prefect_dev` 与 `dashboard_dev`；云电脑生产环境应使用 `prefect_prod` 与 `dashboard_prod`。`collection_database_lock_name` 和 `partition_database_lock_name` 必须按环境使用不同后缀，例如 `_dev`、`_prod`。
+
+安装锁定依赖并初始化运行目录。先选择 Node 20.20.1，再执行前端安装；Python 初始化脚本会安装锁定 Python 依赖、创建运行目录并输出 `smoke_ok`：
+
+```powershell
+nvm install 20.20.1
+nvm use 20.20.1
+npm --prefix frontend ci
+pwsh -File scripts/setup_windows_env.ps1
+```
+
+若 `nvm use 20.20.1` 报版本未安装，先修复或重新安装该 Node 版本，再执行 `node --version` 和 `npm --prefix frontend ci`；不要把 `node_modules` 纳入 Git。
+
+然后执行驾驶舱 MySQL 迁移。`current` 为只读检查，`upgrade head` 只执行尚未应用的 Alembic 迁移，可重复运行：
+
+```powershell
+. .\scripts\lib\runtime_config.ps1
+Import-ProjectRuntimeConfig | Out-Null
+python -m alembic -c .\alembic_dashboard_v2.ini current
+python -m alembic -c .\alembic_dashboard_v2.ini upgrade head
+```
+
+数据库版本到达 `head` 后仍需准备未来日期分区。尤其当 `/api/health` 返回 `503`，且 `dashboard_schema` 显示 `missing_snapshot_partitions` 时，加载运行配置后执行一次分区维护：
+
+```powershell
+. .\scripts\lib\runtime_config.ps1
+Import-ProjectRuntimeConfig | Out-Null
+python flows/dashboard_partition_maintenance_flow.py
+```
+
+该 Flow 只维护驾驶舱分区和留存策略；目标必须是已核对的当前环境数据库。维护完成后，`/api/health` 应显示 `dashboard_schema.ok: true`。
+
+首次恢复或更换代码目录时，必须从新目录重新发布 `prefect.yaml` 中的全部 19 个 Deployment。先仅启动 Prefect Server，等待 API 健康检查成功后发布；完成发布后停止这个引导 Server，由统一启动脚本接管：
+
+```powershell
+pwsh -File scripts/lib/prefect_start.ps1 -Mode server -Detached
+Invoke-WebRequest -Uri http://127.0.0.1:4200/api/health -UseBasicParsing
+. .\scripts\lib\runtime_config.ps1
+Import-ProjectRuntimeConfig | Out-Null
+python -X utf8 -m prefect deploy --all
+pwsh -File scripts/stop.ps1
+```
+
+发布命令会使用新目录的 Flow 入口和相对 `config_path` 创建或更新 19 个 Deployment。YAML 中的 Cron、`Asia/Shanghai` 时区和 `schedules[].active` 状态是唯一准则；发布不等于立即发送通报。
+
+最后由统一入口启动完整运行栈并验收：
+
+```powershell
+pwsh -File scripts/run.ps1
+pwsh -File scripts/status.ps1
+```
+
+`run.ps1` 会依次验证 PostgreSQL 与 MySQL、启动 Prefect Server、建立或校正三个 Work Pool、启动三个 Worker 和 Web 服务，并提交一次 Session Keeper 检查。验收时应确认 Prefect API、后端健康检查、配置中心、驾驶舱和运行监控中心均返回 `200`；首次 Session Keeper Run 应最终为 `Completed`：
+
+```powershell
+Invoke-WebRequest -Uri http://127.0.0.1:8000/api/health -UseBasicParsing
+Invoke-WebRequest -Uri http://127.0.0.1:5173/ -UseBasicParsing
+Invoke-WebRequest -Uri http://127.0.0.1:5174/ -UseBasicParsing
+Invoke-WebRequest -Uri http://127.0.0.1:5175/ -UseBasicParsing
+python -m prefect deployment ls
+```
+
+若 `status.ps1` 显示已登记的旧 Worker，先运行 `pwsh -File scripts/stop.ps1` 再正常启动；除非已确认所有运行中任务可中断，否则不要使用 `scripts/run.ps1 -ForceRestart`。
+
 标准操作顺序：
 
 ```powershell
