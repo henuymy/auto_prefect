@@ -787,7 +787,12 @@ def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
         env=process_env,
     )
     if completed.returncode != 0:
-        raise RuntimeError(f"登录命令执行失败，退出码={completed.returncode}")
+        raw_diagnostic = completed.stderr or completed.stdout or ""
+        diagnostic = summarize_login_failure(raw_diagnostic)
+        message = f"登录命令执行失败，退出码={completed.returncode}"
+        if diagnostic:
+            message += f"，诊断={diagnostic}"
+        raise RuntimeError(message)
     return {
         "command": command,
         "returncode": completed.returncode,

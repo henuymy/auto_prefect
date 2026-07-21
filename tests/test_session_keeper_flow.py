@@ -53,6 +53,32 @@ def test_keeper_reuses_healthy_session_without_notification(monkeypatch):
     assert keeper_module.run_session_keeper() == {"status": "reused"}
 
 
+def test_keeper_routes_failures_and_recovery_through_shared_session_reporting(monkeypatch):
+    calls = []
+
+    class Logger:
+        def info(self, *_args):
+            pass
+
+    def reporting_wrapper(operation, **kwargs):
+        calls.append(kwargs)
+        return operation()
+
+    monkeypatch.setattr(keeper_module, "get_run_logger", Logger)
+    monkeypatch.setattr(keeper_module, "run_with_business_session_reporting", reporting_wrapper)
+    monkeypatch.setattr(keeper_module, "run_session_keeper", lambda *_args: {"status": "reused"})
+
+    assert keeper_module.session_keeper_flow.fn() == {"status": "reused"}
+    assert calls == [
+        {
+            "trigger_source": "session-keeper",
+            "flow_name": "session-keeper-flow",
+            "affected_stage": "共享会话",
+            "recover_on_success": True,
+        }
+    ]
+
+
 def test_keeper_reraises_failure_without_notification(monkeypatch):
     monkeypatch.setattr(
         keeper_module,

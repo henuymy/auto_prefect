@@ -44,6 +44,9 @@ EXPECTED_TABLES = {
     "metric_current",
     "metric_snapshot",
     "metric_acc",
+    "monitor_runs",
+    "monitor_steps",
+    "monitor_events",
 }
 EXPECTED_COLUMNS = {
     "collection_run": {
@@ -88,6 +91,21 @@ EXPECTED_COLUMNS = {
     "metric_acc": {
         "id", "period_type", "stat_date", "node_id", "indicator_id",
         "collection_run_id", "metric_value", "collected_at", "updated_at",
+    },
+    "monitor_runs": {
+        "id", "source", "external_run_id", "task_name", "target_kind",
+        "target_id", "trigger", "status", "scheduled_at", "started_at",
+        "finished_at", "state_occurred_at", "current_step",
+        "business_error_summary", "technical_error_summary", "created_at",
+        "updated_at",
+    },
+    "monitor_steps": {
+        "id", "run_id", "name", "status", "message", "started_at",
+        "finished_at",
+    },
+    "monitor_events": {
+        "id", "source_event_id", "stream_sequence", "run_id", "at", "level",
+        "message", "details",
     },
 }
 EXPECTED_GENERATED_COLUMNS = {
@@ -137,6 +155,22 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
         "uq_metric_acc_period_date_node_indicator",
         ("period_type", "stat_date", "node_id", "indicator_id"),
     ),
+    (
+        "monitor_runs",
+        "uq_monitor_runs_source_external",
+        ("source", "external_run_id"),
+    ),
+    ("monitor_steps", "uq_monitor_steps_run_name", ("run_id", "name")),
+    (
+        "monitor_events",
+        "uq_monitor_events_source_event_id",
+        ("source_event_id",),
+    ),
+    (
+        "monitor_events",
+        "uq_monitor_events_stream_sequence",
+        ("stream_sequence",),
+    ),
 }
 EXPECTED_FOREIGN_KEYS = {
     ("hierarchy_node", ("parent_id",), "hierarchy_node", ("id",), "RESTRICT"),
@@ -182,6 +216,8 @@ EXPECTED_FOREIGN_KEYS = {
         "metric_acc", ("collection_run_id",),
         "collection_run", ("id",), "SET NULL",
     ),
+    ("monitor_steps", ("run_id",), "monitor_runs", ("id",), "CASCADE"),
+    ("monitor_events", ("run_id",), "monitor_runs", ("id",), "CASCADE"),
 }
 EXPECTED_CHECK_CONSTRAINTS = {
     ("collection_run", "ck_collection_run_valid_run_type"),
@@ -283,6 +319,26 @@ EXPECTED_INDEXES = {
         ("period_type", "stat_date", "indicator_id", "metric_value"),
     ),
     ("metric_acc", "ix_metric_acc_stat_date", ("stat_date",)),
+    (
+        "monitor_runs",
+        "ix_monitor_runs_status_scheduled",
+        ("status", "scheduled_at"),
+    ),
+    (
+        "monitor_runs",
+        "ix_monitor_runs_target_status",
+        ("target_kind", "status", "scheduled_at"),
+    ),
+    (
+        "monitor_runs",
+        "ix_monitor_runs_task_started",
+        ("task_name", "started_at"),
+    ),
+    (
+        "monitor_events",
+        "ix_monitor_events_run_sequence",
+        ("run_id", "stream_sequence"),
+    ),
 }
 
 

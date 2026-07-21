@@ -27,6 +27,9 @@ EXPECTED_TABLES = {
     "metric_current",
     "metric_snapshot",
     "metric_acc",
+    "monitor_runs",
+    "monitor_steps",
+    "monitor_events",
 }
 
 

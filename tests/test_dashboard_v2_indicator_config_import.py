@@ -43,8 +43,10 @@ def test_import_v2_indicator_settings_and_custom_formulas(monkeypatch, tmp_path)
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE alembic_version (version_num TEXT)"))
         connection.execute(text(
-            "INSERT INTO alembic_version VALUES ('20260630_0001')"
-        ))
+            "INSERT INTO alembic_version VALUES (:revision)"
+        ), {
+            "revision": import_v2_indicator_config.EXPECTED_REVISION,
+        })
     settings = DashboardMySQLSettings(
         host="db.internal",
         port=3306,

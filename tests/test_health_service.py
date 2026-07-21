@@ -47,7 +47,14 @@ def test_health_returns_503_when_not_ready(monkeypatch):
 
 
 def test_live_is_independent_from_dependencies():
-    assert backend_app.live() == {"ok": True}
+    assert backend_app.live() == {
+        "ok": True,
+        "monitorEvents": {
+            "lastAcceptedAt": None,
+            "lastErrorCategory": None,
+            "lastReconciledAt": None,
+        },
+    }
 
 
 def test_runtime_storage_probe_is_writable(monkeypatch, tmp_path):

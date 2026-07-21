@@ -1146,16 +1146,45 @@ def test_lock_wait_must_cover_complete_login_retry_envelope():
         prepare_session(config, force_refresh=True)
 
 
-def test_login_error_does_not_transport_raw_command_output(monkeypatch):
-    completed = type("Completed", (), {"returncode": 1, "stdout": "raw-stdout-secret", "stderr": "raw-stderr-secret"})()
+def test_run_login_command_redacts_sensitive_child_diagnostic(monkeypatch):
+    completed = type(
+        "Completed",
+        (),
+        {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "password=raw-password",
+        },
+    )()
     monkeypatch.setattr(session_manager.subprocess, "run", lambda *_args, **_kwargs: completed)
 
     with pytest.raises(RuntimeError) as exc_info:
         session_manager.run_login_command("sensitive command")
 
     message = str(exc_info.value)
-    assert "raw-stdout-secret" not in message
-    assert "raw-stderr-secret" not in message
+    assert "<redacted login failure detail>" in message
+    assert "raw-password" not in message
+    assert "sensitive command" not in message
+
+
+def test_run_login_command_includes_sanitized_stderr_diagnostic(monkeypatch):
+    completed = type(
+        "Completed",
+        (),
+        {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "等待 Gotify 验证码超时：45 秒内未收到可用短信转发。",
+        },
+    )()
+    monkeypatch.setattr(session_manager.subprocess, "run", lambda *_args, **_kwargs: completed)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session_manager.run_login_command("sensitive command")
+
+    message = str(exc_info.value)
+    assert "退出码=1" in message
+    assert "等待 Gotify 验证码超时" in message
     assert "sensitive command" not in message
 
 
