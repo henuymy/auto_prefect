@@ -4,8 +4,8 @@
 
 ## 上线前检查
 
-1. 为生产机器创建 `config/runtime.local.json`，确认其中使用生产 PostgreSQL、MySQL、Prefect API、运行目录和三个 Work Pool。
-2. 确认 `config/runtime.local.json`、`config/modules/*.local.json`、`config/tasks/*.local.json` 仍被 Git 忽略。它们可能包含数据库密码、访问令牌、Webhook 和 Cookie。
+1. 为生产机器创建 `config/runtime.local.json`，确认其中使用生产 PostgreSQL、MySQL、Prefect API、运行目录、三个 Work Pool、监控密钥和所需模块凭据。
+2. 从旧版本升级时先执行 `python scripts/migrate_local_json_to_runtime.py` 预览；确认无冲突后执行 `python scripts/migrate_local_json_to_runtime.py --apply --remove-legacy`。开发机和生产机各自迁移，不能复制彼此的文件。
 3. 安装锁定的 Python 依赖与前端 npm 依赖，并确认 Python 基础自检成功。
 4. 确认驾驶舱 V2 数据库迁移和未来日期分区均已就绪，再启动 Worker。
 5. 发布或更新 Deployment 前先记录远端 Deployment 清单，尤其是动态 Notify Deployment。
@@ -72,7 +72,7 @@ pwsh -File scripts/run.ps1 -ForceRestart
 
 ## 生产安全边界
 
-- 禁止提交 `*.local.json`、Cookie、证书、数据库密码、Webhook 或访问令牌；不要使用 `git add -f` 绕过忽略规则。
+- 禁止提交 `config/runtime.local.json`、Cookie、证书、数据库密码、Webhook 或访问令牌；不要使用 `git add -f` 绕过忽略规则。
 - 不要在未核对清单的情况下批量删除远端 Deployment。
 - 不要在未知任务是否真实运行时使用强制重启或中断数据库连接。
 - 数据库结构变更必须通过 Alembic 迁移；分区维护只能在确认目标数据库无误后执行。

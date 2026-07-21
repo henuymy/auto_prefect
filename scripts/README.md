@@ -9,6 +9,13 @@
 | `status.ps1` | 查看受管进程、端口、Pool、会话和锁状态。 |
 | `stop.ps1` | 停止受管运行栈。 |
 
+`migrate_local_json_to_runtime.py` 是一次性本地配置迁移工具，不属于日常运行栈入口。升级后先预览、再写入并删除已验证的旧配置：
+
+```powershell
+python scripts/migrate_local_json_to_runtime.py
+python scripts/migrate_local_json_to_runtime.py --apply --remove-legacy
+```
+
 ## 子目录
 
 - `lib/`：仅供入口脚本加载的 PowerShell/Python 实现，不直接作为日常命令运行。
@@ -87,4 +94,4 @@ logs/、temp/                启动和工具按需产生的临时运行文件
 登记文件。`prefect/prefect_home/` 不随代码分支或 Worktree 切换，应与运行根目录
 一起保留。
 
-不要新增根级运行脚本、项目内 `runtime/` 路径或未分类的 `scripts/` 工具；应将实现放入对应子目录，并从现有入口调用。
+不要新增根级日常运行脚本、项目内 `runtime/` 路径或未分类的 `scripts/` 工具；已登记的 `migrate_local_json_to_runtime.py` 是一次性本地配置迁移例外。其他实现应放入对应子目录，并从现有入口调用。

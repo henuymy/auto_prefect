@@ -14,9 +14,10 @@
 旧的 `cookies`、`browser_session`、`flow/<任务>/templates`
 等路径不再读取或兼容。
 
-保持 `*.local.json` 最小化。它们只能包含凭据、Webhook URL 或其他机器专属
-覆盖项。不要将基础数组或模块默认值复制到本机文件中，因为本机覆盖会进行深度合并，
-并可能掩盖后续基础配置的变更。
+模块基础配置只包含可提交的默认值。凭据、Webhook URL 和其他机器专属字段统一放在
+`config/runtime.local.json` 的 `module_overrides.<模块文件名>` 中，例如
+`module_overrides.login_config`。覆盖仅写入与基础配置不同的字段，因为深度合并时复制
+基础数组或默认值会掩盖后续基础配置的变更。
 
 `autologin.json` 的 `login_command` 使用 `{python_executable}`。会话管理器会将
 其展开为当前 Worker 使用的 Python 解释器。

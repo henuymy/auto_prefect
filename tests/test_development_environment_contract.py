@@ -118,6 +118,25 @@ def test_runtime_json_is_the_only_documented_local_configuration_source():
     assert "config/runtime.local.json" in readme
 
 
+def test_docs_describe_runtime_json_as_the_only_active_local_json_source():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    production_runbook = (ROOT / "docs" / "production-deployment-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    modules_readme = (ROOT / "config" / "modules" / "README.md").read_text(
+        encoding="utf-8"
+    )
+
+    for source in (readme, production_runbook):
+        assert "migrate_local_json_to_runtime.py --apply --remove-legacy" in source
+        assert "config/runtime.local.json" in source
+
+    assert "config/modules/tencent_docs.local.json" not in readme
+    assert "config/dashboard/session.local.json" not in readme
+    assert "*.local.json" not in modules_readme
+    assert "config/modules/*.local.json" not in production_runbook
+
+
 def test_runtime_json_template_is_ignored_and_loader_exports_shared_environment():
     template = ROOT / "config" / "runtime.local.example.json"
     loader = ROOT / "scripts" / "lib" / "runtime_config.ps1"

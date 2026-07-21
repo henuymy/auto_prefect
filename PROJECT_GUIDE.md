@@ -86,7 +86,7 @@ config/runtime.local.json
 config/runtime.local.example.json
 ```
 
-其中维护 Prefect PostgreSQL 与驾驶舱 MySQL V2 的地址、端口、数据库、账号和密码。`prefect.postgres.url` 直接指定 Prefect 使用的数据库，不从 `/prefect` 派生其他库名；驾驶舱实际连接也只读取该本地运行配置。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2`；配置值不应写入 README、本文件或 Git 提交。
+其中按固定顺序维护运行目录与 Pool、Prefect PostgreSQL、驾驶舱 MySQL、监控密钥、模块凭据和任务差异。`prefect.postgres.url` 直接指定 Prefect 使用的数据库，不从 `/prefect` 派生其他库名；驾驶舱实际连接也只读取该本地运行配置。驾驶舱锁覆盖写在 `dashboard.session_overrides`，模块凭据写在 `module_overrides.<模块文件名>`，任务差异写在 `task_overrides.<任务文件名>`。驾驶舱配置 `config/dashboard/session.json` 固定使用 `schema_version: 2`；配置值不应写入 README、本文件或 Git 提交。
 
 | 所在环境 | Prefect PostgreSQL | 驾驶舱 MySQL | 约定 |
 | --- | --- | --- | --- |
@@ -179,7 +179,7 @@ pwsh -File scripts/status.ps1
 pwsh -File scripts/stop.ps1
 ```
 
-系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。旧 Worker 预检通过并启动 Prefect Server 后，脚本会在启动任何新 Worker 前取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run；随后启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker。提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来、缺少预计开始时间的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。脚本启动一个 Server、三个 Worker、FastAPI，以及两个独立的 Vite 前端服务，应用 Pool 上限 `1 / 4 / 6`；它不发布、删除或同步仓库中的 Deployment 定义，但会在清理期间临时暂停并恢复原本未暂停的受管 Deployment，并将 Notify Deployment 的 Work Pool 校正为运行配置指定的 Pool。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
+系统只允许专用 Windows 用户在保持登录和交互式桌面会话时手工启动，不配置开机自启。主机重启、用户重新登录或 Prefect Server 停止后，运维人员必须再次执行 `scripts/run.ps1`。旧 Worker 预检通过并启动 Prefect Server 后，脚本会在启动任何新 Worker 前取消本项目全部已过期的排队 `SCHEDULED` / `PENDING` Run；随后启动并确认 Session Worker 在线，唯一一次提交新的 Session Keeper Run，最后启动 Dashboard 和 Notify Worker。提交不会等待 Session Keeper Flow 完成。预计开始时间仍在未来、缺少预计开始时间的排队 Run，以及不属于本项目受管 Deployment 的 Run，会原样保留且不受此清理影响。脚本启动一个 Server、三个 Worker、FastAPI，以及三个独立的 Vite 前端服务：配置中心 `5173`、数据驾驶舱 `5174` 和运行监控中心 `5175`，应用 Pool 上限 `1 / 4 / 6`；它不发布、删除或同步仓库中的 Deployment 定义，但会在清理期间临时暂停并恢复原本未暂停的受管 Deployment，并将 Notify Deployment 的 Work Pool 校正为运行配置指定的 Pool。通报与驾驶舱采集仍由既有 Prefect Deployment 的 Cron 执行，不会自动触发全部通报。
 
 普通启动会在启动 Prefect Server 前检查进程登记中的 Session、Dashboard 和 Notify Worker，避免旧 Worker 在启动清理前领取排队任务。任一已登记 Worker 仍在运行时必须失败关闭；运维人员应先执行 `scripts/stop.ps1`，确认旧进程停止后再正常运行 `scripts/run.ps1`。`-ForceRestart` 同时会取消运行中的本项目 Run，不能作为绕过该检查的常规手段。
 
@@ -213,6 +213,13 @@ pwsh -File scripts/stop.ps1
 - 验证：运行 MonitorCenter 聚焦测试、前端类型检查、生产构建和浏览器交互检查。
 - 风险与回滚：筛选依赖 `targetId` 的 `report-` 命名契约；如需恢复完整运维队列，回退 `MonitorCenter` 的派生队列改动即可。
 
+### 2026-07-21 - 统一本地运行 JSON 配置
+
+- 原因：运行信息已集中在 `runtime.local.json`，但模块凭据、驾驶舱锁和任务差异仍分散在同级侧车 JSON，导致每台机器配置路径过多且难以核对。
+- 修改内容：`config/runtime.local.json` 成为唯一活跃的私有 JSON 文件，按运行、Prefect、驾驶舱、监控、模块与任务六个分区组织。加载器不再读取侧车文件；一次性迁移工具先预览、冲突失败、原子写入，再按显式参数删除已验证的旧文件。
+- 配置与迁移：每台开发机或生产机分别执行 `python scripts/migrate_local_json_to_runtime.py`，确认无冲突后执行 `--apply --remove-legacy`；不得复制、提交或输出任何环境的私有配置。
+- 验证：中央覆盖、侧车禁读、迁移预览、冲突、删除和 PowerShell 配置校验均由自动化测试覆盖。
+
 ### 2026-07-21 - 通报运行监控中心实时投影与可用性收口
 
 - 原因：早期监控页仍混合 7 天历史、非通报任务和周期性全量同步，页面连接状态也容易被误读为 Prefect 数据正常；失败运行缺少按需可查的真实步骤与日志。
@@ -220,7 +227,7 @@ pwsh -File scripts/stop.ps1
 - 交互与信息层级：运行记录支持 10、20、50 条分页，时间线可按日期收起展开并分批加载。记录详情默认展示业务摘要；点击 Prefect 运行后按需读取 Task Run 和脱敏日志。抽屉支持对话框语义、初始焦点、`Escape` 关闭与 Tab/Shift+Tab 焦点循环。页面分别显示 WebSocket 连接、上游事件时间和最近对账时间。
 - 数据与迁移：驾驶舱 MySQL 新增 `monitor_runs`、`monitor_steps`、`monitor_events`，并通过 `20260718_0002`、`20260719_0003`、`20260719_0004` 迁移补齐通报身份、状态发生时间和事件幂等键；已结束通报记录保留 30 天。Prefect PostgreSQL 仍只通过官方 API 读取，禁止直接写入内部表。
 - 涉及文件：`backend/routers/monitor.py`、`backend/services/monitor_*`、`backend/services/prefect_monitor_*`、`models/monitor.py`、`migrations/dashboard_v2/versions/20260718_0002_monitor_center.py` 至 `20260719_0004_monitor_event_idempotency.py`、`frontend/monitor.html`、`frontend/src/monitor/`、相关 pytest/Vitest 测试以及运行监控文档。
-- 配置与运维：`config/runtime.local.json` 必须配置且仅在本机保存 `monitor.prefect_webhook_secret`；启动配置会导出 `PREFECT_MONITOR_WEBHOOK_SECRET`。还需在 Prefect 中人工创建只匹配 `auto-notify-flow` 和 `notify-` Deployment 的 Automation，具体步骤见 `docs/operations/prefect-monitor-webhook.md`。当前 `scripts/run.ps1` 不托管独立监控前端端口。
+- 配置与运维：`config/runtime.local.json` 必须配置且仅在本机保存 `monitor.prefect_webhook_secret`；启动配置会导出 `PREFECT_MONITOR_WEBHOOK_SECRET`。还需在 Prefect 中人工创建只匹配 `auto-notify-flow` 和 `notify-` Deployment 的 Automation，具体步骤见 `docs/operations/prefect-monitor-webhook.md`。`scripts/run.ps1` 将运行监控中心作为受托管前端服务启动在 `http://127.0.0.1:5175/`，`/monitor.html` 保持兼容访问。
 - 验证与风险：单元、路由、流、同步、迁移与前端回归测试用于覆盖契约；真实 Automation 端到端延迟须在目标环境按至少 20 次状态变化测量，P95 不超过 5 秒才可认定达到实时目标。单 FastAPI 进程以进程内 Hub 广播，扩展为多进程或多实例前必须引入共享消息总线。
 ### 2026-07-17 - 前端双端口与驾驶舱根路径入口
 

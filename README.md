@@ -78,13 +78,13 @@ npm --prefix frontend ci
 pwsh -File scripts/setup_windows_env.ps1
 ```
 
-私密配置使用同名 `.local.json` 或 `.local.ps1` 文件覆盖，切勿把账号、Cookie、Webhook、数据库密码写入受版本控制的文件。
+所有私密 JSON 配置统一保存在被 Git 忽略的 `config/runtime.local.json`。其中的运行目录、Prefect、驾驶舱 MySQL、监控密钥、模块凭据和任务差异分别按固定分区维护；切勿把账号、Cookie、Webhook 或数据库密码写入受版本控制的文件。
 
 ### 为什么忽略本地配置
 
-`.gitignore` 会忽略 `config/runtime.local.json`、`config/modules/*.local.json`、`config/tasks/*.local.json`、`config/dashboard/*.local.json` 和其他本地凭据文件。它们会因电脑、环境或账号不同而变化，并可能包含数据库连接信息、Prefect API 地址、Webhook、访问令牌和 Cookie；提交这些文件会泄露凭据，也会让其他环境错误继承本机配置。
+`.gitignore` 会忽略 `config/runtime.local.json` 和其他本地凭据文件。该文件会因电脑、环境或账号不同而变化，并可能包含数据库连接信息、Prefect API 地址、Webhook、访问令牌和 Cookie；提交它会泄露凭据，也会让其他环境错误继承本机配置。
 
-应提交不含真实凭据的 `*.example.json` 或普通配置模板；每台机器自行创建对应的 `*.local.json`。不要使用 `git add -f` 强制提交被忽略的本地配置。
+应提交不含真实凭据的 `*.example.json` 或普通配置模板；每台机器自行创建自己的 `config/runtime.local.json`。不要使用 `git add -f` 强制提交被忽略的本地配置。
 
 ## 依赖文件职责
 
@@ -108,13 +108,13 @@ pwsh -File scripts/setup_windows_env.ps1
 - `config/dashboard/session.json`：驾驶舱采集、数据库、并发与留存策略。
 - `scripts/tools/dashboard/`：驾驶舱导入、导出、审计与迁移等低频工具。
 
-`config/dashboard/session.local.json` 会覆盖同名基础驾驶舱配置，且被 Git 忽略。当开发库与生产库位于同一 MySQL 服务实例时，两边必须分别配置不同的 `collection_database_lock_name` 和 `partition_database_lock_name`，例如名称后缀使用 `_dev`、`_prod`；同一环境中所有机器必须保留相同锁名，避免同一套数据被并发采集或维护。
+当开发库与生产库位于同一 MySQL 服务实例时，两边必须在 `config/runtime.local.json` 的 `dashboard.session_overrides` 中分别配置不同的 `collection_database_lock_name` 和 `partition_database_lock_name`，例如名称后缀使用 `_dev`、`_prod`；同一环境中所有机器必须保留相同锁名，避免同一套数据被并发采集或维护。
 
 ### 腾讯文档表格下载
 
 下载配置中的报表可设为 `source: "tencent_sheet"`，并指定 `doc_url`（或
 `file_id`）和至少一个 `sheets` 项。腾讯文档凭据保存在被 Git 忽略的
-`config/modules/tencent_docs.local.json`；可提交的
+`config/runtime.local.json` 的 `module_overrides.tencent_docs`；可提交的
 `config/modules/tencent_docs.json` 仅保留字段模板，不能填入真实凭据。
 
 `sheets[].range` 支持显式 A1 范围和自动范围。使用空值、`auto`、`used` 或
@@ -133,13 +133,9 @@ pwsh -File scripts/setup_windows_env.ps1
 }
 ```
 
-常用本地覆盖示例：
-
-```text
-config/modules/login_config.local.json
-config/modules/wecom_sender.local.json
-config/runtime.local.json
-```
+常用私有分区为 `module_overrides.login_config`、
+`module_overrides.wecom_sender` 和 `module_overrides.tencent_docs`；它们全部位于
+`config/runtime.local.json`。
 
 ### 腾讯文档与智能表格
 
@@ -157,8 +153,8 @@ config/runtime.local.json
 可读文本；没有 `values` 的记录不会写入工作簿。
 
 腾讯文档 OpenAPI 凭据仅存放在被 Git 忽略的
-`config/modules/tencent_docs.local.json`，必须包含 `client_id`、`access_token` 与 `open_id`；
-前端不会读取或上传这些凭据。智能表格配置示例：
+`config/runtime.local.json` 的 `module_overrides.tencent_docs`，必须包含 `client_id`、
+`access_token` 与 `open_id`；前端不会读取或上传这些凭据。智能表格配置示例：
 
 ```json
 {
@@ -193,7 +189,17 @@ python scripts/dev/test_tencent_smartbook_export.py --doc-url "https://docs.qq.c
 
 ### 统一运行配置
 
-将 `config/runtime.local.example.json` 复制为 `config/runtime.local.json`，在该文件中统一维护 Prefect PostgreSQL、驾驶舱 MySQL、Prefect API 地址和 Work Pool。该本地文件已被 Git 忽略，不能提交。
+将 `config/runtime.local.example.json` 复制为 `config/runtime.local.json`。该唯一私有文件依次维护运行目录与 Pool、Prefect、驾驶舱 MySQL 与锁覆盖、监控 Webhook 密钥、模块凭据和任务差异；它已被 Git 忽略，不能提交。
+
+从旧版本升级时，先在目标机器预览迁移，再写入并删除已验证的旧配置文件：
+
+```powershell
+python scripts/migrate_local_json_to_runtime.py
+python scripts/migrate_local_json_to_runtime.py --apply
+python scripts/migrate_local_json_to_runtime.py --apply --remove-legacy
+```
+
+预览和冲突信息只显示配置路径，不显示凭据值。若出现冲突，保留两份文件并手工处理后重新从预览开始；开发机和生产机必须分别执行迁移。
 
 启动脚本只读取 JSON 配置。
 `prefect.postgres.url` 指定 Prefect 直接使用的 PostgreSQL 数据库；必须与当前机器所属环境一致，不能复用其他环境的库。
