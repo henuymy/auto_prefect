@@ -398,6 +398,31 @@ python -X utf8 -m prefect deploy --all
 
 执行前必须确保当前环境已加载 `config/runtime.local.json` 对应的 Prefect API 配置。UTF-8 模式可避免 Windows 默认 GBK 编码读取包含中文的 `prefect.yaml` 时发生解码失败。Deployment 会保存发布时的代码加载路径；迁移电脑或项目目录后必须在新目录重新发布，否则 Worker 可能继续访问旧路径并报 `WinError 3`。该命令会创建或更新 `prefect.yaml` 中声明的全部 19 个 Deployment；新增通报或调整 Cron 后，也必须先同步更新 YAML。
 
+### 清空并重建 Deployment
+
+仅在需要重建当前 Prefect 环境、且确认该 API 不包含其他项目 Deployment 的维护窗口内使用。先停止本项目 Worker、确认没有需要保留的运行中 Flow Run，并检查将受影响的对象：
+
+```powershell
+. .\scripts\lib\runtime_config.ps1
+Import-ProjectRuntimeConfig | Out-Null
+python -m prefect deployment ls
+```
+
+确认后删除当前 API 的全部 Deployment：
+
+```powershell
+python -m prefect deployment delete --all --no-prompt
+python -m prefect deployment ls
+```
+
+`--all` 不会限定为本项目，会删除当前 `PREFECT_API_URL` 下的所有 Deployment；它不删除 Flow Run 历史、Work Pool、Automation、数据库或本地运行配置。确认 Prefect Server 已运行且 `prefect.yaml` 包含所需的完整声明后，再恢复发布：
+
+```powershell
+python -X utf8 -m prefect deploy --all
+```
+
+发布后仍需执行 `pwsh -File scripts/run.ps1` 启动 Worker 和管理端；所有 Cron 是否启用以 YAML 中各 `schedules[].active` 为准。
+
 ## 数据库迁移
 
 驾驶舱仅使用 V2 Alembic 配置：

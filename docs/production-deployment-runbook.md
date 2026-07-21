@@ -32,6 +32,34 @@
 - 生产目录、机器账户或 Worktree 变化后，应重新发布受影响的 Deployment，避免 Worker 使用已失效的保存路径。
 - `scripts/run.ps1` 负责启动和队列保护，不负责自动发布或删除 Deployment。
 
+## 清空并重建 Deployment
+
+该操作用于迁移项目目录或重建 Prefect Deployment 元数据，不删除 Flow Run 历史、Work Pool、Automation、Prefect PostgreSQL、驾驶舱 MySQL 或 `config/runtime.local.json`。必须在维护窗口执行，并先停止本项目运行栈：
+
+```powershell
+pwsh -File scripts/stop.ps1
+. .\scripts\lib\runtime_config.ps1
+Import-ProjectRuntimeConfig | Out-Null
+python -m prefect deployment ls
+```
+
+核对清单和活跃 Flow Run 后，才可执行以下不可逆命令：
+
+```powershell
+python -m prefect deployment delete --all --no-prompt
+python -m prefect deployment ls
+```
+
+`--all` 删除当前 `PREFECT_API_URL` 中的全部 Deployment，不区分项目；目标 API 中存在其他项目时禁止使用该命令，应按名称或 ID 单独删除。清单为空后，确认当前目录的 `prefect.yaml` 已包含全部 19 项、Prefect Server 可访问，再重建：
+
+```powershell
+python -X utf8 -m prefect deploy --all
+pwsh -File scripts/run.ps1
+pwsh -File scripts/status.ps1
+```
+
+发布完成不代表立即执行：Cron 的启用状态由 `prefect.yaml` 中的 `schedules[].active` 决定。重建后需要在 Prefect UI 核对 Deployment 名称、Work Pool、Cron、时区和暂停状态，再按批准范围启用调度。
+
 ## 推荐上线顺序
 
 1. 准备并核对生产本地配置，确保凭据不进入 Git。
