@@ -155,6 +155,7 @@ C:\AutoNotifyRuntime\
 - 驾驶舱模块产物写入 `modules/dashboard/output/...`；不保留历史 V2 迁移审核导出工具，历史追溯应使用版本库提交和已归档产物。
 - 保留的 V2 配置导入与切换审计工具只接受运行根相对的 `--bundle` 和 `--approvals`，例如 `modules/dashboard/output/v2_migration`；不得传入绝对路径、`runtime/...` 前缀或项目相对替代路径。`--config` 仍是项目内驾驶舱配置路径。
 - MySQL 配置迁移完成后，生产与开发库必须分别连接 `dashboard_prod`、`dashboard_dev`；旧 `dashboard_v2` 保持只读留存，禁止让新采集任务继续写入。
+- 组织结构读取遇到 MySQL `2006` 或 `2013` 时，只可在废弃当前连接池后以新连接重试一次，固定退避 `0.5` 秒；仅适用于无副作用的读取，禁止复用于写事务。诊断日志只能输出固定类别 `MYSQL_CONNECTION_LOST` 或 `MYSQL_READ_TIMEOUT`、错误码、尝试次数、耗时和 `RETRY`/`RECOVERED`/`FAILED` 结果，不得输出原始异常、SQL、连接地址或凭据。
 
 ### 会话生命周期约定
 
@@ -203,6 +204,15 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-22 - 驾驶舱 MySQL 结构读取恢复
+
+- 原因：组织结构读取在结果接收阶段发生 MySQL `2013` 超时时，单次暂态连接中断会直接使整轮驾驶舱采集失败。
+- 修改内容：对只读结构加载仅识别 `2006`、`2013`，废弃连接池后固定等待 `0.5` 秒并以新连接重试一次；补充只含错误类别、错误码、尝试次数、耗时和恢复结果的受控日志。写事务重试策略保持不变。
+- 涉及文件：`services/dashboard_v2_orchestrator.py`、`tests/test_dashboard_v2_orchestrator.py`、`README.md`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无；不调整 MySQL 运行时配置，不新增索引。
+- 验证：`python -m pytest -q`，`664 passed, 9 skipped`；`ruff check services/dashboard_v2_orchestrator.py tests/test_dashboard_v2_orchestrator.py` 通过。
+- 风险与回滚：连续两次读取失败仍会使当前批次失败，以保留真实基础设施故障；回滚该读取重试提交可恢复单次读取语义。
 
 ### 2026-07-19 - 通报待执行队列筛选
 

@@ -621,6 +621,8 @@ python flows/dashboard_partition_maintenance_flow.py
 
 若维护任务报 MySQL `1205 Lock wait timeout exceeded`，表示驾驶舱采集或其他事务正在锁定 `collection_run`。优先等待采集结束后重试；反复出现时，在确认没有必须保留的业务 Run 后停止运行栈，再运行维护任务并重新启动。不要把调大锁等待时间或直接终止未知数据库连接作为首选处理方式。
 
+驾驶舱采集在读取当前组织结构时，若 MySQL 返回 `2006` 或 `2013`，会废弃当前连接池、等待 `0.5` 秒，并仅用新连接重试一次。日志中的 `MYSQL_CONNECTION_LOST` 或 `MYSQL_READ_TIMEOUT` 会带 `outcome=RETRY`、`RECOVERED` 或 `FAILED`，以及错误码、重试次数和耗时；日志不记录原始异常、SQL、连接地址或凭据。`RECOVERED` 表示本轮已自动恢复，无需人工补跑；`FAILED` 表示两次只读结构加载均失败，应先检查同一时段的 MySQL/代理日志、服务端负载和网络或 TLS 链路，再决定是否重新触发采集。该重试不适用于写事务。
+
 Prefect PostgreSQL 的结构由 Prefect Server 迁移命令维护。迁移或全量恢复前，先停止或隔离会写入源库的 Server 与 Worker；恢复目标库后至少核验数据库迁移版本、各表行数、Deployment、Work Pool 与外键完整性。严禁用开发环境的状态覆盖生产库。
 
 ## 测试与质量检查
@@ -650,7 +652,7 @@ npm run build
 2. 请求 `/api/live` 判断 API 进程是否存活，再请求 `/api/health` 检查依赖。
 3. 查看 `C:\AutoNotifyRuntime\logs` 和 Prefect Flow Run 日志。
 4. 登录失败时检查共享会话状态、Cookie 有效期和被忽略的本地登录配置，不输出认证材料。
-5. 驾驶舱异常时检查 MySQL 连接、Alembic 版本和最近一次采集运行状态。
+5. 驾驶舱异常时检查 MySQL 连接、Alembic 版本和最近一次采集运行状态。若日志为 `MYSQL_CONNECTION_LOST` 或 `MYSQL_READ_TIMEOUT` 且 `outcome=FAILED`，按“数据库迁移”章节核查 MySQL、代理与网络链路；`outcome=RECOVERED` 不需要人工重跑。
 6. 配置中心或数据驾驶舱无法打开时，检查 `frontend/node_modules` 是否存在，并确认 `npm --prefix frontend ci` 成功；配置中心和驾驶舱端口分别为 `5173`、`5174`。
 7. `/api/health` 返回 `503` 时读取响应 JSON 的失败项；MySQL 可连接但 `dashboard_schema` 未就绪时，先运行驾驶舱 V2 分区维护。
 
