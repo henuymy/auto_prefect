@@ -12,7 +12,7 @@ from services.session_broker import StageSessionBroker
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
-@task
+@task(persist_result=False)
 def prepare_session_task(
     config: dict,
     force_refresh: bool = False,

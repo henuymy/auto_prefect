@@ -12,6 +12,23 @@ from services.session_alert_service import notify_session_failure, notify_sessio
 from services.session_business_failure_service import recover_business_session_incidents
 
 
+def test_notify_session_keeps_stage_data_available_in_memory(monkeypatch):
+    expected = {
+        "status": "reused",
+        "stage_data": {"city_ops": {"cookies": [{"value": "sid"}]}},
+    }
+    monkeypatch.setattr(
+        "flows.notify_single_flow.prepare_session_task",
+        lambda *_args, **_kwargs: expected,
+    )
+    monkeypatch.setattr(
+        "flows.notify_single_flow.run_notify_session_preparation",
+        lambda operation: operation(),
+    )
+
+    assert prepare_notify_session({}, force_refresh=False) is expected
+
+
 @pytest.mark.parametrize("force_refresh", [False, True])
 def test_notify_session_preparation_uses_one_full_login_attempt(monkeypatch, force_refresh):
     calls = []

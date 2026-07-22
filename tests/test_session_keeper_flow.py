@@ -2,6 +2,42 @@ import pytest
 
 from flows import session_keeper_flow as keeper_module
 from services.session_manager import SessionLoginError
+from tasks import session_tasks
+
+
+def test_keeper_task_disables_result_persistence():
+    assert session_tasks.prepare_session_task.persist_result is False
+
+
+def test_keeper_flow_omits_stage_data_from_return_value(monkeypatch):
+    secret = "raw-session-token"
+
+    class Logger:
+        def info(self, *_args):
+            pass
+
+    monkeypatch.setattr(keeper_module, "get_run_logger", Logger)
+    monkeypatch.setattr(
+        keeper_module,
+        "run_with_business_session_reporting",
+        lambda operation, **_kwargs: operation(),
+    )
+    monkeypatch.setattr(
+        keeper_module,
+        "run_session_keeper",
+        lambda *_args: {
+            "status": "reused",
+            "stages": ["city_ops"],
+            "stage_data": {
+                "city_ops": {"session_storage": {"uapToken": secret}}
+            },
+        },
+    )
+
+    result = keeper_module.session_keeper_flow.fn()
+
+    assert result == {"status": "reused", "stages": ["city_ops"]}
+    assert secret not in repr(result)
 
 
 def test_format_session_health_confirmation_lists_prepared_stages():

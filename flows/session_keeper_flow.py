@@ -12,6 +12,16 @@ from utils.config_loader import load_json_with_runtime_override
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+KEEPER_RESULT_KEYS = (
+    "status",
+    "stage_health_path",
+    "stages",
+    "validation",
+    "login",
+    "close",
+    "login_attempt_count",
+    "lock",
+)
 
 
 def format_session_health_confirmation(result):
@@ -20,6 +30,10 @@ def format_session_health_confirmation(result):
         return None
     status_text = ", ".join(f"{stage}=healthy" for stage in stages)
     return f"共享会话健康状态确认: {status_text}"
+
+
+def project_keeper_result(result):
+    return {key: result[key] for key in KEEPER_RESULT_KEYS if key in result}
 
 
 def load_keeper_config(config_path, base_dir=PROJECT_ROOT):
@@ -56,4 +70,4 @@ def session_keeper_flow(config_path="config/modules/session_keeper.json"):
     confirmation = format_session_health_confirmation(result)
     if confirmation:
         logger.info(confirmation)
-    return result
+    return project_keeper_result(result)
