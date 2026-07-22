@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
+from services import dashboard_v2_orchestrator as orchestrator
 from services.dashboard_structure import (
     StructureEdge,
     StructureGraph,
@@ -40,6 +43,157 @@ def base_graph() -> StructureGraph:
             StructureEdge("BRANCH", "B", "GRID", "G"),
         },
     )
+
+
+def mysql_operational_error(code: int) -> OperationalError:
+    return OperationalError(
+        "statement",
+        {},
+        Exception(code, "mysql://account:secret@host/database"),
+    )
+
+
+class CapturingLogger:
+    def __init__(self) -> None:
+        self.infos: list[tuple[object, ...]] = []
+        self.warnings: list[tuple[object, ...]] = []
+
+    def info(self, message: object, *args: object) -> None:
+        self.infos.append((message, *args))
+
+    def warning(self, message: object, *args: object) -> None:
+        self.warnings.append((message, *args))
+
+
+@pytest.mark.parametrize(
+    ("error_code", "category"),
+    [(2006, "MYSQL_CONNECTION_LOST"), (2013, "MYSQL_READ_TIMEOUT")],
+)
+def test_v2_structure_read_retries_transient_mysql_error_with_fresh_pool(
+    monkeypatch,
+    error_code,
+    category,
+):
+    graph = base_graph()
+    attempts = 0
+    sleep_delays: list[float] = []
+    logger = CapturingLogger()
+    engine = SimpleNamespace(dispose_calls=0)
+
+    def dispose() -> None:
+        engine.dispose_calls += 1
+
+    def load_once(_engine):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise mysql_operational_error(error_code)
+        return graph
+
+    engine.dispose = dispose
+    monkeypatch.setattr(orchestrator, "_load_v2_structure_graph_once", load_once)
+    monkeypatch.setattr(orchestrator, "sleep", sleep_delays.append)
+    clock = iter([100.0, 100.25])
+    monkeypatch.setattr(orchestrator, "perf_counter", lambda: next(clock))
+
+    result = orchestrator._load_v2_structure_graph_with_retry(
+        engine,
+        batch_no="v2-read-retry",
+        logger=logger,
+    )
+
+    assert result is graph
+    assert attempts == 2
+    assert engine.dispose_calls == 1
+    assert sleep_delays == [0.5]
+    assert logger.warnings == [
+        (
+            "V2 MySQL 结构读取重试 batch_no=%s operation=%s category=%s "
+            "code=%s retry_attempt=%s outcome=%s delay_seconds=%.1f",
+            "v2-read-retry",
+            "LOAD_STRUCTURE_GRAPH",
+            category,
+            error_code,
+            1,
+            "RETRY",
+            0.5,
+        )
+    ]
+    assert logger.infos == [
+        (
+            "V2 MySQL 结构读取恢复 batch_no=%s operation=%s category=%s "
+            "code=%s retry_attempt=%s outcome=%s elapsed_seconds=%.3f",
+            "v2-read-retry",
+            "LOAD_STRUCTURE_GRAPH",
+            category,
+            error_code,
+            1,
+            "RECOVERED",
+            0.25,
+        )
+    ]
+    assert "secret" not in str(logger.warnings)
+    assert "secret" not in str(logger.infos)
+
+
+def test_v2_structure_read_does_not_retry_non_connection_error(monkeypatch):
+    engine = SimpleNamespace(dispose_calls=0)
+    logger = CapturingLogger()
+
+    def dispose() -> None:
+        engine.dispose_calls += 1
+
+    def load_once(_engine):
+        raise mysql_operational_error(1045)
+
+    engine.dispose = dispose
+    monkeypatch.setattr(orchestrator, "_load_v2_structure_graph_once", load_once)
+
+    with pytest.raises(OperationalError):
+        orchestrator._load_v2_structure_graph_with_retry(
+            engine,
+            batch_no="v2-read-no-retry",
+            logger=logger,
+        )
+
+    assert engine.dispose_calls == 0
+    assert logger.warnings == []
+
+
+def test_v2_structure_read_stops_after_one_retry(monkeypatch):
+    attempts = 0
+    engine = SimpleNamespace(dispose_calls=0)
+    logger = CapturingLogger()
+
+    def dispose() -> None:
+        engine.dispose_calls += 1
+
+    def load_once(_engine):
+        nonlocal attempts
+        attempts += 1
+        raise mysql_operational_error(2013)
+
+    engine.dispose = dispose
+    monkeypatch.setattr(orchestrator, "_load_v2_structure_graph_once", load_once)
+    monkeypatch.setattr(orchestrator, "sleep", lambda _delay: None)
+    clock = iter([100.0, 100.5])
+    monkeypatch.setattr(orchestrator, "perf_counter", lambda: next(clock))
+
+    with pytest.raises(OperationalError):
+        orchestrator._load_v2_structure_graph_with_retry(
+            engine,
+            batch_no="v2-read-exhausted",
+            logger=logger,
+        )
+
+    assert attempts == 2
+    assert engine.dispose_calls == 1
+    assert len(logger.warnings) == 2
+    assert logger.warnings[-1][0] == (
+        "V2 MySQL 结构读取失败 batch_no=%s operation=%s category=%s "
+        "code=%s retry_attempt=%s outcome=%s elapsed_seconds=%.3f"
+    )
+    assert logger.warnings[-1][-2:] == ("FAILED", 0.5)
 
 
 def test_augment_observed_preserves_approved_base_edges():

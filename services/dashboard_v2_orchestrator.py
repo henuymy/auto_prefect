@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any, Callable, Iterable
 
 from sqlalchemy import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from infrastructure.dashboard_run_protocol import CollectionRunStore
@@ -43,6 +44,88 @@ class V2MetricCoverageError(RuntimeError):
     error_type = "NODE_COVERAGE_MISMATCH"
 
 
+MYSQL_STRUCTURE_READ_RETRY_CATEGORIES = {
+    2006: "MYSQL_CONNECTION_LOST",
+    2013: "MYSQL_READ_TIMEOUT",
+}
+MYSQL_STRUCTURE_READ_RETRY_DELAY_SECONDS = 0.5
+
+
+def _load_v2_structure_graph_once(engine: Engine) -> StructureGraph:
+    with Session(engine) as session:
+        return load_v2_structure_graph(session)
+
+
+def _load_v2_structure_graph_with_retry(
+    engine: Engine,
+    *,
+    batch_no: str,
+    logger: Any,
+) -> StructureGraph:
+    """Retry one idempotent hierarchy read after a lost MySQL connection."""
+    started = perf_counter()
+    retry_context: tuple[str, int | None, int] | None = None
+    for attempt in range(1, 3):
+        try:
+            graph = _load_v2_structure_graph_once(engine)
+        except OperationalError as exc:
+            error_code = _mysql_error_code(exc)
+            category = MYSQL_STRUCTURE_READ_RETRY_CATEGORIES.get(error_code)
+            if category is None:
+                raise
+            if attempt == 2:
+                logger.warning(
+                    "V2 MySQL 结构读取失败 batch_no=%s operation=%s category=%s "
+                    "code=%s retry_attempt=%s outcome=%s elapsed_seconds=%.3f",
+                    batch_no,
+                    "LOAD_STRUCTURE_GRAPH",
+                    category,
+                    error_code,
+                    attempt - 1,
+                    "FAILED",
+                    perf_counter() - started,
+                )
+                raise
+            logger.warning(
+                "V2 MySQL 结构读取重试 batch_no=%s operation=%s category=%s "
+                "code=%s retry_attempt=%s outcome=%s delay_seconds=%.1f",
+                batch_no,
+                "LOAD_STRUCTURE_GRAPH",
+                category,
+                error_code,
+                attempt,
+                "RETRY",
+                MYSQL_STRUCTURE_READ_RETRY_DELAY_SECONDS,
+            )
+            retry_context = (category, error_code, attempt)
+            engine.dispose()
+            sleep(MYSQL_STRUCTURE_READ_RETRY_DELAY_SECONDS)
+            continue
+        if retry_context is not None:
+            category, error_code, retry_attempt = retry_context
+            logger.info(
+                "V2 MySQL 结构读取恢复 batch_no=%s operation=%s category=%s "
+                "code=%s retry_attempt=%s outcome=%s elapsed_seconds=%.3f",
+                batch_no,
+                "LOAD_STRUCTURE_GRAPH",
+                category,
+                error_code,
+                retry_attempt,
+                "RECOVERED",
+                perf_counter() - started,
+            )
+        return graph
+    raise AssertionError("V2 MySQL 结构读取重试流程未返回")
+
+
+def _mysql_error_code(exc: OperationalError) -> int | None:
+    args = getattr(exc.orig, "args", ())
+    try:
+        return int(args[0])
+    except (IndexError, TypeError, ValueError):
+        return None
+
+
 def collect_validate_metric_rows_v2(
     *,
     engine: Engine,
@@ -62,8 +145,11 @@ def collect_validate_metric_rows_v2(
     del anomaly_directory, failure_directory
     logger = event_logger or logging.getLogger(__name__)
     strategy = normalize_collection_retry_strategy(retry_strategy)
-    with Session(engine) as session:
-        current_graph = load_v2_structure_graph(session)
+    current_graph = _load_v2_structure_graph_with_retry(
+        engine,
+        batch_no=batch_no,
+        logger=logger,
+    )
     if not current_graph.targets:
         raise V2HierarchyError("V2 当前树没有可请求节点，请先执行空库初始化")
 
