@@ -665,6 +665,50 @@ def test_prepare_session_authentication_failure_logs_in_immediately(monkeypatch)
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def test_prepare_session_success_result_does_not_include_login_command(monkeypatch):
+    work_dir = make_work_dir()
+    try:
+        cookie_dump_path = work_dir / "cookie_dump.json"
+        write_json(cookie_dump_path, valid_city_ops_cookie_dump())
+        probe_results = iter(
+            [
+                {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]},
+                {"valid": False, "results": [{"stage": "city_ops", "ok": False, "status_code": 401}]},
+                {"valid": True, "results": [{"stage": "city_ops", "ok": True}]},
+            ]
+        )
+        monkeypatch.setattr(
+            session_manager,
+            "validate_stage_probes",
+            lambda *_args, **_kwargs: next(probe_results),
+        )
+
+        def fake_login(*_args, **kwargs):
+            write_json(
+                Path(kwargs["env"]["AUTO_NOTIFY_COOKIE_DUMP_PATH"]),
+                valid_city_ops_cookie_dump(),
+            )
+            return {
+                "command": "python login.py --password raw-password",
+                "returncode": 0,
+            }
+
+        monkeypatch.setattr(session_manager, "run_login_command", fake_login)
+        monkeypatch.setattr(
+            session_manager,
+            "close_browser_session",
+            lambda *_args, **_kwargs: {"stopped_pids": []},
+        )
+
+        result = prepare_session(session_config(cookie_dump_path))
+
+        assert result["login"] == {"returncode": 0}
+        assert "command" not in result["login"]
+        assert "raw-password" not in repr(result)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def test_prepare_session_does_not_login_when_lock_recheck_finds_infrastructure_failure(monkeypatch):
     work_dir = make_work_dir()
     try:
@@ -1162,9 +1206,119 @@ def test_run_login_command_redacts_sensitive_child_diagnostic(monkeypatch):
         session_manager.run_login_command("sensitive command")
 
     message = str(exc_info.value)
-    assert "<redacted login failure detail>" in message
+    assert "错误类别=unknown" in message
+    assert "诊断=" not in message
     assert "raw-password" not in message
     assert "sensitive command" not in message
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "expected_category"),
+    [
+        ("等待 Gotify 验证码超时", "otp_timeout"),
+        ("打开登录页后未找到 loginName 输入框", "login_page_timeout"),
+        ("WebDriverException: Edge browser failed to start", "browser_error"),
+        ("数据超市 Cookie/Storage 写入失败", "session_capture_failed"),
+        ("unexpected child process error", "unknown"),
+    ],
+)
+def test_classify_login_failure_returns_stable_safe_category(
+    diagnostic, expected_category
+):
+    assert session_manager.classify_login_failure(diagnostic) == expected_category
+
+
+def test_run_login_command_redacts_values_and_keeps_safe_reason(monkeypatch):
+    completed = type(
+        "Completed",
+        (),
+        {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": (
+                "等待 Gotify 验证码超时; username=alice; "
+                "password=correct horse battery staple; "
+                "token=raw-token; Authorization: Bearer raw-auth; "
+                "authorization=Bearer raw-assignment-auth; "
+                "X-Token: raw-header-token; "
+                "verification_code=123456; otp code: 654321; "
+                "Cookie: sid=raw-cookie; "
+                "endpoint=/login?ticket=raw-relative-ticket; "
+                "www.internal.example/login?ticket=raw-host-ticket; "
+                "https://internal.example/login?ticket=raw-ticket"
+            ),
+        },
+    )()
+    monkeypatch.setattr(
+        session_manager.subprocess, "run", lambda *_args, **_kwargs: completed
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session_manager.run_login_command("sensitive command")
+
+    message = str(exc_info.value)
+    assert "错误类别=otp_timeout" in message
+    assert "等待验证码超时" in message
+    for secret in (
+        "alice",
+        "raw-password",
+        "correct horse battery staple",
+        "raw-token",
+        "raw-auth",
+        "raw-assignment-auth",
+        "raw-header-token",
+        "123456",
+        "654321",
+        "raw-cookie",
+        "raw-relative-ticket",
+        "raw-host-ticket",
+        "raw-ticket",
+    ):
+        assert secret not in message
+    assert "internal.example" not in message
+
+
+def test_run_login_command_hides_timeout_command(monkeypatch):
+    timeout = session_manager.subprocess.TimeoutExpired(
+        ["python", "login.py", "--password", "raw-password"], 30
+    )
+    monkeypatch.setattr(
+        session_manager.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(timeout),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session_manager.run_login_command("sensitive command")
+
+    message = str(exc_info.value)
+    assert "错误类别=unknown" in message
+    assert "诊断=" not in message
+    assert "raw-password" not in message
+    assert "login.py" not in message
+
+
+def test_run_login_command_success_result_does_not_include_command(monkeypatch):
+    completed = type(
+        "Completed",
+        (),
+        {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+        },
+    )()
+    monkeypatch.setattr(
+        session_manager.subprocess, "run", lambda *_args, **_kwargs: completed
+    )
+
+    result = session_manager.run_login_command(
+        "python login.py --password raw-password"
+    )
+
+    assert result == {"returncode": 0}
+    assert "command" not in result
+    assert "raw-password" not in repr(result)
 
 
 def test_run_login_command_includes_sanitized_stderr_diagnostic(monkeypatch):
@@ -1184,7 +1338,8 @@ def test_run_login_command_includes_sanitized_stderr_diagnostic(monkeypatch):
 
     message = str(exc_info.value)
     assert "退出码=1" in message
-    assert "等待 Gotify 验证码超时" in message
+    assert "错误类别=otp_timeout" in message
+    assert "等待验证码超时" in message
     assert "sensitive command" not in message
 
 

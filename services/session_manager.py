@@ -661,17 +661,54 @@ class SessionInfrastructureError(RuntimeError):
     pass
 
 
-LOGIN_ERROR_SENSITIVE_PATTERN = re.compile(
-    r"(?i)(用户名|username|password|cookie|token|storage|authorization|secret|stdout|stderr)"
-)
 MAX_LOGIN_ERROR_SUMMARY_LENGTH = 500
+LOGIN_FAILURE_CATEGORIES = (
+    (
+        "otp_timeout",
+        re.compile(
+            r"(?is)(gotify|验证码|短信).{0,120}(timeout|超时)|"
+            r"(timeout|超时).{0,120}(gotify|验证码|短信)"
+        ),
+    ),
+    (
+        "login_page_timeout",
+        re.compile(
+            r"(?is)(loginName|登录页|登录框).{0,120}(timeout|超时|未找到)|"
+            r"(timeout|超时|未找到).{0,120}(loginName|登录页|登录框)"
+        ),
+    ),
+    (
+        "browser_error",
+        re.compile(
+            r"(?i)(webdriver|selenium|msedge|edge browser|driver.*启动|浏览器.*启动)"
+        ),
+    ),
+    (
+        "session_capture_failed",
+        re.compile(
+            r"(?is)(cookie|storage).{0,120}(写入失败|未就绪|capture.*fail|ready.*fail)"
+        ),
+    ),
+)
+LOGIN_FAILURE_SUMMARIES = {
+    "otp_timeout": "等待验证码超时",
+    "login_page_timeout": "登录页加载或登录框检测超时",
+    "browser_error": "Edge WebDriver 启动或响应异常",
+    "session_capture_failed": "会话认证材料捕获或就绪检查失败",
+}
+
+
+def classify_login_failure(error: object) -> str:
+    text = " ".join(str(error).split())
+    for category, pattern in LOGIN_FAILURE_CATEGORIES:
+        if pattern.search(text):
+            return category
+    return "unknown"
 
 
 def summarize_login_failure(error):
-    summary = " ".join(str(error).split())
-    if LOGIN_ERROR_SENSITIVE_PATTERN.search(summary):
-        return "<redacted login failure detail>"
-    return summary[:MAX_LOGIN_ERROR_SUMMARY_LENGTH]
+    category = classify_login_failure(error)
+    return LOGIN_FAILURE_SUMMARIES.get(category, "unknown")[:MAX_LOGIN_ERROR_SUMMARY_LENGTH]
 
 
 class SessionLoginError(RuntimeError):
@@ -774,27 +811,33 @@ def merge_cookie_dump_stages(existing_cookie_dump, refreshed_cookie_dump):
 def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
     process_env = os.environ.copy()
     process_env.update(env or {})
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd),
-        shell=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-        timeout=timeout_seconds,
-        env=process_env,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd),
+            shell=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+            timeout=timeout_seconds,
+            env=process_env,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("登录命令执行失败，错误类别=unknown") from None
     if completed.returncode != 0:
         raw_diagnostic = completed.stderr or completed.stdout or ""
+        category = classify_login_failure(raw_diagnostic)
         diagnostic = summarize_login_failure(raw_diagnostic)
-        message = f"登录命令执行失败，退出码={completed.returncode}"
-        if diagnostic:
+        message = (
+            f"登录命令执行失败，退出码={completed.returncode}，"
+            f"错误类别={category}"
+        )
+        if category != "unknown" and diagnostic:
             message += f"，诊断={diagnostic}"
         raise RuntimeError(message)
     return {
-        "command": command,
         "returncode": completed.returncode,
     }
 
@@ -1119,7 +1162,7 @@ def prepare_session(
                     login_environment["AUTO_NOTIFY_REQUIRED_STAGES"] = ",".join(
                         required_stages
                     )
-                command_result = run_login_command(
+                run_login_command(
                     command,
                     cwd=base_dir,
                     timeout_seconds=login_timeout_seconds,
@@ -1171,7 +1214,6 @@ def prepare_session(
                     time.monotonic() - attempt_started_at,
                 )
                 return {
-                    "command": command_result,
                     "close": close_result,
                     "validation": refreshed_validation,
                 }
@@ -1202,7 +1244,7 @@ def prepare_session(
         "status": "refreshed",
         "cookie_dump_path": str(cookie_dump_path),
         "validation": login_result["validation"],
-        "login": login_result["command"],
+        "login": {"returncode": 0},
         "close": login_result["close"],
         "login_attempt_count": completed_login_attempts,
         "lock": lock_result,
