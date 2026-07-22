@@ -19,9 +19,9 @@
 
 登录成功时，`run_login_command` 和 `prepare_session` 的结果只返回固定的成功退出码，不回传完整登录命令或未筛选的子进程结果。
 
-Cookie 和 Storage 的唯一持久化位置保持为 `C:\\AutoNotifyRuntime\\session\\stages\\*.json`。`prepare_session_task` 禁用 Prefect 结果持久化，允许同一运行的通知 Flow 在内存中取得 `stage_data`；`session_keeper_flow` 在返回前移除 `stage_data`，只对外暴露会话健康状态和受控元数据。
+Cookie 和 Storage 的唯一持久化位置保持为 `C:\\AutoNotifyRuntime\\session\\stages\\*.json`。`prepare_session_task` 禁用 Prefect 结果持久化，允许同一运行的通知 Flow 在内存中取得 `stage_data`；`session_keeper_flow` 在返回前移除 `stage_data` 和原始 `validation`，只对外暴露会话健康状态和受控元数据。
 
-2026-07-22 实现状态：Task 结果显式设置 `persist_result=False`；Keeper Flow 在记录健康确认后，将 Broker 结果投影为受控键集。通知 Flow 保持原对象引用，因此同一运行的下载步骤仍能使用内存中的 `stage_data`。
+2026-07-22 实现状态：Task 结果显式设置 `persist_result=False`；Keeper Flow 在记录健康确认后，将 Broker 结果投影为不含 `stage_data` 和 `validation` 的受控键集。通知 Flow 保持原对象引用，因此同一运行的下载步骤仍能使用内存中的 `stage_data`。
 
 ## 安全约束
 
@@ -40,6 +40,6 @@ Cookie 和 Storage 的唯一持久化位置保持为 `C:\\AutoNotifyRuntime\\ses
 - 无法分类的输出使用 `unknown`。
 - `TimeoutExpired` 中的命令文本不会进入异常、日志或告警。
 - 成功登录的 `login` 结果只含退出码，不含命令文本。
-- 会话 Task 禁用结果持久化；Keeper Flow 结果不包含 Cookie、Storage 或 `stage_data`。
+- 会话 Task 禁用结果持久化；Keeper Flow 结果不包含 Cookie、Storage、`stage_data`、探活 URL 或探活实际值。
 - 通知 Flow 在同一运行内仍可取得原始 `stage_data` 并传给下载任务。
 - 既有纯文本、无敏感信息的诊断继续可见。

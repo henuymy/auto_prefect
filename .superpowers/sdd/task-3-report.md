@@ -57,3 +57,20 @@ No whitespace errors; Git printed only LF-to-CRLF working-copy warnings.
 ## Concerns
 
 None.
+
+## Follow-up Review Correction
+
+The task review found that the initial Keeper allowlist still returned raw
+`validation`, whose probe results can contain storage-derived URL query values
+and response `actual_value` data. The Flow no longer returns `validation`.
+
+```text
+RED: python -m pytest tests\test_session_keeper_flow.py -k "omits_stage_data" -q
+1 failed because the returned result contained validation.probe_validation.
+
+GREEN: python -m pytest tests\test_session_keeper_flow.py -k "omits_stage_data" -q
+1 passed.
+
+Regression: python -m pytest tests\test_session_manager.py tests\test_session_broker.py tests\test_session_keeper_flow.py tests\test_notify_flow_session.py -q
+87 passed.
+```

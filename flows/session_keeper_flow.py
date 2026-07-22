@@ -16,7 +16,6 @@ KEEPER_RESULT_KEYS = (
     "status",
     "stage_health_path",
     "stages",
-    "validation",
     "login",
     "close",
     "login_attempt_count",

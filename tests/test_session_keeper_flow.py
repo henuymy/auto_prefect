@@ -31,12 +31,24 @@ def test_keeper_flow_omits_stage_data_from_return_value(monkeypatch):
             "stage_data": {
                 "city_ops": {"session_storage": {"uapToken": secret}}
             },
+            "validation": {
+                "valid": True,
+                "probe_validation": {
+                    "results": [
+                        {
+                            "url": f"https://example.invalid/probe?token={secret}",
+                            "actual_value": secret,
+                        }
+                    ]
+                },
+            },
         },
     )
 
     result = keeper_module.session_keeper_flow.fn()
 
     assert result == {"status": "reused", "stages": ["city_ops"]}
+    assert "validation" not in result
     assert secret not in repr(result)
 
 

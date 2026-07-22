@@ -198,7 +198,7 @@ python -m pytest tests\test_session_manager.py -k "success_result_does_not_inclu
 
 **接口：**
 - `prepare_session_task` 保持相同入参和内存返回值，但必须以 `persist_result=False` 声明。
-- `session_keeper_flow` 仍记录健康确认，但返回值不得有 `stage_data`、Cookie 或 Storage 字段。
+- `session_keeper_flow` 仍记录健康确认，但返回值不得有 `stage_data`、原始 `validation`、Cookie 或 Storage 字段。
 - `prepare_notify_session` 仍将 `stage_data` 原样交给同一运行的下载步骤。
 
 - [x] **步骤 1：编写失败测试**
@@ -239,6 +239,7 @@ def test_keeper_flow_omits_stage_data_from_return_value(monkeypatch):
     result = keeper_module.session_keeper_flow.fn()
 
     assert result == {"status": "reused", "stages": ["city_ops"]}
+    assert "validation" not in result
     assert secret not in repr(result)
 ```
 
@@ -271,7 +272,7 @@ python -m pytest tests\test_session_keeper_flow.py tests\test_notify_flow_sessio
 @task(persist_result=False)
 ```
 
-在 `flows/session_keeper_flow.py` 新增受控投影函数，只保留 `status`、`stage_health_path`、`stages`、`validation`、`login`、`close`、`login_attempt_count` 和 `lock` 中存在的键；随后由 `session_keeper_flow` 返回该投影，而不是原始 Broker 结果。
+在 `flows/session_keeper_flow.py` 新增受控投影函数，只保留 `status`、`stage_health_path`、`stages`、`login`、`close`、`login_attempt_count` 和 `lock` 中存在的键；随后由 `session_keeper_flow` 返回该投影，而不是原始 Broker 结果。
 
 - [x] **步骤 4：运行聚焦测试**
 
