@@ -45,7 +45,6 @@ const defaultService: MonitorService = import.meta.env.VITE_MONITOR_DATA_SOURCE 
 const labels: Record<RunStatus, string> = { scheduled: "待执行", running: "运行中", succeeded: "成功", failed: "失败", skipped: "已跳过" };
 const historyStatuses = ["succeeded", "running", "failed"] as const;
 const triggerLabels = { all: "全部", scheduled: "定时调度", session: "每 10 分钟", manual: "手动试跑", web: "网页操作" } as const;
-const HISTORY_BATCH_SIZE = 10;
 const RECORD_PAGE_SIZES = [10, 20, 50] as const;
 
 function shortTime(value?: string) { return formatMonitorTime(value); }
@@ -68,15 +67,13 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
   const [pendingQueueOpen, setPendingQueueOpen] = useState(false);
   const [summaryStatus, setSummaryStatus] = useState<Exclude<RunStatus, "scheduled" | "skipped"> | null>(null);
   const [loadVersion, setLoadVersion] = useState(0);
-  const [visibleTimelineCount, setVisibleTimelineCount] = useState(HISTORY_BATCH_SIZE);
   const [recordPage, setRecordPage] = useState(1);
-  const [recordPageSize, setRecordPageSize] = useState<number>(HISTORY_BATCH_SIZE);
+  const [recordPageSize, setRecordPageSize] = useState<number>(RECORD_PAGE_SIZES[0]);
   const [timelineDayExpanded, setTimelineDayExpanded] = useState<Record<string, boolean>>({});
   const detailRequestId = useRef(0);
 
 
   useEffect(() => {
-    setVisibleTimelineCount(HISTORY_BATCH_SIZE);
     setRecordPage(1);
   }, [filters]);
   useEffect(() => {
@@ -134,15 +131,13 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
   const todayLabel = formatMonitorDateTime(referenceNow.toISOString()).slice(0, 10);
   const targetOptions = useMemo(() => Array.from(new Map(historyRuns.map((run) => [run.targetId, run.target])).entries()), [historyRuns]);
   const hasFilters = filters.target !== "all" || filters.trigger !== "all" || filters.status !== "all" || Boolean(filters.startAt || filters.endAt);
-  const visibleTimelineRuns = useMemo(() => filteredRuns.slice(0, visibleTimelineCount), [filteredRuns, visibleTimelineCount]);
-  const timelineRemaining = Math.max(filteredRuns.length - visibleTimelineRuns.length, 0);
   const recordPageCount = Math.max(1, Math.ceil(filteredRuns.length / recordPageSize));
   const currentRecordPage = Math.min(recordPage, recordPageCount);
   const pagedTableRuns = useMemo(() => {
     const start = (currentRecordPage - 1) * recordPageSize;
     return filteredRuns.slice(start, start + recordPageSize);
   }, [currentRecordPage, filteredRuns, recordPageSize]);
-  const groupedTimeline = useMemo(() => visibleTimelineRuns.reduce<Record<string, MonitorRun[]>>((groups, run) => { const key = dayLabel(referenceTime(run)); (groups[key] ??= []).push(run); return groups; }, {}), [visibleTimelineRuns]);
+  const groupedTimeline = useMemo(() => filteredRuns.reduce<Record<string, MonitorRun[]>>((groups, run) => { const key = dayLabel(referenceTime(run)); (groups[key] ??= []).push(run); return groups; }, {}), [filteredRuns]);
 
   const updateFilter = <K extends keyof MonitorFilters>(key: K, value: MonitorFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
   const toggleTimelineDay = (date: string) => setTimelineDayExpanded((current) => ({ ...current, [date]: !(current[date] ?? date === todayLabel) }));
@@ -177,7 +172,7 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
     {connection === "error" ? <section className="monitor-panel load-state"><AlertCircle size={24} /><strong>监控数据暂时不可用</strong><p>监控服务未能响应；请稍后刷新页面。</p><button className="refresh-button" onClick={refresh}>重新加载</button></section> : <div className={`monitor-grid ${pendingQueueOpen || summaryStatus || displayedRun ? "has-detail" : ""}`}>
       <section className="timeline-panel monitor-panel" aria-label="运行时间线">
         <div className="panel-title"><div><h2>运行时间线</h2><p>按实际开始或计划时间排序</p></div></div>
-        {connection === "loading" ? <div className="skeleton-list"><i /><i /><i /><i /></div> : filteredRuns.length === 0 ? <div className="empty-state"><CalendarDays size={24} /><p>这个条件下没有运行记录</p><button onClick={() => setFilters(EMPTY_FILTERS)}>清除筛选</button></div> : <div className="timeline-groups">
+        {connection === "loading" ? <div className="skeleton-list"><i /><i /><i /><i /></div> : filteredRuns.length === 0 ? <div className="empty-state"><CalendarDays size={24} /><p>这个条件下没有运行记录</p><button onClick={() => setFilters(EMPTY_FILTERS)}>清除筛选</button></div> : <div className="timeline-groups" tabIndex={0} aria-label="运行时间线记录，可向下滚动查看全部记录">
           {Object.entries(groupedTimeline).map(([date, list]) => {
             const expanded = timelineDayExpanded[date] ?? date === todayLabel;
             const actionLabel = `${expanded ? "收起" : "展开"} ${date}`;
@@ -189,7 +184,6 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
             </div>;
           })}
         </div>}
-        {timelineRemaining > 0 && <div className="timeline-load-more"><button className="load-more-button" onClick={() => setVisibleTimelineCount((count) => count + HISTORY_BATCH_SIZE)}>加载更多时间线（{timelineRemaining}）</button></div>}
       </section>
 
       <section className="record-panel monitor-panel" aria-label="运行记录">

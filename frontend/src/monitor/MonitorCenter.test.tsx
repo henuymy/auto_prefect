@@ -250,6 +250,27 @@ describe("MonitorCenter live state", () => {
     await user.click(screen.getByRole("button", { name: "收起 2026-07-17" }));
     expect(screen.getByRole("button", { name: "展开 2026-07-17" })).toBeTruthy();
   });
+
+  it("renders every filtered timeline record inside its scrollable list", async () => {
+    const snapshot = await getMonitorSnapshot();
+    const runs = Array.from({ length: 12 }, (_, index) => ({
+      ...snapshot.runs[1],
+      id: `timeline-${index}`,
+      target: `通报 · 时间线记录 ${index + 1}`,
+      scheduledAt: `2026-07-17T${String(23 - index).padStart(2, "0")}:00:00+08:00`,
+      startedAt: `2026-07-17T${String(23 - index).padStart(2, "0")}:00:00+08:00`,
+    }));
+    const service = {
+      getSnapshot: vi.fn().mockResolvedValue({ ...snapshot, runs, updatedAt: "2026-07-17T23:59:00+08:00" }),
+      createStream: () => () => {},
+    };
+
+    render(<MonitorCenter service={service} />);
+
+    const timeline = await screen.findByLabelText("运行时间线记录，可向下滚动查看全部记录");
+    expect(timeline.querySelectorAll(".timeline-item")).toHaveLength(12);
+    expect(screen.queryByRole("button", { name: /加载更多时间线/ })).toBeNull();
+  });
 });
 
 describe("Monitor startup-failure fallback", () => {
