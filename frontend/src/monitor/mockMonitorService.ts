@@ -186,7 +186,7 @@ export function getSummary(runs: MonitorRun[]): MonitorSummary {
 export async function getMonitorSnapshot(): Promise<MonitorSnapshot> {
   // Replace with GET /api/monitor/summary + /api/monitor/runs when the backend is connected.
   await new Promise((resolve) => window.setTimeout(resolve, 360));
-  return { runs: structuredClone(monitorRuns), pendingQueue: structuredClone(pendingQueue), updatedAt: "2026-07-17T09:08:24+08:00", connected: true, upstream: { lastAcceptedAt: "2026-07-17T09:08:24+08:00", lastReconciledAt: "2026-07-17T09:08:24+08:00", lastErrorCategory: null } };
+  return { runs: structuredClone(monitorRuns), pendingQueue: structuredClone(pendingQueue), updatedAt: "2026-07-17T09:08:24+08:00", connected: true, upstream: { lastAcceptedAt: "2026-07-17T09:08:24+08:00", lastReconciledAt: "2026-07-17T09:08:24+08:00", lastErrorCategory: null, lastErrorAt: null, lastErrorDetail: null } };
 }
 
 export function createMockMonitorStream(onUpdate: (update: MonitorStreamMessage) => void) {
@@ -202,7 +202,7 @@ export function createMockMonitorStream(onUpdate: (update: MonitorStreamMessage)
       active.steps[1] = { ...active.steps[1], message: `正在下载第 ${count} / 4 份报表` };
       active.logs.push({ at: "2026-07-17T09:08:24+08:00", level: "INFO", message: `下载进度更新：${count} / 4` });
     }
-    onUpdate({ type: "snapshot", runs, pendingQueue: structuredClone(pendingQueue), updatedAt: "2026-07-17T09:08:24+08:00", connected: true, upstream: { lastAcceptedAt: "2026-07-17T09:08:24+08:00", lastReconciledAt: "2026-07-17T09:08:24+08:00", lastErrorCategory: null } });
+    onUpdate({ type: "snapshot", runs, pendingQueue: structuredClone(pendingQueue), updatedAt: "2026-07-17T09:08:24+08:00", connected: true, upstream: { lastAcceptedAt: "2026-07-17T09:08:24+08:00", lastReconciledAt: "2026-07-17T09:08:24+08:00", lastErrorCategory: null, lastErrorAt: null, lastErrorDetail: null } });
   }, 4200);
   return () => window.clearInterval(timer);
 }

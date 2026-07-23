@@ -63,6 +63,8 @@ export interface MonitorUpstream {
   lastAcceptedAt: string | null;
   lastReconciledAt: string | null;
   lastErrorCategory: string | null;
+  lastErrorAt: string | null;
+  lastErrorDetail: string | null;
 }
 
 export interface PendingQueueItem {
@@ -104,7 +106,14 @@ export interface MonitorConnectionMessage {
   connected: boolean;
 }
 
+export interface MonitorUpstreamUpdatedMessage {
+  type: "upstream.updated";
+  updatedAt: string;
+  upstream: MonitorUpstream;
+}
+
 export type MonitorStreamMessage =
   | ({ type: "snapshot" } & MonitorSnapshot)
   | MonitorRunUpdatedMessage
-  | MonitorConnectionMessage;
+  | MonitorConnectionMessage
+  | MonitorUpstreamUpdatedMessage;

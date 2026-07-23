@@ -31,7 +31,12 @@ export const apiMonitorService = {
       socket.addEventListener("open", () => onUpdate({ type: "connection", connected: true }));
       socket.addEventListener("message", (event) => {
         const message = JSON.parse(event.data) as MonitorStreamMessage;
-        if (message.type === "snapshot" || message.type === "run.updated") onUpdate(message);
+        if (
+          message.type === "snapshot"
+          || message.type === "run.updated"
+          || message.type === "connection"
+          || message.type === "upstream.updated"
+        ) onUpdate(message);
       });
       socket.addEventListener("close", () => {
         if (stopped) return;

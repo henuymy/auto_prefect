@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from backend.routers import monitor
 from backend.services.prefect_monitor_event_service import ProcessedPrefectEvent
+from backend.services.monitor_stream import MonitorRealtimeStatus
 
 
 EVENT = {
@@ -67,6 +68,69 @@ def test_prefect_webhook_publishes_only_after_accepted_event(monkeypatch) -> Non
     assert response.status_code == 202
     assert response.json() == {"accepted": True, "duplicate": False}
     assert published == ["mon_report_run_1"]
+
+
+def test_prefect_webhook_publishes_upstream_status_after_accepted_event(monkeypatch) -> None:
+    upstream_updates: list[dict[str, object]] = []
+
+    monkeypatch.setenv("PREFECT_MONITOR_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(monitor, "realtime_status", MonitorRealtimeStatus())
+    monkeypatch.setattr(
+        monitor,
+        "_process_prefect_event",
+        lambda payload: ProcessedPrefectEvent(
+            accepted=True,
+            duplicate=False,
+            run={"id": "mon_report_run_1"},
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(monitor.stream_hub, "publish_background", lambda _run_id: None, raising=False)
+    monkeypatch.setattr(
+        monitor.stream_hub,
+        "publish_payload_background",
+        upstream_updates.append,
+        raising=False,
+    )
+
+    with client() as test_client:
+        response = test_client.post(
+            "/api/monitor/events/prefect",
+            json=EVENT,
+            headers={"X-Prefect-Monitor-Secret": "test-secret"},
+        )
+
+    assert response.status_code == 202
+    assert upstream_updates[0]["type"] == "upstream.updated"
+    assert upstream_updates[0]["upstream"]["lastAcceptedAt"] is not None
+
+
+def test_prefect_webhook_publishes_upstream_error_when_processing_fails(monkeypatch) -> None:
+    upstream_updates: list[dict[str, object]] = []
+
+    def fail(_payload: dict[str, object]) -> ProcessedPrefectEvent:
+        raise OSError("password=secret monitor storage unavailable")
+
+    monkeypatch.setenv("PREFECT_MONITOR_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(monitor, "realtime_status", MonitorRealtimeStatus())
+    monkeypatch.setattr(monitor, "_process_prefect_event", fail, raising=False)
+    monkeypatch.setattr(
+        monitor.stream_hub,
+        "publish_payload_background",
+        upstream_updates.append,
+        raising=False,
+    )
+
+    with client() as test_client:
+        response = test_client.post(
+            "/api/monitor/events/prefect",
+            json=EVENT,
+            headers={"X-Prefect-Monitor-Secret": "test-secret"},
+        )
+
+    assert response.status_code == 503
+    assert upstream_updates[0]["upstream"]["lastErrorCategory"] == "PROCESSING_FAILED"
+    assert upstream_updates[0]["upstream"]["lastErrorDetail"] == "password=[已隐藏] monitor storage unavailable"
 
 
 def test_prefect_webhook_does_not_publish_duplicate_event(monkeypatch) -> None:

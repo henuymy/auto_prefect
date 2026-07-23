@@ -8,10 +8,31 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any, Protocol
 
+from backend.services.monitor_event_service import sanitize_monitor_text
+
+MAX_MONITOR_ERROR_DETAIL_LENGTH = 320
+
 
 class MonitorWebSocket(Protocol):
     async def accept(self) -> None: ...
     async def send_json(self, payload: dict[str, Any]) -> None: ...
+
+
+def build_upstream_update(upstream: dict[str, str | None]) -> dict[str, Any]:
+    return {
+        "type": "upstream.updated",
+        "updatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "upstream": dict(upstream),
+    }
+
+
+def _monitor_error_detail(error: Exception | None) -> str | None:
+    if error is None:
+        return None
+    detail = sanitize_monitor_text(str(error)).strip()
+    if len(detail) <= MAX_MONITOR_ERROR_DETAIL_LENGTH:
+        return detail or None
+    return f"{detail[:MAX_MONITOR_ERROR_DETAIL_LENGTH - 3].rstrip()}..."
 
 
 class MonitorRealtimeStatus:
@@ -20,20 +41,29 @@ class MonitorRealtimeStatus:
         self._last_accepted_at: str | None = None
         self._last_reconciled_at: str | None = None
         self._last_error_category: str | None = None
+        self._last_error_at: str | None = None
+        self._last_error_detail: str | None = None
 
     def record_accepted(self) -> None:
         with self._lock:
             self._last_accepted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            self._last_error_category = None
+            if self._last_error_category != "RECONCILIATION_FAILED":
+                self._last_error_category = None
+                self._last_error_at = None
+                self._last_error_detail = None
 
     def record_reconciled(self) -> None:
         with self._lock:
             self._last_reconciled_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             self._last_error_category = None
+            self._last_error_at = None
+            self._last_error_detail = None
 
-    def record_error(self, category: str) -> None:
+    def record_error(self, category: str, error: Exception | None = None) -> None:
         with self._lock:
             self._last_error_category = category
+            self._last_error_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            self._last_error_detail = _monitor_error_detail(error)
 
     def as_dict(self) -> dict[str, str | None]:
         with self._lock:
@@ -41,6 +71,8 @@ class MonitorRealtimeStatus:
                 "lastAcceptedAt": self._last_accepted_at,
                 "lastReconciledAt": self._last_reconciled_at,
                 "lastErrorCategory": self._last_error_category,
+                "lastErrorAt": self._last_error_at,
+                "lastErrorDetail": self._last_error_detail,
             }
 
 
@@ -75,6 +107,9 @@ class MonitorStreamHub:
         payload = await asyncio.to_thread(self._load_update, run_id)
         if payload is None:
             return
+        await self.publish_payload_async(payload)
+
+    async def publish_payload_async(self, payload: dict[str, Any]) -> None:
         stale: list[MonitorWebSocket] = []
         for websocket in self._connections.copy():
             try:
@@ -90,10 +125,21 @@ class MonitorStreamHub:
     def publish_background(self, run_id: str) -> asyncio.Task[None]:
         return asyncio.create_task(self.publish_from_async(run_id))
 
+    def publish_payload_background(self, payload: dict[str, Any]) -> asyncio.Task[None]:
+        return asyncio.create_task(self.publish_payload_async(payload))
+
     def publish_from_thread(self, run_id: str) -> None:
         if self._loop is None:
             return
         asyncio.run_coroutine_threadsafe(
             self.publish_from_async(run_id),
+            self._loop,
+        )
+
+    def publish_payload_from_thread(self, payload: dict[str, Any]) -> None:
+        if self._loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.publish_payload_async(payload),
             self._loop,
         )

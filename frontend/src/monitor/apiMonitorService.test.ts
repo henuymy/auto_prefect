@@ -52,6 +52,33 @@ describe("apiMonitorService", () => {
     vi.unstubAllGlobals();
   });
 
+  it("forwards server connection state and upstream status messages", () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const onUpdate = vi.fn();
+
+    const stop = apiMonitorService.createStream(onUpdate);
+    FakeWebSocket.instance?.emit({ type: "connection", connected: false });
+    FakeWebSocket.instance?.emit({
+      type: "upstream.updated",
+      updatedAt: "2026-07-23T16:30:00+00:00",
+      upstream: {
+        lastAcceptedAt: "2026-07-23T16:29:00+00:00",
+        lastReconciledAt: "2026-07-23T16:28:00+00:00",
+        lastErrorCategory: "RECONCILIATION_FAILED",
+        lastErrorAt: "2026-07-23T16:30:00+00:00",
+        lastErrorDetail: "Prefect sync timed out",
+      },
+    });
+
+    expect(onUpdate).toHaveBeenNthCalledWith(1, { type: "connection", connected: false });
+    expect(onUpdate).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      type: "upstream.updated",
+      upstream: expect.objectContaining({ lastErrorCategory: "RECONCILIATION_FAILED" }),
+    }));
+    stop();
+    vi.unstubAllGlobals();
+  });
+
   it("reports a disconnect and reconnects after the socket closes", () => {
     vi.useFakeTimers();
     vi.stubGlobal("WebSocket", FakeWebSocket);

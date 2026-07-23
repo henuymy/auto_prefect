@@ -21,6 +21,7 @@ from backend.routers.monitor import (
 )
 from infrastructure.dashboard_mysql import dispose_dashboard_engine
 from backend.services.monitor_sync_service import MonitorSyncLoop, sync_prefect_monitor
+from backend.services.monitor_stream import build_upstream_update
 
 
 @asynccontextmanager
@@ -29,11 +30,24 @@ async def lifespan(_app: FastAPI):
         for run in runs:
             stream_hub.publish_from_thread(run["id"])
 
+    def publish_upstream_status() -> None:
+        stream_hub.publish_payload_from_thread(
+            build_upstream_update(realtime_status.as_dict())
+        )
+
+    def record_reconciled() -> None:
+        realtime_status.record_reconciled()
+        publish_upstream_status()
+
+    def record_reconciliation_error(error: Exception) -> None:
+        realtime_status.record_error("RECONCILIATION_FAILED", error)
+        publish_upstream_status()
+
     sync_loop = MonitorSyncLoop(
         sync=sync_prefect_monitor,
         on_runs_changed=publish_synced_runs,
-        on_reconciled=realtime_status.record_reconciled,
-        on_error=lambda _error: realtime_status.record_error("RECONCILIATION_FAILED"),
+        on_reconciled=record_reconciled,
+        on_error=record_reconciliation_error,
     )
     stream_hub.bind_loop(asyncio.get_running_loop())
     sync_loop.start()

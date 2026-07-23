@@ -117,7 +117,7 @@ describe("MonitorCenter", () => {
       summary: { succeeded: 2, running: 0, failed: 1, scheduled: 0 },
       updatedAt: "2026-07-19T09:00:01+08:00",
       connected: true,
-      upstream: { lastAcceptedAt: null, lastReconciledAt: null, lastErrorCategory: null },
+      upstream: { lastAcceptedAt: null, lastReconciledAt: null, lastErrorCategory: null, lastErrorAt: null, lastErrorDetail: null },
     });
 
     expect(await screen.findByRole("button", { name: "成功 2" })).toBeTruthy();
@@ -168,6 +168,74 @@ describe("MonitorCenter live state", () => {
     expect(screen.getByText("上游事件：2026-07-19 09:00:00")).toBeTruthy();
     expect(screen.getByText("最近对账：2026-07-19 09:00:01")).toBeTruthy();
     expect(screen.getByText("上游异常：RECONCILIATION_FAILED")).toBeTruthy();
+  });
+
+  it("renders an upstream status update without replacing the run snapshot", async () => {
+    const snapshot = await getMonitorSnapshot();
+    let emit: ((message: MonitorStreamMessage) => void) | undefined;
+    const service = {
+      getSnapshot: vi.fn().mockResolvedValue(snapshot),
+      createStream(onUpdate: (message: MonitorStreamMessage) => void) {
+        emit = onUpdate;
+        return () => {};
+      },
+    };
+
+    render(<MonitorCenter service={service} />);
+    await waitFor(() => expect(emit).toBeDefined());
+    const rowsBefore = screen.getAllByRole("row").length;
+
+    emit!({
+      type: "upstream.updated",
+      updatedAt: "2026-07-19T09:00:10+08:00",
+      upstream: {
+        lastAcceptedAt: "2026-07-19T09:00:00+08:00",
+        lastReconciledAt: "2026-07-19T09:00:08+08:00",
+        lastErrorCategory: "RECONCILIATION_FAILED",
+        lastErrorAt: "2026-07-19T09:00:10+08:00",
+        lastErrorDetail: "Prefect sync timed out",
+      },
+    });
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "上游异常：RECONCILIATION_FAILED（2026-07-19 09:00:10）Prefect sync timed out",
+    );
+    expect(screen.getAllByRole("row")).toHaveLength(rowsBefore);
+  });
+
+  it("allows the user to dismiss an upstream error notification", async () => {
+    const user = userEvent.setup();
+    const snapshot = await getMonitorSnapshot();
+    let emit: ((message: MonitorStreamMessage) => void) | undefined;
+    const service = {
+      getSnapshot: vi.fn().mockResolvedValue(snapshot),
+      createStream(onUpdate: (message: MonitorStreamMessage) => void) {
+        emit = onUpdate;
+        return () => {};
+      },
+    };
+
+    render(<MonitorCenter service={service} />);
+    await waitFor(() => expect(emit).toBeDefined());
+    const rowsBefore = screen.getAllByRole("row").length;
+
+    emit!({
+      type: "upstream.updated",
+      updatedAt: "2026-07-19T09:00:10+08:00",
+      upstream: {
+        lastAcceptedAt: "2026-07-19T09:00:00+08:00",
+        lastReconciledAt: "2026-07-19T09:00:08+08:00",
+        lastErrorCategory: "RECONCILIATION_FAILED",
+        lastErrorAt: "2026-07-19T09:00:10+08:00",
+        lastErrorDetail: "Prefect sync timed out",
+      },
+    });
+
+    const notice = await screen.findByRole("alert");
+    await user.click(within(notice).getByRole("button", { name: "关闭上游异常提示" }));
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getAllByRole("row")).toHaveLength(rowsBefore);
   });
 
   it("shows relative upstream and reconciliation ages", async () => {

@@ -25,4 +25,19 @@ describe("monitor responsive table styles", () => {
     expect(styles).toMatch(/@media \(min-width: 1321px\) \{[^}]*\.monitor-grid\.has-detail \.monitor-detail \{[^}]*contain: size;[^}]*overflow-y: auto;/);
     expect(styles).not.toContain("height: clamp(720px, calc(100vh - 210px), 900px)");
   });
+
+  it("stacks and wraps upstream status before the narrow mobile breakpoint", () => {
+    const breakpointStart = styles.indexOf("@media (max-width: 1320px) {");
+    const breakpointEnd = styles.indexOf("@media", breakpointStart + 1);
+    const breakpointStyles = styles.slice(breakpointStart, breakpointEnd);
+
+    expect(breakpointStyles).toContain(".monitor-header { flex-direction: column; align-items: flex-start;");
+    expect(breakpointStyles).toContain(".header-actions { width: 100%; gap: 11px 16px; flex-wrap: wrap; white-space: normal;");
+  });
+
+  it("uses a fixed dismissible notification instead of placing errors in the header", () => {
+    expect(styles).toContain(".upstream-error-toast { position: fixed;");
+    expect(styles).toContain(".upstream-error-dismiss { display: grid;");
+    expect(styles).not.toContain(".upstream-error { flex:");
+  });
 });

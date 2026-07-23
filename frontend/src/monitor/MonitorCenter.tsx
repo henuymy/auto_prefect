@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 import { EMPTY_FILTERS, createMockMonitorStream, filterRuns, getMonitorSnapshot, getSummary } from "./mockMonitorService";
 import { PendingQueueDrawer } from "./PendingQueueDrawer";
@@ -54,6 +55,20 @@ function referenceTime(run: MonitorRun) { return run.startedAt ?? run.scheduledA
 
 function StatusPill({ status }: { status: RunStatus }) { return <span className={`status-pill status-${status}`}><i />{labels[status]}</span>; }
 
+function UpstreamErrorToast({
+  upstream,
+  onClose,
+}: {
+  upstream: MonitorSnapshot["upstream"];
+  onClose: () => void;
+}) {
+  return <aside className="upstream-error-toast" role="alert">
+    <strong>上游异常：{upstream.lastErrorCategory}{upstream.lastErrorAt ? `（${formatMonitorDateTime(upstream.lastErrorAt)}）` : ""}</strong>
+    <button className="upstream-error-dismiss" aria-label="关闭上游异常提示" title="关闭上游异常提示" onClick={onClose}><X size={16} /></button>
+    {upstream.lastErrorDetail && <p>{upstream.lastErrorDetail}</p>}
+  </aside>;
+}
+
 export function MonitorCenter({ service = defaultService }: { service?: MonitorService }) {
   const [runs, setRuns] = useState<MonitorRun[]>([]);
   const [pendingQueue, setPendingQueue] = useState<PendingQueue | null>(null);
@@ -61,6 +76,7 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
   const [updatedAt, setUpdatedAt] = useState("");
   const [upstream, setUpstream] = useState<MonitorSnapshot["upstream"] | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("loading");
+  const [dismissedUpstreamError, setDismissedUpstreamError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<MonitorRun | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -97,6 +113,11 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
           setConnection(update.connected ? "connected" : "disconnected");
           return;
         }
+        if (update.type === "upstream.updated") {
+          setUpdatedAt(update.updatedAt);
+          setUpstream(update.upstream);
+          return;
+        }
         if (update.type === "snapshot") {
           setRuns(update.runs);
         } else {
@@ -131,6 +152,10 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
   const todayLabel = formatMonitorDateTime(referenceNow.toISOString()).slice(0, 10);
   const targetOptions = useMemo(() => Array.from(new Map(historyRuns.map((run) => [run.targetId, run.target])).entries()), [historyRuns]);
   const hasFilters = filters.target !== "all" || filters.trigger !== "all" || filters.status !== "all" || Boolean(filters.startAt || filters.endAt);
+  const upstreamErrorKey = upstream?.lastErrorCategory
+    ? `${upstream.lastErrorCategory}:${upstream.lastErrorAt ?? upstream.lastErrorDetail ?? ""}`
+    : null;
+  const showUpstreamError = Boolean(upstreamErrorKey && upstreamErrorKey !== dismissedUpstreamError);
   const recordPageCount = Math.max(1, Math.ceil(filteredRuns.length / recordPageSize));
   const currentRecordPage = Math.min(recordPage, recordPageCount);
   const pagedTableRuns = useMemo(() => {
@@ -141,7 +166,7 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
 
   const updateFilter = <K extends keyof MonitorFilters>(key: K, value: MonitorFilters[K]) => setFilters((current) => ({ ...current, [key]: value }));
   const toggleTimelineDay = (date: string) => setTimelineDayExpanded((current) => ({ ...current, [date]: !(current[date] ?? date === todayLabel) }));
-  const refresh = () => setLoadVersion((version) => version + 1);
+  const refresh = () => { setDismissedUpstreamError(null); setLoadVersion((version) => version + 1); };
   const openStatusSummary = (status: Exclude<RunStatus, "scheduled" | "skipped">) => { setSelectedId(null); setPendingQueueOpen(false); setSummaryStatus(status); };
   const openRunDetail = (run: MonitorRun) => { setPendingQueueOpen(false); setSummaryStatus(null); setSelectedId(run.id); setSelectedDetail(run); if (run.source !== "prefect" || !service.getRunDetail) { setDetailLoading(false); return; } const requestId = detailRequestId.current + 1; detailRequestId.current = requestId; setDetailLoading(true); service.getRunDetail(run.id).then((detail) => { if (detailRequestId.current === requestId) setSelectedDetail(detail); }).catch(() => { if (detailRequestId.current === requestId) setSelectedDetail({ ...run, detailAvailable: false, detailMessage: "Prefect 详情暂不可用，正在显示已同步摘要。" }); }).finally(() => { if (detailRequestId.current === requestId) setDetailLoading(false); }); };
 
@@ -153,10 +178,11 @@ export function MonitorCenter({ service = defaultService }: { service?: MonitorS
         <span className="update-time">数据快照：{formatMonitorDateTime(updatedAt)}</span>
         <span className="upstream-state">上游事件：{upstream?.lastAcceptedAt ? `${formatMonitorDateTime(upstream.lastAcceptedAt)}${formatMonitorAge(upstream.lastAcceptedAt, referenceNow) ? `（${formatMonitorAge(upstream.lastAcceptedAt, referenceNow)}）` : ""}` : "尚未收到"}</span>
         <span className="upstream-state">最近对账：{upstream?.lastReconciledAt ? `${formatMonitorDateTime(upstream.lastReconciledAt)}${formatMonitorAge(upstream.lastReconciledAt, referenceNow) ? `（${formatMonitorAge(upstream.lastReconciledAt, referenceNow)}）` : ""}` : "尚未对账"}</span>
-        {upstream?.lastErrorCategory && <span className="upstream-error">上游异常：{upstream.lastErrorCategory}</span>}
         <button className="refresh-button" onClick={refresh}><RefreshCw size={16} />刷新</button>
       </div>
     </header>
+
+    {showUpstreamError && upstream && <UpstreamErrorToast upstream={upstream} onClose={() => setDismissedUpstreamError(upstreamErrorKey)} />}
 
     <section className="workbar monitor-panel" aria-label="运行筛选">
       <div className="filter-area">

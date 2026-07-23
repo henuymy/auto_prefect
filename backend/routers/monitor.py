@@ -28,7 +28,11 @@ from backend.services.monitor_snapshot_service import (
     build_monitor_snapshot,
     build_run_update,
 )
-from backend.services.monitor_stream import MonitorRealtimeStatus, MonitorStreamHub
+from backend.services.monitor_stream import (
+    MonitorRealtimeStatus,
+    MonitorStreamHub,
+    build_upstream_update,
+)
 
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
@@ -133,6 +137,10 @@ def _snapshot_payload(
     )
 
 
+def _publish_upstream_status() -> None:
+    stream_hub.publish_payload_background(build_upstream_update(realtime_status.as_dict()))
+
+
 def _database_unavailable(exc: Exception) -> HTTPException:
     return HTTPException(status_code=503, detail="监控数据库暂不可用，请稍后重试。")
 
@@ -160,14 +168,17 @@ async def receive_prefect_event(
     try:
         result = await run_in_threadpool(_process_prefect_event, payload)
     except InvalidPrefectMonitorEvent as exc:
-        realtime_status.record_error("INVALID_EVENT")
+        realtime_status.record_error("INVALID_EVENT", exc)
+        _publish_upstream_status()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (OSError, ValueError) as exc:
-        realtime_status.record_error("PROCESSING_FAILED")
+        realtime_status.record_error("PROCESSING_FAILED", exc)
+        _publish_upstream_status()
         raise _database_unavailable(exc) from exc
     if result.accepted and result.run:
         realtime_status.record_accepted()
         stream_hub.publish_background(result.run["id"])
+        _publish_upstream_status()
     return {"accepted": result.accepted, "duplicate": result.duplicate}
 
 

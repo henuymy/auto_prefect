@@ -5,7 +5,11 @@ from datetime import datetime
 from time import perf_counter, sleep
 
 from backend.services.monitor_snapshot_service import build_monitor_snapshot, build_run_update
-from backend.services.monitor_stream import MonitorStreamHub
+from backend.services.monitor_stream import (
+    MonitorRealtimeStatus,
+    MonitorStreamHub,
+    build_upstream_update,
+)
 
 
 REPORT_RUNS = [
@@ -69,6 +73,53 @@ class BlockingWebSocket:
         await asyncio.sleep(60)
 
 
+def test_accepted_event_does_not_clear_reconciliation_failure() -> None:
+    status = MonitorRealtimeStatus()
+
+    status.record_error("RECONCILIATION_FAILED")
+    status.record_accepted()
+
+    assert status.as_dict()["lastErrorCategory"] == "RECONCILIATION_FAILED"
+
+
+def test_reconciliation_failure_keeps_diagnostics_until_reconciled() -> None:
+    status = MonitorRealtimeStatus()
+
+    status.record_error(
+        "RECONCILIATION_FAILED",
+        RuntimeError("authorization=secret Prefect sync timed out"),
+    )
+    failed = status.as_dict()
+
+    assert failed["lastErrorAt"] is not None
+    assert failed["lastErrorDetail"] == "authorization=[已隐藏] Prefect sync timed out"
+
+    status.record_reconciled()
+
+    assert status.as_dict()["lastErrorCategory"] is None
+    assert status.as_dict()["lastErrorAt"] is None
+    assert status.as_dict()["lastErrorDetail"] is None
+
+
+def test_reconciliation_failure_limits_diagnostic_detail() -> None:
+    status = MonitorRealtimeStatus()
+
+    status.record_error("RECONCILIATION_FAILED", RuntimeError("x" * 400))
+
+    assert status.as_dict()["lastErrorDetail"] == f"{'x' * 317}..."
+
+
+def test_upstream_update_contains_the_current_status() -> None:
+    status = MonitorRealtimeStatus()
+    status.record_error("RECONCILIATION_FAILED", RuntimeError("sync timed out"))
+
+    update = build_upstream_update(status.as_dict())
+
+    assert update["type"] == "upstream.updated"
+    assert update["updatedAt"] is not None
+    assert update["upstream"]["lastErrorCategory"] == "RECONCILIATION_FAILED"
+
+
 def test_run_update_excludes_scheduled_history_row_but_refreshes_pending_queue() -> None:
     update = build_run_update(
         REPORT_RUNS,
@@ -109,6 +160,27 @@ def test_stream_sends_one_snapshot_then_an_explicit_incremental_update() -> None
     assert socket.accepted is True
     assert [message["type"] for message in socket.messages] == ["snapshot", "run.updated"]
     assert socket.messages[1]["run"]["targetId"] == "report-deployment-1"
+
+
+def test_stream_sends_an_explicit_upstream_status_update() -> None:
+    socket = RecordingWebSocket()
+    hub = MonitorStreamHub(load_update=lambda _run_id: None)
+    hub._connections.add(socket)
+    update = {
+        "type": "upstream.updated",
+        "updatedAt": "2026-07-23T16:30:00+00:00",
+        "upstream": {
+            "lastAcceptedAt": "2026-07-23T16:29:00+00:00",
+            "lastReconciledAt": "2026-07-23T16:28:00+00:00",
+            "lastErrorCategory": "RECONCILIATION_FAILED",
+            "lastErrorAt": "2026-07-23T16:30:00+00:00",
+            "lastErrorDetail": "Prefect sync timed out",
+        },
+    }
+
+    asyncio.run(hub.publish_payload_async(update))
+
+    assert socket.messages == [update]
 
 
 def test_stream_drops_a_blocking_connection_without_delaying_event_delivery() -> None:
