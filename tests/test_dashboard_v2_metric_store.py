@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.dialects import mysql
 
+from services import dashboard_v2_metric_store
 from services.dashboard_metrics import MetricConflictError, MetricWriteError
 from services.dashboard_v2_metric_store import (
     build_v2_acc_upsert_statement,
@@ -103,6 +104,51 @@ def test_sparse_plan_writes_channel_change_and_daily_checkpoint():
     assert len(snapshots) == 2
     assert stats["channel_changed_row_count"] == 1
     assert stats["channel_daily_checkpoint_row_count"] == 1
+
+
+def test_current_value_lookup_is_narrow_and_nonlocking():
+    rows = [
+        SimpleNamespace(
+            node_id=1,
+            indicator_id=100,
+            metric_value=Decimal("10"),
+            stat_date=date(2026, 6, 30),
+        )
+    ]
+
+    class Result:
+        def all(self):
+            return rows
+
+    class Session:
+        statement = None
+
+        def scalars(self, statement):
+            self.statement = statement
+            return Result()
+
+        def execute(self, statement):
+            self.statement = statement
+            return Result()
+
+    session = Session()
+
+    result = dashboard_v2_metric_store._load_current_values(
+        session,
+        node_ids={1},
+        indicator_ids={100},
+    )
+
+    sql = str(session.statement.compile(dialect=mysql.dialect()))
+
+    assert result == {(1, 100): rows[0]}
+    assert "FOR UPDATE" not in sql
+    assert list(session.statement.selected_columns.keys()) == [
+        "node_id",
+        "indicator_id",
+        "metric_value",
+        "stat_date",
+    ]
 
 
 def test_current_upsert_contains_collected_at_guard():

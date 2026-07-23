@@ -10,8 +10,9 @@ def _source(path: str) -> str:
 
 def test_v2_pipeline_checks_database_lock_after_run_finalization():
     source = _source("services/dashboard_v2_pipeline.py")
-    finalize = source.index("finalize_v2_run_in_session(")
-    check = source.index("batch.database_lock.assert_held()")
+    write_transaction = source[source.index("def _write_v2_transaction(") :]
+    finalize = write_transaction.index("finalize_v2_run_in_session(")
+    check = write_transaction.index("batch.database_lock.assert_held()")
 
     assert finalize < check
 

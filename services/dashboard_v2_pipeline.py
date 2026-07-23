@@ -33,7 +33,14 @@ from services.dashboard_v2_metric_store import (
 )
 
 
-MYSQL_RETRYABLE_ERROR_CODES = {1205, 1213}
+MYSQL_RETRYABLE_ERROR_CODES = {1205, 1213, 2006, 2013}
+MYSQL_CONNECTION_LOSS_ERROR_CODES = {2006, 2013}
+MYSQL_ERROR_CATEGORIES = {
+    1205: "MYSQL_LOCK_WAIT_TIMEOUT",
+    1213: "MYSQL_DEADLOCK",
+    2006: "MYSQL_CONNECTION_LOST",
+    2013: "MYSQL_READ_TIMEOUT",
+}
 
 
 def execute_dashboard_v2_pipeline(
@@ -199,6 +206,7 @@ def _write_v2_transaction_with_retry(
     if not 1 <= max_attempts <= 5:
         raise ValueError("database_transaction_retries 必须在 1-5 之间")
     last_error: OperationalError | None = None
+    connection_loss_retries = 0
     for attempt in range(1, max_attempts + 1):
         try:
             return _write_v2_transaction(
@@ -209,23 +217,89 @@ def _write_v2_transaction_with_retry(
                 transaction_attempt=attempt,
             )
         except OperationalError as exc:
-            if mysql_error_code(exc) not in MYSQL_RETRYABLE_ERROR_CODES:
+            error_code = mysql_error_code(exc)
+            if error_code not in MYSQL_RETRYABLE_ERROR_CODES:
                 raise
             last_error = exc
+            category = MYSQL_ERROR_CATEGORIES.get(
+                error_code, "MYSQL_TRANSACTION_CONFLICT"
+            )
+            if error_code in MYSQL_CONNECTION_LOSS_ERROR_CODES:
+                if connection_loss_retries >= 1:
+                    raise
+                connection_loss_retries += 1
+                batch.database_lock.assert_held()
+                batch.engine.dispose()
+                completed = _completed_write_result(
+                    batch=batch,
+                    orchestrated=orchestrated,
+                    transaction_attempt=attempt,
+                )
+                if completed is not None:
+                    logger.warning(
+                        "V2 MySQL 事务连接恢复 batch_no=%s attempt=%s "
+                        "category=%s code=%s outcome=%s",
+                        batch.batch_no,
+                        attempt,
+                        category,
+                        error_code,
+                        "RECOVERED_COMMITTED",
+                    )
+                    return completed
             if attempt >= max_attempts:
                 raise
-            delay = min(2.0, 0.2 * (2 ** (attempt - 1))) + random.uniform(0, 0.1)
+            delay = (
+                0.5
+                if error_code in MYSQL_CONNECTION_LOSS_ERROR_CODES
+                else min(2.0, 0.2 * (2 ** (attempt - 1)))
+                + random.uniform(0, 0.1)
+            )
             logger.warning(
-                "V2 MySQL 事务冲突重试 batch_no=%s attempt=%s code=%s delay=%.3f",
+                "V2 MySQL 事务重试 batch_no=%s attempt=%s category=%s "
+                "code=%s outcome=%s delay=%.3f",
                 batch.batch_no,
                 attempt,
-                mysql_error_code(exc),
+                category,
+                error_code,
+                "RETRY",
                 delay,
             )
             time.sleep(delay)
     if last_error is not None:
         raise last_error
     raise AssertionError("V2 MySQL 事务重试流程未返回")
+
+
+def _completed_write_result(
+    *,
+    batch: Any,
+    orchestrated: dict[str, Any],
+    transaction_attempt: int,
+) -> dict[str, Any] | None:
+    """Recover a transaction whose commit acknowledgement was lost."""
+    with Session(batch.engine) as session:
+        run = session.scalar(
+            select(CollectionRunV2).where(
+                CollectionRunV2.batch_no == batch.batch_no,
+                CollectionRunV2.status == "SUCCESS",
+            )
+        )
+    if run is None:
+        return None
+    return {
+        "batch_no": run.batch_no,
+        "status": run.status,
+        "phase": run.phase,
+        "transaction_attempt": transaction_attempt,
+        "sync": {
+            "structure_changed": bool(orchestrated.get("structure_changed")),
+        },
+        "write_stage_timings": {},
+        "current_upsert_count": run.current_upsert_count,
+        "snapshot_insert_count": run.snapshot_insert_count,
+        "acc_upsert_count": run.acc_upsert_count,
+        "write_stats": {"recovered_after_connection_loss": True},
+    }
 
 
 def _write_v2_transaction(

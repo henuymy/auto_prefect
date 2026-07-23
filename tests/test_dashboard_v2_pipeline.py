@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import date
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -74,6 +75,125 @@ def test_v2_transaction_does_not_retry_non_lock_error(monkeypatch):
         )
 
     assert attempts == 1
+
+
+def test_v2_transaction_retries_connection_loss_once_with_a_new_pool(monkeypatch):
+    attempts: list[int] = []
+    engine = SimpleNamespace(dispose=Mock())
+    database_lock = SimpleNamespace(assert_held=Mock())
+
+    def write(**kwargs):
+        attempts.append(kwargs["transaction_attempt"])
+        if len(attempts) == 1:
+            raise operational_error(2013)
+        return {"status": "SUCCESS", "transaction_attempt": len(attempts)}
+
+    monkeypatch.setattr(pipeline, "_write_v2_transaction", write)
+    monkeypatch.setattr(
+        pipeline,
+        "_completed_write_result",
+        lambda **kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(pipeline.random, "uniform", lambda start, end: 0)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda delay: None)
+
+    result = pipeline._write_v2_transaction_with_retry(
+        batch=SimpleNamespace(
+            batch_no="v2-test",
+            engine=engine,
+            database_lock=database_lock,
+        ),
+        orchestrated={},
+        period_type="REALTIME",
+        query_date=date(2026, 6, 30),
+        max_attempts=3,
+        logger=SimpleNamespace(warning=lambda *args: None),
+    )
+
+    assert attempts == [1, 2]
+    assert result["status"] == "SUCCESS"
+    database_lock.assert_held.assert_called_once_with()
+    engine.dispose.assert_called_once_with()
+
+
+def test_v2_transaction_recovers_when_connection_loss_followed_a_commit(monkeypatch):
+    engine = SimpleNamespace(dispose=Mock())
+    database_lock = SimpleNamespace(assert_held=Mock())
+    completed = {
+        "batch_no": "v2-test",
+        "status": "SUCCESS",
+        "phase": "COMPLETED",
+        "transaction_attempt": 1,
+        "current_upsert_count": 42,
+        "snapshot_insert_count": 9,
+        "acc_upsert_count": 0,
+        "write_stats": {"recovered_after_connection_loss": True},
+    }
+    write = Mock(side_effect=operational_error(2013))
+
+    monkeypatch.setattr(pipeline, "_write_v2_transaction", write)
+    monkeypatch.setattr(
+        pipeline,
+        "_completed_write_result",
+        lambda **kwargs: completed,
+        raising=False,
+    )
+
+    result = pipeline._write_v2_transaction_with_retry(
+        batch=SimpleNamespace(
+            batch_no="v2-test",
+            engine=engine,
+            database_lock=database_lock,
+        ),
+        orchestrated={},
+        period_type="REALTIME",
+        query_date=date(2026, 6, 30),
+        max_attempts=3,
+        logger=SimpleNamespace(warning=lambda *args: None),
+    )
+
+    assert result == completed
+    write.assert_called_once()
+    database_lock.assert_held.assert_called_once_with()
+    engine.dispose.assert_called_once_with()
+
+
+def test_v2_transaction_retries_connection_loss_only_once(monkeypatch):
+    attempts: list[int] = []
+    engine = SimpleNamespace(dispose=Mock())
+    database_lock = SimpleNamespace(assert_held=Mock())
+
+    def write(**kwargs):
+        attempts.append(kwargs["transaction_attempt"])
+        raise operational_error(2013)
+
+    monkeypatch.setattr(pipeline, "_write_v2_transaction", write)
+    monkeypatch.setattr(
+        pipeline,
+        "_completed_write_result",
+        lambda **kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(pipeline.random, "uniform", lambda start, end: 0)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda delay: None)
+
+    with pytest.raises(OperationalError):
+        pipeline._write_v2_transaction_with_retry(
+            batch=SimpleNamespace(
+                batch_no="v2-test",
+                engine=engine,
+                database_lock=database_lock,
+            ),
+            orchestrated={},
+            period_type="REALTIME",
+            query_date=date(2026, 6, 30),
+            max_attempts=3,
+            logger=SimpleNamespace(warning=lambda *args: None),
+        )
+
+    assert attempts == [1, 2]
+    assert engine.dispose.call_count == 1
 
 
 def test_v2_transaction_retry_count_is_bounded():

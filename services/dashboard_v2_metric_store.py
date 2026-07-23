@@ -88,7 +88,7 @@ def write_v2_realtime_metrics_in_session(
     node_types = _load_metric_node_types(
         session, {value["node_id"] for value in current_values}
     )
-    existing = _lock_current_values(
+    existing = _load_current_values(
         session,
         node_ids=set(node_types),
         indicator_ids={value["indicator_id"] for value in current_values},
@@ -388,20 +388,26 @@ def _load_metric_node_types(
     return result
 
 
-def _lock_current_values(
+def _load_current_values(
     session: Session,
     *,
     node_ids: set[int],
     indicator_ids: set[int],
-) -> dict[tuple[int, int], MetricCurrentV2]:
-    rows = session.scalars(
-        select(MetricCurrentV2)
+) -> dict[tuple[int, int], Any]:
+    # The collection named lock serializes metric value writers. Retention may
+    # clear collection_run_id concurrently, which is not used for snapshots.
+    rows = session.execute(
+        select(
+            MetricCurrentV2.node_id,
+            MetricCurrentV2.indicator_id,
+            MetricCurrentV2.metric_value,
+            MetricCurrentV2.stat_date,
+        )
         .where(
             MetricCurrentV2.node_id.in_(node_ids),
             MetricCurrentV2.indicator_id.in_(indicator_ids),
         )
         .order_by(MetricCurrentV2.node_id, MetricCurrentV2.indicator_id)
-        .with_for_update()
     ).all()
     return {(row.node_id, row.indicator_id): row for row in rows}
 
