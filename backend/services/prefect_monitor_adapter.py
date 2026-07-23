@@ -87,6 +87,8 @@ class PrefectMonitorAdapter:
                 deployments_by_id,
                 flows_by_id,
             )
+            if target_kind != "report":
+                continue
             status = STATE_MAP.get(_state_name(flow_run), "scheduled")
             state = flow_run.get("state") or {}
             failure = classify_prefect_failure(str(state.get("message") or flow_run.get("state_message") or ""))

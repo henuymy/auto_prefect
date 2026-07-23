@@ -16,6 +16,10 @@ from uuid import uuid4
 
 RUN_STATUSES = {"scheduled", "running", "succeeded", "failed", "retrying", "cancelled"}
 LOG_LEVELS = {"INFO", "WARN", "ERROR"}
+BUSINESS_ERROR_SUMMARY_MAX_CHARS = 500
+TECHNICAL_ERROR_SUMMARY_MAX_CHARS = 8_000
+MONITOR_DETAIL_MAX_CHARS = 8_000
+_TRUNCATION_SUFFIX = "\n[内容已截断]"
 
 
 class MonitorStore(Protocol):
@@ -39,12 +43,17 @@ _SECRET_VALUE = re.compile(r"(?i)\b(token|cookie|password|authorization|webhook)
 _URL = re.compile(r"https?://[^\s,;]+", re.IGNORECASE)
 
 
-def sanitize_monitor_text(value: str | None) -> str:
+def sanitize_monitor_text(value: str | None, *, max_chars: int | None = None) -> str:
     """Keep operational context while removing secrets and internal URLs."""
     text = str(value or "")
     text = _SECRET_VALUE.sub(lambda match: f"{match.group(1)}=[已隐藏]", text)
     text = re.sub(r"(?i)(?:[a-z]:\\|\\\\)[^\s,;]+", "[本机路径已隐藏]", text)
-    return _URL.sub("[内部地址已隐藏]", text)
+    text = _URL.sub("[内部地址已隐藏]", text)
+    if max_chars is None or len(text) <= max_chars:
+        return text
+    if max_chars <= len(_TRUNCATION_SUFFIX):
+        return text[:max_chars]
+    return f"{text[:max_chars - len(_TRUNCATION_SUFFIX)]}{_TRUNCATION_SUFFIX}"
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -128,7 +137,7 @@ class MemoryMonitorStore:
         self.append_event(saved["id"], {
             "at": _iso(occurred_at),
             "level": "INFO",
-            "message": sanitize_monitor_text(message),
+            "message": sanitize_monitor_text(message, max_chars=MONITOR_DETAIL_MAX_CHARS),
             "details": "",
             "source_event_id": event_id,
         })
@@ -202,9 +211,15 @@ class MonitorEventService:
         })
         if status == "failed":
             if business_error_summary:
-                run["business_error_summary"] = sanitize_monitor_text(business_error_summary)
+                run["business_error_summary"] = sanitize_monitor_text(
+                    business_error_summary,
+                    max_chars=BUSINESS_ERROR_SUMMARY_MAX_CHARS,
+                )
             if technical_error_summary:
-                run["technical_error_summary"] = sanitize_monitor_text(technical_error_summary)
+                run["technical_error_summary"] = sanitize_monitor_text(
+                    technical_error_summary,
+                    max_chars=TECHNICAL_ERROR_SUMMARY_MAX_CHARS,
+                )
         return self._save_run(run)
 
     def update_step(self, run_id: str, *, name: str, status: str, message: str = "") -> dict[str, Any]:
@@ -217,7 +232,7 @@ class MonitorEventService:
         step = {
             "name": name,
             "status": status,
-            "message": sanitize_monitor_text(message),
+            "message": sanitize_monitor_text(message, max_chars=MONITOR_DETAIL_MAX_CHARS),
             "started_at": existing.get("started_at") if existing else (_iso(now) if status in {"running", "completed", "failed"} else None),
             "finished_at": _iso(now) if status in {"completed", "failed"} else None,
         }
@@ -225,7 +240,10 @@ class MonitorEventService:
         run["current_step"] = name
         if status == "failed":
             run["status"] = "failed"
-            run["business_error_summary"] = sanitize_monitor_text(message)
+            run["business_error_summary"] = sanitize_monitor_text(
+                message,
+                max_chars=BUSINESS_ERROR_SUMMARY_MAX_CHARS,
+            )
         self._save_run(run)
         return stored
 
@@ -237,8 +255,8 @@ class MonitorEventService:
         return self.store.append_event(run_id, {
             "at": _iso(self.now()),
             "level": normalized_level,
-            "message": sanitize_monitor_text(message),
-            "details": sanitize_monitor_text(details),
+            "message": sanitize_monitor_text(message, max_chars=MONITOR_DETAIL_MAX_CHARS),
+            "details": sanitize_monitor_text(details, max_chars=MONITOR_DETAIL_MAX_CHARS),
         })
 
     def finish_run(self, run_id: str, *, status: str, current_step: str, business_error_summary: str | None = None, technical_error_summary: str | None = None) -> dict[str, Any]:
@@ -254,8 +272,14 @@ class MonitorEventService:
             "status": status,
             "current_step": current_step,
             "finished_at": _iso(now),
-            "business_error_summary": sanitize_monitor_text(business_error_summary),
-            "technical_error_summary": sanitize_monitor_text(technical_error_summary),
+            "business_error_summary": sanitize_monitor_text(
+                business_error_summary,
+                max_chars=BUSINESS_ERROR_SUMMARY_MAX_CHARS,
+            ),
+            "technical_error_summary": sanitize_monitor_text(
+                technical_error_summary,
+                max_chars=TECHNICAL_ERROR_SUMMARY_MAX_CHARS,
+            ),
         })
         return self._save_run(run)
 

@@ -59,3 +59,20 @@ def test_scheduled_queue_is_sorted_by_scheduled_time_not_task_name() -> None:
 
     assert queue["total"] == 2
     assert [item["external_run_id"] for item in queue["items"]] == ["scheduled-earlier", "scheduled-later"]
+
+
+def test_prefect_run_error_summaries_are_bounded_before_persistence() -> None:
+    service = MonitorEventService(store=MemoryMonitorStore())
+
+    run = service.upsert_prefect_run(
+        external_run_id="failed-long-summary",
+        task_name="通报 · 长错误摘要",
+        status="failed",
+        business_error_summary="业务错误 " + ("x" * 100_000),
+        technical_error_summary="技术错误 " + ("y" * 100_000),
+    )
+
+    assert len(run["business_error_summary"]) <= 500
+    assert len(run["technical_error_summary"]) <= 8_000
+    assert "已截断" in run["business_error_summary"]
+    assert "已截断" in run["technical_error_summary"]

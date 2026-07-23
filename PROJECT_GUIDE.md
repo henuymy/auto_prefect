@@ -252,6 +252,12 @@ pwsh -File scripts/stop.ps1
 - 配置与迁移：每台开发机或生产机分别执行 `python scripts/migrate_local_json_to_runtime.py`，确认无冲突后执行 `--apply --remove-legacy`；不得复制、提交或输出任何环境的私有配置。
 - 验证：中央覆盖、侧车禁读、迁移预览、冲突、删除和 PowerShell 配置校验均由自动化测试覆盖。
 
+### 2026-07-23 - 运行监控对账异常隔离与摘要限长
+
+- 原因：对账适配器会尝试投影非通报 Flow Run；某次 `dashboard-collection` 的 MySQL 连接异常文本超过 MySQL `TEXT` 容量，导致监控投影写入失败并错误显示 `RECONCILIATION_FAILED`。
+- 修改内容：定时对账与 Webhook 统一只处理 `auto-notify-flow` 下名称以 `notify-` 开头的通报 Deployment。业务错误摘要在脱敏后最多保留 500 字符，技术摘要、步骤消息和日志详情最多保留 8,000 字符，并标记已截断；原始技术信息仍由 Prefect 保留。
+- 验证：新增非通报对账过滤和 100KB 异常摘要的回归测试；监控服务、适配器、Webhook、MySQL Store、路由和生命周期相关 pytest 分组均通过。
+
 ### 2026-07-21 - 通报运行监控中心实时投影与可用性收口
 
 - 原因：早期监控页仍混合 7 天历史、非通报任务和周期性全量同步，页面连接状态也容易被误读为 Prefect 数据正常；失败运行缺少按需可查的真实步骤与日志。

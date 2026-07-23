@@ -525,6 +525,8 @@ pwsh -File scripts/lib/start_web.ps1 -Mode both
 - 运行记录支持按对象、触发方式、状态和日期筛选，并支持每页 10、20、50 条；时间线按日期分组，可逐日收起或展开并分批加载。
 - 点击记录会按需向 Prefect 官方 API 查询 Task Run 与脱敏日志。Prefect 暂不可用时，抽屉保留已同步的失败摘要并提示详情暂不可用。
 - “页面实时”仅表示浏览器 WebSocket 状态；“上游事件”和“最近对账”分别反映 Prefect Automation Webhook 的最后接收时间与 REST 对账的最后成功时间，不能互相替代。
+- 后台对账与 Webhook 均只投影 `auto-notify-flow` 中名称以 `notify-` 开头的通报 Deployment；驾驶舱采集等非通报 Flow Run 不写入 `monitor_runs`，也不会影响监控中心的对账状态。
+- 进入监控投影的错误文本会先脱敏并限长：业务摘要最多 500 字符，技术摘要、步骤消息和日志详情最多 8,000 字符；完整原始异常仍以 Prefect 为准，避免超长异常导致 MySQL 投影写入失败。
 
 实时主链路为 Prefect Automation Webhook -> FastAPI -> MySQL -> WebSocket。MySQL 是页面持久化投影，浏览器首次连接和断线重连均先读取 REST 快照；后台每 5 分钟通过 Prefect 官方 REST API 补漏和对账。当前为单 FastAPI 进程，WebSocket 广播仅覆盖该进程；扩展为多进程或多实例时才需要 Redis Pub/Sub 或 Streams。详细接口、密钥和验收方法见 [Prefect 通报监控 Webhook 运维手册](docs/operations/prefect-monitor-webhook.md)，完整架构见 [运行监控中心设计](docs/run-monitoring-center-design.md)。
 

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from backend.services.monitor_event_service import sanitize_monitor_text
+from backend.services.monitor_event_service import (
+    BUSINESS_ERROR_SUMMARY_MAX_CHARS,
+    TECHNICAL_ERROR_SUMMARY_MAX_CHARS,
+    sanitize_monitor_text,
+)
 
 
 STARTUP_FAILURE_MARKERS = (
@@ -24,11 +28,22 @@ class PrefectFailure:
 
 def classify_prefect_failure(message: str | None) -> PrefectFailure:
     """Keep sanitized technical text while translating generic startup failures."""
-    technical_summary = sanitize_monitor_text(message).strip() or None
-    normalized = (technical_summary or "").lower()
+    sanitized_message = sanitize_monitor_text(message).strip()
+    technical_summary = sanitize_monitor_text(
+        sanitized_message,
+        max_chars=TECHNICAL_ERROR_SUMMARY_MAX_CHARS,
+    ).strip() or None
+    normalized = sanitized_message.lower()
     is_startup_failure = any(marker in normalized for marker in STARTUP_FAILURE_MARKERS)
     return PrefectFailure(
-        business_summary=STARTUP_FAILURE_SUMMARY if is_startup_failure else technical_summary,
+        business_summary=(
+            STARTUP_FAILURE_SUMMARY
+            if is_startup_failure
+            else sanitize_monitor_text(
+                sanitized_message,
+                max_chars=BUSINESS_ERROR_SUMMARY_MAX_CHARS,
+            ).strip() or None
+        ),
         technical_summary=technical_summary,
         current_step="调度初始化" if is_startup_failure else "运行失败",
         is_startup_failure=is_startup_failure,

@@ -36,6 +36,32 @@ def test_prefect_adapter_uses_deployment_identity_for_report_runs():
     assert report["task_name"] == "通报 · 经营日报"
 
 
+def test_prefect_adapter_ignores_non_report_runs():
+    service = MonitorEventService(store=MemoryMonitorStore())
+    adapter = PrefectMonitorAdapter(service)
+
+    saved = adapter.sync_flow_runs([
+        {
+            "id": "prefect-dashboard-collection",
+            "deployment_id": "deployment-dashboard",
+            "state_type": "FAILED",
+            "state": {"message": "数据库连接中断"},
+        },
+    ],
+        deployments_by_id={
+            "deployment-dashboard": {
+                "id": "deployment-dashboard",
+                "name": "dashboard-collection",
+                "flow_id": "flow-dashboard",
+            },
+        },
+        flows_by_id={"flow-dashboard": {"id": "flow-dashboard", "name": "dashboard-flow"}},
+    )
+
+    assert saved == []
+    assert service.store.list_runs() == []
+
+
 def test_prefect_adapter_keeps_failed_state_and_uses_state_message_as_summary():
     service = MonitorEventService(store=MemoryMonitorStore())
     adapter = PrefectMonitorAdapter(service)
