@@ -63,17 +63,24 @@
     },
     "smart_ops": {
       "enabled": true,
-      "method": "GET",
-      "url": "https://usm.ha.cmcc:19011/zhyypt/smop/base/refresh",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/zhyypt/smop/dszzBranch/regions/getNameById",
       "headers": {
         "Accept": "*/*",
+        "Content-Type": "application/json",
+        "Origin": "https://usm.ha.cmcc:19011",
         "Referer": "https://usm.ha.cmcc:19011/zhyypt/dist/"
       },
       "headers_from_session_storage": {
         "user-info": "zhyyptInfo.accessToken"
       },
+      "body_type": "json",
+      "data": {
+        "area": "371"
+      },
       "success_status_codes": [200],
-      "allow_empty_body": true,
+      "success_json_path": "header.rspcode",
+      "success_value": "0000",
       "timeout_seconds": 8
     }
   },

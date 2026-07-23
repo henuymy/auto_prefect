@@ -561,9 +561,16 @@ def test_stage_probe_city_ops_requires_all_configured_probes(monkeypatch):
     assert [item["ok"] for item in result["results"]] == [True, True]
 
 
-def test_stage_probe_smart_ops_accepts_empty_200(monkeypatch):
+def test_stage_probe_smart_ops_accepts_region_lookup_response(monkeypatch):
     monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
-    FakeSession.responses = [FakeResponse(status_code=200, text="")]
+    FakeSession.responses = [
+        FakeResponse(
+            payload={
+                "header": {"rspcode": "0000", "rspdesc": "请求成功"},
+                "response": {"areaId": "371", "areaName": "郑州"},
+            }
+        )
+    ]
     cookie_dump = {
         "stages": [
             {
@@ -579,17 +586,37 @@ def test_stage_probe_smart_ops_accepts_empty_200(monkeypatch):
         ["smart_ops"],
         {
             "smart_ops": {
-                "method": "GET",
-                "url": "https://example/refresh",
+                "method": "POST",
+                "url": "https://example/getNameById",
+                "headers": {"Content-Type": "application/json"},
                 "headers_from_session_storage": {"user-info": "zhyyptInfo.accessToken"},
-                "success_status_codes": [200],
-                "allow_empty_body": True,
+                "body_type": "json",
+                "data": {"area": "371"},
+                "success_json_path": "header.rspcode",
+                "success_value": "0000",
             }
         },
     )
 
     assert result["valid"] is True
     assert result["results"][0]["ok"] is True
+    assert FakeSession.responses == []
+
+
+def test_smart_ops_probe_config_uses_region_lookup():
+    config_path = Path(__file__).resolve().parents[1] / "config" / "modules" / "autologin.json"
+    probe = json.loads(config_path.read_text(encoding="utf-8"))["stage_probes"]["smart_ops"]
+
+    assert probe["method"] == "POST"
+    assert probe["url"].endswith("/zhyypt/smop/dszzBranch/regions/getNameById")
+    assert probe["headers"]["Content-Type"] == "application/json"
+    assert probe["headers_from_session_storage"] == {
+        "user-info": "zhyyptInfo.accessToken"
+    }
+    assert probe["body_type"] == "json"
+    assert probe["data"] == {"area": "371"}
+    assert probe["success_json_path"] == "header.rspcode"
+    assert probe["success_value"] == "0000"
 
 
 def test_prepare_session_reuses_after_lock_when_probe_recovers(monkeypatch):
