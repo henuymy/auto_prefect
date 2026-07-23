@@ -40,6 +40,7 @@ class FakeResponse:
 
 class FakeSession:
     responses = []
+    request_calls = []
 
     def __init__(self):
         self.cookies = {}
@@ -47,7 +48,12 @@ class FakeSession:
         self.trust_env = False
 
     def request(self, method, url, **kwargs):
+        self.request_calls.append(
+            {"method": method, "url": url, "kwargs": kwargs}
+        )
         response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
         response.request_kwargs = kwargs
         response.request_method = method
         return response
@@ -428,6 +434,90 @@ def test_stage_probe_city_ops_accepts_recode_0000(monkeypatch):
 
     assert result["valid"] is True
     assert result["results"][0]["ok"] is True
+
+
+def test_stage_probe_retries_one_transient_request_failure(monkeypatch):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.request_calls = []
+    FakeSession.responses = [
+        session_manager.requests.exceptions.ReadTimeout("secret detail"),
+        FakeResponse(payload={"reCode": "0000", "reMsg": "success"}),
+    ]
+    sleeps = []
+    monkeypatch.setattr(session_manager.time, "sleep", sleeps.append)
+
+    result = validate_stage_probes(
+        valid_city_ops_cookie_dump(),
+        ["city_ops"],
+        {
+            "city_ops": {
+                "method": "POST",
+                "url": "https://example/getUserInfo",
+                "connect_timeout_seconds": 2,
+                "read_timeout_seconds": 5,
+                "headers_from_session_storage": {"uapToken": "uapToken"},
+                "body_type": "json",
+                "data": {},
+                "success_json_path": "reCode",
+                "success_value": "0000",
+            }
+        },
+    )
+
+    assert result["valid"] is True
+    assert len(FakeSession.request_calls) == 2
+    assert sleeps == [0.5]
+    assert FakeSession.request_calls[0]["kwargs"]["timeout"] == (2, 5)
+
+
+def test_stage_probe_reports_safe_error_after_one_retry(monkeypatch):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.request_calls = []
+    FakeSession.responses = [
+        session_manager.requests.exceptions.ConnectTimeout("token=secret"),
+        session_manager.requests.exceptions.ConnectTimeout("token=secret"),
+    ]
+    monkeypatch.setattr(session_manager.time, "sleep", lambda _seconds: None)
+
+    result = validate_stage_probes(
+        valid_city_ops_cookie_dump(),
+        ["city_ops"],
+        {
+            "city_ops": {
+                "method": "POST",
+                "url": "https://example/getUserInfo",
+                "connect_timeout_seconds": 2,
+                "read_timeout_seconds": 5,
+            }
+        },
+    )
+
+    assert result["valid"] is False
+    assert len(FakeSession.request_calls) == 2
+    assert result["results"][0]["error"] == "ConnectTimeout"
+    assert "secret" not in repr(result)
+
+
+def test_stage_probe_does_not_retry_authentication_response(monkeypatch):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.request_calls = []
+    FakeSession.responses = [FakeResponse(status_code=401, payload={"reCode": "401"})]
+
+    result = validate_stage_probes(
+        valid_city_ops_cookie_dump(),
+        ["city_ops"],
+        {
+            "city_ops": {
+                "method": "POST",
+                "url": "https://example/getUserInfo",
+                "connect_timeout_seconds": 2,
+                "read_timeout_seconds": 5,
+            }
+        },
+    )
+
+    assert result["results"][0]["reason"] == "session_expired"
+    assert len(FakeSession.request_calls) == 1
 
 
 def test_stage_probe_city_ops_requires_all_configured_probes(monkeypatch):

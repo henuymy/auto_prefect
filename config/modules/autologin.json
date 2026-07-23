@@ -58,7 +58,8 @@
       "data": {},
       "success_json_path": "reCode",
       "success_value": "0000",
-      "timeout_seconds": 8
+      "connect_timeout_seconds": 2,
+      "read_timeout_seconds": 5
     },
     "smart_ops": {
       "enabled": true,

@@ -1,27 +1,26 @@
-# City Ops Probe Retry Design
+# City Ops 探活重试设计
 
-## Goal
+## 目标
 
-Avoid failing a dashboard collection when the city_ops health probe encounters a single transient network failure, without retrying authentication failures or starting an unnecessary login.
+当 `city_ops` 健康探活发生一次瞬时网络故障时，不让驾驶舱采集立即失败；同时不重试认证失败，也不发起非必要的重新登录。
 
-## Scope
+## 范围
 
-Only the existing `city_ops` stage probe changes. The probe makes at most two HTTP requests per validation: its initial request and one retry.
+仅修改现有的 `city_ops` 阶段探活。每次会话校验最多发送两次 HTTP 请求：首次请求和一次重试。
 
-## Request Policy
+## 请求策略
 
-- Use a connect timeout of 2 seconds and a read timeout of 5 seconds.
-- Retry once after a 0.5-second delay only for `requests.exceptions.RequestException`.
-- Do not retry an HTTP response, including 302, 401, or 403. Existing response classification remains responsible for deciding whether a session must be refreshed.
-- If both attempts raise a request exception, return the existing `probe_error` result so session preparation continues to classify it as infrastructure failure.
+- 连接超时为 2 秒，读取超时为 5 秒。
+- 仅在 `requests.exceptions.RequestException` 时，等待 0.5 秒后重试一次。
+- HTTP 已返回响应时不重试，包括 302、401、403；仍由现有响应分类逻辑决定是否需要刷新会话。
+- 两次请求均发生网络异常时，返回既有的 `probe_error`，让会话准备流程继续将其判定为基础设施故障。
 
-## Diagnostics
+## 诊断信息
 
-The probe result records only the safe exception class name, such as `ConnectTimeout` or `ReadTimeout`. It must not include request headers, cookies, tokens, request bodies, or raw exception text.
+探活结果只记录安全的异常类别，例如 `ConnectTimeout` 或 `ReadTimeout`；不得记录请求头、Cookie、Token、请求体或原始异常文本。
 
-## Tests
+## 测试
 
-- A transient request exception followed by a successful response performs exactly two attempts and returns a successful probe result.
-- A persistent request exception performs exactly two attempts and returns `probe_error` with a safe exception class name.
-- An HTTP authentication response performs one attempt and retains its existing authentication classification.
-
+- 首次请求发生瞬态网络异常、第二次请求成功时，应恰好请求两次并返回探活成功。
+- 两次请求均发生网络异常时，应恰好请求两次，并返回带安全异常类别的 `probe_error`。
+- HTTP 认证失败响应只能请求一次，且保留既有的认证失败分类。

@@ -524,7 +524,16 @@ def response_json_or_none(response):
 
 
 def build_probe_request_kwargs(probe, stage):
-    timeout = int(probe.get("timeout_seconds", 8) or 8)
+    timeout_seconds = int(probe.get("timeout_seconds", 8) or 8)
+    connect_timeout_seconds = probe.get("connect_timeout_seconds")
+    read_timeout_seconds = probe.get("read_timeout_seconds")
+    if connect_timeout_seconds is None and read_timeout_seconds is None:
+        timeout = timeout_seconds
+    else:
+        timeout = (
+            int(connect_timeout_seconds or timeout_seconds),
+            int(read_timeout_seconds or timeout_seconds),
+        )
     kwargs = {
         "headers": build_headers(probe, stage),
         "params": resolve_storage_references(probe.get("params"), stage) or None,
@@ -550,7 +559,22 @@ def execute_stage_probe(stage_name, probe, stage):
     session.cookies.update(build_cookie_jar(stage, cookie_names=probe.get("cookie_names")))
     session.headers.update({"User-Agent": "session-probe/1.0"})
     method = str(probe.get("method") or "GET").upper()
-    response = session.request(method, probe["url"], **build_probe_request_kwargs(probe, stage))
+    request_kwargs = build_probe_request_kwargs(probe, stage)
+    for attempt in range(2):
+        try:
+            response = session.request(method, probe["url"], **request_kwargs)
+            break
+        except requests.exceptions.RequestException as exc:
+            if attempt == 1:
+                return {
+                    "stage": stage_name,
+                    "enabled": True,
+                    "ok": False,
+                    "reason": "probe_error",
+                    "error": type(exc).__name__,
+                }
+            time.sleep(0.5)
+
     payload = response_json_or_none(response)
 
     status_codes = probe.get("success_status_codes") or list(range(200, 300))
@@ -638,7 +662,15 @@ def validate_stage_probes(cookie_dump, required_stages=None, stage_probes=None):
                     }
                 )
             except Exception as exc:
-                results.append({"stage": stage_name, "enabled": True, "ok": False, "reason": "probe_error", "error": str(exc)})
+                results.append(
+                    {
+                        "stage": stage_name,
+                        "enabled": True,
+                        "ok": False,
+                        "reason": "probe_error",
+                        "error": type(exc).__name__,
+                    }
+                )
     return {
         "valid": all(item.get("ok") for item in results),
         "results": results,
