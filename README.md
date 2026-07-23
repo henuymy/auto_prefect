@@ -536,6 +536,7 @@ Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge �
 - 每次 Session Keeper 成功完成预热后，Flow 日志会按阶段记录共享会话健康确认，便于在 Prefect UI 中核验本轮健康状态。
 - `autologin.json` 中每个 stage 默认配置一个探活；需要更严格的鉴权校验时可配置 `probes` 数组，所有启用探活都成功才判定该 stage 健康。探活必须动态读取当前会话的 Cookie 或 Storage，不得提交固定认证材料。
 - 认证明确失效时只在全局登录锁内执行一次完整刷新，并仅重试失败的业务步骤一次；基础设施探活失败不触发登录。
+- `city_ops` 探活使用连接超时 `2` 秒、读取超时 `5` 秒。仅 `requests` 网络异常会在等待 `0.5` 秒后重试一次，总共最多两次；已获得的 HTTP 响应不重试，`302`、`401`、`403` 仍按认证失效处理。两次网络异常后仅记录安全的异常类别，例如 `ConnectTimeout` 或 `ReadTimeout`。
 - Session Keeper 不发送会话失败或恢复通知。development 环境仅在最终业务 Run 失败时，按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
 - 完整登录仅持久化调用方声明的业务阶段会话；调用方只消费 Broker 返回的内存 `stage_data`，不得重新读取 Cookie 文件。
 - 请求状态码、探活原因与自动恢复边界见 [请求故障分类与处理](docs/request-failure-handling.md)。
@@ -623,6 +624,8 @@ python flows/dashboard_partition_maintenance_flow.py
 
 驾驶舱采集在读取当前组织结构时，若 MySQL 返回 `2006` 或 `2013`，会废弃当前连接池、等待 `0.5` 秒，并仅用新连接重试一次。日志中的 `MYSQL_CONNECTION_LOST` 或 `MYSQL_READ_TIMEOUT` 会带 `outcome=RETRY`、`RECOVERED` 或 `FAILED`，以及错误码、重试次数和耗时；日志不记录原始异常、SQL、连接地址或凭据。`RECOVERED` 表示本轮已自动恢复，无需人工补跑；`FAILED` 表示两次只读结构加载均失败，应先检查同一时段的 MySQL/代理日志、服务端负载和网络或 TLS 链路，再决定是否重新触发采集。该重试不适用于写事务。
 
+实时指标写事务对 MySQL `2006` 或 `2013` 有单独的一次性恢复边界：原事务退出后，先确认采集命名锁仍由当前任务持有，再废弃写入连接池，并用新连接查询同一 `batch_no` 的 `collection_run`。若状态已经是 `SUCCESS`，表示 snapshot 插入、`metric_current` upsert、Run 完成状态和统计值已在同一事务中提交，只是应用未收到提交回执；系统直接返回已持久化的统计值，绝不重放 snapshot。若未观察到 `SUCCESS`，才等待 `0.5` 秒后完整重试一次；第二次 `2006`/`2013` 直接失败，不会无限重试。正常实时写入顺序为：规划 snapshot -> 插入 snapshot -> upsert 全部 `metric_current` 值 -> 标记 Run 为 `SUCCESS` -> 提交。当前值规划读取仅投影 `node_id`、`indicator_id`、`metric_value`、`stat_date`，不再对整批 `metric_current` 使用 `FOR UPDATE`；该优化依赖所有修改当前指标值的写入方均持有同一环境的 collection MySQL 命名锁。
+
 Prefect PostgreSQL 的结构由 Prefect Server 迁移命令维护。迁移或全量恢复前，先停止或隔离会写入源库的 Server 与 Worker；恢复目标库后至少核验数据库迁移版本、各表行数、Deployment、Work Pool 与外键完整性。严禁用开发环境的状态覆盖生产库。
 
 ## 测试与质量检查
@@ -652,7 +655,7 @@ npm run build
 2. 请求 `/api/live` 判断 API 进程是否存活，再请求 `/api/health` 检查依赖。
 3. 查看 `C:\AutoNotifyRuntime\logs` 和 Prefect Flow Run 日志。
 4. 登录失败时检查共享会话状态、Cookie 有效期和被忽略的本地登录配置，不输出认证材料。
-5. 驾驶舱异常时检查 MySQL 连接、Alembic 版本和最近一次采集运行状态。若日志为 `MYSQL_CONNECTION_LOST` 或 `MYSQL_READ_TIMEOUT` 且 `outcome=FAILED`，按“数据库迁移”章节核查 MySQL、代理与网络链路；`outcome=RECOVERED` 不需要人工重跑。
+5. 驾驶舱异常时检查 MySQL 连接、Alembic 版本和最近一次采集运行状态。若写事务日志记录 `outcome=RECOVERED_COMMITTED`，表示提交结果已恢复，不需要人工补跑；若 `2006`/`2013` 最终使 Run 失败，按“数据库迁移”章节核查 MySQL、代理与网络链路后再决定是否重跑。只读结构加载的 `outcome=RECOVERED` 同样不需要人工补跑。
 6. 配置中心或数据驾驶舱无法打开时，检查 `frontend/node_modules` 是否存在，并确认 `npm --prefix frontend ci` 成功；配置中心和驾驶舱端口分别为 `5173`、`5174`。
 7. `/api/health` 返回 `503` 时读取响应 JSON 的失败项；MySQL 可连接但 `dashboard_schema` 未就绪时，先运行驾驶舱 V2 分区维护。
 

@@ -155,7 +155,9 @@ C:\AutoNotifyRuntime\
 - 驾驶舱模块产物写入 `modules/dashboard/output/...`；不保留历史 V2 迁移审核导出工具，历史追溯应使用版本库提交和已归档产物。
 - 保留的 V2 配置导入与切换审计工具只接受运行根相对的 `--bundle` 和 `--approvals`，例如 `modules/dashboard/output/v2_migration`；不得传入绝对路径、`runtime/...` 前缀或项目相对替代路径。`--config` 仍是项目内驾驶舱配置路径。
 - MySQL 配置迁移完成后，生产与开发库必须分别连接 `dashboard_prod`、`dashboard_dev`；旧 `dashboard_v2` 保持只读留存，禁止让新采集任务继续写入。
-- 组织结构读取遇到 MySQL `2006` 或 `2013` 时，只可在废弃当前连接池后以新连接重试一次，固定退避 `0.5` 秒；仅适用于无副作用的读取，禁止复用于写事务。诊断日志只能输出固定类别 `MYSQL_CONNECTION_LOST` 或 `MYSQL_READ_TIMEOUT`、错误码、尝试次数、耗时和 `RETRY`/`RECOVERED`/`FAILED` 结果，不得输出原始异常、SQL、连接地址或凭据。
+- 组织结构读取遇到 MySQL `2006` 或 `2013` 时，只可在废弃当前连接池后以新连接重试一次，固定退避 `0.5` 秒；该规则仅适用于无副作用的读取。诊断日志只能输出固定类别 `MYSQL_CONNECTION_LOST` 或 `MYSQL_READ_TIMEOUT`、错误码、尝试次数、耗时和 `RETRY`/`RECOVERED`/`FAILED` 结果，不得输出原始异常、SQL、连接地址或凭据。
+- 实时指标写事务有独立的 `2006`/`2013` 恢复协议：事务异常退出后，必须确认 collection MySQL 命名锁仍由当前任务持有，废弃写入连接池，并用新连接读取同一 `batch_no` 的 `collection_run`。仅当状态已为 `SUCCESS` 时，才可返回已持久化的统计值并停止，不得重放 snapshot；这表示 snapshot 插入、`metric_current` upsert、Run 完成状态和统计值已作为同一事务提交。未观察到 `SUCCESS` 时，可在 `0.5` 秒后完整重试一次；第二次连接丢失直接失败。不得将该协议扩展为无限重试、部分写入重放或绕过命名锁。
+- `metric_current` 的 snapshot 决策读取只投影 `node_id`、`indicator_id`、`metric_value`、`stat_date`，不使用整批 `FOR UPDATE`。该无锁读取依赖所有修改当前指标值的写入方使用同一环境的 collection MySQL 命名锁；新增写入路径必须遵守该约束。实时写入顺序固定为：规划 snapshot、插入 snapshot、upsert 全部当前值、将 Run 标记为 `SUCCESS`、提交同一事务。
 
 ### 会话生命周期约定
 
@@ -166,6 +168,8 @@ Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通�
 每次 Session Keeper 成功完成预热后，Flow 日志必须按返回的阶段列表记录共享会话健康确认；阶段列表为空时不记录该确认信息。
 
 `autologin.json` 中 `stage_probes.<stage>` 默认配置单个探活对象；需要更严格的鉴权校验时可改用 `probes` 数组。所有启用探活均成功才判定该 stage 健康；探活的 Cookie、Token 和 Storage 值必须从当前 stage 快照动态注入，禁止在配置、日志或文档中写入固定认证材料。
+
+`city_ops` 探活固定使用连接超时 `2` 秒和读取超时 `5` 秒。只有 `requests` 网络异常可在固定退避 `0.5` 秒后重试一次，总共最多两次；一旦获得 HTTP 响应即不重试，认证响应继续按既有会话刷新边界处理。两次网络异常后仅允许记录异常类别，如 `ConnectTimeout` 或 `ReadTimeout`，不得记录原始异常文本、请求头、Cookie、Token 或请求体。其他 stage 未设置分离超时时保持 `timeout_seconds` 的既有单值语义。
 
 请求故障按认证失效、基础设施、接口契约和业务结果处理。302、401、403、登录页语义和 `reCode=1101` 的认证边界，以及 429、5xx、超时和 JSON 契约失败的处理规则，统一见 [docs/request-failure-handling.md](docs/request-failure-handling.md)。运行日志不得输出完整内部 URL、认证材料或响应正文。
 
@@ -204,6 +208,24 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-23 - 驾驶舱实时指标写事务连接恢复与无锁读取
+
+- 原因：整批 `metric_current` 的 `SELECT ... FOR UPDATE` 会对约 38,000 条当前指标请求行锁；MySQL `2013` 后若盲目重试，无法区分未提交事务与提交回执丢失，可能重放 snapshot。
+- 修改内容：当前值查询改为四列无锁投影；写事务对 `2006`/`2013` 在确认 collection 命名锁后废弃连接池，并查询本批 `SUCCESS` 状态。已提交时恢复持久化结果，未提交时仅完整重试一次。
+- 涉及文件：`services/dashboard_v2_metric_store.py`、`services/dashboard_v2_pipeline.py`、对应测试、`README.md`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无需迁移，不调整 Cron、数据库超时或锁等待配置；所有当前指标写入方必须继续使用同一环境的 collection 命名锁。
+- 验证：`python -m pytest -p no:cacheprovider -q tests/test_dashboard_v2_metric_store.py tests/test_dashboard_v2_pipeline.py tests/test_dashboard_lock_commit_gates.py` 为 `19 passed`；Ruff 与 `git diff --check` 通过。
+- 风险与回滚：发生第二次连接丢失时任务仍会失败，避免无限重试和重复快照。回滚时应同时恢复无锁读取、写事务恢复逻辑及其测试，不得只恢复其中一部分。
+
+### 2026-07-23 - City Ops 探活瞬态网络恢复
+
+- 原因：`city_ops` 探活使用单个 8 秒超时，短暂的网络连接或读取波动会直接中止驾驶舱采集，且日志会截断底层异常的关键类别。
+- 修改内容：对该 stage 配置连接超时 2 秒、读取超时 5 秒；仅网络异常固定等待 0.5 秒并重试一次，HTTP 响应不重试。连续两次失败仅记录安全的请求异常类别。
+- 涉及文件：`config/modules/autologin.json`、`services/session_manager.py`、`tests/test_session_manager.py`、`README.md`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无需迁移；仅更新 `stage_probes.city_ops` 超时字段。
+- 验证：`python -m pytest tests/test_session_manager.py -v` 为 69 passed；Ruff、JSON 校验和目标差异检查通过。
+- 风险与回滚：持续基础设施故障在两次请求后仍会使当前任务失败，不触发自动登录；回滚该变更可恢复单次 8 秒探活语义。
 
 ### 2026-07-22 - 驾驶舱 MySQL 结构读取恢复
 
