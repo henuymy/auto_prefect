@@ -18,4 +18,11 @@ describe("monitor responsive table styles", () => {
     expect(styles).toMatch(/\.timeline-panel \{[^}]*min-height: auto;[^}]*max-height: none;/);
     expect(styles).not.toMatch(/\.monitor-grid \{[^}]*max-width: 1600px/);
   });
+
+  it("uses the record table to size the desktop row and scrolls timeline overflow internally", () => {
+    expect(styles).toMatch(/\.timeline-panel \{[^}]*min-height: 720px;[^}]*height: auto;[^}]*align-self: stretch;[^}]*contain: size;[^}]*overflow: hidden;/);
+    expect(styles).toMatch(/\.monitor-grid\.has-detail \.monitor-detail \{[^}]*align-self: stretch;/);
+    expect(styles).toMatch(/@media \(min-width: 1321px\) \{[^}]*\.monitor-grid\.has-detail \.monitor-detail \{[^}]*contain: size;[^}]*overflow-y: auto;/);
+    expect(styles).not.toContain("height: clamp(720px, calc(100vh - 210px), 900px)");
+  });
 });
