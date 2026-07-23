@@ -43,7 +43,7 @@ export function Header({
   return (
     <header className="flex min-h-16 flex-col gap-3 border-b border-border/70 bg-card/75 px-3 py-3 backdrop-blur-xl lg:flex-row lg:items-center lg:justify-between lg:px-5">
       <div className="min-w-0">
-        <h1 className="text-lg font-black tracking-tight sm:text-xl">基于 Prefect 的自动化任务配置中心</h1>
+        <h1 className="text-lg font-black tracking-tight sm:text-xl">自动化任务配置中心</h1>
         <p className="text-xs text-muted-foreground">可视化编辑报表配置 JSON，发布到自动化调度流程</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">

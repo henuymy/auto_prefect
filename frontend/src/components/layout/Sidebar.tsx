@@ -78,7 +78,7 @@ export function Sidebar({
           <Activity className="h-5 w-5" />
         </div>
         <div className="min-w-0">
-          <div className="text-base font-black">Prefect 配置中心</div>
+          <div className="text-base font-black">配置中心</div>
           <div className="text-xs text-muted-foreground">JSON Visual Console</div>
         </div>
       </div>
