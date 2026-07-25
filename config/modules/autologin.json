@@ -12,7 +12,7 @@
   "allow_login": true,
   "login_timeout_seconds": 600,
   "login_max_attempts": 2,
-  "login_retry_delay_seconds": 60,
+  "login_retry_delay_seconds": 0,
   "login_lock_path": "session/locks/login.lock",
   "login_lock_wait_seconds": 1440,
   "login_lock_poll_seconds": 5,

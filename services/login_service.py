@@ -2,7 +2,9 @@
 import json
 import copy
 import os
+import re
 import shutil
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -12,11 +14,13 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.edge.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from services.cookie_recorder import CookieRecorder, resolve_cookie_dump_path
 from services.otp_service import delete_message, prepare_wait_context, wait_for_otp
 from services.browser_session import (
+    BrowserSessionCleanupError,
+    browser_cleanup_succeeded,
     browser_config,
     close_browser_session,
     format_browser_close_result,
@@ -30,6 +34,44 @@ from utils.config_loader import load_json_with_runtime_override
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 REQUIRED_STAGES_ENV = "AUTO_NOTIFY_REQUIRED_STAGES"
+BROWSER_CLEANED_ENV = "AUTO_NOTIFY_BROWSER_CLEANED"
+SAFE_LOGIN_DIAGNOSTIC_PREFIX = "AUTO_NOTIFY_LOGIN_DIAGNOSTIC"
+SAFE_LOGIN_DIAGNOSTIC_PHASES = frozenset(
+    {
+        "init_driver",
+        "ngboss_login",
+        "ngboss_main",
+        "app_login",
+        "usm_console",
+        "app_session_capture",
+        "session_validation",
+    }
+)
+PROFILE_STARTUP_CONFLICT = re.compile(
+    r"(?i)(user data directory.{0,80}(already in use|in use)|"
+    r"DevToolsActivePort|session not created.{0,120}(failed to start|edge))"
+)
+
+
+def safe_login_failure_reason(error: Exception) -> str:
+    """Map a login error to a stable reason code without exposing its text."""
+    if isinstance(error, BrowserSessionCleanupError):
+        return "profile_in_use"
+    if isinstance(error, TimeoutException):
+        return "timeout"
+    if not isinstance(error, WebDriverException):
+        return "unexpected_exception"
+
+    text = str(error)
+    if re.search(r"(?i)DevToolsActivePort", text):
+        return "devtools_active_port"
+    if re.search(r"(?i)user data directory.{0,80}(already in use|in use)", text):
+        return "profile_in_use"
+    if re.search(r"(?i)(cannot reach|not reachable|disconnected|connection refused)", text):
+        return "driver_unreachable"
+    if re.search(r"(?i)(failed to start|session not created)", text):
+        return "browser_start_failed"
+    return "webdriver_unclassified"
 
 
 def xpath_literal(value: str) -> str:
@@ -72,6 +114,7 @@ class AutoLogin:
         self.usm_window_handle = None
         self.usm_entry_url = None
         self.opened_app_handles = {}
+        self.login_phase = "init_driver"
         self.cookie_recorder = self._init_cookie_recorder()
 
     def _init_cookie_recorder(self):
@@ -336,7 +379,11 @@ class AutoLogin:
         browser_options = self.config.get("browser") or {}
         options.page_load_strategy = browser_options.get("page_load_strategy", "eager") or "eager"
         if browser["user_data_dir"]:
-            if browser_options.get("close_existing_before_start", True):
+            should_close = (
+                browser_options.get("close_existing_before_start", True)
+                and os.environ.get(BROWSER_CLEANED_ENV) != "1"
+            )
+            if should_close:
                 close_result = close_browser_session(
                     browser["session_state_path"],
                     user_data_dir=browser["user_data_dir"],
@@ -353,6 +400,8 @@ class AutoLogin:
                         "[WARN] 启动前旧自动登录浏览器仍有残留: "
                         f"{format_browser_close_result(close_result)}"
                     )
+                if not browser_cleanup_succeeded(close_result):
+                    raise BrowserSessionCleanupError("browser_cleanup_failed")
             if browser_options.get("clear_profile_before_start", False):
                 shutil.rmtree(browser["user_data_dir"], ignore_errors=True)
                 print(f"[INFO] 启动前已删除自动登录浏览器 profile: {browser['user_data_dir']}")
@@ -376,7 +425,28 @@ class AutoLogin:
         if window_width <= 0 or window_height <= 0:
             raise ValueError("浏览器窗口宽高必须大于 0")
         options.add_argument(f"--window-size={window_width},{window_height}")
-        self.driver = webdriver.Edge(options=options)
+        startup_timeout = float(
+            browser_options.get(
+                "profile_startup_timeout_seconds",
+                browser_options.get("close_wait_seconds", 10),
+            )
+            or 10
+        )
+        startup_poll_seconds = float(
+            browser_options.get("profile_startup_poll_seconds", 0.5) or 0.5
+        )
+        deadline = time.monotonic() + max(startup_timeout, 0)
+        while True:
+            try:
+                self.driver = webdriver.Edge(options=options)
+                break
+            except WebDriverException as exc:
+                if not PROFILE_STARTUP_CONFLICT.search(str(exc)):
+                    raise
+                remaining_seconds = deadline - time.monotonic()
+                if remaining_seconds <= 0:
+                    raise BrowserSessionCleanupError("browser_profile_in_use") from exc
+                time.sleep(min(max(startup_poll_seconds, 0.1), remaining_seconds))
         webdriver_timeout = int(browser_options.get("webdriver_timeout_seconds", 30) or 30)
         if hasattr(self.driver.command_executor, "set_timeout"):
             self.driver.command_executor.set_timeout(webdriver_timeout)
@@ -1069,15 +1139,22 @@ class AutoLogin:
         return validation
 
     def login_and_capture_cookies(self):
+        self.login_phase = "init_driver"
         if not self.driver:
             self.init_driver()
+        self.login_phase = "ngboss_login"
         self.login_ngboss()
+        self.login_phase = "ngboss_main"
         self.ensure_ngboss_main_loaded()
         self.capture_cookies("ngboss_main")
+        self.login_phase = "app_login"
         self.click_app_login()
+        self.login_phase = "usm_console"
         self.access_usm_console()
         self.capture_cookies("usm_console")
+        self.login_phase = "app_session_capture"
         self.capture_usm_apps_cookies()
+        self.login_phase = "session_validation"
         self.verify_captured_session()
         return {
             "cookie_dump": str(self.cookie_recorder.output_path) if self.cookie_recorder else None,
@@ -1088,6 +1165,19 @@ class AutoLogin:
         if self.driver:
             self.driver.quit()
             self.driver = None
+
+    def report_safe_login_diagnostic(self, error: Exception) -> None:
+        phase = getattr(self, "login_phase", "init_driver")
+        if phase not in SAFE_LOGIN_DIAGNOSTIC_PHASES:
+            phase = "init_driver"
+        exception_name = type(error).__name__
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", exception_name):
+            exception_name = "Exception"
+        print(
+            f"{SAFE_LOGIN_DIAGNOSTIC_PREFIX} phase={phase} "
+            f"exception={exception_name} reason={safe_login_failure_reason(error)}",
+            file=sys.stderr,
+        )
 
     def run(self):
         success = False
@@ -1101,9 +1191,7 @@ class AutoLogin:
             print("执行完成！")
             print("=" * 60)
         except Exception as e:
-            print(f"\n[ERROR] 执行过程中出错: {e}")
-            import traceback
-            traceback.print_exc()
+            self.report_safe_login_diagnostic(e)
             raise
         finally:
             if success and self.keep_open_after_login():

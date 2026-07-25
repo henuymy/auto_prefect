@@ -20,6 +20,8 @@ from uuid import uuid4
 import requests
 
 from services.browser_session import (
+    BrowserSessionCleanupError,
+    browser_cleanup_succeeded,
     close_browser_session,
     format_browser_close_result,
     summarize_browser_close_result,
@@ -696,6 +698,10 @@ class SessionInfrastructureError(RuntimeError):
 MAX_LOGIN_ERROR_SUMMARY_LENGTH = 500
 LOGIN_FAILURE_CATEGORIES = (
     (
+        "browser_cleanup_failed",
+        re.compile(r"(?i)(browser_cleanup_failed|browser_profile_in_use)"),
+    ),
+    (
         "otp_timeout",
         re.compile(
             r"(?is)(gotify|验证码|短信).{0,120}(timeout|超时)|"
@@ -723,11 +729,41 @@ LOGIN_FAILURE_CATEGORIES = (
     ),
 )
 LOGIN_FAILURE_SUMMARIES = {
+    "browser_cleanup_failed": "自动登录浏览器未能安全关闭",
     "otp_timeout": "等待验证码超时",
     "login_page_timeout": "登录页加载或登录框检测超时",
     "browser_error": "Edge WebDriver 启动或响应异常",
     "session_capture_failed": "会话认证材料捕获或就绪检查失败",
 }
+SAFE_LOGIN_DIAGNOSTIC_PREFIX = "AUTO_NOTIFY_LOGIN_DIAGNOSTIC"
+SAFE_LOGIN_DIAGNOSTIC_PHASES = frozenset(
+    {
+        "init_driver",
+        "ngboss_login",
+        "ngboss_main",
+        "app_login",
+        "usm_console",
+        "app_session_capture",
+        "session_validation",
+    }
+)
+SAFE_LOGIN_DIAGNOSTIC_REASONS = frozenset(
+    {
+        "profile_in_use",
+        "devtools_active_port",
+        "browser_start_failed",
+        "driver_unreachable",
+        "webdriver_unclassified",
+        "timeout",
+        "unexpected_exception",
+    }
+)
+SAFE_LOGIN_DIAGNOSTIC_PATTERN = re.compile(
+    rf"(?m)^{SAFE_LOGIN_DIAGNOSTIC_PREFIX} "
+    r"phase=(?P<phase>[a-z_]+) "
+    r"exception=(?P<exception>[A-Za-z][A-Za-z0-9_]{0,79}) "
+    r"reason=(?P<reason>[a-z_]+)$"
+)
 
 
 def classify_login_failure(error: object) -> str:
@@ -741,6 +777,23 @@ def classify_login_failure(error: object) -> str:
 def summarize_login_failure(error):
     category = classify_login_failure(error)
     return LOGIN_FAILURE_SUMMARIES.get(category, "unknown")[:MAX_LOGIN_ERROR_SUMMARY_LENGTH]
+
+
+def extract_safe_login_diagnostic(error: object) -> str | None:
+    """Return only a validated child-login marker, never raw child output."""
+    match = SAFE_LOGIN_DIAGNOSTIC_PATTERN.search(str(error))
+    if not match:
+        return None
+    values = match.groupdict()
+    if (
+        values["phase"] not in SAFE_LOGIN_DIAGNOSTIC_PHASES
+        or values["reason"] not in SAFE_LOGIN_DIAGNOSTIC_REASONS
+    ):
+        return None
+    return (
+        f"阶段={values['phase']}，异常={values['exception']}，"
+        f"原因={values['reason']}"
+    )
 
 
 class SessionLoginError(RuntimeError):
@@ -862,12 +915,17 @@ def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
         raw_diagnostic = completed.stderr or completed.stdout or ""
         category = classify_login_failure(raw_diagnostic)
         diagnostic = summarize_login_failure(raw_diagnostic)
+        safe_child_diagnostic = extract_safe_login_diagnostic(raw_diagnostic)
+        if safe_child_diagnostic and category != "unknown":
+            diagnostic = f"{diagnostic}，{safe_child_diagnostic}"
         message = (
             f"登录命令执行失败，退出码={completed.returncode}，"
             f"错误类别={category}"
         )
         if category != "unknown" and diagnostic:
             message += f"，诊断={diagnostic}"
+        if category == "browser_cleanup_failed":
+            raise BrowserSessionCleanupError(message)
         raise RuntimeError(message)
     return {
         "returncode": completed.returncode,
@@ -896,7 +954,7 @@ def run_login_with_retry(
     login_attempt,
     *,
     max_attempts=2,
-    retry_delay_seconds=60,
+    retry_delay_seconds=0,
     sleeper=time.sleep,
 ):
     errors = []
@@ -904,13 +962,16 @@ def run_login_with_retry(
         try:
             result = login_attempt()
             return {**result, "attempt_count": attempt}
+        except BrowserSessionCleanupError as exc:
+            raise SessionLoginError([exc]) from exc
         except SessionInfrastructureError:
             raise
         except Exception as exc:
             errors.append(summarize_login_failure(exc))
             if attempt == max_attempts:
                 raise SessionLoginError(errors) from exc
-            sleeper(retry_delay_seconds)
+            if retry_delay_seconds > 0:
+                sleeper(retry_delay_seconds)
     raise AssertionError("unreachable")
 
 
@@ -981,11 +1042,11 @@ def prepare_session(
     if max_age_seconds is not None:
         max_age_seconds = int(max_age_seconds)
     login_max_attempts = config.get("login_max_attempts", 2)
-    login_retry_delay_seconds = config.get("login_retry_delay_seconds", 60)
+    login_retry_delay_seconds = config.get("login_retry_delay_seconds", 0)
     if login_max_attempts != 2:
         raise ValueError("login_max_attempts 必须固定为 2")
-    if login_retry_delay_seconds != 60:
-        raise ValueError("login_retry_delay_seconds 必须固定为 60")
+    if login_retry_delay_seconds != 0:
+        raise ValueError("login_retry_delay_seconds 必须固定为 0")
     if login_attempts is None:
         effective_login_attempts = login_max_attempts
     elif type(login_attempts) is int and login_attempts in {1, 2}:
@@ -1186,9 +1247,12 @@ def prepare_session(
                     "旧自动登录浏览器仍有残留进程，继续尝试登录: %s",
                     format_browser_close_result(close_result),
                 )
+            if not browser_cleanup_succeeded(close_result):
+                raise BrowserSessionCleanupError("browser_cleanup_failed")
             try:
                 login_environment = {
                     "AUTO_NOTIFY_COOKIE_DUMP_PATH": str(attempt_snapshot_path),
+                    "AUTO_NOTIFY_BROWSER_CLEANED": "1",
                 }
                 if required_stages:
                     login_environment["AUTO_NOTIFY_REQUIRED_STAGES"] = ",".join(

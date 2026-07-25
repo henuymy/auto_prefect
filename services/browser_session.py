@@ -14,6 +14,10 @@ from services.runtime_paths import resolve_runtime_relative_path, runtime_path
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
+class BrowserSessionCleanupError(RuntimeError):
+    """Raised when the dedicated browser profile cannot be safely reused."""
+
+
 def resolve_path(value, base_dir=PROJECT_DIR):
     if not value:
         return None
@@ -81,20 +85,22 @@ def record_browser_session(session_state_path, user_data_dir, driver_pid=None, c
     )
 
 
-def find_edge_pids_by_user_data_dir(user_data_dir):
+def inspect_edge_processes_by_user_data_dir(user_data_dir):
+    """Inspect only Edge processes that explicitly use the managed profile."""
     if os.name != "nt":
-        return []
+        return {"available": True, "pids": []}
     profile = str(Path(user_data_dir).resolve())
     script = r"""
+$ErrorActionPreference = 'Stop'
 $needle = $env:AUTO_NOTIFY_EDGE_PROFILE
-$items = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+$items = Get-CimInstance Win32_Process |
   Where-Object {
     $_.Name -in @('msedge.exe', 'msedgedriver.exe') -and
     $_.CommandLine -and
     $_.CommandLine.IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
   } |
   Select-Object -ExpandProperty ProcessId
-$items | ConvertTo-Json -Compress
+[pscustomobject]@{ pids = @($items) } | ConvertTo-Json -Compress
 """
     completed = subprocess.run(
         ["powershell", "-NoProfile", "-Command", script],
@@ -106,23 +112,33 @@ $items | ConvertTo-Json -Compress
         env={**os.environ, "AUTO_NOTIFY_EDGE_PROFILE": profile},
     )
     if completed.returncode != 0 or not completed.stdout.strip():
-        return []
+        return {"available": False, "pids": []}
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        return []
-    if isinstance(payload, int):
-        return [payload]
-    if isinstance(payload, list):
-        return [int(item) for item in payload if str(item).isdigit()]
-    return []
+        return {"available": False, "pids": []}
+    if not isinstance(payload, dict):
+        return {"available": False, "pids": []}
+    pids = payload.get("pids")
+    if not isinstance(pids, list):
+        return {"available": False, "pids": []}
+    return {
+        "available": True,
+        "pids": [int(item) for item in pids if str(item).isdigit()],
+    }
+
+
+def find_edge_pids_by_user_data_dir(user_data_dir):
+    """Return matching process IDs for backwards-compatible session recording."""
+    return inspect_edge_processes_by_user_data_dir(user_data_dir)["pids"]
 
 
 def stop_process_ids(process_ids):
     stopped = []
+    failed = []
     for process_id in sorted({int(pid) for pid in process_ids if pid}):
         try:
-            subprocess.run(
+            completed = subprocess.run(
                 ["taskkill", "/PID", str(process_id), "/T", "/F"],
                 text=True,
                 encoding="utf-8",
@@ -130,30 +146,22 @@ def stop_process_ids(process_ids):
                 capture_output=True,
                 check=False,
             )
-            stopped.append(process_id)
+            if completed.returncode == 0:
+                stopped.append(process_id)
+            else:
+                failed.append(process_id)
         except Exception:
-            continue
-    return stopped
+            failed.append(process_id)
+    return {"stopped_pids": stopped, "failed_pids": failed}
 
 
 def close_recorded_browser_session(session_state_path=None):
-    session_state_path = session_state_path or default_session_state_path()
-    state_path = Path(session_state_path)
-    state = read_session_state(state_path)
-    if not state:
-        remove_session_state(state_path)
-        return {"status": "missing", "stopped_pids": []}
+    return close_browser_session(session_state_path)
 
-    process_ids = []
-    if state.get("driver_pid"):
-        process_ids.append(state.get("driver_pid"))
-    if state.get("user_data_dir"):
-        process_ids.extend(find_edge_pids_by_user_data_dir(state["user_data_dir"]))
-    process_ids.extend(state.get("browser_pids") or [])
 
-    stopped = stop_process_ids(process_ids)
-    remove_session_state(state_path)
-    return {"status": "closed", "stopped_pids": stopped, "state_path": str(state_path)}
+def browser_cleanup_succeeded(result):
+    """Treat legacy mock results without a status as a successful close."""
+    return str((result or {}).get("status") or "closed") == "closed"
 
 
 def summarize_browser_close_result(result):
@@ -180,27 +188,62 @@ def close_browser_session(session_state_path=None, user_data_dir=None, wait_seco
     state_path = Path(session_state_path)
     state = read_session_state(state_path)
     profile_dir = user_data_dir or state.get("user_data_dir") or default_user_data_dir()
-    process_ids = []
-    if state.get("driver_pid"):
-        process_ids.append(state.get("driver_pid"))
-    process_ids.extend(state.get("browser_pids") or [])
-    if profile_dir:
-        process_ids.extend(find_edge_pids_by_user_data_dir(profile_dir))
+    inspection = inspect_edge_processes_by_user_data_dir(profile_dir)
+    common = {
+        "state_path": str(state_path),
+        "user_data_dir": str(Path(profile_dir).resolve()) if profile_dir else None,
+    }
+    if not inspection["available"]:
+        return {
+            "status": "cleanup_unverified",
+            "stopped_pids": [],
+            "failed_pids": [],
+            "remaining_pids": [],
+            **common,
+        }
 
-    stopped = stop_process_ids(process_ids)
-    deadline = time.time() + float(wait_seconds or 0)
-    remaining = find_edge_pids_by_user_data_dir(profile_dir) if profile_dir else []
-    while remaining and time.time() < deadline:
-        time.sleep(float(poll_seconds or 0.5))
-        remaining = find_edge_pids_by_user_data_dir(profile_dir)
-        if remaining:
-            stopped.extend(stop_process_ids(remaining))
+    stopped = set()
+    failed = set()
+    remaining = list(inspection["pids"])
+    deadline = time.monotonic() + max(float(wait_seconds or 0), 0)
+    interval = max(float(poll_seconds or 0.5), 0.1)
+
+    while remaining:
+        stop_result = stop_process_ids(remaining)
+        stopped.update(stop_result["stopped_pids"])
+        failed.update(stop_result["failed_pids"])
+
+        inspection = inspect_edge_processes_by_user_data_dir(profile_dir)
+        if not inspection["available"]:
+            return {
+                "status": "cleanup_unverified",
+                "stopped_pids": sorted(stopped),
+                "failed_pids": sorted(failed - stopped),
+                "remaining_pids": [],
+                **common,
+            }
+        remaining = list(inspection["pids"])
+        if not remaining:
+            break
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            break
+        time.sleep(min(interval, remaining_seconds))
+
+    if remaining:
+        return {
+            "status": "cleanup_failed",
+            "stopped_pids": sorted(stopped),
+            "failed_pids": sorted(failed - stopped),
+            "remaining_pids": remaining,
+            **common,
+        }
 
     remove_session_state(state_path)
     return {
         "status": "closed",
-        "stopped_pids": sorted({int(pid) for pid in stopped if pid}),
-        "remaining_pids": remaining,
-        "state_path": str(state_path),
-        "user_data_dir": str(Path(profile_dir).resolve()) if profile_dir else None,
+        "stopped_pids": sorted(stopped),
+        "failed_pids": sorted(failed - stopped),
+        "remaining_pids": [],
+        **common,
     }

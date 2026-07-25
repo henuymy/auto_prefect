@@ -86,7 +86,7 @@ def session_config(cookie_dump_path, **overrides):
         "required_stages": ["city_ops"],
         "login_command": "fake-login",
         "login_max_attempts": 2,
-        "login_retry_delay_seconds": 60,
+        "login_retry_delay_seconds": 0,
         "stage_probes": {"city_ops": {"method": "POST", "url": "https://example/getUserInfo"}},
     }
     config.update(overrides)
@@ -874,7 +874,7 @@ def test_prepare_session_does_not_login_when_lock_recheck_finds_infrastructure_f
         ("login_max_attempts", 3),
         ("login_max_attempts", 0),
         ("login_retry_delay_seconds", 30),
-        ("login_retry_delay_seconds", 0),
+        ("login_retry_delay_seconds", 60),
     ],
 )
 def test_prepare_session_rejects_non_production_retry_configuration(key, value):
@@ -932,10 +932,10 @@ def test_prepare_session_allows_business_single_login_attempt_override(monkeypat
 
     assert result["status"] == "refreshed"
     assert result["login_attempt_count"] == 1
-    assert retry_options == {"max_attempts": 1, "retry_delay_seconds": 60}
+    assert retry_options == {"max_attempts": 1, "retry_delay_seconds": 0}
 
 
-def test_login_failure_waits_sixty_seconds_and_retries_once(monkeypatch):
+def test_login_failure_retries_without_fixed_delay(monkeypatch):
     calls = []
     sleeps = []
     outcomes = iter([RuntimeError("first failure"), {"returncode": 0}])
@@ -950,12 +950,12 @@ def test_login_failure_waits_sixty_seconds_and_retries_once(monkeypatch):
     result = session_manager.run_login_with_retry(
         login_attempt,
         max_attempts=2,
-        retry_delay_seconds=60,
+        retry_delay_seconds=0,
         sleeper=sleeps.append,
     )
 
     assert calls == ["login", "login"]
-    assert sleeps == [60]
+    assert sleeps == []
     assert result["attempt_count"] == 2
 
 
@@ -971,13 +971,51 @@ def test_login_stops_after_two_failed_attempts(monkeypatch):
         session_manager.run_login_with_retry(
             login_attempt,
             max_attempts=2,
-            retry_delay_seconds=60,
+            retry_delay_seconds=0,
             sleeper=sleeps.append,
         )
 
     assert calls == ["login", "login"]
-    assert sleeps == [60]
+    assert sleeps == []
     assert exc_info.value.attempt_count == 2
+
+
+def test_prepare_session_rejects_fixed_login_retry_delay(monkeypatch):
+    config = session_config(
+        Path(tempfile.gettempdir()) / f"unused-cookie-{uuid4().hex}.json"
+    )
+    config["login_retry_delay_seconds"] = 60
+    monkeypatch.setattr(
+        session_manager,
+        "file_lock",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should reject retry delay before acquiring the lock")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="login_retry_delay_seconds 必须固定为 0"):
+        prepare_session(config, force_refresh=True)
+
+
+def test_browser_cleanup_failure_does_not_wait_for_fixed_login_retry_delay():
+    calls = []
+    sleeps = []
+
+    def login_attempt():
+        calls.append("login")
+        raise session_manager.BrowserSessionCleanupError("browser_cleanup_failed")
+
+    with pytest.raises(session_manager.SessionLoginError) as exc_info:
+        session_manager.run_login_with_retry(
+            login_attempt,
+            max_attempts=2,
+            retry_delay_seconds=60,
+            sleeper=sleeps.append,
+        )
+
+    assert calls == ["login"]
+    assert sleeps == []
+    assert exc_info.value.errors == ["自动登录浏览器未能安全关闭"]
 
 
 def test_format_probe_validation_error_is_human_readable():
@@ -1197,7 +1235,7 @@ def test_prepare_session_second_login_attempt_publishes_only_successful_snapshot
         result = prepare_session(session_config(shared_path))
 
         assert result["login_attempt_count"] == 2
-        assert sleeps == [60]
+        assert sleeps == []
         assert len(set(attempt_paths)) == 2
         assert all(not path.exists() for path in attempt_paths)
         assert json.loads(shared_path.read_text(encoding="utf-8"))["generated_at"] == "second-attempt"
@@ -1458,6 +1496,65 @@ def test_run_login_command_includes_sanitized_stderr_diagnostic(monkeypatch):
     assert "错误类别=otp_timeout" in message
     assert "等待验证码超时" in message
     assert "sensitive command" not in message
+
+
+def test_run_login_command_includes_only_valid_safe_child_diagnostic(monkeypatch):
+    completed = type(
+        "Completed",
+        (),
+        {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": (
+                "AUTO_NOTIFY_LOGIN_DIAGNOSTIC phase=init_driver "
+                "exception=WebDriverException reason=driver_unreachable\n"
+                "password=raw-password https://internal.example/login?token=raw-token"
+            ),
+        },
+    )()
+    monkeypatch.setattr(
+        session_manager.subprocess, "run", lambda *_args, **_kwargs: completed
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session_manager.run_login_command("sensitive command")
+
+    message = str(exc_info.value)
+    assert "错误类别=browser_error" in message
+    assert "阶段=init_driver" in message
+    assert "异常=WebDriverException" in message
+    assert "原因=driver_unreachable" in message
+    for secret in ("raw-password", "internal.example", "raw-token"):
+        assert secret not in message
+
+
+def test_run_login_command_discards_invalid_child_diagnostic_marker(monkeypatch):
+    completed = type(
+        "Completed",
+        (),
+        {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": (
+                "AUTO_NOTIFY_LOGIN_DIAGNOSTIC phase=operator_input "
+                "exception=PasswordError reason=raw-token\n"
+                "WebDriverException: driver failed"
+            ),
+        },
+    )()
+    monkeypatch.setattr(
+        session_manager.subprocess, "run", lambda *_args, **_kwargs: completed
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session_manager.run_login_command("sensitive command")
+
+    message = str(exc_info.value)
+    assert "错误类别=browser_error" in message
+    assert "阶段=" not in message
+    assert "operator_input" not in message
+    assert "PasswordError" not in message
+    assert "raw-token" not in message
 
 
 def test_session_login_error_contains_only_bounded_sanitized_summaries():

@@ -47,7 +47,7 @@ def load_keeper_config(config_path, base_dir=PROJECT_ROOT):
 def run_prepare_session(config):
     return prepare_session_task.with_options(
         retries=0,
-    )(config, force_refresh=False, login_attempts=1)
+    )(config, force_refresh=False)
 
 
 def run_session_keeper(config_path="config/modules/session_keeper.json"):

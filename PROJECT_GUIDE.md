@@ -165,6 +165,16 @@ Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通�
 
 当前登录使用无头模式并保留同一浏览器 Profile 与进程；业务请求明确认证失效时只允许强刷新一次并重试失败步骤一次。Session Keeper 每 10 分钟在同一个浏览器 Profile 中预热 `report_analysis`、`smart_ops`、`city_ops` 与 `data_market`，不发送会话失败或恢复通知。development 环境的最终业务 Run 失败由外层 Flow 按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
 
+专用自动登录 Profile 固定映射为 `C:\AutoNotifyRuntime\session\browser-profile`，不得与日常 Edge Profile 混用，也不得通过全局结束 `msedge.exe` 来清理。完整登录前，持有 `session\locks\login.lock` 的 Session Manager 是唯一允许关闭专用 Edge 的所有者；它必须按进程名和命令行中的专用 Profile 路径识别 `msedge.exe` / `msedgedriver.exe`，不能只依据 `browser-session.json` 中的历史 PID。只有 `taskkill` 退出码为 `0` 才能记为关闭成功。
+
+浏览器关闭遵循条件等待协议：首次关闭后每 `0.5` 秒重新查询专用 Profile 关联进程；进程一旦全部退出即刻继续，不执行无条件睡眠。`browser_close_wait_seconds` 是单轮关闭的总上限，默认 `10` 秒。确认无关联进程后才可启动新的 WebDriver；启动期间如仅出现 Profile 已占用、`DevToolsActivePort` 等释放窗口错误，可在同一动态等待窗口继续尝试。登录子进程由 Manager 在确认清理完成后启动，并通过内部环境标记跳过第二次关闭；直接运行登录脚本时仍需自行执行相同的定向清理。
+
+进程查询不可用、目标进程仍存在或关闭失败时，状态必须为 `browser_cleanup_failed`：保留 `session\browser-session.json`，不得创建新的 Edge、不得删除 Profile、不得写入新的 Cookie，也不得把进程查询失败伪装为“没有残留”。此分类完成动态等待后直接结束本轮，不进行第二次完整登录。Session Keeper 的其他登录失败最多执行第二次完整登录；两次之间不睡眠固定 `60` 秒，下一次尝试开始前仍由定向 Profile 清理按条件轮询决定何时可启动。Worker 账户必须有权执行 `Get-CimInstance Win32_Process` 查询本用户进程；权限缺失时应修复 Windows/WMI 权限，不得用结束所有 Edge 进程作为替代方案。
+
+登录子进程失败时，允许跨进程传递且写入日志的诊断仅为 `AUTO_NOTIFY_LOGIN_DIAGNOSTIC` 中受控的阶段名、Python 异常类名和白名单原因码。阶段只能是 `init_driver`、`ngboss_login`、`ngboss_main`、`app_login`、`usm_console`、`app_session_capture` 或 `session_validation`；原因只能是 Profile 占用、DevTools 端口、浏览器启动、驱动失联、未分类 WebDriver、超时或未知异常的稳定代码。不得记录或解析子进程原始 stderr/stdout、登录命令、认证材料、完整 URL、查询参数或 Selenium 原始异常文本。
+
+旧 Worker 与遗留专用 Edge 分开处理：普通启动发现已登记 Worker 仍在运行时必须失败关闭，运维人员先执行 `scripts/stop.ps1`；Worker 已停止但仅遗留专用 Edge 时，由下一次完整登录在全局锁内完成定向清理。`scripts/stop.ps1` 不承担任意浏览器进程的清理职责，避免干扰非本项目的用户浏览器。
+
 每次 Session Keeper 成功完成预热后，Flow 日志必须按返回的阶段列表记录共享会话健康确认；阶段列表为空时不记录该确认信息。
 
 `autologin.json` 中 `stage_probes.<stage>` 默认配置单个探活对象；需要更严格的鉴权校验时可改用 `probes` 数组。所有启用探活均成功才判定该 stage 健康；探活的 Cookie、Token 和 Storage 值必须从当前 stage 快照动态注入，禁止在配置、日志或文档中写入固定认证材料。
@@ -457,3 +467,21 @@ pwsh -File scripts/stop.ps1
 - 配置或迁移：在被忽略的 `config/runtime.local.json` 中维护 `C:\AutoNotifyRuntime` 与三 Pool 配置；正式 Notify 上限为 6。
 - 验证：全量 Pytest 为 `620 passed, 14 skipped`；聚焦积压策略、锁和受管进程模拟为 `98 passed, 21 deselected`；PowerShell 语法解析、`prefect.yaml` YAML 解析、Ruff 和 `git diff --check` 均通过。由于被 Git 忽略的 `config/runtime.local.json`、数据库配置和凭据均缺失，未执行真实 Windows 启动、三个在线 Worker、Notify 排队、Excel 串行和单登录所有者验收。
 - 风险与回滚：回滚文档和 setup 变更不会停止已运行服务；运行进程只通过当前 Worktree 的注册记录管理。
+
+### 2026-07-24 - 自动登录浏览器 Profile 动态清理
+
+- 原因：保留的专用 Edge 在冷启动或 Worker 非正常停止后可能仍持有 Profile；旧逻辑会把 `taskkill` 失败和进程查询失败误判为清理成功，导致首轮 WebDriver 启动争用同一 Profile。
+- 修改内容：将浏览器清理改为按专用 Profile 定向识别、验证 `taskkill` 退出码并条件轮询退出状态；清理无法确认时保留状态并以 `browser_cleanup_failed` 结束本轮。WebDriver 对明确的 Profile 释放窗口错误实施短轮询，不使用该路径上的固定 60 秒等待；Manager 成为唯一清理所有者，登录子进程跳过重复关闭。
+- 涉及文件：`services/browser_session.py`、`services/session_manager.py`、`services/login_service.py`、`tests/test_browser_session.py`、`tests/test_session_manager.py`、`tests/test_login_service.py`、`README.md`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无。继续使用现有 `browser_close_wait_seconds`（默认 10 秒）作为条件等待上限；专用 Profile、Cookie 和运行时状态均不迁移、不删除。
+- 验证：`python -m pytest -p no:cacheprovider tests/test_browser_session.py tests/test_login_service.py tests/test_session_manager.py tests/test_session_keeper_flow.py -q` 为 `104 passed`；Ruff 和 `git diff --check` 通过。全量 Pytest 另有 1 个未修改的健康检查断言与现有接口字段不同步。
+- 风险与回滚：Worker 账户缺少 WMI 进程查询权限时将安全失败并报告 `browser_cleanup_failed`，不会自动抢占 Profile；回滚上述会话源码与文档即可恢复旧行为，但会重新引入错误的关闭成功判定。
+
+### 2026-07-25 - Session Keeper 无固定等待重试与安全阶段诊断
+
+- 原因：`judicious-seriema` 在 Profile 清理成功后仍以泛化 `browser_error` 失败，而 Keeper 代码显式覆盖为单次登录，导致随后可恢复的瞬态失败无法自动执行第二次完整登录；父进程仅保留泛化类别，无法定位子登录失败发生在驱动启动、门户还是会话捕获阶段。
+- 修改内容：Keeper 改为使用配置的两次完整登录上限；`login_retry_delay_seconds` 固定为 `0`，不再执行固定 `60` 秒睡眠，下一次尝试前复用 Profile 条件清理。登录子进程仅输出阶段、异常类名和白名单原因码，父进程严格验证后附加到固定安全摘要；原始 stderr/stdout 继续丢弃。
+- 涉及文件：`flows/session_keeper_flow.py`、`services/session_manager.py`、`services/login_service.py`、`config/modules/autologin.json`、相关会话测试、README 与 PROJECT_GUIDE。
+- 配置或迁移：将已提交的 `config/modules/autologin.json` 中 `login_retry_delay_seconds` 改为 `0`；无需迁移 Cookie、Profile 或会话状态。Notify Flow 继续显式使用单次完整登录。
+- 验证：新增 Keeper 参数、零延迟、清理失败短路和安全诊断标记测试；执行聚焦会话测试、Ruff 和 `git diff --check`。
+- 风险与回滚：第一次非清理失败会额外执行一次完整登录，可能增加一次门户请求；Profile 未释放、进程查询失败和关闭失败仍安全停止。回滚本条变更需同时恢复 Keeper 调用、零延迟配置、会话源码和文档，不能仅恢复延迟值。

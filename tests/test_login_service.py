@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from selenium.common.exceptions import WebDriverException
 
 from services import login_service
 from services.browser_session import browser_config
@@ -211,6 +212,77 @@ def test_init_driver_enables_headless_edge(monkeypatch, tmp_path):
     assert "detach" not in options.experimental_options
     assert login.driver is fake_driver
     assert login.driver.implicit_wait_seconds == 0
+
+
+def test_init_driver_refuses_to_start_when_browser_cleanup_is_unverified(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        login_service,
+        "close_browser_session",
+        lambda *args, **kwargs: {
+            "status": "cleanup_unverified",
+            "stopped_pids": [],
+            "remaining_pids": [],
+        },
+    )
+    monkeypatch.setattr(
+        login_service.webdriver,
+        "Edge",
+        lambda **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(login_service.BrowserSessionCleanupError, match="browser_cleanup_failed"):
+        make_login(tmp_path).init_driver()
+
+    assert calls == []
+
+
+def test_init_driver_retries_profile_startup_until_driver_is_ready(monkeypatch, tmp_path):
+    fake_driver = FakeDriver()
+    calls = []
+    waits = []
+    monkeypatch.setattr(
+        login_service,
+        "close_browser_session",
+        lambda *args, **kwargs: {"status": "closed", "stopped_pids": [], "remaining_pids": []},
+    )
+
+    def create_driver(*, options):
+        calls.append(options)
+        if len(calls) == 1:
+            raise WebDriverException("user data directory is already in use")
+        return fake_driver
+
+    monkeypatch.setattr(login_service.webdriver, "Edge", create_driver)
+    monkeypatch.setattr(login_service.time, "sleep", waits.append)
+
+    login = make_login(tmp_path)
+    login.init_driver()
+
+    assert login.driver is fake_driver
+    assert len(calls) == 2
+    assert waits == [0.5]
+
+
+def test_login_failure_reports_safe_driver_phase_without_raw_exception(monkeypatch, tmp_path, capsys):
+    login = make_login(tmp_path)
+    raw_error = "cannot reach driver at https://internal.example/?token=raw-token"
+    monkeypatch.setattr(
+        login,
+        "init_driver",
+        lambda: (_ for _ in ()).throw(WebDriverException(raw_error)),
+    )
+
+    with pytest.raises(WebDriverException):
+        login.run()
+
+    captured = capsys.readouterr()
+    assert "AUTO_NOTIFY_LOGIN_DIAGNOSTIC phase=init_driver" in captured.err
+    assert "exception=WebDriverException" in captured.err
+    assert "reason=driver_unreachable" in captured.err
+    assert raw_error not in captured.err
+    assert "internal.example" not in captured.err
+    assert "raw-token" not in captured.err
 
 
 def test_init_driver_logs_browser_close_summary_without_paths_or_process_ids(monkeypatch, tmp_path, capsys):
