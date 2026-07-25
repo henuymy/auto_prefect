@@ -1,7 +1,7 @@
 {
-  "id": "升档市公司通报",
-  "name": "升档市公司通报",
-  "template_path": "templates/升档市公司通报.xlsx",
+  "id": "升降档市公司通报",
+  "name": "升降档市公司通报",
+  "template_path": "templates/升降档市公司通报.xlsx",
   "enabled": false,
   "description": "",
   "downloads": [
@@ -244,6 +244,166 @@
       "headers_from_cookies": {
         "Ssr-token": "ssr-token"
       }
+    },
+    {
+      "source": "http_api",
+      "name": "505402",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=505042&ticket=ST-431004-qDFF7wE5kNZfpJuwiw1JQRU97BZrCYV094H-sso",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "77317",
+        "sheetIndex": "-1",
+        "sheetName": "存量-套餐细分",
+        "type": "excel",
+        "versionName": "20260723",
+        "resId": "505042",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
+    },
+    {
+      "source": "http_api",
+      "name": "516403",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=516403",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "85050",
+        "sheetIndex": "-1",
+        "sheetName": "立单来源客户分析",
+        "type": "excel",
+        "versionName": "20260722",
+        "resId": "516403",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
+    },
+    {
+      "source": "http_api",
+      "name": "512686",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=512686",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "80162",
+        "sheetIndex": "-1",
+        "sheetName": "降档日数据",
+        "type": "excel",
+        "versionName": "20260722",
+        "resId": "512686",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
+    },
+    {
+      "source": "http_api",
+      "name": "512686-1",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=512686",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "80162",
+        "sheetIndex": "-1",
+        "sheetName": "降档日数据",
+        "type": "excel",
+        "versionName": "20260722",
+        "resId": "512686",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
     }
   ],
   "compare_sources": [
@@ -314,9 +474,9 @@
       "max_workers": 4,
       "sheet_mappings": [
         {
-          "name": "519353_1_看存量-年",
+          "name": "519353_看存量-年-1",
           "new_sheet_name": "看存量-年",
-          "template_sheet_name": "519353_1_看存量-年",
+          "template_sheet_name": "519353_看存量-年-1",
           "header_row": 1,
           "ignore_columns": [],
           "key_columns": []
@@ -339,14 +499,74 @@
       ]
     },
     {
-      "download_name": "512005_1",
+      "download_name": "512005-1",
       "engine": "openpyxl",
       "max_workers": 4,
       "sheet_mappings": [
         {
-          "name": "512005_1_全球通客户",
+          "name": "512005_全球通客户-1",
           "new_sheet_name": "全球通客户",
-          "template_sheet_name": "512005_1_全球通客户",
+          "template_sheet_name": "512005_全球通客户-1",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "505042",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "505402_存量-全省套餐",
+          "new_sheet_name": "存量-全省套餐",
+          "template_sheet_name": "505402_存量-全省套餐",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "516403",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "516403_立单来源客户分析",
+          "new_sheet_name": "立单来源客户分析",
+          "template_sheet_name": "516403_立单来源客户分析",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "512686",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "512686_降档日累计数据",
+          "new_sheet_name": "降档日累计数据",
+          "template_sheet_name": "512686_降档日累计数据",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
+    },
+    {
+      "download_name": "512686-1",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "512686_降档日累计数据-1",
+          "new_sheet_name": "降档日累计数据",
+          "template_sheet_name": "512686_降档日累计数据-1",
           "header_row": 1,
           "ignore_columns": [],
           "key_columns": []
@@ -360,7 +580,14 @@
     "items": [
       {
         "type": "image",
-        "sheet": "通报",
+        "sheet": "通报_升档",
+        "capture": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "image",
+        "sheet": "通报_降档",
         "capture": {
           "mode": "used_range"
         }
@@ -384,7 +611,7 @@
     "timezone": "Asia/Shanghai"
   },
   "lastRun": "disabled",
-  "updatedAt": "2026-07-21 23:44:09",
-  "source": "published",
-  "has_draft": false
+  "has_draft": false,
+  "updatedAt": "2026-07-24 12:01:59",
+  "source": "published"
 }
