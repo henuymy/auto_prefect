@@ -17,10 +17,12 @@ def prepare_session_task(
     config: dict,
     force_refresh: bool = False,
     login_attempts: int | None = None,
+    preserve_login_diagnostics: bool = False,
 ) -> dict:
     return StageSessionBroker(base_dir=PROJECT_DIR).ensure(
         config,
         force_refresh=force_refresh,
         event_logger=get_run_logger(),
         login_attempts=login_attempts,
+        preserve_login_diagnostics=preserve_login_diagnostics,
     )

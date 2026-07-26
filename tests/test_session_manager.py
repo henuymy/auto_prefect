@@ -932,7 +932,11 @@ def test_prepare_session_allows_business_single_login_attempt_override(monkeypat
 
     assert result["status"] == "refreshed"
     assert result["login_attempt_count"] == 1
-    assert retry_options == {"max_attempts": 1, "retry_delay_seconds": 0}
+    assert retry_options == {
+        "max_attempts": 1,
+        "retry_delay_seconds": 0,
+        "preserve_diagnostics": False,
+    }
 
 
 def test_login_failure_retries_without_fixed_delay(monkeypatch):
@@ -1367,6 +1371,29 @@ def test_run_login_command_redacts_sensitive_child_diagnostic(monkeypatch):
     assert "sensitive command" not in message
 
 
+def test_run_login_command_preserves_raw_diagnostic_when_requested(monkeypatch):
+    completed = type(
+        "Completed",
+        (),
+        {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "password=raw-password\nlogin failed",
+        },
+    )()
+    monkeypatch.setattr(session_manager.subprocess, "run", lambda *_args, **_kwargs: completed)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        session_manager.run_login_command(
+            "sensitive command", preserve_diagnostics=True
+        )
+
+    message = str(exc_info.value)
+    assert "退出码=1" in message
+    assert "password=raw-password" in message
+    assert "login failed" in message
+
+
 @pytest.mark.parametrize(
     ("diagnostic", "expected_category"),
     [
@@ -1572,6 +1599,20 @@ def test_session_login_error_contains_only_bounded_sanitized_summaries():
     assert "sentinel-user" not in summary
     assert "raw-stdout-secret" not in summary
     assert len(summary) <= 500
+
+
+def test_session_login_error_preserves_diagnostics_when_requested():
+    raw_diagnostic = "password=raw-password\nlogin failed"
+
+    with pytest.raises(session_manager.SessionLoginError) as exc_info:
+        session_manager.run_login_with_retry(
+            lambda: (_ for _ in ()).throw(RuntimeError(raw_diagnostic)),
+            max_attempts=1,
+            retry_delay_seconds=0,
+            preserve_diagnostics=True,
+        )
+
+    assert exc_info.value.errors == [raw_diagnostic]
 
 
 def test_probe_classification_marks_request_exception_as_infrastructure_failure():

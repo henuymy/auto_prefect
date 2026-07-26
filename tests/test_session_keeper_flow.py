@@ -161,4 +161,12 @@ def test_keeper_uses_one_prefect_attempt_and_configured_browser_login_retries(mo
     config = {"required_stages": ["city_ops"]}
     assert keeper_module.run_prepare_session(config) == {"status": "refreshed"}
     assert options == {"retries": 0}
-    assert calls == [(config, {"force_refresh": False})]
+    assert calls == [
+        (
+            config,
+            {
+                "force_refresh": False,
+                "preserve_login_diagnostics": True,
+            },
+        )
+    ]

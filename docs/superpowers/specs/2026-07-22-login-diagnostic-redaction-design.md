@@ -2,7 +2,7 @@
 
 ## 目标
 
-在 Prefect 的登录失败异常中保留可操作的非敏感原因，同时确保账号、密码、验证码、Cookie、Token、Authorization 值、带查询参数的 URL 和完整登录命令不会写入日志、异常、告警或已持久化的 Prefect 结果。
+在 Prefect 的登录失败异常中保留可操作的非敏感原因，同时确保账号、密码、验证码、Cookie、Token、Authorization 值、带查询参数的 URL 和完整登录命令不会写入日志、异常、告警或已持久化的 Prefect 结果。`session-keeper-flow` 是例外：其失败异常会在 Prefect 运行日志中保留登录子进程原始诊断，以便直接排障；企业微信告警仍保留敏感字段过滤。
 
 ## 范围
 

@@ -797,8 +797,12 @@ def extract_safe_login_diagnostic(error: object) -> str | None:
 
 
 class SessionLoginError(RuntimeError):
-    def __init__(self, errors):
-        self.errors = [summarize_login_failure(error) for error in errors]
+    def __init__(self, errors, *, preserve_diagnostics=False):
+        self.errors = (
+            [str(error) for error in errors]
+            if preserve_diagnostics
+            else [summarize_login_failure(error) for error in errors]
+        )
         self.attempt_count = len(self.errors)
         super().__init__(f"自动登录累计失败 {self.attempt_count} 次")
 
@@ -893,7 +897,13 @@ def merge_cookie_dump_stages(existing_cookie_dump, refreshed_cookie_dump):
     return merged_cookie_dump
 
 
-def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
+def run_login_command(
+    command,
+    cwd=PROJECT_DIR,
+    timeout_seconds=None,
+    env=None,
+    preserve_diagnostics=False,
+):
     process_env = os.environ.copy()
     process_env.update(env or {})
     try:
@@ -913,6 +923,11 @@ def run_login_command(command, cwd=PROJECT_DIR, timeout_seconds=None, env=None):
         raise RuntimeError("登录命令执行失败，错误类别=unknown") from None
     if completed.returncode != 0:
         raw_diagnostic = completed.stderr or completed.stdout or ""
+        if preserve_diagnostics:
+            message = f"登录命令执行失败，退出码={completed.returncode}"
+            if raw_diagnostic:
+                message += f"，诊断={raw_diagnostic}"
+            raise RuntimeError(message)
         category = classify_login_failure(raw_diagnostic)
         diagnostic = summarize_login_failure(raw_diagnostic)
         safe_child_diagnostic = extract_safe_login_diagnostic(raw_diagnostic)
@@ -956,6 +971,7 @@ def run_login_with_retry(
     max_attempts=2,
     retry_delay_seconds=0,
     sleeper=time.sleep,
+    preserve_diagnostics=False,
 ):
     errors = []
     for attempt in range(1, max_attempts + 1):
@@ -963,13 +979,17 @@ def run_login_with_retry(
             result = login_attempt()
             return {**result, "attempt_count": attempt}
         except BrowserSessionCleanupError as exc:
-            raise SessionLoginError([exc]) from exc
+            raise SessionLoginError(
+                [exc], preserve_diagnostics=preserve_diagnostics
+            ) from exc
         except SessionInfrastructureError:
             raise
         except Exception as exc:
-            errors.append(summarize_login_failure(exc))
+            errors.append(exc if preserve_diagnostics else summarize_login_failure(exc))
             if attempt == max_attempts:
-                raise SessionLoginError(errors) from exc
+                raise SessionLoginError(
+                    errors, preserve_diagnostics=preserve_diagnostics
+                ) from exc
             if retry_delay_seconds > 0:
                 sleeper(retry_delay_seconds)
     raise AssertionError("unreachable")
@@ -1029,6 +1049,7 @@ def prepare_session(
     force_refresh=False,
     event_logger=None,
     login_attempts: int | None = None,
+    preserve_login_diagnostics=False,
 ):
     cookie_dump_path = resolve_path(
         config.get("cookie_dump_path", "session/cookie_dump.json"),
@@ -1263,6 +1284,7 @@ def prepare_session(
                     cwd=base_dir,
                     timeout_seconds=login_timeout_seconds,
                     env=login_environment,
+                    preserve_diagnostics=preserve_login_diagnostics,
                 )
                 refreshed_cookie_dump, _ = (
                     load_cookie_snapshot_if_exists(attempt_snapshot_path)
@@ -1328,6 +1350,7 @@ def prepare_session(
             login_attempt,
             max_attempts=effective_login_attempts,
             retry_delay_seconds=login_retry_delay_seconds,
+            preserve_diagnostics=preserve_login_diagnostics,
         )
 
     completed_login_attempts = login_result.get("attempt_count", attempt_number)
@@ -1352,6 +1375,7 @@ def prepare_session_from_config(
     base_dir=PROJECT_DIR,
     force_refresh=False,
     login_attempts: int | None = None,
+    preserve_login_diagnostics=False,
 ):
     from services.session_broker import StageSessionBroker
 
@@ -1364,4 +1388,5 @@ def prepare_session_from_config(
         config,
         force_refresh=force_refresh,
         login_attempts=login_attempts,
+        preserve_login_diagnostics=preserve_login_diagnostics,
     )

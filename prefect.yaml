@@ -1,6 +1,10 @@
 name: auto-notify
 prefect-version: "3.0"
 
+pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: C:\AutoNotify
+
 deployments:
   - name: dashboard-collection
     entrypoint: flows/dashboard_metric_flow.py:dashboard_metric_flow
@@ -47,7 +51,7 @@ deployments:
     schedules:
       - cron: "10 8 * * *"
         timezone: Asia/Shanghai
-        active: true
+        active: false
     work_pool:
       name: windows-dashboard-pool
       work_queue_name: default
@@ -58,7 +62,7 @@ deployments:
     schedules:
       - cron: "20 2 * * *"
         timezone: Asia/Shanghai
-        active: true
+        active: false
     work_pool:
       name: windows-dashboard-pool
       work_queue_name: default
