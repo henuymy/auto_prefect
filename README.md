@@ -530,6 +530,18 @@ pwsh -File scripts/lib/start_web.ps1 -Mode both
 
 实时主链路为 Prefect Automation Webhook -> FastAPI -> MySQL -> WebSocket。MySQL 是页面持久化投影，浏览器首次连接和断线重连均先读取 REST 快照；后台每 5 分钟通过 Prefect 官方 REST API 补漏和对账。当前为单 FastAPI 进程，WebSocket 广播仅覆盖该进程；扩展为多进程或多实例时才需要 Redis Pub/Sub 或 Streams。详细接口、密钥和验收方法见 [Prefect 通报监控 Webhook 运维手册](docs/operations/prefect-monitor-webhook.md)，完整架构见 [运行监控中心设计](docs/run-monitoring-center-design.md)。
 
+### 云电脑实时事件接入
+
+每个云电脑必须独立完成 Prefect 侧配置，不能复制其他机器的 `runtime.local.json`、Webhook Block 或密钥。后端从当前机器的 `monitor.prefect_webhook_secret` 读取认证值；Prefect 的 Webhook Block 也必须使用同一个当前机器的值，但不得在任何文档、截图、日志或提交中记录该值。
+
+在 Prefect UI 中创建或复用名称为 `monitor-realtime-events` 的 Webhook Block：使用 `POST`、允许私有地址、启用证书校验，并包含 JSON 内容类型。回调目标必须是 Prefect Server 实际可访问的 FastAPI `8000` 接收端；仅当 Prefect Server 和 FastAPI 位于同一台云电脑时，才可使用本机回环地址。页面端口 `5175` 不能接收事件。
+
+创建且只保留一条用途相同、已启用的事件型 Automation。它应仅匹配 `auto-notify-flow` 中名称以 `notify-` 开头的 Deployment 的 Flow Run 状态变化，并监听 Scheduled、Running、Completed、Failed、Crashed、Cancelled；动作为调用 `monitor-realtime-events` Block。不要让 Session Keeper、`dashboard-collection` 或其他非通报 Deployment 命中该规则。
+
+部署后，手工运行一个 `notify-` Deployment，至少验证 Scheduled、Running、Completed 和一次 Failed 或 Crashed。每次匹配事件的 Automation 调用应返回 `202`，`/api/live` 的 `monitorEvents.lastAcceptedAt` 应更新，页面应出现相应记录；Scheduled 进入 Running 后必须从待执行队列移除。`monitorEvents.lastReconciledAt` 由五分钟 REST 对账更新，两条时间分别反映实时接收和补漏对账，任一项不能替代另一项。
+
+若 `lastErrorCategory` 为 `RECONCILIATION_FAILED`，先检查 FastAPI 生命周期、Prefect API 和 MySQL 是否处于可用状态。Prefect Server 重启窗口可能造成一次瞬态失败；恢复服务后等待下一轮对账，并以 `lastReconciledAt` 前进且 `lastErrorCategory` 恢复为 `null` 为准。不要将浏览器 WebSocket 在线、`5175` 页面可访问或曾经接收到事件误判为对账成功。
+
 ## Session Keeper
 
 Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每 10 分钟运行。

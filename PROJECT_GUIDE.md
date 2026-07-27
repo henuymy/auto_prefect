@@ -159,6 +159,18 @@ C:\AutoNotifyRuntime\
 - 实时指标写事务有独立的 `2006`/`2013` 恢复协议：事务异常退出后，必须确认 collection MySQL 命名锁仍由当前任务持有，废弃写入连接池，并用新连接读取同一 `batch_no` 的 `collection_run`。仅当状态已为 `SUCCESS` 时，才可返回已持久化的统计值并停止，不得重放 snapshot；这表示 snapshot 插入、`metric_current` upsert、Run 完成状态和统计值已作为同一事务提交。未观察到 `SUCCESS` 时，可在 `0.5` 秒后完整重试一次；第二次连接丢失直接失败。不得将该协议扩展为无限重试、部分写入重放或绕过命名锁。
 - `metric_current` 的 snapshot 决策读取只投影 `node_id`、`indicator_id`、`metric_value`、`stat_date`，不使用整批 `FOR UPDATE`。该无锁读取依赖所有修改当前指标值的写入方使用同一环境的 collection MySQL 命名锁；新增写入路径必须遵守该约束。实时写入顺序固定为：规划 snapshot、插入 snapshot、upsert 全部当前值、将 Run 标记为 `SUCCESS`、提交同一事务。
 
+### 运行监控中心约定
+
+运行监控中心只投影 `auto-notify-flow` 下名称以 `notify-` 开头的 Deployment。Prefect 是运行事实来源；FastAPI 接收 Prefect Automation 的状态事件，写入驾驶舱 MySQL 持久化投影，再向单进程内的 WebSocket 客户端广播。后台每 300 秒通过 Prefect 官方 REST API 对账补漏。`5175` 只提供页面，接收事件的服务始终是 FastAPI `8000`。
+
+每个环境均有独立的 `monitor.prefect_webhook_secret`。启动脚本将它导出给后端，Prefect 中的 `monitor-realtime-events` Webhook Block 必须使用同一个环境的值；不得复制其他环境的运行配置或 Block 内容，不得将密钥、请求头值或带敏感参数的回调地址写入仓库、文档、日志、截图或交付物。
+
+每个环境只保留一条已启用的通报状态 Automation。它仅监听上述 Flow 与 Deployment 的 Scheduled、Running、Completed、Failed、Crashed、Cancelled 事件，并调用 `monitor-realtime-events` Block。Session Keeper、驾驶舱采集和其他 Flow 不得匹配。Block 使用 `POST`、允许私有地址，并向 Prefect Server 实际可达的 FastAPI 接收端发送 JSON；不能将页面端口作为回调目标。
+
+`GET /api/live` 的 `monitorEvents` 是运行状态契约：`lastAcceptedAt` 仅表示最近一次被接受的实时事件，`lastReconciledAt` 仅表示最近一次成功 REST 对账，`lastErrorCategory` 表示当前未恢复的上游错误。初次启动的两个时间可以为 `null`；一次成功对账必须刷新 `lastReconciledAt` 并清除先前的对账错误。Prefect Server 重启、FastAPI 生命周期重建或上游短暂不可用时可能出现瞬态 `RECONCILIATION_FAILED`，恢复后必须以随后的成功周期验证清除，不能只依赖页面在线或历史 `202`。
+
+首次部署或变更 Automation 后，须进行端到端验收：验证 Scheduled、Running、Completed 及一次 Failed 或 Crashed，确认 Automation 调用返回 `202`、`lastAcceptedAt` 更新、状态正确投影，且 Scheduled 在 Running 后离开待执行队列；随后等待一个对账周期，确认 `lastReconciledAt` 更新且无错误类别。应记录实际测得的状态变化到页面可见延迟；未完成足够样本的延迟测量前，不得宣称实时 SLA。
+
 ### 会话生命周期约定
 
 Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通过 `StageSessionBroker` 获取会话。Broker 使用独立状态锁与全局登录锁，按所需 stage 重建临时兼容快照、探活并持久化独立 stage 快照及健康状态；成功后删除遗留 `cookie_dump.json` 和临时快照。调用方只能消费返回的内存 `stage_data`，不得重新读取 Cookie 文件。
@@ -218,6 +230,14 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-27 - 云电脑通报实时事件接入验收
+
+- 原因：监控中心此前主要依赖五分钟 REST 对账，无法在 Prefect 通报状态变化后立即更新页面；云电脑需要独立完成上游事件接入，且不得复用本机认证材料。
+- 修改内容：在云电脑 Prefect 中配置独立的 `monitor-realtime-events` Webhook Block，并将唯一通报状态 Automation 限定为 `auto-notify-flow` 的 `notify-*` Deployment 与六类 Flow Run 状态。回调事件由 FastAPI 接收后写入监控投影并向页面广播；文档补齐了 Block、Automation、`/api/live` 三个状态字段和对账窗口的运维契约。
+- 配置与安全：云电脑使用其本机 `runtime.local.json` 中的独立监控密钥，后端与 Block 使用同一值；不记录或提交密钥、Header 值、Cookie、Token、回调地址参数或环境专属 Automation ID。
+- 验证：已验证 Scheduled、Running、Completed 和受控 Failed 状态均由 Automation 返回 `202` 并进入监控中心；`lastAcceptedAt` 更新。Prefect Server 重启窗口曾出现瞬态 `RECONCILIATION_FAILED`，服务恢复后下一次成功对账已更新 `lastReconciledAt` 并清除错误类别。
+- 风险与处理：页面 WebSocket、实时 Webhook 和 REST 对账是三条不同信号。任一单项成功都不能证明其余两项正常；若对账错误持续，检查 FastAPI 生命周期、Prefect API、MySQL 和 Automation 过滤条件，恢复后等待并核验一个完整对账周期。
 
 ### 2026-07-23 - 驾驶舱实时指标写事务连接恢复与无锁读取
 
