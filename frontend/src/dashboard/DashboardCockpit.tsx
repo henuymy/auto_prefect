@@ -2535,14 +2535,37 @@ function Header({
           <RefreshCw size={15} className={loading ? "spin" : ""} />
           {dataTimeMode === "history" ? "重新查询" : "刷新"}
         </button>
-        <button className="refresh-button" onClick={onOpenTargetManager}>
-          <Settings size={15} />
-          目标值设置
-        </button>
-        <button className="refresh-button" onClick={onOpenCustomManager}>
-          <Settings size={15} />
-          指标管理
-        </button>
+        <details
+          className="header-actions-menu"
+          onMouseEnter={keepDetailsOpen}
+          onMouseLeave={closeDetailsAfterLeave}
+        >
+          <summary title="管理操作" aria-label="管理操作">
+            <Settings size={16} />
+          </summary>
+          <div className="header-actions-popover">
+            <button
+              type="button"
+              onClick={(event) => {
+                onOpenTargetManager();
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+            >
+              <Settings size={15} />
+              目标值设置
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                onOpenCustomManager();
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+            >
+              <Settings size={15} />
+              指标管理
+            </button>
+          </div>
+        </details>
       </div>
     </header>
   );
@@ -4814,7 +4837,6 @@ function ProgressColorConfig({
     >
       <summary title="完成率配色">
         <Palette size={15} />
-        <span>配色</span>
       </summary>
       <div className="progress-color-popover">
         <div className="progress-color-config-title">

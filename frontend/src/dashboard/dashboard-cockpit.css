@@ -419,6 +419,13 @@ body::-webkit-scrollbar-button,
   justify-content: flex-start;
 }
 
+.cockpit-header .toolbar > .selector,
+.cockpit-header .toolbar > .window-selector {
+  flex: 0 1 auto;
+  width: fit-content;
+  min-width: 0;
+}
+
 .selector,
 .sort-select {
   position: relative;
@@ -1611,14 +1618,16 @@ body::-webkit-scrollbar-button,
   position: relative;
 }
 
-.progress-color-picker summary {
+.progress-color-picker summary,
+.header-actions-menu summary {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   height: 30px;
+  width: 30px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 6px;
-  padding: 0 9px;
+  padding: 0;
   color: #b8c5d5;
   background: rgba(15, 23, 42, 0.46);
   font-size: 12px;
@@ -1627,14 +1636,57 @@ body::-webkit-scrollbar-button,
   cursor: pointer;
 }
 
-.progress-color-picker summary::-webkit-details-marker {
+.progress-color-picker summary::-webkit-details-marker,
+.header-actions-menu summary::-webkit-details-marker {
   display: none;
 }
 
 .progress-color-picker[open] summary,
-.progress-color-picker summary:hover {
+.progress-color-picker summary:hover,
+.header-actions-menu[open] summary,
+.header-actions-menu summary:hover {
   border-color: rgba(147, 197, 253, 0.36);
   color: #e6eef8;
+}
+
+.header-actions-menu {
+  position: relative;
+}
+
+.header-actions-popover {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  z-index: 45;
+  display: grid;
+  min-width: 148px;
+  gap: 3px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  padding: 5px;
+  background: #101720;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+}
+
+.header-actions-popover button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0 9px;
+  color: #cbd5e1;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+}
+
+.header-actions-popover button:hover {
+  color: #f8fbff;
+  background: rgba(59, 130, 246, 0.16);
 }
 
 .progress-color-popover {
@@ -3388,32 +3440,39 @@ body::-webkit-scrollbar-button,
 
 @media (max-width: 1850px) {
   .cockpit-header {
-    grid-template-columns: 240px minmax(0, 1fr);
+    display: flex;
+    flex-wrap: wrap;
     height: auto;
-    min-height: 108px;
+    min-height: 66px;
     gap: 8px 14px;
     padding: 10px 16px;
   }
 
+  .cockpit-header .brand {
+    flex: 0 0 auto;
+  }
+
   .toolbar:not(.toolbar-muted) {
-    display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.9fr) minmax(250px, 0.95fr);
+    display: flex;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: start;
     gap: 10px;
     min-width: 0;
   }
 
   .toolbar .selector,
   .toolbar .selector:first-child,
-  .window-selector {
+  .toolbar:not(.toolbar-muted) > .window-selector {
     min-width: 0;
   }
 
   .header-status {
-    grid-column: 1 / -1;
+    flex: 0 0 auto;
+    margin-left: auto;
     min-width: 0;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    row-gap: 6px;
+    flex-wrap: nowrap;
   }
 }
 
@@ -3503,6 +3562,12 @@ body::-webkit-scrollbar-button,
     min-width: 0;
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .cockpit-header .toolbar > .selector,
+  .cockpit-header .toolbar > .window-selector,
+  .cockpit-header .toolbar > .target-scenario-switch {
+    width: 100%;
   }
 
   .brand-title {
