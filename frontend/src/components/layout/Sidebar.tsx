@@ -83,7 +83,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="grid gap-2 p-3 sm:grid-cols-2 sm:p-4 xl:block xl:space-y-1">
+      <div className="grid grid-cols-2 gap-2 p-3 sm:p-4 xl:block xl:space-y-1">
         {menus.map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.tab;
@@ -103,7 +103,7 @@ export function Sidebar({
               <Icon className="h-4 w-4 shrink-0" />
               <span className="truncate">{item.label}</span>
               </span>
-              <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-bold", active ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
+                <span className={cn("hidden rounded-full px-2 py-0.5 text-[10px] font-bold xl:inline", active ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
                 已接入
               </span>
             </button>
@@ -192,7 +192,7 @@ export function Sidebar({
         })}
       </div>
 
-      <div className="border-t border-border/70 p-3 sm:p-4">
+      <div className="hidden border-t border-border/70 p-3 sm:block sm:p-4">
         <div className="flex items-center gap-2 rounded-xl bg-muted/60 p-3 text-xs text-muted-foreground">
           <Bell className="h-4 w-4 shrink-0 text-primary" />
           当前模块支持配置编辑、保存、测试运行和发布调度。

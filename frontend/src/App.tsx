@@ -681,7 +681,7 @@ export default function App() {
           ) : (
             <div className="space-y-4 rounded-2xl border border-border/70 bg-background/40 p-3 backdrop-blur-xl">
               <ConfigForm config={config} tab={activeConfigTab} onTabChange={setActiveConfigTab} onChange={updateConfigFromForm} />
-              <div className="h-[70dvh] min-h-[520px]">{jsonPanel}</div>
+              <div className="h-[56dvh] min-h-[360px] sm:h-[70dvh] sm:min-h-[520px]">{jsonPanel}</div>
             </div>
           )}
         </div>

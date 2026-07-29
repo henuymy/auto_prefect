@@ -5157,7 +5157,7 @@ function LevelPanel({
   }, [changeWindows.length]);
 
   return (
-    <section className="level-panel" ref={branchPanelRef} style={panelStyle}>
+    <section className={isBranch ? "level-panel level-panel-branch" : "level-panel"} ref={branchPanelRef} style={panelStyle}>
       <div className="panel-head">
         <div>
           <span className="panel-index">{level.index}</span>

@@ -3527,13 +3527,14 @@ body::-webkit-scrollbar-button,
 @media (max-width: 760px) {
   body {
     overflow-y: auto;
+    overscroll-behavior-y: none;
   }
 
   .cockpit-shell {
     height: auto;
     min-height: 100dvh;
     overflow: visible;
-    padding: 8px;
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   }
 
   .cockpit-content {
@@ -3544,6 +3545,28 @@ body::-webkit-scrollbar-button,
 
   .board-grid {
     flex: none;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: 8px;
+    padding-bottom: 0;
+    overflow-x: visible;
+    overflow-y: visible;
+  }
+
+  .level-panel {
+    min-height: 440px;
+  }
+
+  .level-panel .data-table {
+    max-height: min(62dvh, 560px);
+  }
+
+  .level-panel-branch {
+    min-height: clamp(480px, 64dvh, 640px);
+  }
+
+  .level-panel-branch .data-table {
+    max-height: none;
     overflow-y: visible;
   }
 
@@ -3579,6 +3602,16 @@ body::-webkit-scrollbar-button,
     height: 38px;
   }
 
+  .header-status {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .header-status .divider {
+    display: none;
+  }
+
   .history-time-bar,
   .matrix-toolbar,
   .matrix-panel,
@@ -3590,6 +3623,19 @@ body::-webkit-scrollbar-button,
   .history-time-input {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .history-mode-switch {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .history-mode-switch button {
+    min-width: 0;
+    height: 36px;
+    padding: 0 3px;
+    font-size: 11px;
   }
 
   .history-time-input {
@@ -3612,6 +3658,7 @@ body::-webkit-scrollbar-button,
 
   .data-table {
     overflow-x: auto;
+    overscroll-behavior-x: contain;
   }
 
   .cockpit-footer {
@@ -3639,6 +3686,17 @@ body::-webkit-scrollbar-button,
   .matrix-scroll {
     min-height: 360px;
     max-height: calc(100dvh - 220px);
+  }
+
+  .metric-matrix tbody .matrix-index-column,
+  .metric-matrix tbody .matrix-area-column {
+    position: static;
+  }
+
+  .metric-matrix thead .matrix-index-column,
+  .metric-matrix thead .matrix-area-column {
+    left: auto;
+    z-index: 3;
   }
 
   .custom-metric-backdrop {
