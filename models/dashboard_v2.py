@@ -331,14 +331,25 @@ class TargetPlan(DashboardV2Base):
             "scenario",
             "period_type",
             "plan_name",
+            "status",
             "version_no",
-            name="uq_target_plan_business_version",
+            name="uq_target_plan_status_version",
         ),
         Index(
             "ix_target_plan_lookup",
             "scenario",
             "period_type",
             "status",
+            "effective_from",
+            "effective_to",
+            "priority",
+        ),
+        Index(
+            "ix_target_plan_realtime_lookup",
+            "scenario",
+            "period_type",
+            "status",
+            "is_realtime",
             "effective_from",
             "effective_to",
             "priority",
@@ -361,6 +372,9 @@ class TargetPlan(DashboardV2Base):
     )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default=text("'DRAFT'")
+    )
+    is_realtime: Mapped[bool] = mapped_column(
+        mysql.TINYINT(1), nullable=False, server_default=text("0")
     )
     supersedes_plan_id: Mapped[int | None] = mapped_column(
         mysql.BIGINT(unsigned=True),

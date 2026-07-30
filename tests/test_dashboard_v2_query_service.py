@@ -114,6 +114,7 @@ def _engine():
             period_type TEXT NOT NULL, effective_from DATE NOT NULL,
             effective_to DATE, priority INTEGER NOT NULL DEFAULT 0,
             version_no INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL,
+            is_realtime BOOLEAN NOT NULL DEFAULT 0,
             supersedes_plan_id INTEGER, activated_at DATETIME, retired_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -246,6 +247,47 @@ def test_target_scenario_is_explicit_instead_of_pk_fallback():
     pk_manager = next(row for row in pk["rows"] if row["node_type"] == "CHANNEL_MANAGER")
     assert normal_manager["targets"]["channel_count"] == 30
     assert pk_manager["targets"]["channel_count"] == 60
+
+
+def test_historical_target_uses_business_effective_date_not_publish_time():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            UPDATE target_plan
+            SET status = 'RETIRED', activated_at = '2026-06-01 00:00:00',
+                retired_at = '2026-06-30 11:00:00', effective_to = '2026-06-29'
+            WHERE id = 1
+        """))
+        connection.execute(text("""
+            INSERT INTO target_plan
+                (id, plan_name, scenario, period_type, effective_from,
+                 version_no, status, activated_at)
+            VALUES
+                (2, '日目标', 'NORMAL', 'DAY', '2026-06-30',
+                 2, 'ACTIVE', '2026-06-30 11:00:00')
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (10, 2, 4, 1, 60)
+        """))
+
+    current = get_dashboard_overview(
+        engine,
+        branch_code="AQ",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+    )
+    historical = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 30, 12, 0, 0),
+        indicator_codes=["channel_count"],
+    )
+
+    current_manager = next(row for row in current["rows"] if row["id"] == 4)
+    historical_manager = next(row for row in historical["rows"] if row["id"] == 4)
+    assert current_manager["targets"]["channel_count"] == 60
+    assert historical_manager["targets"]["channel_count"] == 60
 
 
 def test_change_window_matches_v1_finished_anchor_and_nearby_snapshot():
@@ -633,6 +675,46 @@ def test_acc_uses_latest_stat_date_through_yesterday_and_attaches_targets(monkey
     assert result["is_fallback"] is True
 
 
+def test_acc_historical_target_uses_business_effective_date_not_publish_time():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO metric_acc
+                (id, period_type, stat_date, node_id, indicator_id,
+                 collection_run_id, metric_value, collected_at)
+            VALUES (1, 'DAY_ACC', '2026-06-30', 4, 1, 2, 18, '2026-06-30 08:00:00')
+        """))
+        connection.execute(text("""
+            UPDATE target_plan
+            SET status = 'RETIRED', activated_at = '2026-06-01 00:00:00',
+                retired_at = '2026-06-30 11:00:00', effective_to = '2026-06-29'
+            WHERE id = 1
+        """))
+        connection.execute(text("""
+            INSERT INTO target_plan
+                (id, plan_name, scenario, period_type, effective_from,
+                 version_no, status, activated_at)
+            VALUES
+                (2, '日目标', 'NORMAL', 'DAY', '2026-06-30',
+                 2, 'ACTIVE', '2026-06-30 11:00:00')
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (10, 2, 4, 1, 60)
+        """))
+
+    result = get_acc_wide_table(
+        engine,
+        period_type="DAY_ACC",
+        stat_date="2026-06-30",
+        node_type="CHANNEL_MANAGER",
+        indicator_codes=["channel_count"],
+    )
+
+    assert result["rows"][0]["targets"]["channel_count"] == 60
+
+
 def test_acc_options_returns_distinct_daily_dates_in_descending_pages():
     engine = _engine()
     with engine.begin() as connection:
@@ -735,6 +817,33 @@ def test_realtime_acc_adds_same_month_baseline_and_uses_month_target():
         "baseline_missing": False,
         "target_period": "MONTH",
     }
+
+
+def test_realtime_acc_prefers_selected_working_target():
+    engine = _engine()
+    _insert_month_target_and_acc(engine)
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO target_plan
+                (id, plan_name, scenario, period_type, effective_from,
+                 status, is_realtime)
+            VALUES (3, '当前月目标', 'NORMAL', 'MONTH', '2026-06-01', 'DRAFT', 1)
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (4, 3, 2, 1, 250)
+        """))
+
+    result = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+
+    assert result["rows"][0]["targets"]["channel_count"] == 250
 
 
 def test_realtime_acc_loads_only_month_target(monkeypatch):

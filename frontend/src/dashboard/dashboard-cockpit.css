@@ -1973,6 +1973,12 @@ body::-webkit-scrollbar-button,
   background: rgba(59, 130, 246, 0.16);
 }
 
+.target-manager-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .custom-metric-body {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -2817,6 +2823,10 @@ body::-webkit-scrollbar-button,
   backdrop-filter: blur(10px);
 }
 
+.target-manager-toolbar.audit {
+  grid-template-columns: 150px minmax(180px, 260px) minmax(260px, 1fr);
+}
+
 .target-import-button {
   position: relative;
   overflow: hidden;
@@ -2937,6 +2947,175 @@ body::-webkit-scrollbar-button,
   cursor: not-allowed;
 }
 
+.target-value-row output {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: rgba(7, 11, 18, 0.54);
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.target-audit-view {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.target-audit-intro {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.target-audit-intro strong,
+.target-audit-intro span {
+  display: block;
+}
+
+.target-audit-intro strong {
+  color: #f8fbff;
+  font-size: 15px;
+}
+
+.target-audit-intro span {
+  margin-top: 4px;
+  color: #8ea0b8;
+  font-size: 12px;
+}
+
+.target-audit-layout {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.target-audit-plan-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.target-audit-plan-list button {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(7, 11, 18, 0.42);
+  color: #dbe8f7;
+  cursor: pointer;
+  text-align: left;
+}
+
+.target-audit-plan-list button:hover,
+.target-audit-plan-list button.active {
+  border-color: rgba(96, 165, 250, 0.44);
+  background: rgba(59, 130, 246, 0.16);
+}
+
+.target-audit-plan-list strong,
+.target-audit-plan-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-audit-plan-list strong {
+  color: #f8fbff;
+  font-size: 13px;
+}
+
+.target-audit-plan-list span {
+  color: #8ea0b8;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.target-audit-detail {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.target-audit-detail dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.target-audit-detail dl div {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: rgba(7, 11, 18, 0.34);
+}
+
+.target-audit-detail dt,
+.target-audit-detail dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-audit-detail dt {
+  color: #7e8ca0;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.target-audit-detail dd {
+  margin-top: 4px;
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.target-audit-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 12px;
+}
+
+.target-audit-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: rgba(37, 99, 235, 0.2);
+  color: #dbeafe;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.target-audit-actions button:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.34);
+}
+
+.target-audit-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .target-value-form .custom-metric-message {
   flex: 0 0 auto;
 }
@@ -2967,6 +3146,16 @@ body::-webkit-scrollbar-button,
 
   .target-manager-body {
     grid-template-columns: 1fr;
+  }
+
+  .target-manager-toolbar.audit,
+  .target-audit-layout,
+  .target-audit-detail dl {
+    grid-template-columns: 1fr;
+  }
+
+  .target-audit-plan-list {
+    max-height: 170px;
   }
 
   .source-manager-toolbar {

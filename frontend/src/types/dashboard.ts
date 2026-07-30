@@ -63,6 +63,7 @@ export type DashboardTargetPlan = {
   priority: number;
   version_no: number;
   status: DashboardTargetPlanStatus;
+  is_realtime: boolean;
   supersedes_plan_id: number | null;
   activated_at: string | null;
   retired_at: string | null;

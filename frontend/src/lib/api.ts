@@ -232,6 +232,13 @@ export async function activateDashboardTargetPlan(planId: number) {
   );
 }
 
+export async function setDashboardTargetPlanRealtime(planId: number) {
+  return request<DashboardTargetPlan>(
+    `/api/dashboard/target-plans/${planId}/use-for-realtime`,
+    { method: "POST" },
+  );
+}
+
 export async function cloneDashboardTargetPlan(planId: number) {
   return request<DashboardTargetPlan>(
     `/api/dashboard/target-plans/${planId}/clone`,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from io import BytesIO
 
 import pytest
@@ -15,12 +15,16 @@ from services.dashboard_v2_target_admin_service import (
     import_target_template,
     list_target_plans,
     save_target_values,
+    set_target_plan_realtime,
 )
 from services.dashboard_v2_target_service import resolve_v2_target_plan
 from models.dashboard_v2 import TargetPlan
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from services.dashboard_v2_query_service import get_current_wide_table
+from services.dashboard_v2_query_service import (
+    get_current_wide_table,
+    get_historical_with_changes,
+)
 from tests.test_dashboard_v2_query_service import _engine
 
 
@@ -71,8 +75,15 @@ def test_create_edit_activate_target_plan_and_current_uses_target():
     assert grid["row_count"] == 1
     assert grid["rows"][0]["target_value"] == 111.0
 
-    activated = activate_target_plan(engine, plan["id"])
-    assert activated["status"] == "ACTIVE"
+    published = activate_target_plan(engine, plan["id"])
+    assert published["status"] == "ACTIVE"
+    assert published["id"] != plan["id"]
+
+    with Session(engine) as session:
+        assert session.get(TargetPlan, plan["id"]).status == "DRAFT"
+
+    realtime = set_target_plan_realtime(engine, plan["id"])
+    assert realtime["is_realtime"] is True
 
     current = get_current_wide_table(
         engine,
@@ -82,6 +93,24 @@ def test_create_edit_activate_target_plan_and_current_uses_target():
     row = current["rows"][0]
     assert row["metrics"]["channel_count"] == 100
     assert row["targets"]["channel_count"] == 111
+
+    save_target_values(engine, plan_id=plan["id"], values=[
+        {"node_id": 2, "indicator_id": 1, "target_value": 222},
+        {"node_id": 3, "indicator_id": 1, "target_value": 55},
+    ])
+    current_after_edit = get_current_wide_table(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+    )
+    historical = get_historical_with_changes(
+        engine,
+        as_of=datetime(2026, 6, 30, 10, 10, 0),
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+    )
+    assert current_after_edit["rows"][0]["targets"]["channel_count"] == 222
+    assert historical["rows"][0]["targets"]["channel_count"] == 111
 
 
 def test_template_download_contains_expected_sheets():
@@ -146,7 +175,7 @@ def test_list_target_plans_returns_value_counts():
     assert all("value_count" in plan for plan in plans["plans"])
 
 
-def test_same_month_activation_retires_previous_and_retired_can_reactivate():
+def test_same_effective_date_retires_previous_and_keeps_newer_version():
     engine = _engine()
     first = create_target_plan(
         engine, plan_name="同月方案", scenario="NORMAL", period_type="DAY",
@@ -155,27 +184,29 @@ def test_same_month_activation_retires_previous_and_retired_can_reactivate():
     save_target_values(engine, plan_id=first["id"], values=[
         {"node_id": 2, "indicator_id": 1, "target_value": 100},
     ])
-    activate_target_plan(engine, first["id"])
+    first_published = activate_target_plan(engine, first["id"])
 
     second = clone_target_plan(engine, source_plan_id=first["id"])
     assert second["status"] == "DRAFT"
     assert second["effective_from"] == "2026-07-01"
     assert second["value_count"] == 1
-    activate_target_plan(engine, second["id"])
+    second_published = activate_target_plan(engine, second["id"])
 
     with Session(engine) as session:
         statuses = dict(session.execute(select(TargetPlan.id, TargetPlan.status)).all())
-    assert statuses[first["id"]] == "RETIRED"
-    assert statuses[second["id"]] == "ACTIVE"
+    assert statuses[first["id"]] == "DRAFT"
+    assert statuses[second["id"]] == "DRAFT"
+    assert statuses[first_published["id"]] == "RETIRED"
+    assert statuses[second_published["id"]] == "ACTIVE"
+    assert first_published["version_no"] == 1
+    assert second_published["version_no"] == 2
 
-    activate_target_plan(engine, first["id"])
-    with Session(engine) as session:
-        statuses = dict(session.execute(select(TargetPlan.id, TargetPlan.status)).all())
-    assert statuses[first["id"]] == "ACTIVE"
-    assert statuses[second["id"]] == "RETIRED"
+    republished = activate_target_plan(engine, first["id"])
+    assert republished["status"] == "ACTIVE"
+    assert republished["version_no"] == 3
 
 
-def test_active_plan_applies_to_its_whole_month_not_from_its_effective_day():
+def test_active_plan_applies_from_its_effective_date():
     engine = _engine()
     plan = create_target_plan(
         engine, plan_name="月内口径", scenario="NORMAL", period_type="DAY",
@@ -184,15 +215,21 @@ def test_active_plan_applies_to_its_whole_month_not_from_its_effective_day():
     save_target_values(engine, plan_id=plan["id"], values=[
         {"node_id": 2, "indicator_id": 1, "target_value": 100},
     ])
-    activate_target_plan(engine, plan["id"])
+    published = activate_target_plan(engine, plan["id"])
 
     with Session(engine) as session:
         assert resolve_v2_target_plan(
             session, business_date=date(2026, 7, 1), period_type="DAY"
-        ).id == plan["id"]
+        ).id == 1
+        assert resolve_v2_target_plan(
+            session, business_date=date(2026, 7, 14), period_type="DAY"
+        ).id == 1
+        assert resolve_v2_target_plan(
+            session, business_date=date(2026, 7, 15), period_type="DAY"
+        ).id == published["id"]
         assert resolve_v2_target_plan(
             session, business_date=date(2026, 7, 31), period_type="DAY"
-        ).id == plan["id"]
+        ).id == published["id"]
         assert resolve_v2_target_plan(
             session, business_date=date(2026, 6, 30), period_type="DAY"
         ).id == 1

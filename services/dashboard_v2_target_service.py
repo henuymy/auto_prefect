@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Iterable
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import MetricTargetValue, TargetPlan
@@ -69,40 +69,36 @@ def resolve_v2_target_plan(
     period_type: str,
     scenario: str = "NORMAL",
 ) -> TargetPlan | None:
-    """Resolve the one active target plan for the business date's month.
+    """Resolve the published target plan for a business date.
 
-    ``effective_from`` identifies a plan's natural-month ownership.  It is not
-    a within-month cutover date, so a plan dated July 15 applies equally to
-    July 1 and July 31.  Retired plans are historical records only and must
-    never be selected for calculation.
+    ``effective_from`` and ``effective_to`` define the business period that
+    uses the target.  Historical completion rates are therefore resolved by
+    the data's business date, not by the timestamp when the plan was published.
     """
     normalized_period = str(period_type or "").strip().upper()
     if normalized_period not in {"DAY", "MONTH"}:
         raise ValueError("period_type 只支持 DAY/MONTH")
     normalized_scenario = normalize_target_scenario(scenario)
-    month_start = business_date.replace(day=1)
-    month_end = (
-        month_start.replace(year=month_start.year + 1, month=1)
-        if month_start.month == 12
-        else month_start.replace(month=month_start.month + 1)
-    )
-    plans = list(
-        session.scalars(
-            select(TargetPlan).where(
-                TargetPlan.scenario == normalized_scenario,
-                TargetPlan.period_type == normalized_period,
-                TargetPlan.status == "ACTIVE",
-                TargetPlan.effective_from >= month_start,
-                TargetPlan.effective_from < month_end,
-            )
+    return session.scalar(
+        select(TargetPlan)
+        .where(
+            TargetPlan.scenario == normalized_scenario,
+            TargetPlan.period_type == normalized_period,
+            TargetPlan.status.in_(("ACTIVE", "RETIRED")),
+            TargetPlan.effective_from <= business_date,
+            or_(
+                TargetPlan.effective_to.is_(None),
+                TargetPlan.effective_to >= business_date,
+            ),
         )
-    )
-    if len(plans) > 1:
-        raise AmbiguousTargetPlanError(
-            f"同一场景、目标周期、自然月存在多个 ACTIVE 目标方案: "
-            f"ids={[plan.id for plan in plans]}"
+        .order_by(
+            TargetPlan.priority.desc(),
+            TargetPlan.effective_from.desc(),
+            TargetPlan.version_no.desc(),
+            TargetPlan.id.desc(),
         )
-    return plans[0] if plans else None
+        .limit(1)
+    )
 
 
 def load_v2_target_values(
@@ -114,15 +110,100 @@ def load_v2_target_values(
     node_ids: Iterable[int] | None = None,
     indicator_ids: Iterable[int] | None = None,
 ) -> tuple[TargetPlan | None, dict[tuple[int, int], Decimal]]:
-    """Return the selected immutable plan and its requested target values."""
+    """Return the published assessment plan for a business date."""
     plan = resolve_v2_target_plan(
         session,
         business_date=business_date,
         period_type=period_type,
         scenario=scenario,
     )
+    return plan, _target_plan_values(
+        session,
+        plan=plan,
+        node_ids=node_ids,
+        indicator_ids=indicator_ids,
+    )
+
+
+def resolve_v2_working_target_plan(
+    session: Session,
+    *,
+    business_date: date,
+    period_type: str,
+    scenario: str = "NORMAL",
+) -> TargetPlan | None:
+    """Resolve the editable target used by live, unclosed-period views."""
+    normalized_period = str(period_type or "").strip().upper()
+    if normalized_period not in {"DAY", "MONTH"}:
+        raise ValueError("period_type 只支持 DAY/MONTH")
+    normalized_scenario = normalize_target_scenario(scenario)
+    return session.scalar(
+        select(TargetPlan)
+        .where(
+            TargetPlan.scenario == normalized_scenario,
+            TargetPlan.period_type == normalized_period,
+            TargetPlan.status == "DRAFT",
+            TargetPlan.is_realtime.is_(True),
+            TargetPlan.effective_from <= business_date,
+            or_(
+                TargetPlan.effective_to.is_(None),
+                TargetPlan.effective_to >= business_date,
+            ),
+        )
+        .order_by(
+            TargetPlan.priority.desc(),
+            TargetPlan.effective_from.desc(),
+            TargetPlan.version_no.desc(),
+            TargetPlan.id.desc(),
+        )
+        .limit(1)
+    )
+
+
+def load_v2_working_target_values(
+    session: Session,
+    *,
+    business_date: date,
+    period_type: str,
+    scenario: str = "NORMAL",
+    node_ids: Iterable[int] | None = None,
+    indicator_ids: Iterable[int] | None = None,
+) -> tuple[TargetPlan | None, dict[tuple[int, int], Decimal]]:
+    """Return the mutable target used by live, unclosed-period views."""
+    plan = resolve_v2_working_target_plan(
+        session,
+        business_date=business_date,
+        period_type=period_type,
+        scenario=scenario,
+    )
     if plan is None:
-        return None, {}
+        # Existing installations may not yet have a selected realtime draft.
+        # Keep current boards usable until the operator selects one.
+        return load_v2_target_values(
+            session,
+            business_date=business_date,
+            period_type=period_type,
+            scenario=scenario,
+            node_ids=node_ids,
+            indicator_ids=indicator_ids,
+        )
+    return plan, _target_plan_values(
+        session,
+        plan=plan,
+        node_ids=node_ids,
+        indicator_ids=indicator_ids,
+    )
+
+
+def _target_plan_values(
+    session: Session,
+    *,
+    plan: TargetPlan | None,
+    node_ids: Iterable[int] | None,
+    indicator_ids: Iterable[int] | None,
+) -> dict[tuple[int, int], Decimal]:
+    if plan is None:
+        return {}
     query = select(MetricTargetValue).where(MetricTargetValue.plan_id == plan.id)
     normalized_node_ids = set(node_ids or [])
     normalized_indicator_ids = set(indicator_ids or [])
@@ -133,7 +214,7 @@ def load_v2_target_values(
             MetricTargetValue.indicator_id.in_(normalized_indicator_ids)
         )
     values = session.scalars(query).all()
-    return plan, {
+    return {
         (value.node_id, value.indicator_id): value.target_value for value in values
     }
 
@@ -181,6 +262,7 @@ def replace_draft_target_values_in_session(
         )
         for (node_id, indicator_id), value in normalized.items()
     )
+    plan.updated_at = datetime.now()
     session.flush()
     return len(normalized)
 
@@ -203,6 +285,7 @@ def clone_v2_target_plan_in_session(
             TargetPlan.scenario == source.scenario,
             TargetPlan.period_type == source.period_type,
             TargetPlan.plan_name == source.plan_name,
+            TargetPlan.status == "DRAFT",
         )
         .order_by(TargetPlan.version_no.desc())
         .limit(1)
@@ -217,6 +300,7 @@ def clone_v2_target_plan_in_session(
         priority=source.priority,
         version_no=int(latest_version or 0) + 1,
         status="DRAFT",
+        is_realtime=False,
         supersedes_plan_id=source.id,
     )
     session.add(clone)
@@ -245,54 +329,107 @@ def activate_v2_target_plan_in_session(
     plan_id: int,
     activated_at: datetime,
 ) -> TargetPlan:
-    """Make a plan the single active version for its scenario/period/month.
+    """Publish an immutable copy of a DRAFT and preserve that DRAFT.
 
-    A month is the business scope of an effective date.  Plans are never
-    modified in place after activation; an ACTIVE plan may be cloned to a
-    DRAFT, and either a DRAFT or a RETIRED plan can subsequently be activated.
+    The source DRAFT remains the mutable target used by live views. The
+    published copy is the immutable assessment version used by historical and
+    settled-period views.
     """
-    plan = session.scalar(
+    source = session.scalar(
         select(TargetPlan).where(TargetPlan.id == plan_id).with_for_update()
     )
-    if plan is None:
+    if source is None:
         raise TargetPlanError(f"目标方案不存在: {plan_id}")
-    if plan.status not in {"DRAFT", "RETIRED"}:
-        raise TargetPlanError("只有 DRAFT 或 RETIRED 目标方案允许激活")
-    value_count = len(
-        session.scalars(
-            select(MetricTargetValue.id).where(
-                MetricTargetValue.plan_id == plan.id
-            )
-        ).all()
-    )
-    if value_count == 0:
+    if source.status != "DRAFT":
+        raise TargetPlanError("只有 DRAFT 目标方案允许发布")
+    source_values = session.scalars(
+        select(MetricTargetValue).where(MetricTargetValue.plan_id == source.id)
+    ).all()
+    if not source_values:
         raise TargetPlanError("空目标方案不允许激活")
 
-    month_start = plan.effective_from.replace(day=1)
-    month_end = (
-        month_start.replace(year=month_start.year + 1, month=1)
-        if month_start.month == 12
-        else month_start.replace(month=month_start.month + 1)
-    )
-    current_active = list(
+    published_plans = list(
         session.scalars(
             select(TargetPlan)
             .where(
-                TargetPlan.id != plan.id,
-                TargetPlan.scenario == plan.scenario,
-                TargetPlan.period_type == plan.period_type,
-                TargetPlan.status == "ACTIVE",
-                TargetPlan.effective_from >= month_start,
-                TargetPlan.effective_from < month_end,
+                TargetPlan.scenario == source.scenario,
+                TargetPlan.period_type == source.period_type,
+                TargetPlan.plan_name == source.plan_name,
+                TargetPlan.status.in_(("ACTIVE", "RETIRED")),
             )
             .with_for_update()
         )
     )
-    for previous in current_active:
-        previous.status = "RETIRED"
-        previous.retired_at = activated_at
-    plan.status = "ACTIVE"
-    plan.activated_at = activated_at
-    plan.retired_at = None
+    published = TargetPlan(
+        plan_name=source.plan_name,
+        scenario=source.scenario,
+        period_type=source.period_type,
+        effective_from=source.effective_from,
+        effective_to=source.effective_to,
+        priority=source.priority,
+        version_no=max((plan.version_no for plan in published_plans), default=0) + 1,
+        status="ACTIVE",
+        is_realtime=False,
+        supersedes_plan_id=(
+            max(published_plans, key=lambda plan: (plan.version_no, plan.id)).id
+            if published_plans
+            else None
+        ),
+        activated_at=activated_at,
+    )
+    session.add(published)
     session.flush()
-    return plan
+    session.add_all(
+        MetricTargetValue(
+            plan_id=published.id,
+            node_id=value.node_id,
+            indicator_id=value.indicator_id,
+            target_value=value.target_value,
+        )
+        for value in source_values
+    )
+
+    timeline_plans = list(
+        session.scalars(
+            select(TargetPlan)
+            .where(
+                TargetPlan.id != published.id,
+                TargetPlan.scenario == published.scenario,
+                TargetPlan.period_type == published.period_type,
+                TargetPlan.status.in_(("ACTIVE", "RETIRED")),
+            )
+            .with_for_update()
+        )
+    )
+    previous_period_end = published.effective_from - timedelta(days=1)
+    for previous in timeline_plans:
+        if (
+            previous.effective_from < published.effective_from
+            and (previous.effective_to is None or previous.effective_to >= published.effective_from)
+        ):
+            previous.effective_to = previous_period_end
+            previous.status = "RETIRED"
+            previous.retired_at = activated_at
+        elif previous.effective_from == published.effective_from and previous.status == "ACTIVE":
+            # A corrected version may intentionally use the same business
+            # start date. Keep the old range for audit, but let the newer
+            # version win through the resolver's version ordering.
+            previous.status = "RETIRED"
+            previous.retired_at = activated_at
+
+    next_effective_from = min(
+        (
+            previous.effective_from
+            for previous in timeline_plans
+            if previous.effective_from > published.effective_from
+        ),
+        default=None,
+    )
+    published.effective_to = (
+        next_effective_from - timedelta(days=1)
+        if next_effective_from is not None
+        else None
+    )
+    published.retired_at = None
+    session.flush()
+    return published

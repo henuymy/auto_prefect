@@ -34,7 +34,11 @@ from services.dashboard_query_windows import (
     SPARSE_SNAPSHOT_BASELINE_LOOKBACK_DAYS,
     parse_change_window_minutes,
 )
-from services.dashboard_v2_target_service import load_v2_target_values, normalize_target_scenario
+from services.dashboard_v2_target_service import (
+    load_v2_target_values,
+    load_v2_working_target_values,
+    normalize_target_scenario,
+)
 
 
 NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
@@ -475,10 +479,16 @@ def _active_target_map(
     period_type: str,
     target_date: date,
     target_scenario: str = "NORMAL",
+    target_source: str = "ASSESSMENT",
 ) -> dict[tuple[int, int], Decimal]:
     if not node_ids or not indicator_ids:
         return {}
-    _, values = load_v2_target_values(
+    loader = (
+        load_v2_working_target_values
+        if target_source == "WORKING"
+        else load_v2_target_values
+    )
+    _, values = loader(
         session,
         business_date=target_date,
         period_type=_target_period(period_type),
@@ -500,6 +510,7 @@ def _wide_rows(
     current_stat_date: date | None = None,
     target_date: date | None = None,
     target_scenario: str = "NORMAL",
+    target_source: str | None = None,
 ) -> list[dict[str, Any]]:
     components, physical = _components(session, indicators)
     values = _value_rows_at(
@@ -538,6 +549,7 @@ def _wide_rows(
             period_type=period_type,
             target_date=target_date or (as_of.date() if as_of else date.today()),
             target_scenario=target_scenario,
+            target_source=target_source or ("ASSESSMENT" if as_of else "WORKING"),
         )
         for node_id, row in by_id.items():
             row["targets"] = {
@@ -758,6 +770,7 @@ def _apply_realtime_accumulation(
         period_type="MONTH",
         target_date=business_date,
         target_scenario=target_scenario,
+        target_source="WORKING",
     )
     target_by_node: dict[int, dict[str, Any]] = {}
     for node_id in node_ids:

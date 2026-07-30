@@ -159,6 +159,33 @@ C:\AutoNotifyRuntime\
 - 实时指标写事务有独立的 `2006`/`2013` 恢复协议：事务异常退出后，必须确认 collection MySQL 命名锁仍由当前任务持有，废弃写入连接池，并用新连接读取同一 `batch_no` 的 `collection_run`。仅当状态已为 `SUCCESS` 时，才可返回已持久化的统计值并停止，不得重放 snapshot；这表示 snapshot 插入、`metric_current` upsert、Run 完成状态和统计值已作为同一事务提交。未观察到 `SUCCESS` 时，可在 `0.5` 秒后完整重试一次；第二次连接丢失直接失败。不得将该协议扩展为无限重试、部分写入重放或绕过命名锁。
 - `metric_current` 的 snapshot 决策读取只投影 `node_id`、`indicator_id`、`metric_value`、`stat_date`，不使用整批 `FOR UPDATE`。该无锁读取依赖所有修改当前指标值的写入方使用同一环境的 collection MySQL 命名锁；新增写入路径必须遵守该约束。实时写入顺序固定为：规划 snapshot、插入 snapshot、upsert 全部当前值、将 Run 标记为 `SUCCESS`、提交同一事务。
 
+### 目标草稿、考核版本与历史口径约定
+
+驾驶舱目标采用双轨模型，`TargetPlan` 和 `MetricTargetValue` 的修改必须满足以下约束：
+
+- `DRAFT` 是唯一可编辑状态，也是唯一允许设置 `is_realtime=true` 的状态。实时目标以 `(scenario, period_type)` 为隔离范围；设置一个草稿为实时目标时，服务必须在同一事务内锁定并清除该范围其他草稿的实时标记。保存、导入或创建其他草稿不得隐式切换实时口径。
+- `ACTIVE` 与 `RETIRED` 都是只读考核版本。发布不是把草稿原地改为 `ACTIVE`，而是复制草稿和值生成独立记录；源草稿继续保留为可编辑的执行方案。所有写目标值的服务、模板导入、后台脚本和未来 API 都必须拒绝修改已发布记录。
+- `ACTIVE` 表示当前尚未被替代的已发布记录，`RETIRED` 表示已被后续考核版本替代但仍必须保留。考核解析必须同时查询这两种状态，不能只过滤 `ACTIVE`；`RETIRED` 是历史和审计链的一部分，不是可删除垃圾数据。
+- 版本号在 `(plan_name, scenario, period_type, status)` 范围内有序。草稿 `v1` 与其发布副本 `v1` 可以并存，这是 `20260729_0005` 的数据约束；审计和 API 必须使用记录 ID、状态与谱系字段区分二者，不能把裸 `version_no` 当成全局 ID。
+- 前端目标管理只把 `DRAFT` 放入“目标草稿”编辑界面，只把 `ACTIVE`/`RETIRED` 放入“版本记录”只读界面；不在驾驶舱顶部增加“基于某考核版本调整”等轻量状态提示。版本记录必须保留方案名称、场景、周期、版本、使用区间、发布时间、状态、被替代关系和目标值明细，并提供“以此版本创建草稿”。
+
+查询口径固定如下：
+
+| 查询 | 目标来源 | 目标周期 |
+| --- | --- | --- |
+| 当前实时值、当前实时变化、实时矩阵和下钻 | 命中的 `DRAFT + is_realtime` | `DAY` |
+| 实时累计 | 命中的 `DRAFT + is_realtime` | `MONTH` |
+| 历史值、历史矩阵和历史下钻 | 按历史业务日期命中的 `ACTIVE/RETIRED` | `DAY` |
+| 累计日期查询 `/api/dashboard/acc` | 按累计 `stat_date` 命中的 `ACTIVE/RETIRED` | `DAY` |
+
+实时读取找不到命中的实时草稿时，为兼容旧安装可回退到考核版本。该回退只能作为升级过渡，不能代替显式选择实时草稿。运维或前端不得把未来生效或没有目标值的草稿设为实时口径；否则原实时草稿会被取消，当前日期可能回退到考核版本或显示为空目标。发布层已经拒绝空草稿；若要把“非空草稿”变成强制系统约束，应同时在 `set_target_plan_realtime()`、前端按钮和相关测试中实现，不能只靠文档约定。
+
+`effective_from`/`effective_to` 表示包含两端的业务使用区间，不是发布时刻。解析候选考核版本时按优先级、较晚生效日期、较高版本号和记录 ID 取胜。发布新版本时，服务负责截断与新版本相交的较早时间线，并将其标为 `RETIRED`；同一生效日期的修订保留旧版本审计记录，较高版本号的修订在查询时胜出。业务上应避免不必要的重叠方案，优先使用连续、不重叠的日期区间；优先级只能表达有明确审批依据的覆盖规则。
+
+指标历史事实与考核目标版本的不可变边界必须写清：`metric_snapshot`、`metric_acc` 和采集 Run 不会因发布目标而更新；历史完成率则在查询时按业务日期解析考核版本，当前没有在指标事实表中持久化 `assessment_plan_id`。因此，未来生效的新版本不会改变此前日期的完成率，但“同一生效日”的修订会用新版本重新计算该日期范围的完成率。若业务要求结算结果永久绑定采集当时的考核版本，必须设计迁移：在结算/快照写入时固化考核版本 ID，并让历史查询优先读该绑定；在完成该迁移前，禁止声称当前实现提供采集时版本冻结。
+
+目标管理的唯一应用服务边界为 `services/dashboard_v2_target_service.py` 和 `services/dashboard_v2_target_admin_service.py`，HTTP 边界为 `/api/dashboard/target-plans`、`/target-values` 和 `/target-template`。数据库迁移只能通过 `python -m alembic -c alembic_dashboard_v2.ini upgrade head` 执行；新迁移如影响目标状态、解析顺序或值复制，必须同时补充以下测试：草稿可编辑、发布副本不可编辑、实时草稿独占、保存非实时草稿不切换口径、历史按日期解析、同日修订的版本优先级、空草稿拒绝发布，以及前端文案和 API 契约。
+
 ### 运行监控中心约定
 
 运行监控中心只投影 `auto-notify-flow` 下名称以 `notify-` 开头的 Deployment。Prefect 是运行事实来源；FastAPI 接收 Prefect Automation 的状态事件，写入驾驶舱 MySQL 持久化投影，再向单进程内的 WebSocket 客户端广播。后台每 300 秒通过 Prefect 官方 REST API 对账补漏。`5175` 只提供页面，接收事件的服务始终是 FastAPI `8000`。
@@ -230,6 +257,15 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-30 - 驾驶舱目标草稿与考核版本双轨管理
+
+- 原因：实时执行目标需要允许持续调整，而历史完成率、已发布考核依据和审计记录不能与可编辑方案混在同一状态中。
+- 修改内容：目标管理界面分为可编辑的“目标草稿”和只读的“考核版本记录”；草稿可显式设为实时目标，发布时复制为 `ACTIVE` 考核版本，原草稿继续可编辑。历史和累计按生效日期解析 `ACTIVE/RETIRED`，同日修订由较高版本号胜出；README 与本指南补充了数据来源、操作顺序、时间线规则、接口、迁移和不可变边界。
+- 涉及文件：`models/dashboard_v2.py`、`services/dashboard_v2_target_service.py`、`services/dashboard_v2_target_admin_service.py`、`services/dashboard_v2_query_service.py`、`backend/routers/dashboard.py`、`frontend/src/dashboard/DashboardCockpit.tsx`、`frontend/src/lib/api.ts`、`frontend/src/types/dashboard.ts`、`migrations/dashboard_v2/versions/20260729_0005_target_plan_draft_publish.py`、`README.md`、`PROJECT_GUIDE.md` 及相关测试。
+- 配置或迁移：目标库升级 `python -m alembic -c alembic_dashboard_v2.ini upgrade head`。迁移增加 `is_realtime` 和索引，不改写已有目标值、指标快照或累计数据；升级后须由管理员选择一份当前有效的非空草稿作为实时目标。
+- 验证：目标相关后端测试 `46 passed`，前端 `npm run typecheck` 通过，`git diff --check` 通过；应在目标环境完成一次草稿保存、实时切换、发布、历史日期查询和同日修订的人工验收。
+- 风险与回滚：同日修订会重新计算该日期范围的历史完成率，但不会改写指标事实；若需要采集时版本冻结，必须先实现版本 ID 固化迁移。回滚代码前必须评估已执行的 `20260729_0005`，不能仅删除 `is_realtime` 列或已发布审计记录。
 
 ### 2026-07-27 - 云电脑通报实时事件接入验收
 

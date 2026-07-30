@@ -68,6 +68,7 @@ def serialize_target_plan(plan: TargetPlan, value_count: int | None = None) -> d
         "priority": plan.priority,
         "version_no": plan.version_no,
         "status": plan.status,
+        "is_realtime": bool(plan.is_realtime),
         "supersedes_plan_id": plan.supersedes_plan_id,
         "activated_at": _time_to_iso(plan.activated_at),
         "retired_at": _time_to_iso(plan.retired_at),
@@ -134,6 +135,7 @@ def create_target_plan(
                 TargetPlan.plan_name == name,
                 TargetPlan.scenario == normalized_scenario,
                 TargetPlan.period_type == normalized_period,
+                TargetPlan.status == "DRAFT",
             )
             .order_by(TargetPlan.version_no.desc())
             .limit(1)
@@ -160,6 +162,36 @@ def activate_target_plan(engine: Engine, plan_id: int) -> dict:
             plan_id=plan_id,
             activated_at=datetime.now(),
         )
+        count = session.scalar(
+            select(func.count(MetricTargetValue.id)).where(
+                MetricTargetValue.plan_id == plan.id
+            )
+        )
+        return serialize_target_plan(plan, int(count or 0))
+
+
+def set_target_plan_realtime(engine: Engine, plan_id: int) -> dict:
+    """Make one editable target the live target for its scenario and period."""
+    with Session(engine) as session, session.begin():
+        plan = session.scalar(
+            select(TargetPlan).where(TargetPlan.id == plan_id).with_for_update()
+        )
+        if plan is None:
+            raise TargetPlanError(f"目标方案不存在: {plan_id}")
+        if plan.status != "DRAFT":
+            raise TargetPlanError("只有目标草稿可以设为实时目标")
+        drafts = session.scalars(
+            select(TargetPlan)
+            .where(
+                TargetPlan.scenario == plan.scenario,
+                TargetPlan.period_type == plan.period_type,
+                TargetPlan.status == "DRAFT",
+            )
+            .with_for_update()
+        ).all()
+        for draft in drafts:
+            draft.is_realtime = draft.id == plan.id
+        session.flush()
         count = session.scalar(
             select(func.count(MetricTargetValue.id)).where(
                 MetricTargetValue.plan_id == plan.id

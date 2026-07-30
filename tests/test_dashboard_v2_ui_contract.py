@@ -37,3 +37,20 @@ def test_cumulative_mode_uses_lazy_available_date_selector():
     assert "onCumulativeLoadMore" in source
     assert "加载更多日期" in source
     assert 'onCumulativeQuery' in source
+
+
+def test_target_editor_only_edits_execution_plans_and_keeps_audit_separate():
+    source = COCKPIT.read_text(encoding="utf-8")
+
+    assert 'const [view, setView] = useState<"EXECUTION" | "AUDIT">("EXECUTION");' in source
+    assert 'const executionPlans = useMemo(' in source
+    assert 'plan.status === "DRAFT"' in source
+    assert '保存草稿' in source
+    assert 'setDashboardTargetPlanRealtime' in source
+    assert '设为实时目标' in source
+    assert '发布为考核版本' in source
+    assert 'className="target-audit-view"' in source
+    assert '考核版本记录' in source
+    assert '以此版本创建草稿' in source
+    assert '执行方案' not in source
+    assert '复制为草稿并编辑' not in source

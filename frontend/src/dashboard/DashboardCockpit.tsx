@@ -6,7 +6,7 @@ import {
   ArrowUp,
   BarChart3,
   CalendarClock,
-  Copy,
+  ClipboardList,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -49,6 +49,7 @@ import {
   importDashboardTargetTemplate,
   saveDashboardCustomIndicator,
   saveDashboardTargetValues,
+  setDashboardTargetPlanRealtime,
   updateDashboardIndicatorSettings,
 } from "@/lib/api";
 import type {
@@ -2845,9 +2846,28 @@ const TARGET_NODE_TYPES: Array<"" | DashboardRow["node_type"]> = [
   "CHANNEL",
 ];
 
-function targetPlanLabel(plan: DashboardTargetPlan) {
+function targetPlanAuditLabel(plan: DashboardTargetPlan) {
   const period = plan.period_type === "MONTH" ? "月目标" : "日目标";
   return `${period} v${plan.version_no}`;
+}
+
+function targetPlanExecutionLabel(plan: DashboardTargetPlan) {
+  const period = plan.period_type === "MONTH" ? "月目标" : "日目标";
+  return `${period} · 生效 ${targetPlanEffectivePeriod(plan)}`;
+}
+
+function targetPlanAuditStatus(plan: DashboardTargetPlan) {
+  return plan.status === "ACTIVE" ? "已发布" : "已替换";
+}
+
+function formatTargetPlanTimestamp(value: string | null | undefined) {
+  return value ? value.replace("T", " ").slice(0, 16) : "--";
+}
+
+function targetPlanEffectivePeriod(plan: DashboardTargetPlan) {
+  return plan.effective_to
+    ? `${plan.effective_from} 至 ${plan.effective_to}`
+    : `${plan.effective_from} 起`;
 }
 
 function targetScenarioText(scenario: DashboardTargetScenario) {
@@ -2885,6 +2905,9 @@ function TargetValueManager({
     "ALL" | DashboardTargetScenario
   >("ALL");
   const [edits, setEdits] = useState<Record<string, string>>({});
+  const [view, setView] = useState<"EXECUTION" | "AUDIT">("EXECUTION");
+  const [selectedAuditPlanId, setSelectedAuditPlanId] = useState<number | null>(null);
+  const [auditRows, setAuditRows] = useState<DashboardTargetValueRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -2894,22 +2917,25 @@ function TargetValueManager({
     () => catalog.filter((indicator) => indicator.enabled && indicator.storage_mode === "STORE"),
     [catalog],
   );
-  const visiblePlans = useMemo(
+  const executionPlans = useMemo(
     () => plans.filter((plan) =>
-      planScenarioFilter === "ALL" || plan.scenario === planScenarioFilter,
+      plan.status === "DRAFT"
+      && (planScenarioFilter === "ALL" || plan.scenario === planScenarioFilter),
     ),
     [planScenarioFilter, plans],
   );
+  const assessmentPlans = useMemo(
+    () => plans.filter((plan) => plan.status !== "DRAFT"),
+    [plans],
+  );
+  const selectedAuditPlan = assessmentPlans.find((plan) => plan.id === selectedAuditPlanId) || null;
 
   const loadPlans = useCallback(async () => {
     const result = await getDashboardTargetPlans();
     setPlans(result.plans);
     setSelectedPlanId((current) => {
-      if (current && result.plans.some((plan) => plan.id === current)) return current;
-      return result.plans.find((plan) => plan.status === "DRAFT")?.id
-        ?? result.plans.find((plan) => plan.status === "ACTIVE")?.id
-        ?? result.plans[0]?.id
-        ?? null;
+      if (current && result.plans.some((plan) => plan.id === current && plan.status === "DRAFT")) return current;
+      return result.plans.find((plan) => plan.status === "DRAFT")?.id ?? null;
     });
   }, []);
 
@@ -2928,11 +2954,8 @@ function TargetValueManager({
         indicatorCode: current.indicatorCode || catalogResult.indicators[0]?.code || "",
       }));
       setSelectedPlanId((current) => {
-        if (current && plansResult.plans.some((plan) => plan.id === current)) return current;
-        return plansResult.plans.find((plan) => plan.status === "DRAFT")?.id
-          ?? plansResult.plans.find((plan) => plan.status === "ACTIVE")?.id
-          ?? plansResult.plans[0]?.id
-          ?? null;
+        if (current && plansResult.plans.some((plan) => plan.id === current && plan.status === "DRAFT")) return current;
+        return plansResult.plans.find((plan) => plan.status === "DRAFT")?.id ?? null;
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -2946,7 +2969,7 @@ function TargetValueManager({
   }, [load]);
 
   const loadValues = useCallback(async () => {
-    if (!selectedPlanId) {
+    if (!selectedPlanId || view !== "EXECUTION") {
       setRows([]);
       return;
     }
@@ -2967,11 +2990,45 @@ function TargetValueManager({
     } finally {
       setBusy(false);
     }
-  }, [filter.indicatorCode, filter.nodeType, filter.search, selectedPlanId]);
+  }, [filter.indicatorCode, filter.nodeType, filter.search, selectedPlanId, view]);
 
   useEffect(() => {
     void loadValues();
   }, [loadValues]);
+
+  useEffect(() => {
+    setSelectedAuditPlanId((current) => {
+      if (current && assessmentPlans.some((plan) => plan.id === current)) return current;
+      return assessmentPlans[0]?.id ?? null;
+    });
+  }, [assessmentPlans]);
+
+  const loadAuditValues = useCallback(async () => {
+    if (!selectedAuditPlanId || view !== "AUDIT") {
+      setAuditRows([]);
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await getDashboardTargetValues({
+        planId: selectedAuditPlanId,
+        nodeType: filter.nodeType || undefined,
+        indicatorCode: filter.indicatorCode || undefined,
+        search: filter.search || undefined,
+        limit: 1000,
+      });
+      setAuditRows(result.rows);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [filter.indicatorCode, filter.nodeType, filter.search, selectedAuditPlanId, view]);
+
+  useEffect(() => {
+    void loadAuditValues();
+  }, [loadAuditValues]);
 
   const createPlan = async () => {
     const priority = Number(draft.priority || 0);
@@ -2991,7 +3048,7 @@ function TargetValueManager({
       } satisfies CreateTargetPlanPayload);
       await loadPlans();
       setSelectedPlanId(created.id);
-      setMessage("已创建目标值草稿");
+      setMessage("已创建目标草稿");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3033,8 +3090,7 @@ function TargetValueManager({
 
   const activate = async () => {
     if (!selectedPlanId || !selectedPlan) return;
-    const month = selectedPlan.effective_from.slice(0, 7);
-    if (!window.confirm(`确定激活「${selectedPlan.plan_name}」吗？这会替换 ${month} 当前生效的同场景、同周期方案。`)) {
+    if (!window.confirm(`确定将「${selectedPlan.plan_name}」发布为考核版本吗？该版本自 ${selectedPlan.effective_from} 起用于完成率计算；发布后目标值不可直接修改。`)) {
       return;
     }
     setBusy(true);
@@ -3043,7 +3099,7 @@ function TargetValueManager({
       await activateDashboardTargetPlan(selectedPlanId);
       await loadPlans();
       onSaved();
-      setMessage("目标方案已激活，驾驶舱数据已刷新");
+      setMessage("已发布为考核版本，当前草稿仍可继续修改");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3051,15 +3107,32 @@ function TargetValueManager({
     }
   };
 
-  const clonePlan = async () => {
-    if (!selectedPlanId || !selectedPlan) return;
+  const setRealtimeTarget = async () => {
+    if (!selectedPlanId || !editable) return;
     setBusy(true);
     setMessage("");
     try {
-      const cloned = await cloneDashboardTargetPlan(selectedPlanId);
+      await setDashboardTargetPlanRealtime(selectedPlanId);
+      await loadPlans();
+      onSaved();
+      setMessage("已设为实时目标，当前看板和当前累计将使用此草稿");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createExecutionFromAudit = async () => {
+    if (!selectedAuditPlan) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const cloned = await cloneDashboardTargetPlan(selectedAuditPlan.id);
       await loadPlans();
       setSelectedPlanId(cloned.id);
-      setMessage("已复制为新草稿，可修改目标值后再激活");
+      setView("EXECUTION");
+      setMessage("已基于考核版本创建目标草稿");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -3089,9 +3162,15 @@ function TargetValueManager({
         <header className="custom-metric-head">
           <div>
             <strong>目标值设置</strong>
-            <span>维护目标方案草稿；日期仅标识所属自然月，确认后激活用于完成率计算</span>
+            <span>维护目标草稿；发布后生成独立考核版本，历史完成率按生效日期匹配</span>
           </div>
-          <button type="button" onClick={onClose}>关闭</button>
+          <div className="target-manager-head-actions">
+            <button type="button" onClick={() => setView((current) => current === "AUDIT" ? "EXECUTION" : "AUDIT")}>
+              <ClipboardList size={15} />
+              {view === "AUDIT" ? "目标草稿" : "版本记录"}
+            </button>
+            <button type="button" onClick={onClose}>关闭</button>
+          </div>
         </header>
         <div className="custom-metric-body target-manager-body">
           <aside className="custom-metric-list target-plan-list">
@@ -3101,7 +3180,7 @@ function TargetValueManager({
             </button>
             <div className="target-plan-create">
               <label>
-                <span>新草稿名称</span>
+                <span>草稿名称</span>
                 <input
                   value={draft.plan_name}
                   onChange={(event) => setDraft((current) => ({ ...current, plan_name: event.target.value }))}
@@ -3138,7 +3217,7 @@ function TargetValueManager({
               </div>
               <div>
                 <label>
-                  <span>所属月份（日期）</span>
+                  <span>生效日期</span>
                   <input
                     type="date"
                     value={draft.effective_from}
@@ -3159,8 +3238,8 @@ function TargetValueManager({
                 创建草稿
               </button>
             </div>
-            <div className="target-plan-list-title">已有目标方案</div>
-            <div className="target-scenario-tabs" aria-label="目标方案场景筛选">
+            <div className="target-plan-list-title">目标草稿</div>
+            <div className="target-scenario-tabs" aria-label="目标草稿场景筛选">
               {[
                 ["ALL", "全部"],
                 ["NORMAL", "日常"],
@@ -3177,7 +3256,7 @@ function TargetValueManager({
               ))}
             </div>
             <div className="target-plan-items">
-              {visiblePlans.map((plan) => (
+              {executionPlans.map((plan) => (
                 <button
                   key={plan.id}
                   type="button"
@@ -3188,14 +3267,14 @@ function TargetValueManager({
                     {targetScenarioText(plan.scenario)}
                   </span>
                   <strong>{plan.plan_name}</strong>
-                  <span>{targetPlanLabel(plan)} · {plan.status} · {plan.value_count ?? 0} 条</span>
+                  <span>{targetPlanExecutionLabel(plan)} · {plan.value_count ?? 0} 条</span>
                 </button>
               ))}
-              {!visiblePlans.length && <div className="source-manager-empty">暂无目标方案</div>}
+              {!executionPlans.length && <div className="source-manager-empty">暂无目标草稿</div>}
             </div>
           </aside>
           <main className="custom-metric-form target-value-form">
-            <div className="target-manager-toolbar">
+            <div className={`target-manager-toolbar ${view === "AUDIT" ? "audit" : ""}`}>
               <select
                 value={filter.nodeType}
                 onChange={(event) => setFilter((current) => ({
@@ -3234,88 +3313,147 @@ function TargetValueManager({
                   placeholder="搜索区域名称或编码"
                 />
               </label>
-              <button type="button" onClick={() => window.open(dashboardTargetTemplateUrl(), "_blank")}>
-                <Download size={15} />
-                下载模板
-              </button>
-              <label className={editable ? "target-import-button" : "target-import-button disabled"}>
-                <FileUp size={15} />
-                导入
-                <input
-                  type="file"
-                  accept=".xlsx"
-                  disabled={!editable || busy}
-                  onChange={(event) => {
-                    void importFile(event.target.files?.[0] ?? null);
-                    event.currentTarget.value = "";
-                  }}
-                />
-              </label>
-            </div>
-            {selectedPlan && (
-              <div className="target-plan-summary">
-                <span className={selectedPlan.scenario === "PK" ? "target-scenario-badge pk" : "target-scenario-badge"}>
-                  {targetScenarioText(selectedPlan.scenario)}
-                </span>
-                <strong>{selectedPlan.plan_name}</strong>
-                <span>{targetPlanLabel(selectedPlan)} · {selectedPlan.status} · 生效 {selectedPlan.effective_from}</span>
-              </div>
-            )}
-            <div className="target-value-table">
-              <div className="target-value-head">
-                <span>区域</span>
-                <span>指标</span>
-                <span>目标值</span>
-              </div>
-              {rows.map((row) => {
-                const key = `${row.node_id}:${row.indicator_id}`;
-                return (
-                  <div className="target-value-row" key={key}>
-                    <div>
-                      <strong>{row.node_name}</strong>
-                      <span>{row.node_code} · {levelLabel(row.node_type)}</span>
-                    </div>
-                    <div>
-                      <strong>{row.indicator_name}</strong>
-                      <span>{row.indicator_code}</span>
-                    </div>
-                    <input
-                      value={edits[key] ?? (row.target_value == null ? "" : String(row.target_value))}
-                      disabled={!editable || busy}
-                      inputMode="decimal"
-                      onChange={(event) => setEdits((current) => ({
-                        ...current,
-                        [key]: event.target.value,
-                      }))}
-                      placeholder="--"
-                    />
-                  </div>
-                );
-              })}
-              {!rows.length && (
-                <div className="source-manager-empty">
-                  {selectedPlanId ? "当前筛选没有目标值行" : "请先创建或选择目标方案"}
-                </div>
-              )}
-            </div>
-            {message && <div className="custom-metric-message">{message}</div>}
-            <div className="custom-metric-actions">
-              {selectedPlan?.status === "ACTIVE" && (
-                <button type="button" disabled={busy} onClick={() => void clonePlan()}>
-                  <Copy size={14} />
-                  复制为草稿并编辑
+              {view === "EXECUTION" && <>
+                <button type="button" onClick={() => window.open(dashboardTargetTemplateUrl(), "_blank")}>
+                  <Download size={15} />
+                  下载模板
                 </button>
-              )}
+                <label className={editable ? "target-import-button" : "target-import-button disabled"}>
+                  <FileUp size={15} />
+                  导入
+                  <input
+                    type="file"
+                    accept=".xlsx"
+                    disabled={!editable || busy}
+                    onChange={(event) => {
+                      void importFile(event.target.files?.[0] ?? null);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              </>}
+            </div>
+            {view === "EXECUTION" ? <>
+              <div className="target-value-table">
+                <div className="target-value-head">
+                  <span>区域</span>
+                  <span>指标</span>
+                  <span>目标值</span>
+                </div>
+                {rows.map((row) => {
+                  const key = `${row.node_id}:${row.indicator_id}`;
+                  return (
+                    <div className="target-value-row" key={key}>
+                      <div>
+                        <strong>{row.node_name}</strong>
+                        <span>{row.node_code} · {levelLabel(row.node_type)}</span>
+                      </div>
+                      <div>
+                        <strong>{row.indicator_name}</strong>
+                        <span>{row.indicator_code}</span>
+                      </div>
+                      <input
+                        value={edits[key] ?? (row.target_value == null ? "" : String(row.target_value))}
+                        disabled={!editable || busy}
+                        inputMode="decimal"
+                        onChange={(event) => setEdits((current) => ({
+                          ...current,
+                          [key]: event.target.value,
+                        }))}
+                        placeholder="--"
+                        aria-label={`${row.node_name} ${row.indicator_name} 目标值`}
+                      />
+                    </div>
+                  );
+                })}
+                {!rows.length && (
+                  <div className="source-manager-empty">
+                    {selectedPlanId ? "当前筛选没有目标值行" : "请先创建或选择目标草稿"}
+                  </div>
+                )}
+              </div>
+            </> : <section className="target-audit-view" aria-label="考核版本记录">
+              <div className="target-audit-intro">
+                <div>
+                  <strong>考核版本记录</strong>
+                  <span>已发布版本只读，历史完成率按生效日期匹配考核目标。</span>
+                </div>
+              </div>
+              <div className="target-audit-layout">
+                <div className="target-audit-plan-list">
+                  {assessmentPlans.map((plan) => (
+                    <button
+                      key={plan.id}
+                      type="button"
+                      className={plan.id === selectedAuditPlanId ? "active" : ""}
+                      onClick={() => setSelectedAuditPlanId(plan.id)}
+                    >
+                      <strong>{plan.plan_name}</strong>
+                      <span>{targetPlanAuditLabel(plan)} · {targetPlanAuditStatus(plan)}</span>
+                      <span>使用 {targetPlanEffectivePeriod(plan)} · {plan.value_count ?? 0} 条</span>
+                    </button>
+                  ))}
+                  {!assessmentPlans.length && <div className="source-manager-empty">暂无已发布的考核版本</div>}
+                </div>
+                <div className="target-audit-detail">
+                  {selectedAuditPlan ? <>
+                    <dl>
+                      <div><dt>版本</dt><dd>{targetPlanAuditLabel(selectedAuditPlan)}</dd></div>
+                      <div><dt>状态</dt><dd>{targetPlanAuditStatus(selectedAuditPlan)}</dd></div>
+                      <div><dt>使用周期</dt><dd>{targetPlanEffectivePeriod(selectedAuditPlan)}</dd></div>
+                      <div><dt>发布时间</dt><dd>{formatTargetPlanTimestamp(selectedAuditPlan.activated_at)}</dd></div>
+                    </dl>
+                    <div className="target-audit-actions">
+                      <button type="button" disabled={busy} onClick={() => void createExecutionFromAudit()}>
+                        <Plus size={14} />
+                        以此版本创建草稿
+                      </button>
+                    </div>
+                    <div className="target-value-table">
+                      <div className="target-value-head">
+                        <span>区域</span>
+                        <span>指标</span>
+                        <span>考核目标</span>
+                      </div>
+                      {auditRows.map((row) => (
+                        <div className="target-value-row" key={`${row.node_id}:${row.indicator_id}`}>
+                          <div>
+                            <strong>{row.node_name}</strong>
+                            <span>{row.node_code} · {levelLabel(row.node_type)}</span>
+                          </div>
+                          <div>
+                            <strong>{row.indicator_name}</strong>
+                            <span>{row.indicator_code}</span>
+                          </div>
+                          <output>{row.target_value == null ? "--" : row.target_value}</output>
+                        </div>
+                      ))}
+                      {!auditRows.length && <div className="source-manager-empty">当前筛选没有考核目标行</div>}
+                    </div>
+                  </> : <div className="source-manager-empty">请选择考核版本</div>}
+                </div>
+              </div>
+            </section>}
+            {message && <div className="custom-metric-message">{message}</div>}
+            {view === "EXECUTION" && <div className="custom-metric-actions">
+              <button
+                type="button"
+                disabled={busy || !editable || selectedPlan?.is_realtime}
+                onClick={() => void setRealtimeTarget()}
+              >
+                <Signal size={14} />
+                {selectedPlan?.is_realtime ? "当前实时目标" : "设为实时目标"}
+              </button>
               <button type="button" disabled={busy || !editable} onClick={() => void saveValues()}>
                 <Save size={14} />
                 保存草稿
               </button>
-              {(selectedPlan?.status === "DRAFT" || selectedPlan?.status === "RETIRED") && (
+              {selectedPlan?.status === "DRAFT" && (
                 <button type="button" className="primary" disabled={busy} onClick={() => void activate()}>
-                  {selectedPlan.status === "RETIRED" ? "重新激活" : "激活方案"}
+                  发布为考核版本
                 </button>
               )}
-            </div>
+            </div>}
           </main>
         </div>
       </section>

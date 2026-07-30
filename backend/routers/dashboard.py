@@ -47,6 +47,7 @@ from services.dashboard_v2_target_admin_service import (
     import_target_template,
     list_target_plans,
     save_target_values,
+    set_target_plan_realtime,
 )
 from services.dashboard_v2_target_service import TargetPlanError
 
@@ -452,6 +453,25 @@ def activate_dashboard_target_plan(plan_id: int):
         raise HTTPException(
             status_code=503,
             detail=f"目标方案激活失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.post("/target-plans/{plan_id}/use-for-realtime")
+def set_dashboard_target_plan_realtime(plan_id: int):
+    engine = get_dashboard_engine()
+    try:
+        result = set_target_plan_realtime(engine, plan_id)
+        _invalidate_version_state()
+        with _dashboard_cache_lock:
+            _dashboard_cache.clear()
+            _dashboard_cache_failures.clear()
+        return result
+    except TargetPlanError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"实时目标设置失败: {type(exc).__name__}",
         ) from exc
 
 

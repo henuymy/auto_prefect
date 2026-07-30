@@ -1,4 +1,4 @@
-function Get-RuntimeConfigValue {
+﻿function Get-RuntimeConfigValue {
     param(
         [Parameter(Mandatory = $true)]
         [object]$Config,
