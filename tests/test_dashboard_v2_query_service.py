@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ from services.dashboard_v2_custom_indicator_service import (
     delete_custom_indicator,
     list_custom_indicators,
     upsert_custom_indicator,
+    update_indicator_settings,
 )
 
 
@@ -677,6 +679,59 @@ def test_custom_formula_does_not_override_source_storage_mode():
     assert source is not None
     assert source.storage_mode == "STORE"
     assert saved["components"][0]["source_storage_mode"] == "STORE"
+
+
+def test_source_indicator_rejects_independent_display_without_stored_result():
+    engine = _engine()
+
+    with pytest.raises(ValueError, match="独立展示的源指标必须使用结果落库"):
+        update_indicator_settings(
+            engine,
+            "channel_count",
+            storage_mode="COMPONENT",
+        )
+
+    component_only = update_indicator_settings(
+        engine,
+        "channel_count",
+        enabled=False,
+        storage_mode="COMPONENT",
+    )
+    assert component_only["enabled"] is False
+    assert component_only["storage_mode"] == "COMPONENT"
+
+    with pytest.raises(ValueError, match="独立展示的源指标必须使用结果落库"):
+        update_indicator_settings(engine, "channel_count", enabled=True)
+
+    displayed = update_indicator_settings(
+        engine,
+        "channel_count",
+        enabled=True,
+        storage_mode="STORE",
+    )
+    assert displayed["enabled"] is True
+    assert displayed["storage_mode"] == "STORE"
+
+
+def test_displayed_stored_source_can_also_be_a_formula_dependency():
+    engine = _engine()
+
+    saved = upsert_custom_indicator(
+        engine,
+        code="channel_total",
+        name="渠道合计",
+        components=[{"source_code": "channel_count", "coefficient": 1}],
+    )
+
+    with Session(engine) as session:
+        source = session.scalar(
+            select(IndicatorV2).where(IndicatorV2.code == "channel_count")
+        )
+
+    assert source is not None
+    assert source.enabled is True
+    assert source.storage_mode == "STORE"
+    assert saved["components"][0]["source_code"] == "channel_count"
 
 
 def test_acc_uses_latest_stat_date_through_yesterday_and_attaches_targets(monkeypatch):

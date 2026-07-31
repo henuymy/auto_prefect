@@ -212,7 +212,9 @@ C:\AutoNotifyRuntime\
 
 当前实现没有在 `metric_snapshot`/`metric_acc` 中保存 `assessment_plan_id`，历史完成率是在查询时按业务日期解析 `ACTIVE/RETIRED`。因此同一生效日期的修订可能重新计算该日期结果；只有实施上述结算快照绑定后，才能保证采集时口径永久冻结。
 
-自定义指标必须把三种维度分开：`IndicatorV2.enabled` 表示源指标是否独立展示，`IndicatorV2.storage_mode` 表示结果落库还是仅作为公式组件，`IndicatorFormulaComponent` 表示被哪些自定义指标引用。公式编辑只写入源指标和系数，不得通过组件请求修改源指标全局 `storage_mode`；导入文件中的旧 `source_storage_mode` 只能用于一致性校验。已归档源指标禁止建立新公式引用，独立停用的源指标仍可作为已有公式组件使用并在界面显示依赖提示。
+自定义指标必须把类型、展示、数据角色、公式关系和生命周期分开：`IndicatorV2.indicator_type` 为 `SOURCE`/`CUSTOM`，`IndicatorV2.enabled` 表示是否独立展示，`IndicatorV2.storage_mode` 为“结果落库（`STORE`）”或“仅计算输入（`COMPONENT`）”，`IndicatorFormulaComponent` 才表示被哪些组合指标引用，`source_active`/`removed_at` 表示源指标归档。公式编辑只写源指标和系数，不得通过组件请求修改源指标全局数据角色；导入文件中的旧 `source_storage_mode` 只能用于一致性校验。
+
+“独立展示 + 结果落库 + 被公式引用”是合法的重叠组合；“仅计算输入”不等于“被公式引用”。服务端必须拒绝 `enabled=true + storage_mode=COMPONENT`，界面也必须阻止该选择。组合指标固定为 `CUSTOM + STORE`，当前只允许引用源指标、只支持加权组合，不支持嵌套组合；已归档源指标不能建立新引用，依赖状态应显示“依赖正常”“依赖可用（不独立展示）”“已归档”或“待选择”。
 
 `effective_from`/`effective_to` 表示包含两端的业务使用区间，不是发布时刻。解析候选考核版本时按优先级、较晚生效日期、较高版本号和记录 ID 取胜。发布新版本时，服务负责截断与新版本相交的较早时间线，并将其标为 `RETIRED`；同一生效日期的修订保留旧版本审计记录，较高版本号的修订在查询时胜出。业务上应避免不必要的重叠方案，优先使用连续、不重叠的日期区间；优先级只能表达有明确审批依据的覆盖规则。
 
@@ -298,6 +300,13 @@ pwsh -File scripts/stop.ps1
 - 修改内容：公式编辑器只维护源指标和系数，增加公式预览与依赖状态；源指标页单独维护存储角色；已归档源指标禁止建立新公式引用；旧导入字段仅做一致性校验。
 - 涉及文件：`frontend/src/dashboard/DashboardCockpit.tsx`、`frontend/src/dashboard/dashboard-cockpit.css`、`frontend/src/types/dashboard.ts`、`backend/routers/dashboard.py`、`services/dashboard_v2_custom_indicator_service.py`、`scripts/tools/dashboard/import_v2_indicator_config.py` 及相关测试。
 - 验证：目标查询、指标导入和 UI 契约测试 `43 passed`；前端 Vitest `34 passed`，TypeScript 检查通过。
+
+### 2026-07-31 - 明确指标类型与合法状态组合
+
+- 原因：`COMPONENT` 曾被界面称为“公式组件”，容易与“被公式引用”混为一谈，也允许出现无法查询的“独立展示 + 仅计算输入”组合。
+- 修改内容：统一为“结果落库/仅计算输入”和“被公式引用”两组文案；服务端及界面拒绝独立展示的源指标切换为仅计算输入；明确源指标可同时独立展示、结果落库并被组合公式引用，组合指标固定为 `CUSTOM + STORE` 且不支持嵌套。
+- 涉及文件：`frontend/src/dashboard/DashboardCockpit.tsx`、`services/dashboard_v2_custom_indicator_service.py`、`README.md`、`PROJECT_GUIDE.md` 及相关测试。
+- 验证：指标服务、导入与 UI 契约测试 `46 passed`；前端 Vitest `34 passed`，TypeScript 检查通过；针对本次 Python 文件的 Ruff 检查通过。
 
 ### 2026-07-31 - 明确目标体系建表边界
 

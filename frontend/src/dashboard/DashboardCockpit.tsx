@@ -125,7 +125,7 @@ type SourceMetricOption = {
   source_active: boolean;
   storage_mode: StorageMode;
 };
-type SourceFilterMode = "all" | "enabled" | "disabled" | "store" | "component";
+type SourceFilterMode = "all" | "enabled" | "disabled" | "store" | "referenced";
 const COEFFICIENT_PATTERN = /^-?\d+(\.\d{0,4})?$/;
 const COEFFICIENT_INPUT_PATTERN = /^-?\d*(\.\d{0,4})?$/;
 type OverallCapMode = "CAPPED" | "UNCAPPED";
@@ -3495,7 +3495,7 @@ function draftFromCustomIndicator(indicator: DashboardCustomIndicator): CustomIn
 }
 
 function sourceRoleLabel(storageMode: StorageMode) {
-  return storageMode === "STORE" ? "结果落库" : "公式组件";
+  return storageMode === "STORE" ? "结果落库" : "仅计算输入";
 }
 
 function sourceDependencyState(option: SourceMetricOption | undefined) {
@@ -3515,8 +3515,8 @@ function sourceDependencyState(option: SourceMetricOption | undefined) {
   }
   if (!option.enabled) {
     return {
-      label: "独立停用",
-      detail: "不会独立展示，但仍可作为公式组件参与计算",
+      label: "依赖可用（不独立展示）",
+      detail: "不会独立展示，但仍可作为公式依赖参与计算",
       tone: "is-warning",
     };
   }
@@ -3597,7 +3597,7 @@ function CustomIndicatorManager({
         if (sourceFilter === "enabled") return indicator.enabled;
         if (sourceFilter === "disabled") return !indicator.enabled;
         if (sourceFilter === "store") return indicator.storage_mode === "STORE";
-        if (sourceFilter === "component") return componentSourceCodes.has(indicator.code);
+        if (sourceFilter === "referenced") return componentSourceCodes.has(indicator.code);
         return true;
       })
       .filter((indicator) =>
@@ -3613,7 +3613,7 @@ function CustomIndicatorManager({
       enabled: sourceRows.filter((indicator) => indicator.enabled).length,
       disabled: sourceRows.filter((indicator) => !indicator.enabled).length,
       store: sourceRows.filter((indicator) => indicator.storage_mode === "STORE").length,
-      component: sourceRows.filter((indicator) => componentSourceCodes.has(indicator.code)).length,
+      referenced: sourceRows.filter((indicator) => componentSourceCodes.has(indicator.code)).length,
     };
   }, [catalog, componentSourceCodes]);
   const formulaPreview = useMemo(() => {
@@ -3716,10 +3716,16 @@ function CustomIndicatorManager({
     indicator: DashboardCatalogIndicator,
     patch: { enabled?: boolean; storage_mode?: StorageMode },
   ) => {
+    const nextEnabled = patch.enabled ?? indicator.enabled;
+    const nextStorageMode = patch.storage_mode ?? indicator.storage_mode;
+    if (nextEnabled && nextStorageMode === "COMPONENT") {
+      setMessage("独立展示的源指标必须使用结果落库。请先关闭独立展示，再设为仅计算输入。");
+      return;
+    }
     const actionText = patch.enabled != null
       ? `${patch.enabled ? "启用独立展示" : "停用独立展示"}源指标「${indicator.name}」`
       : `将源指标「${indicator.name}」改为${
-          patch.storage_mode === "STORE" ? "结果落库" : "公式组件"
+          patch.storage_mode === "STORE" ? "结果落库" : "仅计算输入"
         }`;
     if (!window.confirm(`确定要${actionText}吗？`)) return;
     setBusy(true);
@@ -3801,7 +3807,7 @@ function CustomIndicatorManager({
                   </div>
                   <div>
                     <dt>公式引用</dt>
-                    <dd>{sourceStats.component}</dd>
+                    <dd>{sourceStats.referenced}</dd>
                   </div>
                 </dl>
               </div>
@@ -3823,9 +3829,9 @@ function CustomIndicatorManager({
                     {[
                       ["all", "全部", sourceStats.total],
                       ["enabled", "独立展示", sourceStats.enabled],
-                      ["disabled", "独立停用", sourceStats.disabled],
+                      ["disabled", "不独立展示", sourceStats.disabled],
                       ["store", "结果落库", sourceStats.store],
-                      ["component", "被公式引用", sourceStats.component],
+                      ["referenced", "被公式引用", sourceStats.referenced],
                     ].map(([key, label, count]) => (
                       <button
                         key={key}
@@ -3855,8 +3861,8 @@ function CustomIndicatorManager({
                         <span>{indicator.code}</span>
                       </div>
                       <div className="source-manager-status">
-                        <span>{indicator.enabled ? "独立展示" : "独立停用"}</span>
-                        <span>{indicator.storage_mode === "STORE" ? "结果落库" : "公式组件"}</span>
+                        <span>{indicator.enabled ? "独立展示" : "不独立展示"}</span>
+                        <span>{sourceRoleLabel(indicator.storage_mode)}</span>
                         {componentSourceCodes.has(indicator.code) && <span>被公式引用</span>}
                       </div>
                       <label className="source-manager-enable">
@@ -3873,12 +3879,13 @@ function CustomIndicatorManager({
                       <select
                         value={indicator.storage_mode}
                         disabled={busy}
+                        title={indicator.enabled ? "独立展示的源指标必须使用结果落库" : undefined}
                         onChange={(event) => void updateSourceIndicator(indicator, {
                           storage_mode: event.target.value as StorageMode,
                         })}
                       >
-                        <option value="STORE">落库展示</option>
-                        <option value="COMPONENT">只参与计算</option>
+                        <option value="STORE">结果落库</option>
+                        <option value="COMPONENT" disabled={indicator.enabled}>仅计算输入</option>
                       </select>
                     </div>
                   ))}
@@ -4108,7 +4115,7 @@ function SourceMetricPicker({
               >
                 <strong>{option.name}</strong>
                 <span>
-                  {option.code} · {option.source_active ? (option.enabled ? "可用" : "独立停用") : "已归档"}
+                  {option.code} · {option.source_active ? (option.enabled ? "依赖正常" : "依赖可用（不独立展示）") : "已归档"}
                   {` · ${sourceRoleLabel(option.storage_mode)}`}
                 </span>
               </button>

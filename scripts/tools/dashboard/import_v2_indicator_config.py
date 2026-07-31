@@ -65,10 +65,16 @@ def import_indicator_config(
                 code = str(source.get("code") or "").strip()
                 name = str(source.get("name") or "").strip()
                 storage_mode = str(source.get("storage_mode") or "STORE").strip().upper()
+                enabled = bool(source.get("enabled", True))
                 if not code or not name:
                     raise ValueError("源指标 code/name 不能为空")
                 if storage_mode not in {"STORE", "COMPONENT"}:
                     raise ValueError(f"指标 {code} storage_mode 非法: {storage_mode}")
+                if enabled and storage_mode == "COMPONENT":
+                    raise ValueError(
+                        f"源指标 {code} 独立展示时必须使用结果落库；"
+                        "请先关闭独立展示，再设置为仅计算输入"
+                    )
                 indicator = existing.get(code)
                 if indicator is None:
                     indicator = IndicatorV2(
@@ -76,7 +82,7 @@ def import_indicator_config(
                         name=name,
                         indicator_type="SOURCE",
                         storage_mode=storage_mode,
-                        enabled=bool(source.get("enabled", True)),
+                        enabled=enabled,
                         source_active=bool(source.get("source_active", True)),
                         sort_order=int(source.get("sort_order", 0) or 0),
                     )
@@ -89,7 +95,7 @@ def import_indicator_config(
                         raise ValueError(f"源指标编码已被自建指标占用: {code}")
                     indicator.name = name
                     indicator.storage_mode = storage_mode
-                    indicator.enabled = bool(source.get("enabled", True))
+                    indicator.enabled = enabled
                     indicator.source_active = bool(source.get("source_active", True))
                     indicator.sort_order = int(source.get("sort_order", 0) or 0)
                     source_updated += 1

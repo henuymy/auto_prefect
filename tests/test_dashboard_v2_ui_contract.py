@@ -71,4 +71,10 @@ def test_custom_formula_keeps_source_storage_role_outside_formula_rows():
 
     assert "custom-component-dependency" in source
     assert "公式预览" in source
+    assert 'return storageMode === "STORE" ? "结果落库" : "仅计算输入";' in source
+    assert "依赖可用（不独立展示）" in source
+    assert "被公式引用" in source
+    assert "独立展示的源指标必须使用结果落库" in source
+    assert '<option value="COMPONENT" disabled={indicator.enabled}>仅计算输入</option>' in source
+    assert "公式组件" not in source
     assert "source_storage_mode" not in source

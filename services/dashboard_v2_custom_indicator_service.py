@@ -204,10 +204,19 @@ def update_indicator_settings(
             raise ValueError(f"指标不存在: {code}")
         if indicator.indicator_type != "SOURCE":
             raise ValueError("该接口只允许修改源指标设置")
-        if enabled is not None:
-            indicator.enabled = enabled
-        if normalized_storage:
-            indicator.storage_mode = normalized_storage
+        next_enabled = indicator.enabled if enabled is None else enabled
+        next_storage = (
+            indicator.storage_mode
+            if normalized_storage is None
+            else normalized_storage
+        )
+        if next_enabled and next_storage == "COMPONENT":
+            raise ValueError(
+                "独立展示的源指标必须使用结果落库；"
+                "请先关闭独立展示，再切换为仅计算输入"
+            )
+        indicator.enabled = next_enabled
+        indicator.storage_mode = next_storage
         session.commit()
         session.refresh(indicator)
         return _payload(indicator, [])
