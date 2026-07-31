@@ -201,6 +201,17 @@ C:\AutoNotifyRuntime\
 
 实时目标的完整命中键为 `(scenario, period_type, business_date)` 加上 `status=DRAFT`、`is_realtime=true` 和生效区间；任何条件不满足都不得改用其他场景、周期、状态或日期区间的方案。
 
+建表边界必须保持简单：当前不为 NORMAL/PK、DAY/MONTH、实时/历史或 DRAFT/ACTIVE/RETIRED 分别建表。目标配置统一落在现有 `target_plan` 与 `metric_target_value`，实际事实统一落在 `collection_run`、`metric_current`、`metric_snapshot` 与 `metric_acc`。因此，缺少某个场景或周期的草稿是数据配置缺口，不是数据库结构缺口；例如缺少月目标草稿时，应创建 `MONTH + DRAFT` 方案及其明细，不得新增“月目标表”。
+
+| 需求 | 新增表 | 边界 |
+| --- | ---: | --- |
+| 当前实时、实时累计、累计、历史查询 | 0 | 通过目标来源、目标周期和业务日期组合现有目标表与事实表。 |
+| NORMAL/PK、DAY/MONTH 隔离 | 0 | 使用 `target_plan.scenario`、`target_plan.period_type`，不复制表结构。 |
+| 草稿/考核版本隔离 | 0 | 使用 `target_plan.status`、`is_realtime` 和发布复制逻辑。 |
+| 采集时永久固化考核版本，后续修订不改变已结算结果 | 1（可选） | 新增 `dashboard_assessment_snapshot`，至少绑定 `collection_run_id`、`target_plan_id`、`node_id`、`indicator_id`、实际值、目标值和完成率；也可经迁移评审后在事实表增加等价绑定字段。 |
+
+当前实现没有在 `metric_snapshot`/`metric_acc` 中保存 `assessment_plan_id`，历史完成率是在查询时按业务日期解析 `ACTIVE/RETIRED`。因此同一生效日期的修订可能重新计算该日期结果；只有实施上述结算快照绑定后，才能保证采集时口径永久冻结。
+
 `effective_from`/`effective_to` 表示包含两端的业务使用区间，不是发布时刻。解析候选考核版本时按优先级、较晚生效日期、较高版本号和记录 ID 取胜。发布新版本时，服务负责截断与新版本相交的较早时间线，并将其标为 `RETIRED`；同一生效日期的修订保留旧版本审计记录，较高版本号的修订在查询时胜出。业务上应避免不必要的重叠方案，优先使用连续、不重叠的日期区间；优先级只能表达有明确审批依据的覆盖规则。
 
 指标历史事实与考核目标版本的不可变边界必须写清：`metric_snapshot`、`metric_acc` 和采集 Run 不会因发布目标而更新；历史完成率则在查询时按业务日期解析考核版本，当前没有在指标事实表中持久化 `assessment_plan_id`。因此，未来生效的新版本不会改变此前日期的完成率，但“同一生效日”的修订会用新版本重新计算该日期范围的完成率。若业务要求结算结果永久绑定采集当时的考核版本，必须设计迁移：在结算/快照写入时固化考核版本 ID，并让历史查询优先读该绑定；在完成该迁移前，禁止声称当前实现提供采集时版本冻结。
@@ -278,6 +289,13 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-31 - 明确目标体系建表边界
+
+- 原因：避免把场景、目标周期、实时/历史和版本状态误拆成多套重复表结构。
+- 修改内容：补充现有 `target_plan`、`metric_target_value`、采集事实表的职责，以及当前新增表数量为 0 的结论；明确只有要求采集时永久绑定考核版本时，才新增 `dashboard_assessment_snapshot`（1 张可选表）。
+- 涉及文件：`README.md`、`PROJECT_GUIDE.md`。
+- 验证：文档差异检查通过。
 
 ### 2026-07-31 - 实时目标缺失时禁止版本回退
 

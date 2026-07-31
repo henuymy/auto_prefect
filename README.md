@@ -156,6 +156,19 @@ pwsh -File scripts/setup_windows_env.ps1
 
 实时目标查询的完整命中条件是：`scenario`、目标 `period_type`、`DRAFT`、`is_realtime=true`，并且业务日期落在生效区间内。任一条件不满足，目标值就是空值；系统不会跨场景、跨周期、跨状态或跨生效区间选取其他方案。
 
+#### 建表边界与历史冻结
+
+当前目标体系不需要为日常/PK、日/月、实时/历史或草稿/考核版本分别建表。目标配置统一使用已有的 `target_plan`（方案身份、场景、目标周期、状态、版本和生效区间）与 `metric_target_value`（节点 × 指标目标值）；实际数据继续使用 `collection_run`、`metric_current`、`metric_snapshot` 和 `metric_acc`。因此，当前没有月目标草稿时，只需创建一条 `MONTH + DRAFT` 的方案记录并写入目标明细，不需要新增数据库表。
+
+| 需求 | 新增表数量 | 处理方式 |
+| --- | ---: | --- |
+| 当前实时、实时累计、累计、历史查询 | 0 | 使用现有目标表和事实表，通过场景、周期、来源和业务日期解析。 |
+| NORMAL/PK 或 DAY/MONTH 隔离 | 0 | 使用 `target_plan.scenario`、`target_plan.period_type`，禁止拆分成多套表。 |
+| 草稿与考核版本隔离 | 0 | 使用 `target_plan.status` 和 `is_realtime`，发布时复制方案和值。 |
+| 采集时永久绑定考核版本，后续修订绝不重算历史 | 1（可选） | 新增 `dashboard_assessment_snapshot`，保存 `collection_run_id`、`target_plan_id`、节点、指标、实际值、目标值和完成率；或者经评审后为事实表增加等价的考核版本绑定字段。 |
+
+当前实现的历史完成率仍是查询时按业务日期解析 `ACTIVE/RETIRED`。未来生效日期之外的新版本不会影响旧日期；同一生效日期的修订可能改变该日期的查询结果。若业务要求彻底冻结，必须先实施上述 1 张结算快照表，再宣称历史结果不可重算。
+
 #### 日常操作流程
 
 1. 在驾驶舱点击“目标值设置”，新建草稿，填写方案名称、场景、目标周期、生效日期和优先级。
