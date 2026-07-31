@@ -471,6 +471,29 @@ def _target_period(period_type: str) -> str:
     raise ValueError(f"period_type 只支持 DAY_ACC/MONTH: {period_type!r}")
 
 
+def _normalize_target_period(
+    target_period: str | None,
+    *,
+    metric_period: str,
+) -> str:
+    """Resolve the goal period independently from the metric storage period."""
+    if target_period is None:
+        return _target_period(metric_period)
+    normalized = str(target_period).strip().upper()
+    if normalized not in {"DAY", "MONTH"}:
+        raise ValueError(f"target_period 只支持 DAY/MONTH: {target_period!r}")
+    return normalized
+
+
+def _normalize_target_source(target_source: str) -> str:
+    normalized = str(target_source or "").strip().upper()
+    if normalized not in {"WORKING", "ASSESSMENT"}:
+        raise ValueError(
+            f"target_source 只支持 WORKING/ASSESSMENT: {target_source!r}"
+        )
+    return normalized
+
+
 def _active_target_map(
     session: Session,
     *,
@@ -483,9 +506,10 @@ def _active_target_map(
 ) -> dict[tuple[int, int], Decimal]:
     if not node_ids or not indicator_ids:
         return {}
+    normalized_source = _normalize_target_source(target_source)
     loader = (
         load_v2_working_target_values
-        if target_source == "WORKING"
+        if normalized_source == "WORKING"
         else load_v2_target_values
     )
     _, values = loader(
@@ -1401,8 +1425,16 @@ def _acc_rows_in_session(
     indicators: list[IndicatorV2],
     period_type: str,
     target_day: date,
+    target_period: str | None = None,
+    target_source: str = "ASSESSMENT",
+    target_date: date | None = None,
     target_scenario: str = "NORMAL",
 ) -> list[dict[str, Any]]:
+    normalized_target_period = _normalize_target_period(
+        target_period,
+        metric_period=period_type,
+    )
+    normalized_target_source = _normalize_target_source(target_source)
     components, physical = _components(session, indicators)
     metrics_by_id = _acc_metrics_in_session(
         session,
@@ -1417,9 +1449,10 @@ def _acc_rows_in_session(
         session,
         node_ids=[row.id for row in nodes],
         indicator_ids=[row.id for row in physical],
-        period_type=period_type,
-        target_date=target_day,
+        period_type=normalized_target_period,
+        target_date=target_date or target_day,
         target_scenario=target_scenario,
+        target_source=normalized_target_source,
     )
     rows: list[dict[str, Any]] = []
     for node in nodes:
@@ -1444,11 +1477,18 @@ def get_acc_wide_table(
     parent_id: int | None = None, stat_date: str | None = None,
     indicator_codes: list[str] | None = None,
     target_scenario: str = "NORMAL",
+    target_period: str | None = None,
+    target_source: str = "ASSESSMENT",
 ) -> dict[str, Any]:
     normalized = str(period_type).strip().upper()
     if normalized not in {"DAY_ACC", "MONTH"}:
         raise ValueError(f"period_type 只支持 DAY_ACC/MONTH: {period_type!r}")
     normalized_target_scenario = normalize_target_scenario(target_scenario)
+    normalized_target_period = _normalize_target_period(
+        target_period,
+        metric_period=normalized,
+    )
+    normalized_target_source = _normalize_target_source(target_source)
     with Session(engine) as session:
         through_date = date.fromisoformat(stat_date) if stat_date else _yesterday_shanghai()
         target_day = (
@@ -1463,6 +1503,11 @@ def get_acc_wide_table(
         )
         indicators = _enabled_indicators(session, indicator_codes)
         nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
+        target_date = (
+            _realtime_business_date(_latest_run(session))
+            if normalized_target_source == "WORKING"
+            else target_day
+        )
         rows = (
             _acc_rows_in_session(
                 session,
@@ -1470,6 +1515,9 @@ def get_acc_wide_table(
                 indicators=indicators,
                 period_type=normalized,
                 target_day=target_day,
+                target_period=normalized_target_period,
+                target_source=normalized_target_source,
+                target_date=target_date,
                 target_scenario=normalized_target_scenario,
             )
             if target_day is not None
@@ -1486,6 +1534,9 @@ def get_acc_wide_table(
             "through_date": through_date.isoformat(),
             "stat_date": target_day.isoformat() if target_day else None,
             "is_fallback": bool(target_day is not None and target_day < through_date),
+            "target_period": normalized_target_period,
+            "target_source": normalized_target_source,
+            "target_date": target_date.isoformat() if target_date else None,
         }
 
 
@@ -1575,6 +1626,9 @@ def get_dashboard_overview(
                 indicators=indicators,
                 period_type=normalized_period,
                 target_day=acc_date,
+                target_period="MONTH",
+                target_source="WORKING",
+                target_date=_realtime_business_date(run),
                 target_scenario=normalized_target_scenario,
             )
         result = {
@@ -1673,6 +1727,9 @@ def get_drill_down(
                     indicators=indicators,
                     period_type=normalized_period,
                     target_day=acc_date,
+                    target_period="MONTH",
+                    target_source="WORKING",
+                    target_date=_realtime_business_date(run),
                     target_scenario=normalized_target_scenario,
                 )
             result = {
@@ -1748,6 +1805,9 @@ def get_drill_down(
                 indicators=indicators,
                 period_type=normalized_period,
                 target_day=acc_date,
+                target_period="MONTH",
+                target_source="WORKING",
+                target_date=_realtime_business_date(run),
                 target_scenario=normalized_target_scenario,
             )
         result = {

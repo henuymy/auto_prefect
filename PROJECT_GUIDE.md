@@ -175,10 +175,31 @@ C:\AutoNotifyRuntime\
 | --- | --- | --- |
 | 当前实时值、当前实时变化、实时矩阵和下钻 | 命中的 `DRAFT + is_realtime` | `DAY` |
 | 实时累计 | 命中的 `DRAFT + is_realtime` | `MONTH` |
+| 累计基线面板 | 命中的 `DRAFT + is_realtime` | `MONTH`，仅展示最近已完成采集日的 `DAY_ACC` |
 | 历史值、历史矩阵和历史下钻 | 按历史业务日期命中的 `ACTIVE/RETIRED` | `DAY` |
-| 累计日期查询 `/api/dashboard/acc` | 按累计 `stat_date` 命中的 `ACTIVE/RETIRED` | `DAY` |
+| 累计日期查询 `/api/dashboard/acc` | 按累计 `stat_date` 命中的 `ACTIVE/RETIRED` | `MONTH` |
 
-实时读取找不到命中的实时草稿时，为兼容旧安装可回退到考核版本。该回退只能作为升级过渡，不能代替显式选择实时草稿。运维或前端不得把未来生效或没有目标值的草稿设为实时口径；否则原实时草稿会被取消，当前日期可能回退到考核版本或显示为空目标。发布层已经拒绝空草稿；若要把“非空草稿”变成强制系统约束，应同时在 `set_target_plan_realtime()`、前端按钮和相关测试中实现，不能只靠文档约定。
+累计实际值周期与目标周期必须分离。`DAY_ACC` 只表示累计实际值的存储周期；真正的月度执行口径是“实时累计”，传入 `target_period=MONTH, target_source=WORKING`，计算前一日累计加当天实时；旁边的“累计基线”只展示最近已完成采集日的 `DAY_ACC`，不含当天实时。累计日期查询应传入 `target_period=MONTH, target_source=ASSESSMENT`。目标业务日期也必须独立：实时月累计按当前实时 Run 的 `stat_date` 选草稿，历史累计按所选累计 `stat_date` 选考核版本。实时读取找不到命中的实时草稿时必须返回空目标，禁止回退到考核版本；运维或前端不得把未来生效或没有目标值的草稿设为实时口径，否则当前日期只能显示为空目标。发布层已经拒绝空草稿；实时目标缺失应作为配置问题处理，不能用历史版本掩盖。
+
+目标解析的边界必须与数据库字段一一对应：
+
+| 因素 | 判断字段/值 | 对应表 | 规则 |
+| --- | --- | --- | --- |
+| 业务场景 | `NORMAL`、`PK` / `target_plan.scenario` | `target_plan` | 场景隔离，禁止跨场景替代。 |
+| 目标周期 | `DAY`、`MONTH` / `target_plan.period_type` | `target_plan`、`metric_target_value` | 目标周期独立于实际存储周期，`DAY_ACC` 不可当作目标周期。 |
+| 方案身份与版本谱系 | `plan_name`、`version_no`、`priority`、`supersedes_plan_id` | `target_plan` | 标识方案修订链和覆盖优先级；版本号不是跨状态的全局 ID。 |
+| 版本状态 | `DRAFT`、`ACTIVE`、`RETIRED` / `target_plan.status` | `target_plan` | 实时只能使用 `DRAFT`；历史和累计日期只能使用 `ACTIVE/RETIRED`。 |
+| 实时标记 | `target_plan.is_realtime=true` | `target_plan` | 同场景同周期唯一实时草稿；不存在命中草稿时返回空目标。 |
+| 生效日期 | `effective_from <= business_date <= effective_to` | `target_plan` | 按业务日期命中，发布时间只用于审计。 |
+| 目标来源 | `WORKING` 或 `ASSESSMENT`（接口参数） | 查询服务 + `target_plan` | `WORKING` 只解析实时草稿；`ASSESSMENT` 只解析已发布版本，二者不得互换。 |
+| 目标业务日期 | 实时取成功 Run 的 `stat_date`；历史/累计取所选日期 | `collection_run`、`metric_acc` | 只用于匹配生效区间，不能用发布时间代替。 |
+| 目标数值 | `plan_id`、`node_id`、`indicator_id`、`target_value` | `metric_target_value` | 目标方案的节点 × 指标明细，已发布方案不可改。 |
+| 组织与指标维度 | `node_id`、`indicator_id` | `hierarchy_node`、`indicator` | 定义目标明细和实际事实的节点、指标范围；禁用节点/指标不参与查询。 |
+| 实时实际值 | 当前成功采集批次 | `collection_run`、`metric_current` | 当日实时、实时累计的实际值来源。 |
+| 历史实际值 | 批次完成前的快照 | `collection_run`、`metric_snapshot` | 历史值和历史变化的实际值来源。 |
+| 累计实际值 | `period_type=DAY_ACC`、`stat_date` | `metric_acc` | 累计基线和累计日期查询的实际值来源。 |
+
+实时目标的完整命中键为 `(scenario, period_type, business_date)` 加上 `status=DRAFT`、`is_realtime=true` 和生效区间；任何条件不满足都不得改用其他场景、周期、状态或日期区间的方案。
 
 `effective_from`/`effective_to` 表示包含两端的业务使用区间，不是发布时刻。解析候选考核版本时按优先级、较晚生效日期、较高版本号和记录 ID 取胜。发布新版本时，服务负责截断与新版本相交的较早时间线，并将其标为 `RETIRED`；同一生效日期的修订保留旧版本审计记录，较高版本号的修订在查询时胜出。业务上应避免不必要的重叠方案，优先使用连续、不重叠的日期区间；优先级只能表达有明确审批依据的覆盖规则。
 
@@ -257,6 +278,23 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-31 - 实时目标缺失时禁止版本回退
+
+- 原因：实时页面不能在缺少执行目标草稿时静默使用考核版本，否则页面看似有目标，实际却混用了不同口径。
+- 修改内容：`load_v2_working_target_values()` 只返回命中的 `DRAFT + is_realtime=true`；场景、目标周期、生效日期或实时标记任一条件不满足时返回空目标。README 与本指南补充目标方案、目标明细、实时事实、历史快照和累计事实的表字段边界。
+- 涉及文件：`services/dashboard_v2_target_service.py`、`tests/test_dashboard_v2_query_service.py`、`README.md`、`PROJECT_GUIDE.md`。
+- 验证：目标查询与 UI 契约测试 `36 passed`，`ruff check`、`npm run typecheck` 和 `git diff --check` 通过。
+- 运维影响：当前场景/周期没有有效实时草稿时，目标值和完成率显示为空；管理员必须在目标值设置中创建、填充并设为实时目标，不能修改 `ACTIVE/RETIRED` 补救。
+
+### 2026-07-31 - 累计实际值与完成率目标周期解耦
+
+- 原因：驾驶舱“当月累计”读取 `DAY_ACC` 实际值时，旧实现会隐式将其映射为日目标，导致月累计进度无法使用实时月目标草稿。
+- 修改内容：累计查询新增独立的 `target_period`、`target_source` 和目标业务日期。实时累计以当前实时 Run 的 `stat_date` 选择 `MONTH + WORKING`，旁边的累计基线只展示最近已完成采集日的 `DAY_ACC`；累计日期查询以所选累计日期选择 `MONTH + ASSESSMENT`。总览、下钻、全量范围查询和前端 API 调用均显式传递该口径，并将原“当月累计”面板改名为“累计基线”。
+- 涉及文件：`services/dashboard_v2_query_service.py`、`backend/routers/dashboard.py`、`frontend/src/dashboard/DashboardCockpit.tsx`、`frontend/src/lib/api.ts`、`frontend/src/types/dashboard.ts`、`README.md`、`PROJECT_GUIDE.md`、`tests/test_dashboard_v2_query_service.py`、`tests/test_dashboard_v2_ui_contract.py`。
+- 配置或迁移：无数据库迁移。`GET /api/dashboard/acc` 新增可选 `target_period=DAY|MONTH` 和 `target_source=WORKING|ASSESSMENT`；未传时保持旧接口按实际值周期映射目标周期、使用考核版本的兼容行为。
+- 验证：`python -m pytest tests/test_dashboard_v2_query_service.py tests/test_dashboard_v2_ui_contract.py -q` 为 `36 passed`；`npm run typecheck` 与 `git diff --check` 通过。
+- 风险与回滚：调用方若误把 `DAY_ACC` 当成目标周期，仍会得到日目标的兼容默认值；所有月累计调用必须显式指定 `MONTH`。回滚只需恢复查询、路由和前端参数传递，无数据回填或结构回滚。
 
 ### 2026-07-30 - 驾驶舱目标草稿与考核版本双轨管理
 

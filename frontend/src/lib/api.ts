@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetValuesResponse, DashboardValueMode, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
+import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPeriod, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetSource, DashboardTargetValuesResponse, DashboardValueMode, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -483,6 +483,8 @@ export async function getAccDashboard(
   parentId?: number,
   indicatorCodes?: string[],
   targetScenario: DashboardTargetScenario = "NORMAL",
+  targetPeriod?: DashboardTargetPeriod,
+  targetSource: DashboardTargetSource = "ASSESSMENT",
 ) {
   const params = new URLSearchParams();
   params.set("period_type", periodType);
@@ -491,6 +493,8 @@ export async function getAccDashboard(
   if (parentId != null) params.set("parent_id", String(parentId));
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   params.set("target_scenario", targetScenario);
+  if (targetPeriod) params.set("target_period", targetPeriod);
+  params.set("target_source", targetSource);
   return request<DashboardAccResponse>(
     `/api/dashboard/acc?${params.toString()}`,
   );

@@ -201,8 +201,10 @@ def _engine():
 
 
 def test_overview_returns_v2_tree_with_manager_and_without_legacy_fields():
+    engine = _engine()
+    _insert_working_day_target(engine)
     result = get_dashboard_overview(
-        _engine(), branch_code="AQ", indicator_codes=["channel_count"], include_acc=False
+        engine, branch_code="AQ", indicator_codes=["channel_count"], include_acc=False
     )
 
     manager = next(row for row in result["rows"] if row["node_type"] == "CHANNEL_MANAGER")
@@ -216,12 +218,14 @@ def test_overview_returns_v2_tree_with_manager_and_without_legacy_fields():
 
 def test_target_scenario_is_explicit_instead_of_pk_fallback():
     engine = _engine()
+    _insert_working_day_target(engine)
     with engine.begin() as connection:
         connection.execute(text("""
             INSERT INTO target_plan
                 (id, plan_name, scenario, period_type, effective_from, status)
-            VALUES (9, 'PK日目标', 'PK', 'DAY', '2026-06-01', 'ACTIVE')
+            VALUES (9, 'PK日目标', 'PK', 'DAY', '2026-06-01', 'DRAFT')
         """))
+        connection.execute(text("UPDATE target_plan SET is_realtime=1 WHERE id=9"))
         connection.execute(text("""
             INSERT INTO metric_target_value
                 (id, plan_id, node_id, indicator_id, target_value)
@@ -251,6 +255,7 @@ def test_target_scenario_is_explicit_instead_of_pk_fallback():
 
 def test_historical_target_uses_business_effective_date_not_publish_time():
     engine = _engine()
+    _insert_working_day_target(engine)
     with engine.begin() as connection:
         connection.execute(text("""
             UPDATE target_plan
@@ -271,6 +276,7 @@ def test_historical_target_uses_business_effective_date_not_publish_time():
                 (id, plan_id, node_id, indicator_id, target_value)
             VALUES (10, 2, 4, 1, 60)
         """))
+        connection.execute(text("UPDATE metric_target_value SET target_value=45 WHERE plan_id=10 AND node_id=4"))
 
     current = get_dashboard_overview(
         engine,
@@ -286,7 +292,7 @@ def test_historical_target_uses_business_effective_date_not_publish_time():
 
     current_manager = next(row for row in current["rows"] if row["id"] == 4)
     historical_manager = next(row for row in historical["rows"] if row["id"] == 4)
-    assert current_manager["targets"]["channel_count"] == 60
+    assert current_manager["targets"]["channel_count"] == 45
     assert historical_manager["targets"]["channel_count"] == 60
 
 
@@ -715,6 +721,80 @@ def test_acc_historical_target_uses_business_effective_date_not_publish_time():
     assert result["rows"][0]["targets"]["channel_count"] == 60
 
 
+def test_day_acc_metrics_can_use_working_or_assessment_month_targets():
+    engine = _engine()
+    _insert_month_target_and_acc(engine)
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO target_plan
+                (id, plan_name, scenario, period_type, effective_from,
+                 status, is_realtime)
+            VALUES (3, '当前月目标', 'NORMAL', 'MONTH', '2026-06-30', 'DRAFT', 1)
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (4, 3, 2, 1, 250)
+        """))
+
+    working = get_acc_wide_table(
+        engine,
+        period_type="DAY_ACC",
+        stat_date="2026-06-29",
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        target_period="MONTH",
+        target_source="WORKING",
+    )
+    assessment = get_acc_wide_table(
+        engine,
+        period_type="DAY_ACC",
+        stat_date="2026-06-29",
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        target_period="MONTH",
+        target_source="ASSESSMENT",
+    )
+
+    assert working["rows"][0]["metrics"]["channel_count"] == 80
+    assert working["rows"][0]["targets"]["channel_count"] == 250
+    assert working["target_period"] == "MONTH"
+    assert working["target_source"] == "WORKING"
+    assert working["target_date"] == "2026-06-30"
+    assert assessment["rows"][0]["targets"]["channel_count"] == 200
+    assert assessment["target_period"] == "MONTH"
+    assert assessment["target_source"] == "ASSESSMENT"
+    assert assessment["target_date"] == "2026-06-29"
+
+
+def test_realtime_overview_month_acc_uses_working_month_target():
+    engine = _engine()
+    _insert_month_target_and_acc(engine)
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO target_plan
+                (id, plan_name, scenario, period_type, effective_from,
+                 status, is_realtime)
+            VALUES (3, '当前月目标', 'NORMAL', 'MONTH', '2026-06-30', 'DRAFT', 1)
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (4, 3, 2, 1, 250)
+        """))
+
+    result = get_dashboard_overview(
+        engine,
+        branch_code="AQ",
+        indicator_codes=["channel_count"],
+        include_acc=True,
+    )
+
+    acc_branch = next(row for row in result["acc_rows"] if row["id"] == 2)
+    assert acc_branch["metrics"]["channel_count"] == 80
+    assert acc_branch["targets"]["channel_count"] == 250
+
+
 def test_acc_options_returns_distinct_daily_dates_in_descending_pages():
     engine = _engine()
     with engine.begin() as connection:
@@ -763,7 +843,8 @@ def test_acc_returns_empty_rows_when_no_data_exists_before_yesterday(monkeypatch
 
 
 def _insert_month_target_and_acc(
-    engine, *, acc_date: str = "2026-06-29", acc_value: int = 80
+    engine, *, acc_date: str = "2026-06-29", acc_value: int = 80,
+    include_working: bool = True,
 ):
     with engine.begin() as connection:
         connection.execute(text("""
@@ -787,6 +868,36 @@ def _insert_month_target_and_acc(
             """),
             {"acc_date": acc_date, "acc_value": acc_value},
         )
+        if include_working:
+            connection.execute(text("""
+                INSERT INTO target_plan
+                    (id, plan_name, scenario, period_type, effective_from,
+                     status, is_realtime)
+                VALUES (20, '实时月目标', 'NORMAL', 'MONTH', '2026-06-01',
+                        'DRAFT', 1)
+            """))
+            connection.execute(text("""
+                INSERT INTO metric_target_value
+                    (id, plan_id, node_id, indicator_id, target_value)
+                VALUES (20, 20, 2, 1, 200)
+            """))
+
+
+def _insert_working_day_target(engine, *, target_value: int = 30):
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO target_plan
+                (id, plan_name, scenario, period_type, effective_from,
+                 status, is_realtime)
+            VALUES (10, '实时日目标', 'NORMAL', 'DAY', '2026-06-01',
+                    'DRAFT', 1)
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_target_value
+                (id, plan_id, node_id, indicator_id, target_value)
+            VALUES (100, 10, 4, 1, :target_value),
+                   (101, 10, 5, 1, :target_value)
+        """), {"target_value": target_value})
 
 
 def test_realtime_acc_adds_same_month_baseline_and_uses_month_target():
@@ -821,7 +932,7 @@ def test_realtime_acc_adds_same_month_baseline_and_uses_month_target():
 
 def test_realtime_acc_prefers_selected_working_target():
     engine = _engine()
-    _insert_month_target_and_acc(engine)
+    _insert_month_target_and_acc(engine, include_working=False)
     with engine.begin() as connection:
         connection.execute(text("""
             INSERT INTO target_plan
@@ -844,6 +955,21 @@ def test_realtime_acc_prefers_selected_working_target():
     )
 
     assert result["rows"][0]["targets"]["channel_count"] == 250
+
+
+def test_realtime_target_does_not_fallback_to_assessment_version():
+    engine = _engine()
+    _insert_month_target_and_acc(engine, include_working=False)
+
+    result = get_current_with_changes(
+        engine,
+        node_type="BRANCH",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+        value_mode="REALTIME_ACC",
+    )
+
+    assert result["rows"][0]["targets"]["channel_count"] is None
 
 
 def test_realtime_acc_loads_only_month_target(monkeypatch):

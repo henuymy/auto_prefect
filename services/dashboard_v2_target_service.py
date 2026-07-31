@@ -169,7 +169,12 @@ def load_v2_working_target_values(
     node_ids: Iterable[int] | None = None,
     indicator_ids: Iterable[int] | None = None,
 ) -> tuple[TargetPlan | None, dict[tuple[int, int], Decimal]]:
-    """Return the mutable target used by live, unclosed-period views."""
+    """Return only the selected mutable target used by live views.
+
+    A missing working draft is an explicit configuration gap.  It must not be
+    silently replaced with an assessment version because that would make a
+    live page appear configured while using a different business rule.
+    """
     plan = resolve_v2_working_target_plan(
         session,
         business_date=business_date,
@@ -177,16 +182,7 @@ def load_v2_working_target_values(
         scenario=scenario,
     )
     if plan is None:
-        # Existing installations may not yet have a selected realtime draft.
-        # Keep current boards usable until the operator selects one.
-        return load_v2_target_values(
-            session,
-            business_date=business_date,
-            period_type=period_type,
-            scenario=scenario,
-            node_ids=node_ids,
-            indicator_ids=indicator_ids,
-        )
+        return None, {}
     return plan, _target_plan_values(
         session,
         plan=plan,

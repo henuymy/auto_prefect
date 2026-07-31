@@ -18,6 +18,8 @@ def test_cumulative_mode_queries_selected_daily_accumulation_date():
     assert 'const [cumulativeAsOf, setCumulativeAsOf] = useState("");' in source
     assert 'const [cumulativeInput, setCumulativeInput] = useState("");' in source
     assert '"DAY_ACC",\n            cumulativeAsOf || undefined,' in source
+    assert 'targetScenario,\n            "MONTH",\n            "ASSESSMENT",' in source
+    assert 'targetScenario,\n                  "MONTH",\n                  "WORKING",' in source
     assert 'cumulativeValue={cumulativeInput}' in source
     cumulative_only_cache_as_of = '''asOf: dataTimeMode === "history"
       ? historyAsOf
@@ -27,6 +29,14 @@ def test_cumulative_mode_queries_selected_daily_accumulation_date():
     normalized_source = "\n".join(line.lstrip() for line in source.splitlines())
     normalized_contract = "\n".join(line.lstrip() for line in cumulative_only_cache_as_of.splitlines())
     assert normalized_source.count(normalized_contract) == 2
+
+
+def test_cockpit_labels_stored_accumulation_as_a_baseline():
+    source = COCKPIT.read_text(encoding="utf-8")
+
+    assert "累计基线" in source
+    assert "截至最近已完成采集日的 DAY_ACC，不含当天实时" in source
+    assert "<strong>当月累计</strong><span>前一日期累计 + 当日实时</span>" not in source
 
 
 def test_cumulative_mode_uses_lazy_available_date_selector():

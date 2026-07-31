@@ -1046,6 +1046,8 @@ def acc_dashboard(
     stat_date: str | None = Query(None),
     indicator_codes: str | None = Query(None),
     target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
+    target_period: str | None = Query(None, pattern="^(DAY|MONTH)$"),
+    target_source: str = Query("ASSESSMENT", pattern="^(WORKING|ASSESSMENT)$"),
 ):
     normalized = str(period_type or "").strip().upper()
     if normalized not in {"DAY_ACC", "MONTH"}:
@@ -1066,6 +1068,8 @@ def acc_dashboard(
                 stat_date,
                 tuple(parsed_codes or ()),
                 target_scenario,
+                target_period,
+                target_source,
             ),
             lambda: get_acc_wide_table(
                 engine,
@@ -1075,6 +1079,8 @@ def acc_dashboard(
                 stat_date=stat_date,
                 indicator_codes=parsed_codes,
                 target_scenario=target_scenario,
+                target_period=target_period,
+                target_source=target_source,
             ),
         )
     except SQLAlchemyError as exc:

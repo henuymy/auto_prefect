@@ -1375,6 +1375,8 @@ export function DashboardCockpit() {
             undefined,
             requestedIndicatorCodes,
             targetScenario,
+            "MONTH",
+            "ASSESSMENT",
           ).then((acc) => {
             const allRows = acc.rows.map((row) => ({
               ...row,
@@ -1438,6 +1440,8 @@ export function DashboardCockpit() {
                   undefined,
                   requestedIndicatorCodes,
                   targetScenario,
+                  "MONTH",
+                  "WORKING",
                 ),
               ]).then(([changes, acc]) => [changes, acc.rows] as const)
             : await getDashboardWithChanges(
@@ -1493,6 +1497,8 @@ export function DashboardCockpit() {
                 parentId,
                 requestedIndicatorCodes,
                 targetScenario,
+                "MONTH",
+                "WORKING",
               ),
             ]).then(([changes, acc]) => [changes, acc.rows] as const)
           : await getDashboardWithChanges(
@@ -1649,6 +1655,8 @@ export function DashboardCockpit() {
                     undefined,
                     requestedIndicatorCodes,
                     targetScenario,
+                    "MONTH",
+                    "WORKING",
                   )
                     .then((accData) => accData.rows)
                     .catch(() => [])
@@ -2337,7 +2345,7 @@ export function DashboardCockpit() {
       {SHOW_MONTH_ACCUMULATION && monthLevels.length > 0 && (
         <main className="board-grid">
           <div className="section-title" style={{ gridColumn: "1 / -1", marginBottom: -6 }}>
-            <strong>当月累计</strong><span>前一日期累计 + 当日实时</span>
+            <strong>累计基线</strong><span>截至最近已完成采集日的 DAY_ACC，不含当天实时</span>
           </div>
           {monthLevels.map((level) => (
             <LevelPanel

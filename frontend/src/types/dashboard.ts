@@ -51,6 +51,7 @@ export type UpdateIndicatorSettingsPayload = {
 
 export type DashboardTargetScenario = "NORMAL" | "PK";
 export type DashboardTargetPeriod = "DAY" | "MONTH";
+export type DashboardTargetSource = "WORKING" | "ASSESSMENT";
 export type DashboardTargetPlanStatus = "DRAFT" | "ACTIVE" | "RETIRED";
 
 export type DashboardTargetPlan = {
@@ -260,6 +261,9 @@ export type DashboardAccResponse = {
   through_date: string;
   stat_date: string | null;
   is_fallback: boolean;
+  target_period: DashboardTargetPeriod;
+  target_source: DashboardTargetSource;
+  target_date: string | null;
 };
 
 export type DashboardOverviewResponse = {
