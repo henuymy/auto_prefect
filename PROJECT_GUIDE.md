@@ -212,6 +212,8 @@ C:\AutoNotifyRuntime\
 
 当前实现没有在 `metric_snapshot`/`metric_acc` 中保存 `assessment_plan_id`，历史完成率是在查询时按业务日期解析 `ACTIVE/RETIRED`。因此同一生效日期的修订可能重新计算该日期结果；只有实施上述结算快照绑定后，才能保证采集时口径永久冻结。
 
+自定义指标必须把三种维度分开：`IndicatorV2.enabled` 表示源指标是否独立展示，`IndicatorV2.storage_mode` 表示结果落库还是仅作为公式组件，`IndicatorFormulaComponent` 表示被哪些自定义指标引用。公式编辑只写入源指标和系数，不得通过组件请求修改源指标全局 `storage_mode`；导入文件中的旧 `source_storage_mode` 只能用于一致性校验。已归档源指标禁止建立新公式引用，独立停用的源指标仍可作为已有公式组件使用并在界面显示依赖提示。
+
 `effective_from`/`effective_to` 表示包含两端的业务使用区间，不是发布时刻。解析候选考核版本时按优先级、较晚生效日期、较高版本号和记录 ID 取胜。发布新版本时，服务负责截断与新版本相交的较早时间线，并将其标为 `RETIRED`；同一生效日期的修订保留旧版本审计记录，较高版本号的修订在查询时胜出。业务上应避免不必要的重叠方案，优先使用连续、不重叠的日期区间；优先级只能表达有明确审批依据的覆盖规则。
 
 指标历史事实与考核目标版本的不可变边界必须写清：`metric_snapshot`、`metric_acc` 和采集 Run 不会因发布目标而更新；历史完成率则在查询时按业务日期解析考核版本，当前没有在指标事实表中持久化 `assessment_plan_id`。因此，未来生效的新版本不会改变此前日期的完成率，但“同一生效日”的修订会用新版本重新计算该日期范围的完成率。若业务要求结算结果永久绑定采集当时的考核版本，必须设计迁移：在结算/快照写入时固化考核版本 ID，并让历史查询优先读该绑定；在完成该迁移前，禁止声称当前实现提供采集时版本冻结。
@@ -289,6 +291,13 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-07-31 - 分离自定义指标依赖与源指标存储角色
+
+- 原因：公式组件行修改源指标全局 `storage_mode` 会影响其他自定义指标，且“独立展示”“结果落库”“公式引用”容易被误认为互斥状态。
+- 修改内容：公式编辑器只维护源指标和系数，增加公式预览与依赖状态；源指标页单独维护存储角色；已归档源指标禁止建立新公式引用；旧导入字段仅做一致性校验。
+- 涉及文件：`frontend/src/dashboard/DashboardCockpit.tsx`、`frontend/src/dashboard/dashboard-cockpit.css`、`frontend/src/types/dashboard.ts`、`backend/routers/dashboard.py`、`services/dashboard_v2_custom_indicator_service.py`、`scripts/tools/dashboard/import_v2_indicator_config.py` 及相关测试。
+- 验证：目标查询、指标导入和 UI 契约测试 `43 passed`；前端 Vitest `34 passed`，TypeScript 检查通过。
 
 ### 2026-07-31 - 明确目标体系建表边界
 

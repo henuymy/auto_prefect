@@ -64,3 +64,11 @@ def test_target_editor_only_edits_execution_plans_and_keeps_audit_separate():
     assert '以此版本创建草稿' in source
     assert '执行方案' not in source
     assert '复制为草稿并编辑' not in source
+
+
+def test_custom_formula_keeps_source_storage_role_outside_formula_rows():
+    source = COCKPIT.read_text(encoding="utf-8")
+
+    assert "custom-component-dependency" in source
+    assert "公式预览" in source
+    assert "source_storage_mode" not in source

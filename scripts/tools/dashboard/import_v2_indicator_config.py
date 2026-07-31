@@ -141,12 +141,14 @@ def import_indicator_config(
                     if source_code in seen_sources:
                         raise ValueError(f"自建指标 {code} 重复引用源指标: {source_code}")
                     seen_sources.add(source_code)
-                    source_mode = str(
-                        component.get("source_storage_mode") or source.storage_mode
+                    legacy_source_mode = str(
+                        component.get("source_storage_mode") or ""
                     ).strip().upper()
-                    if source_mode not in {"STORE", "COMPONENT"}:
-                        raise ValueError(f"源指标 {source_code} storage_mode 非法")
-                    source.storage_mode = source_mode
+                    if legacy_source_mode and legacy_source_mode != source.storage_mode:
+                        raise ValueError(
+                            f"源指标 {source_code} 的 storage_mode 必须在指标设置中统一配置，"
+                            f"不能由公式组件覆盖: {legacy_source_mode} != {source.storage_mode}"
+                        )
                     session.add(
                         IndicatorFormulaComponent(
                             custom_indicator_id=indicator.id,

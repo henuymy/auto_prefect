@@ -121,6 +121,9 @@ type StorageMode = "STORE" | "COMPONENT";
 type SourceMetricOption = {
   code: string;
   name: string;
+  enabled: boolean;
+  source_active: boolean;
+  storage_mode: StorageMode;
 };
 type SourceFilterMode = "all" | "enabled" | "disabled" | "store" | "component";
 const COEFFICIENT_PATTERN = /^-?\d+(\.\d{0,4})?$/;
@@ -2827,7 +2830,6 @@ type CustomIndicatorDraft = {
   components: Array<{
     source_code: string;
     coefficient: string;
-    source_storage_mode: StorageMode;
   }>;
 };
 
@@ -3474,7 +3476,7 @@ function emptyCustomDraft(): CustomIndicatorDraft {
     code: "",
     name: "",
     enabled: true,
-    components: [{ source_code: "", coefficient: "1", source_storage_mode: "COMPONENT" }],
+    components: [{ source_code: "", coefficient: "1" }],
   };
 }
 
@@ -3487,9 +3489,41 @@ function draftFromCustomIndicator(indicator: DashboardCustomIndicator): CustomIn
       ? indicator.components.map((component) => ({
           source_code: component.source_code,
           coefficient: String(component.coefficient ?? 1),
-          source_storage_mode: component.source_storage_mode || "COMPONENT",
         }))
       : emptyCustomDraft().components,
+  };
+}
+
+function sourceRoleLabel(storageMode: StorageMode) {
+  return storageMode === "STORE" ? "结果落库" : "公式组件";
+}
+
+function sourceDependencyState(option: SourceMetricOption | undefined) {
+  if (!option) {
+    return {
+      label: "待选择",
+      detail: "请选择一个源指标",
+      tone: "is-muted",
+    };
+  }
+  if (!option.source_active) {
+    return {
+      label: "已归档",
+      detail: "该源指标已从当前指标清单归档",
+      tone: "is-error",
+    };
+  }
+  if (!option.enabled) {
+    return {
+      label: "独立停用",
+      detail: "不会独立展示，但仍可作为公式组件参与计算",
+      tone: "is-warning",
+    };
+  }
+  return {
+    label: "依赖正常",
+    detail: "源指标可用于公式计算",
+    tone: "is-ok",
   };
 }
 
@@ -3536,8 +3570,15 @@ function CustomIndicatorManager({
       .map((indicator) => ({
         code: indicator.code,
         name: indicator.name || indicator.code,
+        enabled: indicator.enabled,
+        source_active: indicator.source_active,
+        storage_mode: indicator.storage_mode,
       })),
     [catalog],
+  );
+  const sourceByCode = useMemo(
+    () => new Map(sourceOptions.map((option) => [option.code, option])),
+    [sourceOptions],
   );
   const componentSourceCodes = useMemo(() => {
     const codes = new Set<string>();
@@ -3575,6 +3616,16 @@ function CustomIndicatorManager({
       component: sourceRows.filter((indicator) => componentSourceCodes.has(indicator.code)).length,
     };
   }, [catalog, componentSourceCodes]);
+  const formulaPreview = useMemo(() => {
+    const parts = draft.components
+      .filter((component) => component.source_code.trim())
+      .map((component) => {
+        const source = sourceByCode.get(component.source_code.trim());
+        const coefficient = component.coefficient.trim() || "1";
+        return `${coefficient} × ${source?.name || component.source_code.trim()}`;
+      });
+    return parts.join(" + ");
+  }, [draft.components, sourceByCode]);
 
   const updateComponent = (
     index: number,
@@ -3593,7 +3644,7 @@ function CustomIndicatorManager({
       ...current,
       components: [
         ...current.components,
-        { source_code: "", coefficient: "1", source_storage_mode: "COMPONENT" },
+        { source_code: "", coefficient: "1" },
       ],
     }));
   };
@@ -3612,7 +3663,6 @@ function CustomIndicatorManager({
       .map((component) => ({
         source_code: component.source_code.trim(),
         coefficient: Number(component.coefficient || 1),
-        source_storage_mode: component.source_storage_mode,
       }))
       .filter((component) => component.source_code);
     if (!code || !name || !components.length) {
@@ -3667,9 +3717,9 @@ function CustomIndicatorManager({
     patch: { enabled?: boolean; storage_mode?: StorageMode },
   ) => {
     const actionText = patch.enabled != null
-      ? `${patch.enabled ? "启用" : "停用"}源指标「${indicator.name}」`
+      ? `${patch.enabled ? "启用独立展示" : "停用独立展示"}源指标「${indicator.name}」`
       : `将源指标「${indicator.name}」改为${
-          patch.storage_mode === "STORE" ? "落库展示" : "只参与计算"
+          patch.storage_mode === "STORE" ? "结果落库" : "公式组件"
         }`;
     if (!window.confirm(`确定要${actionText}吗？`)) return;
     setBusy(true);
@@ -3692,7 +3742,7 @@ function CustomIndicatorManager({
         <header className="custom-metric-head">
           <div>
             <strong>自定义指标管理</strong>
-            <span>维护自定义指标公式、源指标启停和落库方式</span>
+            <span>维护自定义指标公式；源指标状态与存储角色独立管理</span>
           </div>
           <button type="button" onClick={onClose}>关闭</button>
         </header>
@@ -3742,11 +3792,11 @@ function CustomIndicatorManager({
                     <dd>{sourceStats.total}</dd>
                   </div>
                   <div>
-                    <dt>启用</dt>
+                    <dt>独立展示</dt>
                     <dd>{sourceStats.enabled}</dd>
                   </div>
                   <div>
-                    <dt>落库</dt>
+                    <dt>结果落库</dt>
                     <dd>{sourceStats.store}</dd>
                   </div>
                   <div>
@@ -3772,10 +3822,10 @@ function CustomIndicatorManager({
                   <div className="source-filter-tabs" aria-label="源指标筛选">
                     {[
                       ["all", "全部", sourceStats.total],
-                      ["enabled", "已启用", sourceStats.enabled],
-                      ["disabled", "未启用", sourceStats.disabled],
-                      ["store", "落库", sourceStats.store],
-                      ["component", "公式引用", sourceStats.component],
+                      ["enabled", "独立展示", sourceStats.enabled],
+                      ["disabled", "独立停用", sourceStats.disabled],
+                      ["store", "结果落库", sourceStats.store],
+                      ["component", "被公式引用", sourceStats.component],
                     ].map(([key, label, count]) => (
                       <button
                         key={key}
@@ -3805,9 +3855,9 @@ function CustomIndicatorManager({
                         <span>{indicator.code}</span>
                       </div>
                       <div className="source-manager-status">
-                        <span>{indicator.enabled ? "已启用" : "未启用"}</span>
-                        <span>{indicator.storage_mode === "STORE" ? "落库展示" : "只参与计算"}</span>
-                        {componentSourceCodes.has(indicator.code) && <span>公式引用</span>}
+                        <span>{indicator.enabled ? "独立展示" : "独立停用"}</span>
+                        <span>{indicator.storage_mode === "STORE" ? "结果落库" : "公式组件"}</span>
+                        {componentSourceCodes.has(indicator.code) && <span>被公式引用</span>}
                       </div>
                       <label className="source-manager-enable">
                         <input
@@ -3818,7 +3868,7 @@ function CustomIndicatorManager({
                             enabled: event.target.checked,
                           })}
                         />
-                        启用
+                        独立展示
                       </label>
                       <select
                         value={indicator.storage_mode}
@@ -3876,44 +3926,52 @@ function CustomIndicatorManager({
               </button>
             </div>
             <div className="custom-component-list">
-              {draft.components.map((component, index) => (
-                <div key={index} className="custom-component-row">
-                  <SourceMetricPicker
-                    value={component.source_code}
-                    options={sourceOptions}
-                    onChange={(value) => updateComponent(index, { source_code: value })}
-                  />
-                  <input
-                    value={component.coefficient}
-                    onChange={(event) => {
-                      const nextValue = event.target.value.trim();
-                      if (COEFFICIENT_INPUT_PATTERN.test(nextValue)) {
-                        updateComponent(index, { coefficient: nextValue });
-                      }
-                    }}
-                    inputMode="decimal"
-                    placeholder="1"
-                  />
-                  <select
-                    value={component.source_storage_mode}
-                    onChange={(event) => updateComponent(index, {
-                      source_storage_mode: event.target.value as StorageMode,
-                    })}
-                  >
-                    <option value="COMPONENT">只参与计算</option>
-                    <option value="STORE">源指标也落库</option>
-                  </select>
-                  <button
-                    type="button"
-                    title="移除"
-                    disabled={draft.components.length <= 1}
-                    onClick={() => removeComponent(index)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
+              {draft.components.map((component, index) => {
+                const source = sourceByCode.get(component.source_code.trim());
+                const dependency = sourceDependencyState(source);
+                return (
+                  <div key={index} className="custom-component-row">
+                    <SourceMetricPicker
+                      value={component.source_code}
+                      options={sourceOptions}
+                      onChange={(value) => updateComponent(index, { source_code: value })}
+                    />
+                    <input
+                      value={component.coefficient}
+                      onChange={(event) => {
+                        const nextValue = event.target.value.trim();
+                        if (COEFFICIENT_INPUT_PATTERN.test(nextValue)) {
+                          updateComponent(index, { coefficient: nextValue });
+                        }
+                      }}
+                      inputMode="decimal"
+                      aria-label={`${source?.name || component.source_code || "源指标"} 系数`}
+                      placeholder="系数"
+                    />
+                    <span
+                      className={`custom-component-dependency ${dependency.tone}`}
+                      title={dependency.detail}
+                    >
+                      {dependency.label}
+                    </span>
+                    <button
+                      type="button"
+                      title="移除"
+                      disabled={draft.components.length <= 1}
+                      onClick={() => removeComponent(index)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
+            {formulaPreview && (
+              <div className="custom-formula-preview">
+                <span>公式预览</span>
+                <strong>{formulaPreview}</strong>
+              </div>
+            )}
             {message && <div className="custom-metric-message">{message}</div>}
             <div className="custom-metric-actions">
               <button type="button" onClick={() => setDraft(emptyCustomDraft())}>清空</button>
@@ -4040,6 +4098,7 @@ function SourceMetricPicker({
                 type="button"
                 role="option"
                 aria-selected={option.code === value}
+                disabled={!option.source_active}
                 className={option.code === value ? "active" : ""}
                 onClick={() => {
                   onChange(option.code);
@@ -4048,7 +4107,10 @@ function SourceMetricPicker({
                 }}
               >
                 <strong>{option.name}</strong>
-                <span>{option.code}</span>
+                <span>
+                  {option.code} · {option.source_active ? (option.enabled ? "可用" : "独立停用") : "已归档"}
+                  {` · ${sourceRoleLabel(option.storage_mode)}`}
+                </span>
               </button>
             ))}
             {!filteredOptions.length && (

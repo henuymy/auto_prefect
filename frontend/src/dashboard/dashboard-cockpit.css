@@ -2516,6 +2516,11 @@ body::-webkit-scrollbar-button,
   color: #fff;
 }
 
+.source-metric-options button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .source-metric-options strong,
 .source-metric-options span {
   overflow: hidden;
@@ -2581,7 +2586,7 @@ body::-webkit-scrollbar-button,
 .custom-component-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(430px, 1fr) 90px minmax(180px, 0.38fr) 38px;
+  grid-template-columns: minmax(430px, 1fr) 100px minmax(120px, 160px) 38px;
   gap: 10px;
   align-items: start;
 }
@@ -2604,6 +2609,72 @@ body::-webkit-scrollbar-button,
 .custom-component-row > button:disabled {
   opacity: 0.38;
   cursor: not-allowed;
+}
+
+.custom-component-dependency {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.58);
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.custom-component-dependency.is-ok {
+  border-color: rgba(34, 197, 94, 0.28);
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.custom-component-dependency.is-muted {
+  color: #94a3b8;
+}
+
+.custom-component-dependency.is-warning {
+  border-color: rgba(251, 191, 36, 0.28);
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.custom-component-dependency.is-error {
+  border-color: rgba(248, 113, 113, 0.32);
+  color: #fecaca;
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.custom-formula-preview {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 2px 0 4px;
+  border-left: 2px solid rgba(96, 165, 250, 0.56);
+  padding: 8px 10px;
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.custom-formula-preview span {
+  flex: 0 0 auto;
+  color: #8ea0b8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.custom-formula-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .custom-metric-message {

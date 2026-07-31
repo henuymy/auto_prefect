@@ -87,7 +87,6 @@ _version_state_cache: dict[str, Any] | None = None
 class CustomIndicatorComponentPayload(BaseModel):
     source_code: str = Field(..., min_length=1, max_length=100)
     coefficient: float = 1
-    source_storage_mode: str | None = Field(None, pattern="^(STORE|COMPONENT)$")
 
 
 class CustomIndicatorPayload(BaseModel):

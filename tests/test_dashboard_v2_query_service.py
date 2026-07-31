@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import Session
+
+from models.dashboard_v2 import IndicatorV2
 
 from services import dashboard_v2_query_service
 
@@ -648,6 +651,32 @@ def test_v2_custom_indicator_can_be_saved_and_is_archived_instead_of_deleted():
         "archived": True,
     }
     assert listed["indicators"][0]["enabled"] is False
+
+
+def test_custom_formula_does_not_override_source_storage_mode():
+    engine = _engine()
+
+    saved = upsert_custom_indicator(
+        engine,
+        code="store_mode_guard",
+        name="落库方式保护",
+        components=[
+            {
+                "source_code": "channel_count",
+                "coefficient": 1,
+                "source_storage_mode": "COMPONENT",
+            }
+        ],
+    )
+
+    with Session(engine) as session:
+        source = session.scalar(
+            select(IndicatorV2).where(IndicatorV2.code == "channel_count")
+        )
+
+    assert source is not None
+    assert source.storage_mode == "STORE"
+    assert saved["components"][0]["source_storage_mode"] == "STORE"
 
 
 def test_acc_uses_latest_stat_date_through_yesterday_and_attaches_targets(monkeypatch):

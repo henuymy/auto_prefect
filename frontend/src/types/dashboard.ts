@@ -21,7 +21,8 @@ export type CustomIndicatorComponent = {
   source_code: string;
   source_name?: string;
   coefficient: number;
-  source_storage_mode?: "STORE" | "COMPONENT" | null;
+  source_enabled?: boolean;
+  source_active?: boolean;
 };
 
 export type DashboardCustomIndicator = DashboardCatalogIndicator & {
@@ -40,7 +41,6 @@ export type SaveCustomIndicatorPayload = {
   components: Array<{
     source_code: string;
     coefficient?: number;
-    source_storage_mode?: "STORE" | "COMPONENT";
   }>;
 };
 

@@ -24,6 +24,8 @@ def _components_for(
             source.code,
             source.name,
             source.storage_mode,
+            source.enabled,
+            source.source_active,
             IndicatorFormulaComponent.coefficient,
         )
         .join(source, source.id == IndicatorFormulaComponent.source_indicator_id)
@@ -40,6 +42,10 @@ def _components_for(
                 "source_code": row.code,
                 "source_name": row.name,
                 "coefficient": float(row.coefficient),
+                "source_enabled": row.enabled,
+                "source_active": row.source_active,
+                # Kept in the response for old clients; it is no longer
+                # editable as part of a formula component.
                 "source_storage_mode": row.storage_mode,
             }
         )
@@ -111,6 +117,9 @@ def upsert_custom_indicator(
         invalid = [row.code for row in sources if row.indicator_type != "SOURCE"]
         if invalid:
             raise ValueError(f"组成指标必须是源指标: {', '.join(invalid)}")
+        archived = [row.code for row in sources if not row.source_active]
+        if archived:
+            raise ValueError(f"组成指标包含已归档源指标: {', '.join(archived)}")
         if normalized_code in source_by_code:
             raise ValueError("自建指标不能引用自身")
         indicator = session.scalar(
@@ -148,8 +157,6 @@ def upsert_custom_indicator(
         )
         for index, item in enumerate(normalized_components):
             source = source_by_code[item["source_code"]]
-            if item.get("source_storage_mode"):
-                source.storage_mode = item["source_storage_mode"]
             session.add(
                 IndicatorFormulaComponent(
                     custom_indicator_id=indicator.id,
