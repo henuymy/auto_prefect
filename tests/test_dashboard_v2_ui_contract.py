@@ -69,6 +69,10 @@ def test_target_editor_only_edits_execution_plans_and_keeps_audit_separate():
 def test_custom_formula_keeps_source_storage_role_outside_formula_rows():
     source = COCKPIT.read_text(encoding="utf-8")
     css = Path("frontend/src/dashboard/dashboard-cockpit.css").read_text(encoding="utf-8")
+    manager = source[
+        source.index("function CustomIndicatorManager"):
+        source.index("function SourceMetricPicker")
+    ]
 
     assert "custom-component-dependency" in source
     assert "custom-component-columns" in source
@@ -84,3 +88,8 @@ def test_custom_formula_keeps_source_storage_role_outside_formula_rows():
     assert "source-manager-columns" in source
     assert "grid-template-columns: max-content minmax(0, 1fr);" in css
     assert "overflow-wrap: anywhere;" in css
+    assert "const [customMessage, setCustomMessage]" in manager
+    assert "const [sourceMessage, setSourceMessage]" in manager
+    assert "{sourceMessage &&" in manager
+    assert "{customMessage &&" in manager
+    assert "setMessage(" not in manager

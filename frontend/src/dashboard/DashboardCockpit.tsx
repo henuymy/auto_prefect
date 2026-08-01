@@ -3537,7 +3537,8 @@ function CustomIndicatorManager({
   const [catalog, setCatalog] = useState<DashboardCatalogIndicator[]>([]);
   const [customIndicators, setCustomIndicators] = useState<DashboardCustomIndicator[]>([]);
   const [draft, setDraft] = useState<CustomIndicatorDraft>(() => emptyCustomDraft());
-  const [message, setMessage] = useState("");
+  const [customMessage, setCustomMessage] = useState("");
+  const [sourceMessage, setSourceMessage] = useState("");
   const [managerTab, setManagerTab] = useState<"custom" | "source">("custom");
   const [sourceKeyword, setSourceKeyword] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilterMode>("all");
@@ -3545,7 +3546,8 @@ function CustomIndicatorManager({
 
   const load = useCallback(async () => {
     setBusy(true);
-    setMessage("");
+    setCustomMessage("");
+    setSourceMessage("");
     try {
       const [catalogData, customData] = await Promise.all([
         getDashboardIndicators(true, false),
@@ -3554,7 +3556,9 @@ function CustomIndicatorManager({
       setCatalog(catalogData.indicators);
       setCustomIndicators(customData.indicators);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      const text = error instanceof Error ? error.message : String(error);
+      setCustomMessage(text);
+      setSourceMessage(text);
     } finally {
       setBusy(false);
     }
@@ -3666,30 +3670,30 @@ function CustomIndicatorManager({
       }))
       .filter((component) => component.source_code);
     if (!code || !name || !components.length) {
-      setMessage("请填写编码、名称，并至少选择 1 个源指标");
+      setCustomMessage("请填写编码、名称，并至少选择 1 个源指标");
       return;
     }
     if (components.some((component) => !Number.isFinite(component.coefficient))) {
-      setMessage("系数必须是有效数字");
+      setCustomMessage("系数必须是有效数字");
       return;
     }
     if (draft.components.some((component) => {
       const coefficient = component.coefficient.trim();
       return coefficient && !COEFFICIENT_PATTERN.test(coefficient);
     })) {
-      setMessage("系数最多保留 4 位小数");
+      setCustomMessage("系数最多保留 4 位小数");
       return;
     }
     setBusy(true);
-    setMessage("");
+    setCustomMessage("");
     try {
       await saveDashboardCustomIndicator({ code, name, enabled: draft.enabled, components });
       setDraft(emptyCustomDraft());
       await load();
       onSaved();
-      setMessage("已保存自定义指标");
+      setCustomMessage("已保存自定义指标");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setCustomMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -3698,15 +3702,15 @@ function CustomIndicatorManager({
   const removeCustom = async (indicator: DashboardCustomIndicator) => {
     if (!window.confirm(`确定删除自定义指标「${indicator.name}」吗？`)) return;
     setBusy(true);
-    setMessage("");
+    setCustomMessage("");
     try {
       await deleteDashboardCustomIndicator(indicator.code);
       if (draft.code === indicator.code) setDraft(emptyCustomDraft());
       await load();
       onSaved();
-      setMessage("已删除自定义指标");
+      setCustomMessage("已删除自定义指标");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setCustomMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -3719,7 +3723,7 @@ function CustomIndicatorManager({
     const nextEnabled = patch.enabled ?? indicator.enabled;
     const nextStorageMode = patch.storage_mode ?? indicator.storage_mode;
     if (nextEnabled && nextStorageMode === "COMPONENT") {
-      setMessage("独立展示的源指标必须使用结果落库。请先关闭独立展示，再设为仅计算输入。");
+      setSourceMessage("独立展示的源指标必须使用结果落库。请先关闭独立展示，再设为仅计算输入。");
       return;
     }
     const actionText = patch.enabled != null
@@ -3729,14 +3733,14 @@ function CustomIndicatorManager({
         }`;
     if (!window.confirm(`确定要${actionText}吗？`)) return;
     setBusy(true);
-    setMessage("");
+    setSourceMessage("");
     try {
       await updateDashboardIndicatorSettings(indicator.code, patch);
       await load();
       onSaved();
-      setMessage("已保存源指标设置");
+      setSourceMessage("已保存源指标设置");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setSourceMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -3907,7 +3911,7 @@ function CustomIndicatorManager({
                     </div>
                   )}
                 </div>
-                {message && <div className="custom-metric-message">{message}</div>}
+                {sourceMessage && <div className="custom-metric-message">{sourceMessage}</div>}
               </>
             ) : (
             <>
@@ -4001,7 +4005,7 @@ function CustomIndicatorManager({
                   <strong>{formulaPreview}</strong>
                 </div>
               )}
-              {message && <div className="custom-metric-message">{message}</div>}
+              {customMessage && <div className="custom-metric-message">{customMessage}</div>}
               <div className="custom-metric-actions">
                 <button type="button" onClick={() => setDraft(emptyCustomDraft())}>清空</button>
                 <button type="button" className="primary" disabled={busy} onClick={() => void save()}>
