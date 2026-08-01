@@ -2087,14 +2087,20 @@ body::-webkit-scrollbar-button,
   display: block;
 }
 
+.source-manager-summary-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .source-manager-summary strong {
   color: #f8fbff;
-  font-size: 28px;
+  font-size: 24px;
   line-height: 1;
 }
 
 .source-manager-summary span {
-  margin-top: 6px;
+  margin-top: 0;
   color: #94a3b8;
   font-size: 12px;
   font-weight: 800;
@@ -2227,13 +2233,28 @@ body::-webkit-scrollbar-button,
   scrollbar-gutter: stable;
 }
 
+.source-manager-columns {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 110px 172px minmax(132px, 180px);
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 0 14px 6px;
+  color: #7e8ca0;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.source-manager-columns span:not(:first-child) {
+  text-align: center;
+}
+
 .source-manager-form .custom-metric-message {
   flex: 0 0 auto;
 }
 
 .source-manager-row {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 240px 92px 172px;
+  grid-template-columns: minmax(240px, 1fr) 110px 172px minmax(132px, 180px);
   gap: 12px;
   align-items: center;
   min-height: 66px;
@@ -2298,22 +2319,21 @@ body::-webkit-scrollbar-button,
   white-space: nowrap;
 }
 
-.source-manager-row.is-enabled .source-manager-status span:first-child {
-  border-color: rgba(34, 197, 94, 0.28);
-  background: rgba(34, 197, 94, 0.1);
-  color: #86efac;
-}
-
-.source-manager-row.is-component .source-manager-status span:last-child {
-  border-color: rgba(251, 191, 36, 0.28);
-  background: rgba(251, 191, 36, 0.1);
-  color: #fde68a;
-}
-
-.source-manager-row.is-formula-source .source-manager-status span:last-child {
+.source-manager-status span.is-referenced {
   border-color: rgba(96, 165, 250, 0.3);
   background: rgba(59, 130, 246, 0.12);
   color: #bfdbfe;
+}
+
+.source-manager-status span.is-archived {
+  border-color: rgba(248, 113, 113, 0.32);
+  background: rgba(248, 113, 113, 0.1);
+  color: #fecaca;
+}
+
+.source-manager-status span.is-muted {
+  border-color: rgba(148, 163, 184, 0.12);
+  color: #64748b;
 }
 
 .source-manager-enable {
@@ -2572,8 +2592,36 @@ body::-webkit-scrollbar-button,
   margin: 18px 0 10px;
 }
 
+.custom-component-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .custom-component-head strong {
   color: #f8fbff;
+}
+
+.custom-component-title span {
+  color: #7e8ca0;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.custom-component-columns {
+  display: grid;
+  grid-template-columns: minmax(430px, 1fr) 100px minmax(120px, 160px) 38px;
+  gap: 10px;
+  margin-bottom: 5px;
+  padding: 0 10px;
+  color: #7e8ca0;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.custom-component-columns span:nth-child(2),
+.custom-component-columns span:nth-child(3) {
+  text-align: center;
 }
 
 .custom-component-list {
@@ -2651,10 +2699,11 @@ body::-webkit-scrollbar-button,
 }
 
 .custom-formula-preview {
-  display: flex;
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
   gap: 10px;
-  margin: 2px 0 4px;
+  margin: 0 0 10px;
   border-left: 2px solid rgba(96, 165, 250, 0.56);
   padding: 8px 10px;
   background: rgba(37, 99, 235, 0.08);
@@ -2669,12 +2718,11 @@ body::-webkit-scrollbar-button,
 
 .custom-formula-preview strong {
   min-width: 0;
-  overflow: hidden;
   color: #dbeafe;
   font-size: 12px;
   font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .custom-metric-message {
@@ -2702,6 +2750,35 @@ body::-webkit-scrollbar-button,
     #101720 34%
   );
   backdrop-filter: blur(8px);
+}
+
+.custom-metric-editor-footer {
+  position: sticky;
+  z-index: 95;
+  bottom: 0;
+  flex: 0 0 auto;
+  margin: 8px -22px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 12px 22px 16px;
+  background: linear-gradient(
+    180deg,
+    rgba(16, 23, 32, 0.82),
+    #101720 34%
+  );
+  backdrop-filter: blur(8px);
+}
+
+.custom-metric-editor-footer .custom-metric-message {
+  margin: 0 0 10px;
+}
+
+.custom-metric-editor-footer .custom-metric-actions {
+  position: static;
+  margin: 0;
+  border-top: 0;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .custom-metric-actions .primary {
@@ -3217,7 +3294,6 @@ body::-webkit-scrollbar-button,
   }
 
   .custom-metric-grid,
-  .custom-component-row,
   .source-manager-row,
   .target-manager-toolbar,
   .target-value-head,
@@ -3241,6 +3317,27 @@ body::-webkit-scrollbar-button,
 
   .source-manager-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .source-manager-columns,
+  .custom-component-columns {
+    display: none;
+  }
+
+  .custom-component-row {
+    grid-template-columns: minmax(0, 1fr) 100px 38px;
+    gap: 8px;
+  }
+
+  .custom-component-row > .custom-component-dependency {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .custom-component-row > button {
+    grid-column: 3;
+    grid-row: 1;
+    height: 42px;
   }
 
   .source-filter-tabs {
@@ -4020,5 +4117,17 @@ body::-webkit-scrollbar-button,
     margin-left: -14px;
     padding-right: 14px;
     padding-left: 14px;
+  }
+
+  .custom-metric-editor-footer {
+    margin-right: -14px;
+    margin-left: -14px;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .custom-metric-editor-footer .custom-metric-actions {
+    margin: 0;
+    padding: 0;
   }
 }

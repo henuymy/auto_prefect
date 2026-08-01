@@ -3515,13 +3515,13 @@ function sourceDependencyState(option: SourceMetricOption | undefined) {
   }
   if (!option.enabled) {
     return {
-      label: "依赖可用（不独立展示）",
+      label: "可用",
       detail: "不会独立展示，但仍可作为公式依赖参与计算",
       tone: "is-warning",
     };
   }
   return {
-    label: "依赖正常",
+    label: "正常",
     detail: "源指标可用于公式计算",
     tone: "is-ok",
   };
@@ -3790,8 +3790,10 @@ function CustomIndicatorManager({
             </>
             ) : (
               <div className="source-manager-summary">
-                <strong>{sourceIndicators.length}</strong>
-                <span>当前列表</span>
+                <div className="source-manager-summary-total">
+                  <strong>{sourceIndicators.length}</strong>
+                  <span>当前列表</span>
+                </div>
                 <dl>
                   <div>
                     <dt>全部</dt>
@@ -3845,29 +3847,29 @@ function CustomIndicatorManager({
                     ))}
                   </div>
                 </div>
+                <div className="source-manager-columns" aria-hidden="true">
+                  <span>指标</span>
+                  <span>独立展示</span>
+                  <span>数据角色</span>
+                  <span>公式关系</span>
+                </div>
                 <div className="source-manager-list">
                   {sourceIndicators.map((indicator) => (
                     <div
                       key={indicator.code}
                       className={[
                         "source-manager-row",
-                        indicator.enabled ? "is-enabled" : "is-disabled",
-                        indicator.storage_mode === "COMPONENT" ? "is-component" : "",
-                        componentSourceCodes.has(indicator.code) ? "is-formula-source" : "",
+                        indicator.enabled ? "" : "is-disabled",
                       ].filter(Boolean).join(" ")}
                     >
                       <div className="source-manager-name">
                         <strong>{indicator.name}</strong>
                         <span>{indicator.code}</span>
                       </div>
-                      <div className="source-manager-status">
-                        <span>{indicator.enabled ? "独立展示" : "不独立展示"}</span>
-                        <span>{sourceRoleLabel(indicator.storage_mode)}</span>
-                        {componentSourceCodes.has(indicator.code) && <span>被公式引用</span>}
-                      </div>
                       <label className="source-manager-enable">
                         <input
                           type="checkbox"
+                          aria-label={`独立展示 ${indicator.name}`}
                           checked={indicator.enabled}
                           disabled={busy}
                           onChange={(event) => void updateSourceIndicator(indicator, {
@@ -3879,6 +3881,7 @@ function CustomIndicatorManager({
                       <select
                         value={indicator.storage_mode}
                         disabled={busy}
+                        aria-label={`数据角色 ${indicator.name}`}
                         title={indicator.enabled ? "独立展示的源指标必须使用结果落库" : undefined}
                         onChange={(event) => void updateSourceIndicator(indicator, {
                           storage_mode: event.target.value as StorageMode,
@@ -3887,6 +3890,15 @@ function CustomIndicatorManager({
                         <option value="STORE">结果落库</option>
                         <option value="COMPONENT" disabled={indicator.enabled}>仅计算输入</option>
                       </select>
+                      <div className="source-manager-status">
+                        {!indicator.source_active ? (
+                          <span className="is-archived">已归档</span>
+                        ) : componentSourceCodes.has(indicator.code) ? (
+                          <span className="is-referenced">被公式引用</span>
+                        ) : (
+                          <span className="is-muted">—</span>
+                        )}
+                      </div>
                     </div>
                   ))}
                   {!sourceIndicators.length && (
@@ -3926,11 +3938,20 @@ function CustomIndicatorManager({
               </label>
             </div>
             <div className="custom-component-head">
-              <strong>组成指标</strong>
+              <div className="custom-component-title">
+                <strong>组成指标</strong>
+                <span>{draft.components.length} 个</span>
+              </div>
               <button type="button" onClick={addComponent}>
                 <Plus size={14} />
                 添加
               </button>
+            </div>
+            <div className="custom-component-columns" aria-hidden="true">
+              <span>源指标</span>
+              <span>系数</span>
+              <span>依赖状态</span>
+              <span />
             </div>
             <div className="custom-component-list">
               {draft.components.map((component, index) => {
@@ -3973,18 +3994,20 @@ function CustomIndicatorManager({
                 );
               })}
             </div>
-            {formulaPreview && (
-              <div className="custom-formula-preview">
-                <span>公式预览</span>
-                <strong>{formulaPreview}</strong>
+            <div className="custom-metric-editor-footer">
+              {formulaPreview && (
+                <div className="custom-formula-preview">
+                  <span>公式预览</span>
+                  <strong>{formulaPreview}</strong>
+                </div>
+              )}
+              {message && <div className="custom-metric-message">{message}</div>}
+              <div className="custom-metric-actions">
+                <button type="button" onClick={() => setDraft(emptyCustomDraft())}>清空</button>
+                <button type="button" className="primary" disabled={busy} onClick={() => void save()}>
+                  {busy ? "处理中..." : "保存指标"}
+                </button>
               </div>
-            )}
-            {message && <div className="custom-metric-message">{message}</div>}
-            <div className="custom-metric-actions">
-              <button type="button" onClick={() => setDraft(emptyCustomDraft())}>清空</button>
-              <button type="button" className="primary" disabled={busy} onClick={() => void save()}>
-                {busy ? "处理中..." : "保存指标"}
-              </button>
             </div>
             </>
             )}
