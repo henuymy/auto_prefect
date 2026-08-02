@@ -40,6 +40,7 @@ from services.dashboard_v2_query_service import (
 )
 from services.dashboard_v2_target_admin_service import (
     activate_target_plan,
+    build_target_plan_export,
     build_target_template,
     clone_target_plan,
     create_target_plan,
@@ -538,21 +539,53 @@ def save_dashboard_target_values(plan_id: int, payload: TargetValueSavePayload):
         ) from exc
 
 
+def _target_excel_response(content: bytes, *, filename: str) -> StreamingResponse:
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/target-template")
-def dashboard_target_template():
+def dashboard_target_template(plan_id: int | None = Query(None, ge=1)):
     engine = get_dashboard_engine()
     try:
-        content = build_target_template(engine)
+        content = (
+            build_target_plan_export(engine, plan_id=plan_id)
+            if plan_id is not None
+            else build_target_template(engine)
+        )
+    except TargetPlanError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SQLAlchemyError as exc:
         raise HTTPException(
             status_code=503,
             detail=f"目标值模板生成失败: {type(exc).__name__}",
         ) from exc
-    filename = "dashboard-v2-target-template.xlsx"
-    return StreamingResponse(
-        BytesIO(content),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    filename = (
+        f"dashboard-v2-target-plan-{plan_id}.xlsx"
+        if plan_id is not None
+        else "dashboard-v2-target-template.xlsx"
+    )
+    return _target_excel_response(content, filename=filename)
+
+
+@router.get("/target-plans/{plan_id}/export")
+def export_dashboard_target_plan(plan_id: int):
+    engine = get_dashboard_engine()
+    try:
+        content = build_target_plan_export(engine, plan_id=plan_id)
+    except TargetPlanError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"目标方案导出失败: {type(exc).__name__}",
+        ) from exc
+    return _target_excel_response(
+        content,
+        filename=f"dashboard-v2-target-plan-{plan_id}.xlsx",
     )
 
 

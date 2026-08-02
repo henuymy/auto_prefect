@@ -214,7 +214,7 @@ pwsh -File scripts/setup_windows_env.ps1
 | 切换实时目标 | `POST /target-plans/{id}/use-for-realtime` | 仅允许 `DRAFT`，会取消同场景同周期其他草稿的实时标记。 |
 | 发布考核版本 | `POST /target-plans/{id}/activate` | 仅允许非空 `DRAFT`，生成独立只读副本。 |
 | 从版本创建草稿 | `POST /target-plans/{id}/clone` | 复制版本和目标值，新草稿默认不作为实时目标。 |
-| 模板导入导出 | `GET /target-template`、`POST /target-template/import?plan_id=...` | Excel 必须有“目标值”工作表及 `scenario`、`period_type`、`effective_from`、`node_type`、`node_code`、`indicator_code`、`target_value` 字段。 |
+| 模板导入导出 | `GET /target-template`、`GET /target-plans/{id}/export`、`POST /target-template/import?plan_id=...` | 导入兼容标准“目标值”明细表；也兼容“区公司级/网格级/渠道经理级/渠道级/指标参考表”分 Sheet 格式，指标列按“指标参考表”中的名称映射编码。导出当前方案后的文件可直接修改并回传。 |
 
 任何手工 SQL、导入脚本或新 API 都不得绕过这些状态约束去修改 `ACTIVE`/`RETIRED` 的 `MetricTargetValue`。需要批量调整时，先复制为草稿，再导入、切换实时或发布。
 

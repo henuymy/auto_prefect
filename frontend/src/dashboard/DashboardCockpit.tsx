@@ -29,6 +29,7 @@ import {
   cloneDashboardTargetPlan,
   createDashboardTargetPlan,
   deleteDashboardCustomIndicator,
+  dashboardTargetPlanExportUrl,
   dashboardTargetTemplateUrl,
   getDashboardOverview,
   getDashboardDrillDown,
@@ -3324,9 +3325,19 @@ function TargetValueManager({
                 />
               </label>
               {view === "EXECUTION" && <>
+                <button
+                  type="button"
+                  disabled={!selectedPlanId}
+                  onClick={() => {
+                    if (selectedPlanId) window.open(dashboardTargetPlanExportUrl(selectedPlanId), "_blank");
+                  }}
+                >
+                  <Download size={15} />
+                  导出当前计划
+                </button>
                 <button type="button" onClick={() => window.open(dashboardTargetTemplateUrl(), "_blank")}>
                   <Download size={15} />
-                  下载模板
+                  下载标准模板
                 </button>
                 <label className={editable ? "target-import-button" : "target-import-button disabled"}>
                   <FileUp size={15} />

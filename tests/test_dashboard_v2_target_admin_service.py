@@ -8,6 +8,7 @@ from openpyxl import Workbook, load_workbook
 
 from services.dashboard_v2_target_admin_service import (
     activate_target_plan,
+    build_target_plan_export,
     build_target_template,
     clone_target_plan,
     create_target_plan,
@@ -43,6 +44,29 @@ def _xlsx(rows: list[tuple[object, ...]]) -> bytes:
     ])
     for row in rows:
         worksheet.append(row)
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _source_layout_xlsx() -> bytes:
+    workbook = Workbook()
+    branch = workbook.active
+    branch.title = "区公司级"
+    branch.append(["编码", "名称", "渠道数量"])
+    branch.append(["AQ", "中原区", 120])
+    grid = workbook.create_sheet("网格级")
+    grid.append(["编码", "名称", "渠道数量"])
+    grid.append(["AQ701", "须水网格", 60])
+    manager = workbook.create_sheet("渠道经理级")
+    manager.append(["编码", "名称"])
+    manager.append(["M001&AQ701", "张经理"])
+    channel = workbook.create_sheet("渠道级")
+    channel.append(["编码", "名称"])
+    channel.append(["C001", "测试渠道"])
+    indicator = workbook.create_sheet("指标参考表")
+    indicator.append(["编码", "名称"])
+    indicator.append(["channel_count", "渠道数量"])
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -166,6 +190,71 @@ def test_import_template_rejects_invalid_rows():
                 ("NORMAL", "DAY_ACC", "2026-07-01", "BRANCH", "AQ", "channel_count", 120),
             ]),
         )
+
+
+def test_import_source_layout_uses_selected_plan_metadata():
+    engine = _engine()
+    plan = create_target_plan(
+        engine,
+        plan_name="分层日目标",
+        scenario="PK",
+        period_type="DAY",
+        effective_from=date(2026, 7, 1),
+    )
+
+    result = import_target_template(
+        engine,
+        plan_id=plan["id"],
+        content=_source_layout_xlsx(),
+    )
+
+    assert result["imported"] == 2
+    assert result["plan"]["scenario"] == "PK"
+    values = get_target_values(engine, plan_id=plan["id"], indicator_code="channel_count")
+    assert {
+        (row["node_type"], row["node_code"], row["target_value"])
+        for row in values["rows"]
+        if row["target_value"] is not None
+    } == {
+        ("BRANCH", "AQ", 120.0),
+        ("GRID", "AQ701", 60.0),
+    }
+
+
+def test_plan_export_round_trips_through_source_layout_import():
+    engine = _engine()
+    source = create_target_plan(
+        engine,
+        plan_name="待导出日目标",
+        scenario="NORMAL",
+        period_type="DAY",
+        effective_from=date(2026, 7, 1),
+    )
+    save_target_values(engine, plan_id=source["id"], values=[
+        {"node_id": 2, "indicator_id": 1, "target_value": 120},
+        {"node_id": 3, "indicator_id": 1, "target_value": 60},
+    ])
+
+    content = build_target_plan_export(engine, plan_id=source["id"])
+    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        assert workbook.sheetnames == ["区公司级", "网格级", "渠道经理级", "渠道级", "指标参考表"]
+        assert list(workbook["区公司级"].values)[:2] == [
+            ("编码", "名称", "渠道数量"),
+            ("AQ", "中原区", 120),
+        ]
+    finally:
+        workbook.close()
+
+    target = create_target_plan(
+        engine,
+        plan_name="回传日目标",
+        scenario="NORMAL",
+        period_type="DAY",
+        effective_from=date(2026, 7, 1),
+    )
+    result = import_target_template(engine, plan_id=target["id"], content=content)
+    assert result["imported"] == 2
 
 
 def test_list_target_plans_returns_value_counts():

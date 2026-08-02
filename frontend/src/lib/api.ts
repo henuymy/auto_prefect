@@ -282,6 +282,10 @@ export function dashboardTargetTemplateUrl() {
   return `${API_BASE}/api/dashboard/target-template`;
 }
 
+export function dashboardTargetPlanExportUrl(planId: number) {
+  return `${API_BASE}/api/dashboard/target-plans/${encodeURIComponent(String(planId))}/export`;
+}
+
 export async function importDashboardTargetTemplate(planId: number, file: File) {
   const formData = new FormData();
   formData.append("file", file);

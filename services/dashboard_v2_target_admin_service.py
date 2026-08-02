@@ -16,7 +16,7 @@ from sqlalchemy import Engine, and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from models.dashboard_v2 import HierarchyNode, IndicatorV2, MetricTargetValue, TargetPlan
-from services.dashboard_metrics import parse_metric_value
+from services.dashboard_metrics import MetricValueError, parse_metric_value
 from services.dashboard_v2_target_service import (
     TargetPlanError,
     activate_v2_target_plan_in_session,
@@ -27,6 +27,16 @@ from services.dashboard_v2_target_service import (
 VALID_SCENARIOS = {"NORMAL", "PK"}
 VALID_TARGET_PERIODS = {"DAY", "MONTH"}
 VALID_NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
+SOURCE_TARGET_SHEETS = (
+    ("区公司级", "BRANCH"),
+    ("网格级", "GRID"),
+    ("渠道经理级", "CHANNEL_MANAGER"),
+    ("渠道级", "CHANNEL"),
+)
+SOURCE_TARGET_SHEET_TYPES = {
+    **dict(SOURCE_TARGET_SHEETS),
+    "市公司级": "CITY",
+}
 
 
 @dataclass(frozen=True)
@@ -493,83 +503,318 @@ def build_target_template(engine: Engine) -> bytes:
     return output.getvalue()
 
 
-def read_target_excel_rows(content: bytes) -> list[TargetExcelRow]:
-    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+def build_target_plan_export(engine: Engine, *, plan_id: int) -> bytes:
+    """Export a plan in the business workbook layout accepted by the importer."""
+    with Session(engine) as session:
+        plan = session.get(TargetPlan, plan_id)
+        if plan is None:
+            raise TargetPlanError(f"目标方案不存在: {plan_id}")
+        nodes = session.scalars(
+            select(HierarchyNode)
+            .where(
+                HierarchyNode.enabled.is_(True),
+                HierarchyNode.metric_enabled.is_(True),
+            )
+            .order_by(
+                HierarchyNode.level_no,
+                HierarchyNode.sort_order,
+                HierarchyNode.node_code,
+            )
+        ).all()
+        indicators = session.scalars(
+            select(IndicatorV2)
+            .where(IndicatorV2.enabled.is_(True))
+            .order_by(IndicatorV2.sort_order, IndicatorV2.code)
+        ).all()
+        target_values = session.scalars(
+            select(MetricTargetValue).where(MetricTargetValue.plan_id == plan_id)
+        ).all()
+
+    nodes_by_id = {node.id: node for node in nodes}
+    indicators_by_id = {indicator.id: indicator for indicator in indicators}
+    values_by_key = {
+        (target.node_id, target.indicator_id): target.target_value
+        for target in target_values
+        if target.node_id in nodes_by_id and target.indicator_id in indicators_by_id
+    }
+    used_indicators_by_type: dict[str, set[int]] = {}
+    for node_id, indicator_id in values_by_key:
+        node = nodes_by_id[node_id]
+        used_indicators_by_type.setdefault(node.node_type, set()).add(indicator_id)
+
+    sheet_types = list(SOURCE_TARGET_SHEETS)
+    if used_indicators_by_type.get("CITY"):
+        sheet_types.insert(0, ("市公司级", "CITY"))
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    header_fill = PatternFill("solid", fgColor="2563EB")
+    header_font = Font(name="Microsoft YaHei", bold=True, color="FFFFFF")
+
+    for sheet_name, node_type in sheet_types:
+        worksheet = workbook.create_sheet(sheet_name)
+        type_nodes = [node for node in nodes if node.node_type == node_type]
+        type_indicator_ids = used_indicators_by_type.get(node_type, set())
+        type_indicators = [
+            indicator for indicator in indicators if indicator.id in type_indicator_ids
+        ]
+        headers = ["编码", "名称", *[indicator.name for indicator in type_indicators]]
+        for column, header in enumerate(headers, 1):
+            cell = worksheet.cell(row=1, column=column, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            worksheet.column_dimensions[get_column_letter(column)].width = (
+                24 if column < 3 else 18
+            )
+        for row_index, node in enumerate(type_nodes, 2):
+            worksheet.cell(row=row_index, column=1, value=node.node_code)
+            worksheet.cell(row=row_index, column=2, value=node.node_name)
+            for column, indicator in enumerate(type_indicators, 3):
+                target_value = values_by_key.get((node.id, indicator.id))
+                if target_value is not None:
+                    worksheet.cell(
+                        row=row_index,
+                        column=column,
+                        value=_decimal_to_float(target_value),
+                    )
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{max(2, len(type_nodes) + 1)}"
+
+    references = workbook.create_sheet("指标参考表")
+    for column, header in enumerate(["编码", "名称"], 1):
+        cell = references.cell(row=1, column=column, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        references.column_dimensions[get_column_letter(column)].width = 28
+    for row_index, indicator in enumerate(indicators, 2):
+        references.cell(row=row_index, column=1, value=indicator.code)
+        references.cell(row=row_index, column=2, value=indicator.name)
+    references.freeze_panes = "A2"
+    references.auto_filter.ref = f"A1:B{max(2, len(indicators) + 1)}"
+
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _read_normalized_target_excel_rows(workbook) -> list[TargetExcelRow]:
+    worksheet = workbook["目标值"]
+    iterator = worksheet.iter_rows(values_only=True)
     try:
-        if "目标值" not in workbook.sheetnames:
-            raise ValueError("Excel 缺少“目标值”sheet")
-        worksheet = workbook["目标值"]
-        iterator = worksheet.iter_rows(values_only=True)
         headers = [str(value or "").strip() for value in next(iterator)]
-        required = {
-            "scenario",
-            "period_type",
-            "effective_from",
-            "node_type",
-            "node_code",
-            "indicator_code",
-            "target_value",
-        }
-        missing = sorted(required - set(headers))
-        if missing:
-            raise ValueError(f"目标值 sheet 缺少字段: {', '.join(missing)}")
-        rows: list[TargetExcelRow] = []
-        for excel_row_number, values in enumerate(iterator, 2):
-            raw = dict(zip(headers, values))
-            if not any(value is not None for value in raw.values()):
-                continue
-            scenario = str(raw.get("scenario") or "").strip().upper()
-            period_type = str(raw.get("period_type") or "").strip().upper()
-            node_type = str(raw.get("node_type") or "").strip().upper()
-            node_code = str(raw.get("node_code") or "").strip()
-            indicator_code = str(raw.get("indicator_code") or "").strip()
-            if scenario not in VALID_SCENARIOS:
-                raise ValueError(f"第 {excel_row_number} 行: scenario 只支持 NORMAL/PK")
-            if period_type not in VALID_TARGET_PERIODS:
-                raise ValueError(f"第 {excel_row_number} 行: period_type 只支持 DAY/MONTH")
-            if node_type not in VALID_NODE_TYPES:
-                raise ValueError(f"第 {excel_row_number} 行: node_type 非法")
-            if not node_code:
-                raise ValueError(f"第 {excel_row_number} 行: node_code 不能为空")
-            if not indicator_code:
-                raise ValueError(f"第 {excel_row_number} 行: indicator_code 不能为空")
-            raw_effective_from = raw.get("effective_from")
-            if isinstance(raw_effective_from, datetime):
-                effective_from = raw_effective_from.date()
-            elif isinstance(raw_effective_from, date):
-                effective_from = raw_effective_from
-            else:
-                try:
-                    effective_from = date.fromisoformat(str(raw_effective_from))
-                except ValueError as exc:
-                    raise ValueError(
-                        f"第 {excel_row_number} 行: effective_from 不是有效日期"
-                    ) from exc
+    except StopIteration as exc:
+        raise ValueError("目标值 sheet 没有表头") from exc
+    required = {
+        "scenario",
+        "period_type",
+        "effective_from",
+        "node_type",
+        "node_code",
+        "indicator_code",
+        "target_value",
+    }
+    missing = sorted(required - set(headers))
+    if missing:
+        raise ValueError(f"目标值 sheet 缺少字段: {', '.join(missing)}")
+    rows: list[TargetExcelRow] = []
+    for excel_row_number, values in enumerate(iterator, 2):
+        raw = dict(zip(headers, values))
+        if not any(value is not None for value in raw.values()):
+            continue
+        scenario = str(raw.get("scenario") or "").strip().upper()
+        period_type = str(raw.get("period_type") or "").strip().upper()
+        node_type = str(raw.get("node_type") or "").strip().upper()
+        node_code = str(raw.get("node_code") or "").strip()
+        indicator_code = str(raw.get("indicator_code") or "").strip()
+        if scenario not in VALID_SCENARIOS:
+            raise ValueError(f"第 {excel_row_number} 行: scenario 只支持 NORMAL/PK")
+        if period_type not in VALID_TARGET_PERIODS:
+            raise ValueError(f"第 {excel_row_number} 行: period_type 只支持 DAY/MONTH")
+        if node_type not in VALID_NODE_TYPES:
+            raise ValueError(f"第 {excel_row_number} 行: node_type 非法")
+        if not node_code:
+            raise ValueError(f"第 {excel_row_number} 行: node_code 不能为空")
+        if not indicator_code:
+            raise ValueError(f"第 {excel_row_number} 行: indicator_code 不能为空")
+        raw_effective_from = raw.get("effective_from")
+        if isinstance(raw_effective_from, datetime):
+            effective_from = raw_effective_from.date()
+        elif isinstance(raw_effective_from, date):
+            effective_from = raw_effective_from
+        else:
             try:
-                target_value = parse_metric_value(raw.get("target_value"))
+                effective_from = date.fromisoformat(str(raw_effective_from))
             except ValueError as exc:
                 raise ValueError(
-                    f"第 {excel_row_number} 行: target_value 不是有效数值"
+                    f"第 {excel_row_number} 行: effective_from 不是有效日期"
                 ) from exc
-            rows.append(
-                TargetExcelRow(
-                    row_number=excel_row_number,
-                    scenario=scenario,
-                    period_type=period_type,
-                    effective_from=effective_from,
-                    node_type=node_type,
-                    node_code=node_code,
-                    indicator_code=indicator_code,
-                    target_value=target_value,
-                )
+        try:
+            target_value = parse_metric_value(raw.get("target_value"))
+        except (ValueError, MetricValueError) as exc:
+            raise ValueError(
+                f"第 {excel_row_number} 行: target_value 不是有效数值"
+            ) from exc
+        rows.append(
+            TargetExcelRow(
+                row_number=excel_row_number,
+                scenario=scenario,
+                period_type=period_type,
+                effective_from=effective_from,
+                node_type=node_type,
+                node_code=node_code,
+                indicator_code=indicator_code,
+                target_value=target_value,
             )
-        return rows
+        )
+    return rows
+
+
+def _first_nonempty_row(worksheet) -> tuple[int, tuple[object, ...]] | None:
+    for row_number, values in enumerate(worksheet.iter_rows(values_only=True), 1):
+        if any(value is not None and str(value).strip() for value in values):
+            return row_number, values
+    return None
+
+
+def _source_indicator_codes(workbook) -> dict[str, str]:
+    if "指标参考表" not in workbook.sheetnames:
+        raise ValueError("分层目标文件缺少“指标参考表”sheet")
+    worksheet = workbook["指标参考表"]
+    header = _first_nonempty_row(worksheet)
+    if header is None:
+        raise ValueError("指标参考表为空")
+    header_row, header_values = header
+    if len(header_values) < 2 or [str(value or "").strip() for value in header_values[:2]] != ["编码", "名称"]:
+        raise ValueError("指标参考表前两列必须为“编码”“名称”")
+
+    codes: dict[str, str] = {}
+    for values in worksheet.iter_rows(min_row=header_row + 1, values_only=True):
+        code = str(values[0] or "").strip() if values else ""
+        name = str(values[1] or "").strip() if len(values) > 1 else ""
+        if not code and not name:
+            continue
+        if not code or not name:
+            raise ValueError("指标参考表存在缺少编码或名称的行")
+        existing = codes.get(name)
+        if existing and existing != code:
+            raise ValueError(f"指标参考表名称映射重复: {name}")
+        codes[name] = code
+        codes[code] = code
+    return codes
+
+
+def _read_source_target_excel_rows(
+    workbook,
+    *,
+    scenario: str,
+    period_type: str,
+    effective_from: date,
+) -> list[TargetExcelRow]:
+    indicator_codes = _source_indicator_codes(workbook)
+    rows: list[TargetExcelRow] = []
+    recognized_sheets = 0
+    for sheet_name, node_type in SOURCE_TARGET_SHEET_TYPES.items():
+        if sheet_name not in workbook.sheetnames:
+            continue
+        recognized_sheets += 1
+        worksheet = workbook[sheet_name]
+        header = _first_nonempty_row(worksheet)
+        if header is None:
+            continue
+        header_row, header_values = header
+        header_cells = [str(value or "").strip() for value in header_values]
+        if len(header_cells) < 2 or header_cells[:2] != ["编码", "名称"]:
+            raise ValueError(f"{sheet_name} 前两列必须为“编码”“名称”")
+        target_columns: list[tuple[int, str, str]] = []
+        for index, header_name in enumerate(header_cells[2:], 3):
+            if not header_name:
+                continue
+            indicator_code = indicator_codes.get(header_name)
+            if not indicator_code:
+                raise ValueError(
+                    f"{sheet_name} 指标列“{header_name}”未在指标参考表中定义"
+                )
+            target_columns.append((index, header_name, indicator_code))
+        for excel_row_number, values in enumerate(
+            worksheet.iter_rows(min_row=header_row + 1, values_only=True),
+            header_row + 1,
+        ):
+            if not any(value is not None and str(value).strip() for value in values):
+                continue
+            node_code = str(values[0] or "").strip() if values else ""
+            node_name = str(values[1] or "").strip() if len(values) > 1 else ""
+            if not node_code:
+                raise ValueError(f"{sheet_name} 第 {excel_row_number} 行: 编码不能为空")
+            if not node_name:
+                raise ValueError(f"{sheet_name} 第 {excel_row_number} 行: 名称不能为空")
+            for column, header_name, indicator_code in target_columns:
+                raw_value = values[column - 1] if len(values) >= column else None
+                if raw_value is None or not str(raw_value).strip():
+                    continue
+                try:
+                    target_value = parse_metric_value(raw_value)
+                except (ValueError, MetricValueError) as exc:
+                    raise ValueError(
+                        f"{sheet_name} 第 {excel_row_number} 行“{header_name}”不是有效数值"
+                    ) from exc
+                rows.append(
+                    TargetExcelRow(
+                        row_number=excel_row_number,
+                        scenario=scenario,
+                        period_type=period_type,
+                        effective_from=effective_from,
+                        node_type=node_type,
+                        node_code=node_code,
+                        indicator_code=indicator_code,
+                        target_value=target_value,
+                    )
+                )
+    if not recognized_sheets:
+        raise ValueError("Excel 缺少“目标值”或区公司级/网格级等目标数据 sheet")
+    return rows
+
+
+def read_target_excel_rows(
+    content: bytes,
+    *,
+    scenario: str = "NORMAL",
+    period_type: str = "DAY",
+    effective_from: date | None = None,
+) -> list[TargetExcelRow]:
+    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        if "目标值" in workbook.sheetnames:
+            return _read_normalized_target_excel_rows(workbook)
+        normalized_scenario = str(scenario or "").strip().upper()
+        normalized_period = str(period_type or "").strip().upper()
+        if normalized_scenario not in VALID_SCENARIOS:
+            raise ValueError("scenario 只支持 NORMAL/PK")
+        if normalized_period not in VALID_TARGET_PERIODS:
+            raise ValueError("period_type 只支持 DAY/MONTH")
+        return _read_source_target_excel_rows(
+            workbook,
+            scenario=normalized_scenario,
+            period_type=normalized_period,
+            effective_from=effective_from or date.today(),
+        )
     finally:
         workbook.close()
 
 
 def import_target_template(engine: Engine, *, plan_id: int, content: bytes) -> dict:
-    rows = read_target_excel_rows(content)
+    with Session(engine) as session:
+        plan = session.get(TargetPlan, plan_id)
+        if plan is None:
+            raise TargetPlanError(f"目标方案不存在: {plan_id}")
+        if plan.status != "DRAFT":
+            raise TargetPlanError("只有 DRAFT 目标方案允许导入目标值")
+        rows = read_target_excel_rows(
+            content,
+            scenario=plan.scenario,
+            period_type=plan.period_type,
+            effective_from=plan.effective_from,
+        )
     if not rows:
         raise ValueError("目标值文件没有可导入的数据行")
     identities = {
