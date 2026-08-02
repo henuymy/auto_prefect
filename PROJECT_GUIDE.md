@@ -535,6 +535,15 @@ pwsh -File scripts/stop.ps1
 - 风险与回滚：
 ```
 
+### 2026-08-03 - 完整结构复采确认后的分支级联停用
+
+- 原因：渠道经理在上游响应中连续缺失时，旧同步逻辑可在其仍有启用 CHANNEL 后代的情况下单独停用经理，形成“启用子节点指向停用父级”的无效树。采集在读取当前树时会安全失败，无法进入结构重采；同时，首轮或不完整响应不能据此推断渠道已删除。
+- 修改内容：结构编排器仅在第二轮受影响网格复采无可恢复错误、候选树合法且指标覆盖通过后，产出 `structure_reconciliation_confirmed`。写入事务将此确认信号传递给层级同步：已观测到迁移的节点先更新父级；缺失计数达到阈值且复采已确认时，停用仍未出现在候选树中的整棵分支并关闭有效父子历史；未携带确认信号的直接同步调用仍保留有启用后代的分支，避免半截数据误关节点。同步结果新增 `disable_deferred` 用于识别被保护的停用请求。
+- 涉及文件：`services/dashboard_v2_orchestrator.py`、`services/dashboard_v2_pipeline.py`、`services/dashboard_v2_hierarchy.py`、`tests/test_dashboard_v2_hierarchy_sync.py`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无需 Alembic 迁移。继续使用 `config/dashboard/session.json` 的 `relation_missing_disable_threshold`（默认 `2`）。遇到历史断树时，先确认最近一次二轮复采的 `SUCCESS`、无可恢复错误和候选节点覆盖，再在受控事务内停用确认消失的分支；不得仅通过关闭启用子节点或跳过树校验绕过故障。
+- 验证：`python -m pytest -p no:cacheprovider tests/test_dashboard_v2_hierarchy.py tests/test_dashboard_v2_hierarchy_sync.py tests/test_dashboard_v2_orchestrator.py tests/test_dashboard_v2_pipeline.py -q` 为 `31 passed`；Ruff 和 `git diff --check` 通过。生产库应用层组织树加载成功，启用节点父级断链数为 `0`。
+- 风险与回滚：该策略依赖 GRID 和 CHANNEL_MANAGER 响应在无错误二轮复采中完整反映受影响子树。若上游接口不再满足这一契约，应保留确认信号为假并将分支交给人工对账；回滚时须同时恢复编排确认信号、写入参数和层级级联逻辑，不能只回退其中一层。
+
 ### 2026-07-13 - 通报任务配置收敛与驾驶舱分区修复
 
 - 原因：每份通报任务重复维护相同的步骤与运行目录，且驾驶舱未来分区缺失会使健康检查失败。

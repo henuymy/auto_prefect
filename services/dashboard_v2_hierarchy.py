@@ -434,6 +434,7 @@ def sync_v2_hierarchy_in_session(
     collection_run_id: int | None = None,
     removed_identities: Iterable[tuple[str, str]] = (),
     missing_disable_threshold: int = 2,
+    complete_structure_reconciliation: bool = False,
 ) -> dict[str, int]:
     """Persist a complete, validated candidate graph in the caller transaction.
 
@@ -462,6 +463,7 @@ def sync_v2_hierarchy_in_session(
         ).all()
     }
     created = updated = moved = restored = disabled = missing_incremented = 0
+    disable_deferred = 0
 
     ordered_identities = sorted(
         candidate_nodes,
@@ -537,13 +539,39 @@ def sync_v2_hierarchy_in_session(
         for node_type, node_code in removed_identities
         if str(node_type).strip() and str(node_code).strip()
     }
-    for identity in normalized_removed - observed_identities:
+    children_by_parent_id: dict[int, list[HierarchyNode]] = defaultdict(list)
+    for candidate in existing.values():
+        if candidate.parent_id is not None:
+            children_by_parent_id[candidate.parent_id].append(candidate)
+    removal_identities = sorted(
+        normalized_removed - observed_identities,
+        key=lambda identity: (-NODE_LEVELS.get(identity[0], 0), identity[1]),
+    )
+    for identity in removal_identities:
         node = existing.get(identity)
         if node is None or not node.enabled:
             continue
         node.missing_count += 1
         missing_incremented += 1
         if node.missing_count < missing_disable_threshold:
+            continue
+        # A missing manager alone does not establish that its channels were
+        # removed. Only the completed, error-free subtree retry may confirm
+        # that the whole unobserved branch can be retired.
+        if _has_enabled_descendant(
+            node=node,
+            children_by_parent_id=children_by_parent_id,
+        ):
+            if complete_structure_reconciliation:
+                disabled += _disable_enabled_subtree(
+                    root=node,
+                    children_by_parent_id=children_by_parent_id,
+                    active_history_by_child=active_history_by_child,
+                    collected_at=collected_at,
+                    missing_disable_threshold=missing_disable_threshold,
+                )
+                continue
+            disable_deferred += 1
             continue
         node.enabled = False
         _close_active_parent_history(
@@ -559,6 +587,7 @@ def sync_v2_hierarchy_in_session(
         "restored": restored,
         "disabled": disabled,
         "missing_incremented": missing_incremented,
+        "disable_deferred": disable_deferred,
     }
 
 
@@ -637,3 +666,49 @@ def _close_active_parent_history(
     active = active_history_by_child.pop(child_node_id, None)
     if active is not None:
         active.valid_to = collected_at
+
+
+def _has_enabled_descendant(
+    *,
+    node: HierarchyNode,
+    children_by_parent_id: dict[int, list[HierarchyNode]],
+) -> bool:
+    """Return whether a node still has an enabled descendant."""
+    pending = list(children_by_parent_id.get(node.id, []))
+    visited: set[int] = set()
+    while pending:
+        descendant = pending.pop()
+        if descendant.id in visited:
+            continue
+        visited.add(descendant.id)
+        if descendant.enabled:
+            return True
+        pending.extend(children_by_parent_id.get(descendant.id, []))
+    return False
+
+
+def _disable_enabled_subtree(
+    *,
+    root: HierarchyNode,
+    children_by_parent_id: dict[int, list[HierarchyNode]],
+    active_history_by_child: dict[int, HierarchyParentHistory],
+    collected_at: datetime,
+    missing_disable_threshold: int,
+) -> int:
+    """Retire every enabled node in a confirmed missing subtree."""
+    pending = [root]
+    visited: set[int] = set()
+    disabled = 0
+    while pending:
+        node = pending.pop()
+        if node.id in visited:
+            continue
+        visited.add(node.id)
+        pending.extend(children_by_parent_id.get(node.id, []))
+        if not node.enabled:
+            continue
+        node.enabled = False
+        node.missing_count = max(node.missing_count, missing_disable_threshold)
+        _close_active_parent_history(active_history_by_child, node.id, collected_at)
+        disabled += 1
+    return disabled

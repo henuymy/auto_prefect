@@ -100,14 +100,21 @@ def session():
     engine.dispose()
 
 
-def candidate_graph(*, include_channel: bool = True) -> StructureGraph:
+def candidate_graph(
+    *,
+    include_manager: bool = True,
+    include_channel: bool = True,
+) -> StructureGraph:
     identities = [
         ("CITY", "A"),
         ("BRANCH", "B"),
         ("GRID", "G"),
-        ("CHANNEL_MANAGER", "M"),
     ]
+    if include_manager:
+        identities.append(("CHANNEL_MANAGER", "M"))
     if include_channel:
+        if not include_manager:
+            raise ValueError("CHANNEL requires CHANNEL_MANAGER")
         identities.append(("CHANNEL", "C"))
     nodes = {
         identity: StructureNode(
@@ -120,8 +127,9 @@ def candidate_graph(*, include_channel: bool = True) -> StructureGraph:
     edges = {
         StructureEdge("CITY", "A", "BRANCH", "B"),
         StructureEdge("BRANCH", "B", "GRID", "G"),
-        StructureEdge("GRID", "G", "CHANNEL_MANAGER", "M"),
     }
+    if include_manager:
+        edges.add(StructureEdge("GRID", "G", "CHANNEL_MANAGER", "M"))
     if include_channel:
         edges.add(StructureEdge("CHANNEL_MANAGER", "M", "CHANNEL", "C"))
     return StructureGraph(
@@ -172,6 +180,108 @@ def test_missing_node_disable_keeps_last_trusted_observation_time(session):
     assert channel.enabled is False
     assert channel.last_seen_at == last_observed_at
     assert result["disabled"] == 1
+
+
+def test_missing_parent_with_active_descendant_defers_disable(session):
+    session.execute(
+        text("UPDATE hierarchy_node SET missing_count = 1 WHERE node_code = 'M'")
+    )
+
+    result = sync_v2_hierarchy_in_session(
+        session,
+        candidate_graph(include_manager=False, include_channel=False),
+        collected_at=datetime(2026, 7, 10, 10, 0),
+        collection_run_id=None,
+        removed_identities={("CHANNEL_MANAGER", "M")},
+        missing_disable_threshold=2,
+    )
+    manager = session.scalar(
+        select(HierarchyNode).where(HierarchyNode.node_code == "M")
+    )
+    channel = session.scalar(
+        select(HierarchyNode).where(HierarchyNode.node_code == "C")
+    )
+
+    assert manager is not None
+    assert channel is not None
+    assert manager.enabled is True
+    assert channel.enabled is True
+    assert manager.missing_count == 2
+    assert channel.missing_count == 0
+    active_history_count = session.scalar(
+        text(
+            "SELECT COUNT(*) FROM hierarchy_parent_history "
+            "WHERE child_node_id IN (4, 5) AND valid_to IS NULL"
+        )
+    )
+    assert active_history_count == 2
+    assert result["disabled"] == 0
+    assert result["disable_deferred"] == 1
+
+
+def test_missing_parent_disables_after_descendant_is_independently_removed(session):
+    session.execute(
+        text(
+            "UPDATE hierarchy_node SET missing_count = 1 "
+            "WHERE node_code IN ('M', 'C')"
+        )
+    )
+
+    result = sync_v2_hierarchy_in_session(
+        session,
+        candidate_graph(include_manager=False, include_channel=False),
+        collected_at=datetime(2026, 7, 10, 10, 0),
+        collection_run_id=None,
+        removed_identities={
+            ("CHANNEL_MANAGER", "M"),
+            ("CHANNEL", "C"),
+        },
+        missing_disable_threshold=2,
+    )
+    manager = session.scalar(
+        select(HierarchyNode).where(HierarchyNode.node_code == "M")
+    )
+    channel = session.scalar(
+        select(HierarchyNode).where(HierarchyNode.node_code == "C")
+    )
+
+    assert manager is not None
+    assert channel is not None
+    assert manager.enabled is False
+    assert channel.enabled is False
+    assert result["disabled"] == 2
+    assert result["disable_deferred"] == 0
+
+
+def test_confirmed_subtree_reconciliation_disables_unobserved_descendants(session):
+    session.execute(
+        text("UPDATE hierarchy_node SET missing_count = 1 WHERE node_code = 'M'")
+    )
+
+    result = sync_v2_hierarchy_in_session(
+        session,
+        candidate_graph(include_manager=False, include_channel=False),
+        collected_at=datetime(2026, 7, 10, 10, 0),
+        collection_run_id=None,
+        removed_identities={("CHANNEL_MANAGER", "M")},
+        missing_disable_threshold=2,
+        complete_structure_reconciliation=True,
+    )
+    manager = session.scalar(
+        select(HierarchyNode).where(HierarchyNode.node_code == "M")
+    )
+    channel = session.scalar(
+        select(HierarchyNode).where(HierarchyNode.node_code == "C")
+    )
+
+    assert manager is not None
+    assert channel is not None
+    assert manager.enabled is False
+    assert channel.enabled is False
+    assert manager.missing_count == 2
+    assert channel.missing_count == 2
+    assert result["disabled"] == 2
+    assert result["disable_deferred"] == 0
 
 
 def test_parent_history_is_preloaded_once_instead_of_queried_per_node(session):

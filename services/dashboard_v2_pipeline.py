@@ -337,6 +337,9 @@ def _write_v2_transaction(
                 missing_disable_threshold=int(
                     batch.config.get("relation_missing_disable_threshold", 2) or 2
                 ),
+                complete_structure_reconciliation=bool(
+                    orchestrated.get("structure_reconciliation_confirmed")
+                ),
             )
             sync_result["structure_changed"] = True
         stage_timings["hierarchy_sync_seconds"] = round(

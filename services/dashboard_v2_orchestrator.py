@@ -332,6 +332,7 @@ def collect_validate_metric_rows_v2(
         structure_changed=True,
         strategy=strategy,
         affected_grid_codes=affected_grid_codes,
+        structure_reconciliation_confirmed=True,
     )
 
 
@@ -427,6 +428,7 @@ def _orchestration_result(
     structure_changed: bool,
     strategy: str,
     affected_grid_codes: set[str],
+    structure_reconciliation_confirmed: bool = False,
 ) -> dict[str, Any]:
     summary = summarize_structure_changes(
         graph_diff,
@@ -445,6 +447,7 @@ def _orchestration_result(
         "attempt_timings": timings,
         "attempts": len(timings),
         "structure_changed": structure_changed,
+        "structure_reconciliation_confirmed": structure_reconciliation_confirmed,
         "change_plan": {
             "removed_targets": graph_diff.removed_targets,
             "removed_areas": graph_diff.removed_areas,
