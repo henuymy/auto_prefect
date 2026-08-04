@@ -2229,6 +2229,11 @@ export function DashboardCockpit() {
           setLoading(true);
           setData(null);
           setDataTimeMode(nextMode);
+          if (nextMode === "cumulative") {
+            // A page can stay open across the daily accumulation run. Refresh
+            // available dates whenever the cumulative view is re-entered.
+            void loadCumulativeDateOptions(true);
+          }
           if (nextMode === "history") {
             void loadHistoryAvailability();
             const nextAsOf = historyAsOf || historyMinuteQueryTime(historyRange.latest);
@@ -2245,8 +2250,9 @@ export function DashboardCockpit() {
         }}
         onCumulativeChange={setCumulativeInput}
         onCumulativeLoadMore={() => void loadCumulativeDateOptions()}
-        onCumulativeQuery={() => {
+        onCumulativeQuery={async () => {
           if (!cumulativeInput) return;
+          await loadCumulativeDateOptions(true);
           if (cumulativeInput === cumulativeAsOf) {
             void fetchData(true);
             return;

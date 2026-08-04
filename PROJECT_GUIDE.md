@@ -181,6 +181,8 @@ C:\AutoNotifyRuntime\
 
 累计实际值周期与目标周期必须分离。`DAY_ACC` 只表示累计实际值的存储周期；真正的月度执行口径是“实时累计”，传入 `target_period=MONTH, target_source=WORKING`，计算前一日累计加当天实时；旁边的“累计基线”只展示最近已完成采集日的 `DAY_ACC`，不含当天实时。累计日期查询应传入 `target_period=MONTH, target_source=ASSESSMENT`。目标业务日期也必须独立：实时月累计按当前实时 Run 的 `stat_date` 选草稿，历史累计按所选累计 `stat_date` 选考核版本。实时读取找不到命中的实时草稿时必须返回空目标，禁止回退到考核版本；运维或前端不得把未来生效或没有目标值的草稿设为实时口径，否则当前日期只能显示为空目标。发布层已经拒绝空草稿；实时目标缺失应作为配置问题处理，不能用历史版本掩盖。
 
+累计日期选项不是日历维度，而是实际快照维度：`GET /api/dashboard/acc/options` 只查询 `metric_acc` 中 `period_type=DAY_ACC` 的去重 `stat_date`，不补造没有快照的日期。日累计任务在业务日结束后写入前一天，所以 8 月 4 日运行成功时应产生 8 月 3 日快照，8 月 4 日本身仍属于实时数据；月目标草稿也不会创建 `DAY_ACC` 日期。驾驶舱累计日期列表在首次进入、重新进入“累计”或点击“查询”时刷新，页面跨越日累计任务运行时间持续打开时，旧列表可能暂时显示前一日；这属于前端列表缓存，不代表数据库缺少数据。排查顺序固定为：先查 `collection_run` 的 `DAY_ACC + SUCCESS + stat_date`，再查对应 `metric_acc` 行，最后刷新页面并核对 `/api/dashboard/acc/options`。
+
 目标解析的边界必须与数据库字段一一对应：
 
 | 因素 | 判断字段/值 | 对应表 | 规则 |
@@ -294,6 +296,15 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-08-04 - 累计日期快照与前端日期刷新说明
+
+- 原因：日累计任务已成功写入 8 月 `DAY_ACC`，但持续打开的驾驶舱页面仍显示 7 月 31 日，容易误判为数据库或调度未生成 8 月数据。
+- 修改内容：补充累计日期选项只来自 `metric_acc` 已落库的 `DAY_ACC.stat_date`、日任务写入前一业务日以及当天不能作为历史累计日期的规则；前端在重新进入“累计”和点击“查询”时刷新日期选项，同时保留用户已选择的日期。
+- 涉及文件：`frontend/src/dashboard/DashboardCockpit.tsx`、`tests/test_dashboard_v2_ui_contract.py`、`README.md`、`PROJECT_GUIDE.md`。
+- 数据核验：生产库 `metric_acc` 已核验存在 2026-08-01、2026-08-02、2026-08-03 的 `DAY_ACC`，对应 `collection_run` 均为 `SUCCESS`；`GET /api/dashboard/acc/options` 返回上述日期。
+- 验证：`pytest -q tests/test_dashboard_v2_ui_contract.py` 为 `6 passed`；`npm run typecheck` 通过。
+- 配置或迁移：无需数据库迁移；若通过 FRP 使用已部署前端，需重新构建并发布前端资源后才能使用日期刷新逻辑。
 
 ### 2026-07-31 - 分离自定义指标依赖与源指标存储角色
 

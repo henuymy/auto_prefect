@@ -47,6 +47,8 @@ def test_cumulative_mode_uses_lazy_available_date_selector():
     assert "onCumulativeLoadMore" in source
     assert "加载更多日期" in source
     assert 'onCumulativeQuery' in source
+    assert "void loadCumulativeDateOptions(true);" in source
+    assert "await loadCumulativeDateOptions(true);" in source
 
 
 def test_target_editor_only_edits_execution_plans_and_keeps_audit_separate():

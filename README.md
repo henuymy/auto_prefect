@@ -136,6 +136,8 @@ pwsh -File scripts/setup_windows_env.ps1
 
 `DAY_ACC` 是累计实际值的数据周期，不是目标周期。真正的月度执行口径是“实时累计”：它必须显式传入 `target_period=MONTH, target_source=WORKING`，计算“前一日累计 + 当日实时”。旁边的“累计基线”只展示最近已完成采集日的 `DAY_ACC`，不含当天实时。累计日期查询传 `target_period=MONTH, target_source=ASSESSMENT`。实时查询找不到命中的实时草稿时直接返回空目标；不会改用已发布考核版本。目标缺失必须在目标值设置中补齐，不能通过历史版本兜底掩盖配置问题。
 
+累计页面的日期下拉框来自 `GET /api/dashboard/acc/options`，只列出 `metric_acc` 中已经落库的 `period_type=DAY_ACC` 的 `stat_date`，不是按自然日补齐，也不会因为创建月目标草稿而生成日期。日累计任务在业务日结束后写入前一天的快照，因此 2026-08-04 最多显示已成功落库的 2026-08-03，不能期待当天的 2026-08-04 立即出现在历史累计列表。若调度运行成功但页面仍停在旧日期，先刷新页面或重新进入“累计”并点击“查询”；前端会重新读取日期选项。仍无日期时，再检查 `collection_run.run_type=DAY_ACC` 的 `SUCCESS`、`stat_date` 和 `metric_acc` 行数。目标草稿、累计实际快照和前端缓存是三个独立边界。
+
 #### 场景、周期与数据表边界
 
 | 因素 | 允许的值/判断字段 | 对应表 | 作用 |
