@@ -182,7 +182,7 @@ pwsh -File scripts/setup_windows_env.ps1
 #### 日常操作流程
 
 1. 在驾驶舱点击“目标值设置”，新建草稿，填写方案名称、场景、目标周期、生效日期和优先级。
-2. 在“目标草稿”中逐项填写目标值，或下载模板后导入。导入会校验场景、周期、生效日期、节点和指标，并用文件内容整体替换该草稿已有目标值；先下载最新模板再编辑。
+2. 在“目标草稿”中逐项填写目标值，或下载模板后导入。导入只处理启用且结果落库（`STORE`）的指标；标准“目标值”表按明细行处理，分层模板按指标列处理。无效指标列、节点或数据行会跳过并在结果中提示，其他有效内容继续导入，已有未涉及目标值不会被清空；先下载最新模板再编辑。
 3. 点击“保存草稿”。草稿可反复修改，保存其他草稿不会改变正在使用的实时口径。
 4. 选择已经保存目标值、且当前日期落在生效区间内的草稿，点击“设为实时目标”。系统会取消同一场景、同一目标周期下其他草稿的实时资格。该动作只切换实时展示，不发布考核版本。
 5. 确认当期考核口径后，点击“发布为考核版本”。系统会复制当前草稿及其全部目标值，生成只读版本；源草稿保持 `DRAFT`，仍可继续调整并再次发布。
@@ -212,11 +212,11 @@ pwsh -File scripts/setup_windows_env.ps1
 | 列出方案 | `GET /target-plans?status=DRAFT|ACTIVE|RETIRED` | 返回状态、版本、生效区间、实时标记和目标值条数。 |
 | 新建草稿 | `POST /target-plans` | 只创建 `DRAFT` 元数据。 |
 | 查询目标值 | `GET /target-values?plan_id=...` | 可按层级、指标和名称过滤。 |
-| 保存目标值 | `PUT /target-plans/{id}/values` | 仅允许 `DRAFT`，一次保存替换该草稿全部目标值。 |
+| 保存目标值 | `PUT /target-plans/{id}/values` | 仅允许 `DRAFT`，按节点 × 指标新增或覆盖提交的目标值。 |
 | 切换实时目标 | `POST /target-plans/{id}/use-for-realtime` | 仅允许 `DRAFT`，会取消同场景同周期其他草稿的实时标记。 |
 | 发布考核版本 | `POST /target-plans/{id}/activate` | 仅允许非空 `DRAFT`，生成独立只读副本。 |
 | 从版本创建草稿 | `POST /target-plans/{id}/clone` | 复制版本和目标值，新草稿默认不作为实时目标。 |
-| 模板导入导出 | `GET /target-template`、`GET /target-plans/{id}/export`、`POST /target-template/import?plan_id=...` | 导入兼容标准“目标值”明细表；也兼容“区公司级/网格级/渠道经理级/渠道级/指标参考表”分 Sheet 格式，指标列按“指标参考表”中的名称映射编码。导出当前方案后的文件可直接修改并回传。 |
+| 模板导入导出 | `GET /target-template`、`GET /target-plans/{id}/export`、`POST /target-template/import?plan_id=...` | 导入兼容标准“目标值”明细表；也兼容“区公司级/网格级/渠道经理级/渠道级/指标参考表”分 Sheet 格式，指标列按“指标参考表”中的名称映射编码。导入按行/列部分成功，响应返回 `skipped` 和 `skipped_count`；导出当前方案后的文件可直接修改并回传。 |
 
 任何手工 SQL、导入脚本或新 API 都不得绕过这些状态约束去修改 `ACTIVE`/`RETIRED` 的 `MetricTargetValue`。需要批量调整时，先复制为草稿，再导入、切换实时或发布。
 

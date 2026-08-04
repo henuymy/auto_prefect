@@ -49,6 +49,41 @@ class TargetExcelRow:
     node_code: str
     indicator_code: str
     target_value: Decimal
+    sheet: str = "目标值"
+
+
+@dataclass(frozen=True)
+class TargetImportSkip:
+    sheet: str
+    row_number: int
+    node_type: str
+    node_code: str
+    indicator_code: str
+    reason: str
+
+
+def _record_import_skip(
+    skipped: list[TargetImportSkip] | None,
+    *,
+    sheet: str,
+    row_number: int,
+    node_type: str = "",
+    node_code: str = "",
+    indicator_code: str = "",
+    reason: str,
+) -> None:
+    if skipped is None:
+        raise ValueError(f"{sheet} 第 {row_number} 行: {reason}")
+    skipped.append(
+        TargetImportSkip(
+            sheet=sheet,
+            row_number=row_number,
+            node_type=node_type,
+            node_code=node_code,
+            indicator_code=indicator_code,
+            reason=reason,
+        )
+    )
 
 
 def _decimal_to_float(value: Decimal | None) -> float | None:
@@ -273,7 +308,10 @@ def get_target_values(
             ).limit(limit)
         ).all()
 
-        indicator_query = select(IndicatorV2).where(IndicatorV2.enabled.is_(True))
+        indicator_query = select(IndicatorV2).where(
+            IndicatorV2.enabled.is_(True),
+            IndicatorV2.storage_mode == "STORE",
+        )
         if normalized_indicator_code:
             indicator_query = indicator_query.where(
                 IndicatorV2.code == normalized_indicator_code
@@ -360,6 +398,7 @@ def save_target_values(
                 select(IndicatorV2.id).where(
                     IndicatorV2.id.in_(indicator_ids),
                     IndicatorV2.enabled.is_(True),
+                    IndicatorV2.storage_mode == "STORE",
                 )
             ).all()
         )
@@ -426,7 +465,10 @@ def build_target_template(engine: Engine) -> bytes:
         ).all()
         indicators = session.scalars(
             select(IndicatorV2)
-            .where(IndicatorV2.enabled.is_(True))
+            .where(
+                IndicatorV2.enabled.is_(True),
+                IndicatorV2.storage_mode == "STORE",
+            )
             .order_by(IndicatorV2.sort_order, IndicatorV2.code)
         ).all()
 
@@ -523,7 +565,10 @@ def build_target_plan_export(engine: Engine, *, plan_id: int) -> bytes:
         ).all()
         indicators = session.scalars(
             select(IndicatorV2)
-            .where(IndicatorV2.enabled.is_(True))
+            .where(
+                IndicatorV2.enabled.is_(True),
+                IndicatorV2.storage_mode == "STORE",
+            )
             .order_by(IndicatorV2.sort_order, IndicatorV2.code)
         ).all()
         target_values = session.scalars(
@@ -598,7 +643,11 @@ def build_target_plan_export(engine: Engine, *, plan_id: int) -> bytes:
     return output.getvalue()
 
 
-def _read_normalized_target_excel_rows(workbook) -> list[TargetExcelRow]:
+def _read_normalized_target_excel_rows(
+    workbook,
+    *,
+    skipped: list[TargetImportSkip] | None = None,
+) -> list[TargetExcelRow]:
     worksheet = workbook["目标值"]
     iterator = worksheet.iter_rows(values_only=True)
     try:
@@ -627,34 +676,42 @@ def _read_normalized_target_excel_rows(workbook) -> list[TargetExcelRow]:
         node_type = str(raw.get("node_type") or "").strip().upper()
         node_code = str(raw.get("node_code") or "").strip()
         indicator_code = str(raw.get("indicator_code") or "").strip()
-        if scenario not in VALID_SCENARIOS:
-            raise ValueError(f"第 {excel_row_number} 行: scenario 只支持 NORMAL/PK")
-        if period_type not in VALID_TARGET_PERIODS:
-            raise ValueError(f"第 {excel_row_number} 行: period_type 只支持 DAY/MONTH")
-        if node_type not in VALID_NODE_TYPES:
-            raise ValueError(f"第 {excel_row_number} 行: node_type 非法")
-        if not node_code:
-            raise ValueError(f"第 {excel_row_number} 行: node_code 不能为空")
-        if not indicator_code:
-            raise ValueError(f"第 {excel_row_number} 行: indicator_code 不能为空")
-        raw_effective_from = raw.get("effective_from")
-        if isinstance(raw_effective_from, datetime):
-            effective_from = raw_effective_from.date()
-        elif isinstance(raw_effective_from, date):
-            effective_from = raw_effective_from
-        else:
-            try:
-                effective_from = date.fromisoformat(str(raw_effective_from))
-            except ValueError as exc:
-                raise ValueError(
-                    f"第 {excel_row_number} 行: effective_from 不是有效日期"
-                ) from exc
         try:
-            target_value = parse_metric_value(raw.get("target_value"))
-        except (ValueError, MetricValueError) as exc:
-            raise ValueError(
-                f"第 {excel_row_number} 行: target_value 不是有效数值"
-            ) from exc
+            if scenario not in VALID_SCENARIOS:
+                raise ValueError("scenario 只支持 NORMAL/PK")
+            if period_type not in VALID_TARGET_PERIODS:
+                raise ValueError("period_type 只支持 DAY/MONTH")
+            if node_type not in VALID_NODE_TYPES:
+                raise ValueError("node_type 非法")
+            if not node_code:
+                raise ValueError("node_code 不能为空")
+            if not indicator_code:
+                raise ValueError("indicator_code 不能为空")
+            raw_effective_from = raw.get("effective_from")
+            if isinstance(raw_effective_from, datetime):
+                effective_from = raw_effective_from.date()
+            elif isinstance(raw_effective_from, date):
+                effective_from = raw_effective_from
+            else:
+                try:
+                    effective_from = date.fromisoformat(str(raw_effective_from))
+                except ValueError as exc:
+                    raise ValueError("effective_from 不是有效日期") from exc
+            try:
+                target_value = parse_metric_value(raw.get("target_value"))
+            except (ValueError, MetricValueError) as exc:
+                raise ValueError("target_value 不是有效数值") from exc
+        except ValueError as exc:
+            _record_import_skip(
+                skipped,
+                sheet="目标值",
+                row_number=excel_row_number,
+                node_type=node_type,
+                node_code=node_code,
+                indicator_code=indicator_code,
+                reason=str(exc),
+            )
+            continue
         rows.append(
             TargetExcelRow(
                 row_number=excel_row_number,
@@ -665,6 +722,7 @@ def _read_normalized_target_excel_rows(workbook) -> list[TargetExcelRow]:
                 node_code=node_code,
                 indicator_code=indicator_code,
                 target_value=target_value,
+                sheet="目标值",
             )
         )
     return rows
@@ -710,6 +768,7 @@ def _read_source_target_excel_rows(
     scenario: str,
     period_type: str,
     effective_from: date,
+    skipped: list[TargetImportSkip] | None = None,
 ) -> list[TargetExcelRow]:
     indicator_codes = _source_indicator_codes(workbook)
     rows: list[TargetExcelRow] = []
@@ -732,9 +791,15 @@ def _read_source_target_excel_rows(
                 continue
             indicator_code = indicator_codes.get(header_name)
             if not indicator_code:
-                raise ValueError(
-                    f"{sheet_name} 指标列“{header_name}”未在指标参考表中定义"
+                _record_import_skip(
+                    skipped,
+                    sheet=sheet_name,
+                    row_number=header_row,
+                    node_type=node_type,
+                    indicator_code=header_name,
+                    reason="指标列未在指标参考表中定义",
                 )
+                continue
             target_columns.append((index, header_name, indicator_code))
         for excel_row_number, values in enumerate(
             worksheet.iter_rows(min_row=header_row + 1, values_only=True),
@@ -745,19 +810,41 @@ def _read_source_target_excel_rows(
             node_code = str(values[0] or "").strip() if values else ""
             node_name = str(values[1] or "").strip() if len(values) > 1 else ""
             if not node_code:
-                raise ValueError(f"{sheet_name} 第 {excel_row_number} 行: 编码不能为空")
+                _record_import_skip(
+                    skipped,
+                    sheet=sheet_name,
+                    row_number=excel_row_number,
+                    node_type=node_type,
+                    reason="区域编码不能为空",
+                )
+                continue
             if not node_name:
-                raise ValueError(f"{sheet_name} 第 {excel_row_number} 行: 名称不能为空")
+                _record_import_skip(
+                    skipped,
+                    sheet=sheet_name,
+                    row_number=excel_row_number,
+                    node_type=node_type,
+                    node_code=node_code,
+                    reason="区域名称不能为空",
+                )
+                continue
             for column, header_name, indicator_code in target_columns:
                 raw_value = values[column - 1] if len(values) >= column else None
                 if raw_value is None or not str(raw_value).strip():
                     continue
                 try:
                     target_value = parse_metric_value(raw_value)
-                except (ValueError, MetricValueError) as exc:
-                    raise ValueError(
-                        f"{sheet_name} 第 {excel_row_number} 行“{header_name}”不是有效数值"
-                    ) from exc
+                except (ValueError, MetricValueError):
+                    _record_import_skip(
+                        skipped,
+                        sheet=sheet_name,
+                        row_number=excel_row_number,
+                        node_type=node_type,
+                        node_code=node_code,
+                        indicator_code=indicator_code,
+                        reason=f"指标列“{header_name}”不是有效数值",
+                    )
+                    continue
                 rows.append(
                     TargetExcelRow(
                         row_number=excel_row_number,
@@ -768,6 +855,7 @@ def _read_source_target_excel_rows(
                         node_code=node_code,
                         indicator_code=indicator_code,
                         target_value=target_value,
+                        sheet=sheet_name,
                     )
                 )
     if not recognized_sheets:
@@ -781,11 +869,12 @@ def read_target_excel_rows(
     scenario: str = "NORMAL",
     period_type: str = "DAY",
     effective_from: date | None = None,
+    skipped: list[TargetImportSkip] | None = None,
 ) -> list[TargetExcelRow]:
     workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
     try:
         if "目标值" in workbook.sheetnames:
-            return _read_normalized_target_excel_rows(workbook)
+            return _read_normalized_target_excel_rows(workbook, skipped=skipped)
         normalized_scenario = str(scenario or "").strip().upper()
         normalized_period = str(period_type or "").strip().upper()
         if normalized_scenario not in VALID_SCENARIOS:
@@ -797,12 +886,14 @@ def read_target_excel_rows(
             scenario=normalized_scenario,
             period_type=normalized_period,
             effective_from=effective_from or date.today(),
+            skipped=skipped,
         )
     finally:
         workbook.close()
 
 
 def import_target_template(engine: Engine, *, plan_id: int, content: bytes) -> dict:
+    skipped: list[TargetImportSkip] = []
     with Session(engine) as session:
         plan = session.get(TargetPlan, plan_id)
         if plan is None:
@@ -814,15 +905,10 @@ def import_target_template(engine: Engine, *, plan_id: int, content: bytes) -> d
             scenario=plan.scenario,
             period_type=plan.period_type,
             effective_from=plan.effective_from,
+            skipped=skipped,
         )
-    if not rows:
+    if not rows and not skipped:
         raise ValueError("目标值文件没有可导入的数据行")
-    identities = {
-        (row.node_type, row.node_code, row.indicator_code)
-        for row in rows
-    }
-    if len(identities) != len(rows):
-        raise ValueError("目标值文件存在重复的 node_type/node_code/indicator_code")
 
     with Session(engine) as session, session.begin():
         plan = session.scalar(
@@ -832,61 +918,170 @@ def import_target_template(engine: Engine, *, plan_id: int, content: bytes) -> d
             raise TargetPlanError(f"目标方案不存在: {plan_id}")
         if plan.status != "DRAFT":
             raise TargetPlanError("只有 DRAFT 目标方案允许导入目标值")
-        mismatched = [
-            row.row_number
-            for row in rows
-            if row.scenario != plan.scenario
-            or row.period_type != plan.period_type
-            or row.effective_from != plan.effective_from
-        ]
-        if mismatched:
-            raise ValueError(
-                f"导入行与目标方案场景/周期/生效日期不一致: {mismatched[:10]}"
-            )
+
+        matched_rows: list[TargetExcelRow] = []
+        for row in rows:
+            if (
+                row.scenario != plan.scenario
+                or row.period_type != plan.period_type
+                or row.effective_from != plan.effective_from
+            ):
+                _record_import_skip(
+                    skipped,
+                    sheet=row.sheet,
+                    row_number=row.row_number,
+                    node_type=row.node_type,
+                    node_code=row.node_code,
+                    indicator_code=row.indicator_code,
+                    reason="与目标草稿的场景、周期或生效日期不一致",
+                )
+                continue
+            matched_rows.append(row)
+
+        unique_rows: list[TargetExcelRow] = []
+        first_rows: dict[tuple[str, str, str], int] = {}
+        for row in matched_rows:
+            identity = (row.node_type, row.node_code, row.indicator_code)
+            first_row = first_rows.get(identity)
+            if first_row is not None:
+                _record_import_skip(
+                    skipped,
+                    sheet=row.sheet,
+                    row_number=row.row_number,
+                    node_type=row.node_type,
+                    node_code=row.node_code,
+                    indicator_code=row.indicator_code,
+                    reason=f"与第 {first_row} 行重复，保留首次出现的目标值",
+                )
+                continue
+            first_rows[identity] = row.row_number
+            unique_rows.append(row)
+
+        node_keys = {(row.node_type, row.node_code) for row in unique_rows}
         nodes = session.scalars(
             select(HierarchyNode).where(
-                HierarchyNode.enabled.is_(True),
-                HierarchyNode.metric_enabled.is_(True),
                 and_(
-                    HierarchyNode.node_type.in_({row.node_type for row in rows}),
-                    HierarchyNode.node_code.in_({row.node_code for row in rows}),
+                    HierarchyNode.node_type.in_({key[0] for key in node_keys} or {""}),
+                    HierarchyNode.node_code.in_({key[1] for key in node_keys} or {""}),
                 ),
             )
         ).all()
-        node_by_key = {(node.node_type, node.node_code): node.id for node in nodes}
+        node_by_key = {(node.node_type, node.node_code): node for node in nodes}
+
+        indicator_codes = {row.indicator_code for row in unique_rows}
         indicators = session.scalars(
             select(IndicatorV2).where(
-                IndicatorV2.enabled.is_(True),
-                IndicatorV2.code.in_({row.indicator_code for row in rows}),
+                IndicatorV2.code.in_(indicator_codes or {""}),
             )
         ).all()
-        indicator_by_code = {indicator.code: indicator.id for indicator in indicators}
-        missing_nodes = sorted(
-            {(row.node_type, row.node_code) for row in rows} - set(node_by_key)
-        )
-        missing_indicators = sorted(
-            {row.indicator_code for row in rows} - set(indicator_by_code)
-        )
-        if missing_nodes:
-            raise ValueError(f"目标值节点不存在或不可用: {missing_nodes[:10]}")
-        if missing_indicators:
-            raise ValueError(f"目标值指标不存在或不可用: {missing_indicators[:10]}")
+        indicator_by_code = {indicator.code: indicator for indicator in indicators}
 
-        session.query(MetricTargetValue).filter(
-            MetricTargetValue.plan_id == plan_id
-        ).delete(synchronize_session=False)
-        session.add_all(
-            MetricTargetValue(
-                plan_id=plan_id,
-                node_id=node_by_key[(row.node_type, row.node_code)],
-                indicator_id=indicator_by_code[row.indicator_code],
-                target_value=row.target_value,
+        indicator_reasons: dict[str, str] = {}
+        for code in indicator_codes:
+            indicator = indicator_by_code.get(code)
+            if indicator is None:
+                indicator_reasons[code] = "指标不存在"
+            elif not indicator.enabled:
+                indicator_reasons[code] = "指标未启用独立展示"
+            elif indicator.storage_mode != "STORE":
+                indicator_reasons[code] = "指标为仅计算输入，不能配置目标"
+        for code, reason in indicator_reasons.items():
+            first = next(row for row in unique_rows if row.indicator_code == code)
+            _record_import_skip(
+                skipped,
+                sheet=first.sheet,
+                row_number=first.row_number,
+                node_type=first.node_type,
+                node_code=first.node_code,
+                indicator_code=code,
+                reason=reason,
             )
-            for row in rows
-        )
+
+        valid_rows: list[TargetExcelRow] = []
+        invalid_node_keys: dict[tuple[str, str], str] = {}
+        for row in unique_rows:
+            if row.indicator_code in indicator_reasons:
+                continue
+            node = node_by_key.get((row.node_type, row.node_code))
+            if node is None:
+                invalid_node_keys[(row.node_type, row.node_code)] = "节点不存在"
+            elif not node.enabled or not node.metric_enabled:
+                invalid_node_keys[(row.node_type, row.node_code)] = "节点未启用或未允许指标采集"
+            else:
+                valid_rows.append(row)
+        for (node_type, node_code), reason in invalid_node_keys.items():
+            first = next(
+                row for row in unique_rows
+                if row.node_type == node_type and row.node_code == node_code
+            )
+            _record_import_skip(
+                skipped,
+                sheet=first.sheet,
+                row_number=first.row_number,
+                node_type=node_type,
+                node_code=node_code,
+                indicator_code=first.indicator_code,
+                reason=reason,
+            )
+
+        created = 0
+        updated = 0
+        if valid_rows:
+            valid_node_ids = {
+                node_by_key[(row.node_type, row.node_code)].id
+                for row in valid_rows
+            }
+            valid_indicator_ids = {
+                indicator_by_code[row.indicator_code].id
+                for row in valid_rows
+            }
+            existing = {
+                (row.node_id, row.indicator_id): row
+                for row in session.scalars(
+                    select(MetricTargetValue).where(
+                        MetricTargetValue.plan_id == plan_id,
+                        MetricTargetValue.node_id.in_(valid_node_ids),
+                        MetricTargetValue.indicator_id.in_(valid_indicator_ids),
+                    )
+                ).all()
+            }
+            for row in valid_rows:
+                node_id = node_by_key[(row.node_type, row.node_code)].id
+                indicator_id = indicator_by_code[row.indicator_code].id
+                target = existing.get((node_id, indicator_id))
+                if target is None:
+                    session.add(
+                        MetricTargetValue(
+                            plan_id=plan_id,
+                            node_id=node_id,
+                            indicator_id=indicator_id,
+                            target_value=row.target_value,
+                        )
+                    )
+                    created += 1
+                else:
+                    target.target_value = row.target_value
+                    updated += 1
+        value_count = session.scalar(
+            select(func.count(MetricTargetValue.id)).where(
+                MetricTargetValue.plan_id == plan_id
+            )
+        ) or 0
         return {
-            "plan": serialize_target_plan(plan, len(rows)),
-            "imported": len(rows),
-            "created": len(rows),
-            "updated": 0,
+            "plan": serialize_target_plan(plan, int(value_count)),
+            "imported": len(valid_rows),
+            "created": created,
+            "updated": updated,
+            "skipped": [
+                {
+                    "sheet": item.sheet,
+                    "row_number": item.row_number,
+                    "node_type": item.node_type,
+                    "node_code": item.node_code,
+                    "indicator_code": item.indicator_code,
+                    "reason": item.reason,
+                }
+                for item in skipped
+            ],
+            "skipped_count": len(skipped),
         }

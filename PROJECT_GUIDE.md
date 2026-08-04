@@ -220,6 +220,8 @@ C:\AutoNotifyRuntime\
 
 `effective_from`/`effective_to` 表示包含两端的业务使用区间，不是发布时刻。解析候选考核版本时按优先级、较晚生效日期、较高版本号和记录 ID 取胜。发布新版本时，服务负责截断与新版本相交的较早时间线，并将其标为 `RETIRED`；同一生效日期的修订保留旧版本审计记录，较高版本号的修订在查询时胜出。业务上应避免不必要的重叠方案，优先使用连续、不重叠的日期区间；优先级只能表达有明确审批依据的覆盖规则。
 
+目标模板导入按可识别粒度部分成功：标准“目标值”表按明细行处理，分层 Sheet 按指标列处理。只有启用且 `storage_mode=STORE` 的指标可以写入目标；无效指标列、节点、场景/周期/生效日期或数值行会进入 `skipped`，其他有效行继续新增或覆盖，未涉及的既有草稿目标保持不变。前端必须展示导入数量和未导入原因，不能因为一列无效而回滚整份文件。
+
 指标历史事实与考核目标版本的不可变边界必须写清：`metric_snapshot`、`metric_acc` 和采集 Run 不会因发布目标而更新；历史完成率则在查询时按业务日期解析考核版本，当前没有在指标事实表中持久化 `assessment_plan_id`。因此，未来生效的新版本不会改变此前日期的完成率，但“同一生效日”的修订会用新版本重新计算该日期范围的完成率。若业务要求结算结果永久绑定采集当时的考核版本，必须设计迁移：在结算/快照写入时固化考核版本 ID，并让历史查询优先读该绑定；在完成该迁移前，禁止声称当前实现提供采集时版本冻结。
 
 目标管理的唯一应用服务边界为 `services/dashboard_v2_target_service.py` 和 `services/dashboard_v2_target_admin_service.py`，HTTP 边界为 `/api/dashboard/target-plans`、`/target-values` 和 `/target-template`。数据库迁移只能通过 `python -m alembic -c alembic_dashboard_v2.ini upgrade head` 执行；新迁移如影响目标状态、解析顺序或值复制，必须同时补充以下测试：草稿可编辑、发布副本不可编辑、实时草稿独占、保存非实时草稿不切换口径、历史按日期解析、同日修订的版本优先级、空草稿拒绝发布，以及前端文案和 API 契约。
@@ -296,6 +298,14 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-08-04 - 目标模板按指标列部分导入
+
+- 原因：分层目标模板中一个指标对应一列，单列指标不可用时，旧实现会让整份文件导入失败，其他合法指标也无法落库。
+- 修改内容：标准“目标值”表按明细行、分层模板按指标列处理；仅启用且 `storage_mode=STORE` 的指标可写入。无效指标列、节点、方案元数据或数值行进入 `skipped`，有效目标继续新增或覆盖，未涉及的草稿目标不再被清空；前端展示导入数量和未导入原因。
+- 涉及文件：`services/dashboard_v2_target_admin_service.py`、`frontend/src/dashboard/DashboardCockpit.tsx`、`frontend/src/dashboard/dashboard-cockpit.css`、`frontend/src/types/dashboard.ts`、`tests/test_dashboard_v2_target_admin_service.py`、`README.md`、`PROJECT_GUIDE.md`。
+- 接口变化：`POST /api/dashboard/target-template/import` 返回 `skipped` 和 `skipped_count`，无需数据库迁移。
+- 验证：目标管理测试 `10 passed`，查询与 UI 契约测试 `40 passed`，`npm run typecheck` 和 `git diff --check` 通过。
 
 ### 2026-08-04 - 累计日期快照与前端日期刷新说明
 

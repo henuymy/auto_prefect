@@ -3165,7 +3165,22 @@ function TargetValueManager({
       const result = await importDashboardTargetTemplate(selectedPlanId, file);
       await Promise.all([loadPlans(), loadValues()]);
       onSaved();
-      setMessage(`已导入 ${result.imported} 条目标值`);
+      if (result.skipped_count) {
+        const preview = result.skipped.slice(0, 8).map((item) => {
+          const location = item.indicator_code
+            ? `${item.sheet} 第${item.row_number}行 · ${item.indicator_code}`
+            : `${item.sheet} 第${item.row_number}行`;
+          return `${location}：${item.reason}`;
+        }).join("；");
+        const rest = result.skipped_count > result.skipped.length
+          ? `；另有 ${result.skipped_count - result.skipped.length} 条未展开`
+          : "";
+        setMessage(
+          `已导入 ${result.imported} 条目标值；${result.skipped_count} 条未导入：${preview}${rest}`,
+        );
+      } else {
+        setMessage(`已导入 ${result.imported} 条目标值`);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {

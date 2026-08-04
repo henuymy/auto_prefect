@@ -124,6 +124,15 @@ export type ImportTargetTemplateResponse = {
   imported: number;
   created: number;
   updated: number;
+  skipped: Array<{
+    sheet: string;
+    row_number: number;
+    node_type: string;
+    node_code: string;
+    indicator_code: string;
+    reason: string;
+  }>;
+  skipped_count: number;
 };
 
 export type DashboardLatestRunResponse = {

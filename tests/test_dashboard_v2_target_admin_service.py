@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, datetime
 from io import BytesIO
 
-import pytest
 from openpyxl import Workbook, load_workbook
 
 from services.dashboard_v2_target_admin_service import (
@@ -67,6 +66,16 @@ def _source_layout_xlsx() -> bytes:
     indicator = workbook.create_sheet("指标参考表")
     indicator.append(["编码", "名称"])
     indicator.append(["channel_count", "渠道数量"])
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _source_layout_with_invalid_indicator_column_xlsx() -> bytes:
+    workbook = load_workbook(BytesIO(_source_layout_xlsx()))
+    worksheet = workbook["区公司级"]
+    worksheet.cell(row=1, column=4, value="未配置指标")
+    worksheet.cell(row=2, column=4, value=999)
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -172,7 +181,7 @@ def test_import_template_replaces_draft_values():
     assert {row["target_value"] for row in values["rows"] if row["target_value"]} == {120.0, 60.0}
 
 
-def test_import_template_rejects_invalid_rows():
+def test_import_template_skips_invalid_rows_and_reports_them():
     engine = _engine()
     plan = create_target_plan(
         engine,
@@ -182,14 +191,39 @@ def test_import_template_rejects_invalid_rows():
         effective_from=date(2026, 7, 1),
     )
 
-    with pytest.raises(ValueError, match="period_type 只支持 DAY/MONTH"):
-        import_target_template(
-            engine,
-            plan_id=plan["id"],
-            content=_xlsx([
-                ("NORMAL", "DAY_ACC", "2026-07-01", "BRANCH", "AQ", "channel_count", 120),
-            ]),
-        )
+    result = import_target_template(
+        engine,
+        plan_id=plan["id"],
+        content=_xlsx([
+            ("NORMAL", "DAY_ACC", "2026-07-01", "BRANCH", "AQ", "channel_count", 120),
+        ]),
+    )
+
+    assert result["imported"] == 0
+    assert result["skipped_count"] == 1
+    assert "period_type 只支持 DAY/MONTH" in result["skipped"][0]["reason"]
+
+
+def test_import_source_layout_skips_invalid_indicator_column():
+    engine = _engine()
+    plan = create_target_plan(
+        engine,
+        plan_name="分列容错导入",
+        scenario="PK",
+        period_type="DAY",
+        effective_from=date(2026, 7, 1),
+    )
+
+    result = import_target_template(
+        engine,
+        plan_id=plan["id"],
+        content=_source_layout_with_invalid_indicator_column_xlsx(),
+    )
+
+    assert result["imported"] == 2
+    assert result["skipped_count"] == 1
+    assert result["skipped"][0]["indicator_code"] == "未配置指标"
+    assert "指标列未在指标参考表中定义" in result["skipped"][0]["reason"]
 
 
 def test_import_source_layout_uses_selected_plan_metadata():
