@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPeriod, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetSource, DashboardTargetValuesResponse, DashboardValueMode, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
+import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChannelIndicatorExclusion, DashboardChannelIndicatorExclusionPreview, DashboardChannelIndicatorExclusionResponse, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPeriod, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetSource, DashboardTargetValuesResponse, DashboardValueMode, DeleteDashboardChannelIndicatorExclusionResponse, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveDashboardChannelIndicatorExclusionPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateDashboardChannelIndicatorExclusionPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -152,6 +152,8 @@ export async function getCurrentDashboard(
   indicatorCodes?: string[],
   valueMode: DashboardValueMode = "REALTIME",
   targetScenario: DashboardTargetScenario = "NORMAL",
+  search?: string,
+  limit?: number,
 ) {
   const params = new URLSearchParams();
   if (nodeType) params.set("node_type", nodeType);
@@ -159,6 +161,8 @@ export async function getCurrentDashboard(
   if (indicatorCodes?.length) params.set("indicator_codes", indicatorCodes.join(","));
   params.set("value_mode", valueMode);
   params.set("target_scenario", targetScenario);
+  if (search) params.set("search", search);
+  if (limit != null) params.set("limit", String(limit));
   const qs = params.toString();
   return request<DashboardCurrentResponse>(
     `/api/dashboard/current${qs ? `?${qs}` : ""}`,
@@ -204,6 +208,56 @@ export async function updateDashboardIndicatorSettings(
     `/api/dashboard/indicators/${encodeURIComponent(code)}`,
     {
       method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function getDashboardChannelIndicatorExclusions() {
+  return request<DashboardChannelIndicatorExclusionResponse>(
+    "/api/dashboard/channel-indicator-exclusions",
+  );
+}
+
+export async function createDashboardChannelIndicatorExclusion(
+  payload: SaveDashboardChannelIndicatorExclusionPayload,
+) {
+  return request<DashboardChannelIndicatorExclusion>(
+    "/api/dashboard/channel-indicator-exclusions",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function updateDashboardChannelIndicatorExclusion(
+  exclusionId: number,
+  payload: UpdateDashboardChannelIndicatorExclusionPayload,
+) {
+  return request<DashboardChannelIndicatorExclusion>(
+    `/api/dashboard/channel-indicator-exclusions/${encodeURIComponent(String(exclusionId))}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteDashboardChannelIndicatorExclusion(exclusionId: number) {
+  return request<DeleteDashboardChannelIndicatorExclusionResponse>(
+    `/api/dashboard/channel-indicator-exclusions/${encodeURIComponent(String(exclusionId))}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function previewDashboardChannelIndicatorExclusion(
+  payload: SaveDashboardChannelIndicatorExclusionPayload,
+) {
+  return request<DashboardChannelIndicatorExclusionPreview>(
+    "/api/dashboard/channel-indicator-exclusions/preview",
+    {
+      method: "POST",
       body: JSON.stringify(payload),
     },
   );

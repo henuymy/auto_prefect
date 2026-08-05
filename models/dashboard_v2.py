@@ -313,6 +313,62 @@ class IndicatorFormulaComponent(DashboardV2Base):
     updated_at: Mapped[datetime] = _updated_at_column()
 
 
+class ChannelIndicatorExclusion(DashboardV2Base):
+    """A date-effective rule that excludes one channel's indicator."""
+
+    __tablename__ = "channel_indicator_exclusion"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ACTIVE','CANCELLED')", name="valid_status"
+        ),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to >= effective_from",
+            name="valid_effective_dates",
+        ),
+        UniqueConstraint(
+            "channel_node_id",
+            "indicator_id",
+            "effective_from",
+            name="uq_channel_indicator_exclusion_channel_indicator_from",
+        ),
+        Index(
+            "ix_channel_indicator_exclusion_channel_validity",
+            "channel_node_id",
+            "effective_from",
+            "effective_to",
+        ),
+        Index(
+            "ix_channel_indicator_exclusion_indicator_validity",
+            "indicator_id",
+            "effective_from",
+            "effective_to",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        mysql.BIGINT(unsigned=True), primary_key=True, autoincrement=True
+    )
+    channel_node_id: Mapped[int] = mapped_column(
+        mysql.BIGINT(unsigned=True),
+        ForeignKey("hierarchy_node.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    indicator_id: Mapped[int] = mapped_column(
+        mysql.BIGINT(unsigned=True),
+        ForeignKey("indicator.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'ACTIVE'")
+    )
+    reason: Mapped[str | None] = mapped_column(String(500))
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = _created_at_column()
+    updated_at: Mapped[datetime] = _updated_at_column()
+
+
 class TargetPlan(DashboardV2Base):
     __tablename__ = "target_plan"
     __table_args__ = (
@@ -560,13 +616,76 @@ class MetricAccV2(DashboardV2Base):
     updated_at: Mapped[datetime] = _updated_at_column()
 
 
+class MetricCaliberOverride(DashboardV2Base):
+    """Effective metric values calculated from active exclusion rules."""
+
+    __tablename__ = "metric_caliber_override"
+    __table_args__ = (
+        CheckConstraint(
+            "value_state IN ('VALUE','EXCLUDED')", name="valid_value_state"
+        ),
+        CheckConstraint(
+            "calculation_type IN ('EXCLUSION_ROLLUP')",
+            name="valid_calculation_type",
+        ),
+        CheckConstraint(
+            "(value_state = 'VALUE' AND metric_value IS NOT NULL) "
+            "OR (value_state = 'EXCLUDED' AND metric_value IS NULL)",
+            name="valid_value_state_metric_value",
+        ),
+        UniqueConstraint(
+            "collection_run_id",
+            "node_id",
+            "indicator_id",
+            name="uq_metric_caliber_override_run_node_indicator",
+        ),
+        Index(
+            "ix_metric_caliber_override_node_indicator_run",
+            "node_id",
+            "indicator_id",
+            "collection_run_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        mysql.BIGINT(unsigned=True), primary_key=True, autoincrement=True
+    )
+    collection_run_id: Mapped[int | None] = mapped_column(
+        mysql.BIGINT(unsigned=True),
+        ForeignKey("collection_run.id", ondelete="SET NULL"),
+    )
+    node_id: Mapped[int] = mapped_column(
+        mysql.BIGINT(unsigned=True),
+        ForeignKey("hierarchy_node.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    indicator_id: Mapped[int] = mapped_column(
+        mysql.BIGINT(unsigned=True),
+        ForeignKey("indicator.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    metric_value: Mapped[Decimal | None] = mapped_column(mysql.DECIMAL(20, 4))
+    value_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'VALUE'")
+    )
+    calculation_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'EXCLUSION_ROLLUP'"),
+    )
+    rule_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = _created_at_column()
+
+
 __all__ = [
+    "ChannelIndicatorExclusion",
     "CollectionRunV2",
     "HierarchyNode",
     "HierarchyParentHistory",
     "IndicatorFormulaComponent",
     "IndicatorV2",
     "MetricAccV2",
+    "MetricCaliberOverride",
     "MetricCurrentV2",
     "MetricSnapshotV2",
     "MetricTargetValue",

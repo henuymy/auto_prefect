@@ -39,6 +39,10 @@ from services.dashboard_v2_target_service import (
     load_v2_working_target_values,
     normalize_target_scenario,
 )
+from services.dashboard_v2_exclusion_runtime import (
+    active_exclusion_pairs_in_session,
+    metric_caliber_overrides_in_session,
+)
 
 
 NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
@@ -159,13 +163,18 @@ def _apply_custom(
     response_codes = [row.code for row in indicators]
     for row in rows:
         metrics = row["metrics"]
+        metric_states = row.get("metric_states") or {}
         targets = row.get("targets")
         for code, parts in components.items():
-            if metrics.get(code) is None:
+            if metric_states.get(code) != "EXCLUDED" and metrics.get(code) is None:
                 metrics[code] = _weighted_sum(metrics, parts)
             if isinstance(targets, dict) and targets.get(code) is None:
                 targets[code] = _weighted_sum(targets, parts)
         row["metrics"] = {code: metrics.get(code) for code in response_codes}
+        if "metric_states" in row:
+            row["metric_states"] = {
+                code: metric_states.get(code, "VALUE") for code in response_codes
+            }
         if isinstance(targets, dict):
             row["targets"] = {code: targets.get(code) for code in response_codes}
 
@@ -245,6 +254,8 @@ def _nodes(
     parent_id: int | None = None,
     as_of: datetime | None = None,
     include_disabled: bool = False,
+    search: str | None = None,
+    limit: int | None = None,
 ) -> list[HierarchyNode]:
     normalized = _normalized_node_type(node_type)
     stmt = select(HierarchyNode)
@@ -252,13 +263,29 @@ def _nodes(
         stmt = stmt.where(HierarchyNode.enabled.is_(True))
     if normalized:
         stmt = stmt.where(HierarchyNode.node_type == normalized)
-    result = list(session.scalars(stmt.order_by(HierarchyNode.level_no, HierarchyNode.sort_order, HierarchyNode.id)))
-    if parent_id is None:
+    keyword = str(search or "").strip().lower()
+    if keyword:
+        escaped_keyword = (
+            keyword.replace("/", "//").replace("%", "/%").replace("_", "/_")
+        )
+        pattern = f"%{escaped_keyword}%"
+        stmt = stmt.where(
+            or_(
+                func.lower(HierarchyNode.node_name).like(pattern, escape="/"),
+                func.lower(HierarchyNode.node_code).like(pattern, escape="/"),
+            )
+        )
+    if parent_id is not None and as_of is None:
+        stmt = stmt.where(HierarchyNode.parent_id == parent_id)
+    stmt = stmt.order_by(HierarchyNode.level_no, HierarchyNode.sort_order, HierarchyNode.id)
+    if limit is not None and (parent_id is None or as_of is None):
+        stmt = stmt.limit(limit)
+    result = list(session.scalars(stmt))
+    if parent_id is None or as_of is None:
         return result
-    if as_of is None:
-        return [row for row in result if row.parent_id == parent_id]
     parents = _historical_parent_map(session, as_of)
-    return [row for row in result if parents.get(row.id, row.parent_id) == parent_id]
+    rows = [row for row in result if parents.get(row.id, row.parent_id) == parent_id]
+    return rows if limit is None else rows[:limit]
 
 
 def _drill_context_nodes(
@@ -462,6 +489,62 @@ def _value_rows_at(
     ).all()
 
 
+def _effective_metric_values_in_session(
+    session: Session,
+    *,
+    values: Iterable[Any],
+    node_ids: Iterable[int],
+    indicator_ids: Iterable[int],
+    business_date: date | None,
+) -> tuple[dict[tuple[int, int, int | None], tuple[Any, str]], set[tuple[int, int]]]:
+    """Overlay exclusion-caliber values onto raw metric query rows.
+
+    The override table is keyed to the exact collection run that supplied a raw
+    value. Direct channel exclusions are date-effective rules, so they remain
+    visible even when a sparse channel snapshot was carried forward from a
+    preceding run.
+    """
+    source = list(values)
+    node_id_list = list(dict.fromkeys(int(value) for value in node_ids))
+    indicator_id_list = list(dict.fromkeys(int(value) for value in indicator_ids))
+    exclusion_pairs = (
+        active_exclusion_pairs_in_session(
+            session,
+            business_date=business_date,
+            channel_node_ids=node_id_list,
+            indicator_ids=indicator_id_list,
+        )
+        if business_date is not None
+        else set()
+    )
+    overrides = metric_caliber_overrides_in_session(
+        session,
+        collection_run_ids=[getattr(value, "collection_run_id", None) for value in source],
+        node_ids=node_id_list,
+        indicator_ids=indicator_id_list,
+    )
+    result: dict[tuple[int, int, int | None], tuple[Any, str]] = {}
+    for value in source:
+        node_id = int(value.node_id)
+        indicator_id = int(value.indicator_id)
+        run_id = getattr(value, "collection_run_id", None)
+        normalized_run_id = int(run_id) if run_id is not None else None
+        key = (node_id, indicator_id, normalized_run_id)
+        if (node_id, indicator_id) in exclusion_pairs:
+            result[key] = (None, "EXCLUDED")
+            continue
+        override = (
+            overrides.get((normalized_run_id, node_id, indicator_id))
+            if normalized_run_id is not None
+            else None
+        )
+        if override is None:
+            result[key] = (value.metric_value, "VALUE")
+        else:
+            result[key] = (override.metric_value, override.value_state)
+    return result, exclusion_pairs
+
+
 def _target_period(period_type: str) -> str:
     normalized = str(period_type or "").strip().upper()
     if normalized in {"DAY", "DAY_ACC"}:
@@ -535,6 +618,7 @@ def _wide_rows(
     target_date: date | None = None,
     target_scenario: str = "NORMAL",
     target_source: str | None = None,
+    business_date: date | None = None,
 ) -> list[dict[str, Any]]:
     components, physical = _components(session, indicators)
     values = _value_rows_at(
@@ -545,6 +629,13 @@ def _wide_rows(
         current_stat_date=current_stat_date,
     )
     code_by_id = {row.id: row.code for row in physical}
+    effective_values, direct_exclusions = _effective_metric_values_in_session(
+        session,
+        values=values,
+        node_ids=[row.id for row in nodes],
+        indicator_ids=[row.id for row in physical],
+        business_date=business_date,
+    )
     parent_map = _historical_parent_map(session, as_of) if as_of else {}
     rows = []
     by_id: dict[int, dict[str, Any]] = {}
@@ -554,12 +645,24 @@ def _wide_rows(
             collection_run_id=None,
             collected_at=None,
             metrics={row.code: None for row in physical},
+            metric_states={
+                row.code: (
+                    "EXCLUDED" if (node.id, row.id) in direct_exclusions else "VALUE"
+                )
+                for row in physical
+            },
         )
         rows.append(dto)
         by_id[node.id] = dto
     for value in values:
         row = by_id[value.node_id]
-        row["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
+        code = code_by_id[value.indicator_id]
+        run_id = value.collection_run_id
+        metric_value, value_state = effective_values[
+            (value.node_id, value.indicator_id, run_id)
+        ]
+        row["metrics"][code] = _number(metric_value)
+        row["metric_states"][code] = value_state
         current_at = row["collected_at"]
         value_at = _iso(value.collected_at)
         if current_at is None or (value_at and value_at > current_at):
@@ -604,17 +707,41 @@ def _append_changes(
             cutoff=anchor - timedelta(minutes=minutes),
             stat_date=stat_date,
         )
-        values: dict[int, dict[str, Any]] = defaultdict(dict)
+        effective_values, direct_exclusions = _effective_metric_values_in_session(
+            session,
+            values=historical,
+            node_ids=[row["id"] for row in rows],
+            indicator_ids=[row.id for row in physical],
+            business_date=stat_date,
+        )
+        values: dict[int, dict[str, Any]] = {
+            row["id"]: {
+                "metrics": {indicator.code: None for indicator in physical},
+                "metric_states": {
+                    indicator.code: (
+                        "EXCLUDED"
+                        if (row["id"], indicator.id) in direct_exclusions
+                        else "VALUE"
+                    )
+                    for indicator in physical
+                },
+            }
+            for row in rows
+        }
         code_by_id = {row.id: row.code for row in physical}
         for value in historical:
-            values[value.node_id][code_by_id[value.indicator_id]] = _number(value.metric_value)
-        for node_values in values.values():
-            for code, parts in components.items():
-                node_values[code] = _weighted_sum(node_values, parts)
+            node_values = values[value.node_id]
+            code = code_by_id[value.indicator_id]
+            metric_value, value_state = effective_values[
+                (value.node_id, value.indicator_id, value.collection_run_id)
+            ]
+            node_values["metrics"][code] = _number(metric_value)
+            node_values["metric_states"][code] = value_state
+        _apply_custom(list(values.values()), indicators, components)
         key = f"change_{minutes}min"
         for row in rows:
             changes = row.setdefault("changes", {})
-            previous = values.get(row["id"], {})
+            previous = values.get(row["id"], {}).get("metrics", {})
             for indicator in indicators:
                 current = row["metrics"].get(indicator.code)
                 old = previous.get(indicator.code)
@@ -818,25 +945,36 @@ def _apply_realtime_accumulation(
             components=components,
             physical=physical,
         )
-        acc_by_node = {
-            node_id: row["metrics"]
-            for node_id, row in acc_rows.items()
-        }
+        acc_by_node = acc_rows
 
     response_codes = [indicator.code for indicator in indicators]
     for row in rows:
         current_metrics = row.get("metrics") or {}
-        acc_metrics = acc_by_node.get(row["id"], {})
+        current_states = row.get("metric_states") or {}
+        acc_row = acc_by_node.get(row["id"], {})
+        acc_metrics = acc_row.get("metrics", {})
+        acc_states = acc_row.get("metric_states", {})
         totals: dict[str, Any] = {}
+        total_states: dict[str, str] = {}
         for code in response_codes:
             current = current_metrics.get(code)
             baseline = 0 if meta["baseline_zero"] else acc_metrics.get(code)
+            excluded = (
+                current_states.get(code) == "EXCLUDED"
+                or acc_states.get(code) == "EXCLUDED"
+            )
             total = (
                 None
-                if meta["baseline_missing"] or current is None or baseline is None
+                if (
+                    excluded
+                    or meta["baseline_missing"]
+                    or current is None
+                    or baseline is None
+                )
                 else current + baseline
             )
             totals[code] = total
+            total_states[code] = "EXCLUDED" if excluded else "VALUE"
 
             changes = (row.get("changes") or {}).get(code, {})
             for payload in changes.values():
@@ -851,6 +989,7 @@ def _apply_realtime_accumulation(
                 )
 
         row["metrics"] = totals
+        row["metric_states"] = total_states
         row["targets"] = {
             code: target_by_node.get(row["id"], {}).get(code)
             for code in response_codes
@@ -1050,13 +1189,21 @@ def get_current_wide_table(
     indicator_codes: list[str] | None = None,
     value_mode: str = "REALTIME",
     target_scenario: str = "NORMAL",
+    search: str | None = None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     normalized_mode = _normalize_value_mode(value_mode)
     normalized_target_scenario = normalize_target_scenario(target_scenario)
     with Session(engine) as session:
         run = _latest_run(session)
         indicators = _enabled_indicators(session, indicator_codes)
-        nodes = _nodes(session, node_type=node_type, parent_id=parent_id)
+        nodes = _nodes(
+            session,
+            node_type=node_type,
+            parent_id=parent_id,
+            search=search,
+            limit=limit,
+        )
         rows = _wide_rows(
             session,
             nodes=nodes,
@@ -1070,6 +1217,7 @@ def get_current_wide_table(
             ),
             target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
+            business_date=_realtime_business_date(run),
         )
         accumulation_meta = _apply_value_mode(
             session,
@@ -1122,6 +1270,7 @@ def get_current_with_changes(
             ),
             target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
+            business_date=_realtime_business_date(run),
         )
         anchor = _change_anchor_time(run)
         _append_changes(
@@ -1209,6 +1358,7 @@ def get_historical_with_changes(
             period_type="DAY_ACC",
             include_targets=True,
             target_scenario=normalized_target_scenario,
+            business_date=_change_stat_date(run, value_cutoff),
         )
         _append_changes(
             session,
@@ -1331,6 +1481,7 @@ def get_dashboard_matrix_page(
             ),
             target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
+            business_date=_realtime_business_date(run),
         )
         anchor = _change_anchor_time(run)
         _append_changes(
@@ -1401,17 +1552,35 @@ def _acc_metrics_in_session(
         )
     ).scalars().all()
     code_by_id = {row.id: row.code for row in physical}
+    effective_values, direct_exclusions = _effective_metric_values_in_session(
+        session,
+        values=values,
+        node_ids=[row.id for row in nodes],
+        indicator_ids=[row.id for row in physical],
+        business_date=target_day,
+    )
     by_id = {
         node.id: {
             "collection_run_id": None,
             "collected_at": None,
             "metrics": {row.code: None for row in physical},
+            "metric_states": {
+                row.code: (
+                    "EXCLUDED" if (node.id, row.id) in direct_exclusions else "VALUE"
+                )
+                for row in physical
+            },
         }
         for node in nodes
     }
     for value in values:
         row = by_id[value.node_id]
-        row["metrics"][code_by_id[value.indicator_id]] = _number(value.metric_value)
+        code = code_by_id[value.indicator_id]
+        metric_value, value_state = effective_values[
+            (value.node_id, value.indicator_id, value.collection_run_id)
+        ]
+        row["metrics"][code] = _number(metric_value)
+        row["metric_states"][code] = value_state
         row["collection_run_id"] = value.collection_run_id
         row["collected_at"] = _iso(value.collected_at)
     _apply_custom(list(by_id.values()), indicators, components)
@@ -1462,6 +1631,7 @@ def _acc_rows_in_session(
             collection_run_id=metric_row["collection_run_id"],
             collected_at=metric_row["collected_at"],
             metrics=metric_row["metrics"],
+            metric_states=metric_row["metric_states"],
             targets={
                 row.code: _number(target_map.get((node.id, row.id)))
                 for row in physical
@@ -1525,7 +1695,11 @@ def get_acc_wide_table(
         )
         rows = [
             row for row in rows
-            if any(value is not None for value in row["metrics"].values())
+            if any(
+                value is not None
+                or row.get("metric_states", {}).get(code) == "EXCLUDED"
+                for code, value in row["metrics"].items()
+            )
         ]
         return {
             "indicators": [_indicator_dto(row) for row in indicators],
@@ -1593,6 +1767,7 @@ def get_dashboard_overview(
             ),
             target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
+            business_date=_realtime_business_date(run),
         )
         anchor = _change_anchor_time(run)
         _append_changes(
@@ -1694,6 +1869,7 @@ def get_drill_down(
                 ),
                 target_date=_realtime_business_date(run),
                 target_scenario=normalized_target_scenario,
+                business_date=_realtime_business_date(run),
             )
             anchor = _change_anchor_time(run)
             _append_changes(
@@ -1772,6 +1948,7 @@ def get_drill_down(
             ),
             target_date=_realtime_business_date(run),
             target_scenario=normalized_target_scenario,
+            business_date=_realtime_business_date(run),
         )
         anchor = _change_anchor_time(run)
         _append_changes(

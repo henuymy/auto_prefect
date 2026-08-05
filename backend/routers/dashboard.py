@@ -21,6 +21,13 @@ from services.dashboard_v2_custom_indicator_service import (
     update_indicator_settings,
     upsert_custom_indicator,
 )
+from services.dashboard_v2_exclusion_service import (
+    cancel_channel_indicator_exclusion,
+    create_channel_indicator_exclusion,
+    list_channel_indicator_exclusions,
+    preview_channel_indicator_exclusion,
+    update_channel_indicator_exclusion,
+)
 from services.dashboard_v2_query_service import (
     get_dashboard_overview,
     get_dashboard_matrix_page,
@@ -121,6 +128,30 @@ class TargetValueSavePayload(BaseModel):
     values: list[TargetValuePayload]
 
 
+class ChannelIndicatorExclusionPayload(BaseModel):
+    channel_node_id: int = Field(..., ge=1)
+    indicator_id: int = Field(..., ge=1)
+    effective_from: date
+    effective_to: date | None = None
+    reason: str | None = Field(None, max_length=500)
+    status: str = Field(
+        "ACTIVE",
+        pattern="^(ACTIVE|CANCELLED|active|cancelled)$",
+    )
+
+
+class ChannelIndicatorExclusionUpdatePayload(BaseModel):
+    channel_node_id: int | None = Field(None, ge=1)
+    indicator_id: int | None = Field(None, ge=1)
+    effective_from: date | None = None
+    effective_to: date | None = None
+    reason: str | None = Field(None, max_length=500)
+    status: str | None = Field(
+        None,
+        pattern="^(ACTIVE|CANCELLED|active|cancelled)$",
+    )
+
+
 def _parse_change_windows(value: str | None) -> list[int] | None:
     try:
         return parse_change_window_minutes(value)
@@ -170,6 +201,16 @@ def _invalidate_version_state() -> None:
     with _version_state_lock:
         _version_state_cache = None
         _version_state_cached_at = 0.0
+
+
+def _invalidate_dashboard_response_cache() -> None:
+    """Drop cached data views after a business-caliber configuration change."""
+    global _dashboard_cache_total_bytes
+    _invalidate_version_state()
+    with _dashboard_cache_lock:
+        _dashboard_cache.clear()
+        _dashboard_cache_failures.clear()
+        _dashboard_cache_total_bytes = 0
 
 
 def _cache_result_size(result: dict[str, Any]) -> int:
@@ -397,6 +438,113 @@ def update_dashboard_indicator(code: str, payload: IndicatorSettingsPayload):
         raise HTTPException(
             status_code=503,
             detail=f"指标设置保存失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/channel-indicator-exclusions")
+def dashboard_channel_indicator_exclusions(
+    status: str | None = Query(
+        None,
+        pattern="^(ACTIVE|CANCELLED|active|cancelled)$",
+    ),
+    active_on: date | None = Query(None),
+    channel_node_id: int | None = Query(None, ge=1),
+    indicator_id: int | None = Query(None, ge=1),
+):
+    engine = get_dashboard_engine()
+    try:
+        return list_channel_indicator_exclusions(
+            engine,
+            status=status,
+            active_on=active_on,
+            channel_node_id=channel_node_id,
+            indicator_id=indicator_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"渠道指标排除规则查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.post("/channel-indicator-exclusions")
+def create_dashboard_channel_indicator_exclusion(
+    payload: ChannelIndicatorExclusionPayload,
+):
+    engine = get_dashboard_engine()
+    try:
+        result = create_channel_indicator_exclusion(
+            engine,
+            **payload.model_dump(),
+        )
+        _invalidate_dashboard_response_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"渠道指标排除规则保存失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.post("/channel-indicator-exclusions/preview")
+def preview_dashboard_channel_indicator_exclusion(
+    payload: ChannelIndicatorExclusionPayload,
+):
+    engine = get_dashboard_engine()
+    try:
+        return preview_channel_indicator_exclusion(
+            engine,
+            **payload.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"渠道指标排除规则预览失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.patch("/channel-indicator-exclusions/{exclusion_id}")
+def update_dashboard_channel_indicator_exclusion(
+    exclusion_id: int,
+    payload: ChannelIndicatorExclusionUpdatePayload,
+):
+    engine = get_dashboard_engine()
+    try:
+        result = update_channel_indicator_exclusion(
+            engine,
+            exclusion_id,
+            **payload.model_dump(exclude_unset=True),
+        )
+        _invalidate_dashboard_response_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"渠道指标排除规则更新失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.delete("/channel-indicator-exclusions/{exclusion_id}")
+def delete_dashboard_channel_indicator_exclusion(exclusion_id: int):
+    engine = get_dashboard_engine()
+    try:
+        result = cancel_channel_indicator_exclusion(engine, exclusion_id)
+        _invalidate_dashboard_response_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"渠道指标排除规则取消失败: {type(exc).__name__}",
         ) from exc
 
 
@@ -1004,6 +1152,8 @@ def current_dashboard(
     indicator_codes: str | None = Query(None),
     value_mode: str = Query("REALTIME", pattern="^(REALTIME|REALTIME_ACC)$"),
     target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
+    search: str | None = Query(None, min_length=1, max_length=100),
+    limit: int | None = Query(None, ge=1, le=201),
 ):
     engine = get_dashboard_engine()
     try:
@@ -1014,6 +1164,8 @@ def current_dashboard(
             indicator_codes=_parse_indicator_codes(indicator_codes),
             value_mode=value_mode,
             target_scenario=target_scenario,
+            search=search,
+            limit=limit,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

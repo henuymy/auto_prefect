@@ -11,6 +11,7 @@ from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 
 from models.dashboard_v2_base import DashboardV2Base
 import models.dashboard_v2  # noqa: F401  Ensures V2 tables are registered.
+import models.monitor  # noqa: F401  Ensures monitor tables are registered.
 from services import dashboard_v2_readiness as readiness
 
 

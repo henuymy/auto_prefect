@@ -6,12 +6,14 @@ import {
   ArrowUp,
   BarChart3,
   CalendarClock,
+  CircleOff,
   ClipboardList,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Database,
   Download,
+  Eye,
   FileUp,
   Plus,
   Palette,
@@ -27,7 +29,9 @@ import {
 import {
   activateDashboardTargetPlan,
   cloneDashboardTargetPlan,
+  createDashboardChannelIndicatorExclusion,
   createDashboardTargetPlan,
+  deleteDashboardChannelIndicatorExclusion,
   deleteDashboardCustomIndicator,
   dashboardTargetPlanExportUrl,
   dashboardTargetTemplateUrl,
@@ -38,6 +42,7 @@ import {
   getDashboardHistoryMatrix,
   getDashboardHistoryOptions,
   getDashboardAccOptions,
+  getDashboardChannelIndicatorExclusions,
   getDashboardHistoryRange,
   getDashboardHistoryWithChanges,
   getDashboardLatestRun,
@@ -50,6 +55,7 @@ import {
   importDashboardTargetTemplate,
   saveDashboardCustomIndicator,
   saveDashboardTargetValues,
+  previewDashboardChannelIndicatorExclusion,
   setDashboardTargetPlanRealtime,
   updateDashboardIndicatorSettings,
 } from "@/lib/api";
@@ -57,6 +63,8 @@ import type {
   CreateTargetPlanPayload,
   DashboardCustomIndicator,
   DashboardCatalogIndicator,
+  DashboardChannelIndicatorExclusion,
+  DashboardChannelIndicatorExclusionPreview,
   DashboardRow,
   DashboardRowWithChanges,
   DashboardIndicator,
@@ -72,6 +80,7 @@ import type {
   DashboardTargetValueRow,
   DashboardValueMode,
   IndicatorChanges,
+  SaveDashboardChannelIndicatorExclusionPayload,
 } from "@/types/dashboard";
 
 /* ── types ── */
@@ -90,6 +99,7 @@ type BoardRow = {
   parentId: number | null;
   name: string;
   done: number;
+  excluded?: boolean;
   target: number | null;
   changes: Record<number, Change>;
 };
@@ -442,6 +452,10 @@ function signedPct(value: number) {
   return "0%";
 }
 
+function isMetricExcluded(row: DashboardRow, indicatorCode: string) {
+  return row.metric_states?.[indicatorCode] === "EXCLUDED";
+}
+
 function normalizeChangeWindowMinutes(value: number, fallback = 5) {
   if (!Number.isFinite(value)) return fallback;
   const rounded = Math.round(value / 5) * 5;
@@ -484,6 +498,9 @@ function sortRows(
   direction: "asc" | "desc" = "desc",
 ) {
   return [...rows].sort((left, right) => {
+    if (Boolean(left.excluded) !== Boolean(right.excluded)) {
+      return left.excluded ? 1 : -1;
+    }
     let score = 0;
     if (sortKey === "progress") {
       score = progressScore(left) - progressScore(right);
@@ -501,7 +518,9 @@ function sortRows(
 }
 
 function pct(row: BoardRow) {
-  return row.target != null && row.target > 0 ? row.done / row.target : null;
+  return !row.excluded && row.target != null && row.target > 0
+    ? row.done / row.target
+    : null;
 }
 
 function progressScore(row: BoardRow) {
@@ -683,11 +702,16 @@ function calculateOverallProgress(
   let total = 0;
   let validCount = 0;
   let weightTotal = 0;
+  let excludedCount = 0;
 
   for (const indicator of indicators) {
     const rule = rules[indicator.code] ?? defaultOverallRule(indicator, level);
     const weightPercent = parsePercentInput(rule.weightPercent);
     if (weightPercent == null || weightPercent <= 0) continue;
+    if (isMetricExcluded(row, indicator.code)) {
+      excludedCount += 1;
+      continue;
+    }
 
     const done = row.metrics[indicator.code];
     const target = row.targets?.[indicator.code];
@@ -705,8 +729,8 @@ function calculateOverallProgress(
   }
 
   return validCount > 0
-    ? { value: total, validCount, weightTotal }
-    : { value: null, validCount: 0, weightTotal: 0 };
+    ? { value: total, validCount, weightTotal, excludedCount }
+    : { value: null, validCount: 0, weightTotal: 0, excludedCount };
 }
 
 function sortRowsByOverallProgress(
@@ -759,28 +783,34 @@ function buildBoards(
     activeCode,
     visible,
     (r, _max) => {
-      const done = r.metrics[activeCode] ?? 0;
+      const excluded = isMetricExcluded(r, activeCode);
+      const done = excluded ? 0 : r.metrics[activeCode] ?? 0;
       const cs = (r.changes || {})[activeCode] || {};
       return {
         nodeId: r.id,
         parentId: r.parent_id,
         name: r.node_name,
         done,
+        excluded,
         target: r.targets?.[activeCode] ?? null,
-        changes: changesForWindows(cs, changeWindows),
+        changes: excluded ? emptyChanges(changeWindows) : changesForWindows(cs, changeWindows),
       };
     },
   );
 
   const monthLevels = scopedAccRows.length
-    ? _buildLevels(scopedAccRows, activeCode, visible, (r, _max) => ({
-        nodeId: r.id,
-        parentId: r.parent_id,
-        name: r.node_name,
-        done: r.metrics[activeCode] ?? 0,
-        target: r.targets?.[activeCode] ?? null,
-        changes: emptyChanges(changeWindows),
-      }))
+    ? _buildLevels(scopedAccRows, activeCode, visible, (r, _max) => {
+        const excluded = isMetricExcluded(r, activeCode);
+        return {
+          nodeId: r.id,
+          parentId: r.parent_id,
+          name: r.node_name,
+          done: excluded ? 0 : r.metrics[activeCode] ?? 0,
+          excluded,
+          target: r.targets?.[activeCode] ?? null,
+          changes: emptyChanges(changeWindows),
+        };
+      })
     : [];
 
   return { dayLevels, monthLevels };
@@ -1063,6 +1093,7 @@ export function DashboardCockpit() {
   const [levelAllPopup, setLevelAllPopup] = useState<LevelAllPopup>(null);
   const [customManagerOpen, setCustomManagerOpen] = useState(false);
   const [targetManagerOpen, setTargetManagerOpen] = useState(false);
+  const [exclusionManagerOpen, setExclusionManagerOpen] = useState(false);
   const scopePopupTargetRef = useRef<ScopePopupTarget | null>(null);
   const fetchSeqRef = useRef(0);
   const queryCacheRef = useRef<Map<string, DashboardCacheEntry>>(new Map());
@@ -2199,6 +2230,7 @@ export function DashboardCockpit() {
         onRefresh={() => void fetchData(true)}
         onOpenCustomManager={() => setCustomManagerOpen(true)}
         onOpenTargetManager={() => setTargetManagerOpen(true)}
+        onOpenExclusionManager={() => setExclusionManagerOpen(true)}
         progressColors={progressColors}
         onProgressColorChange={(key, value) => setProgressColors((current) => ({
           ...current,
@@ -2272,6 +2304,13 @@ export function DashboardCockpit() {
       {targetManagerOpen && (
         <TargetValueManager
           onClose={() => setTargetManagerOpen(false)}
+          onSaved={() => void fetchData(true)}
+        />
+      )}
+
+      {exclusionManagerOpen && (
+        <ChannelIndicatorExclusionManager
+          onClose={() => setExclusionManagerOpen(false)}
           onSaved={() => void fetchData(true)}
         />
       )}
@@ -2441,6 +2480,7 @@ function Header({
   onRefresh,
   onOpenTargetManager,
   onOpenCustomManager,
+  onOpenExclusionManager,
   progressColors,
   onProgressColorChange,
   onResetProgressColors,
@@ -2465,6 +2505,7 @@ function Header({
   onRefresh: () => void;
   onOpenTargetManager: () => void;
   onOpenCustomManager: () => void;
+  onOpenExclusionManager: () => void;
   progressColors: MatrixProgressColors;
   onProgressColorChange: (key: keyof MatrixProgressColors, value: string) => void;
   onResetProgressColors: () => void;
@@ -2582,6 +2623,16 @@ function Header({
             >
               <Settings size={15} />
               指标管理
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                onOpenExclusionManager();
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+            >
+              <CircleOff size={15} />
+              渠道指标排除
             </button>
           </div>
         </details>
@@ -2853,6 +2904,103 @@ type TargetFilter = {
   indicatorCode: string;
   search: string;
 };
+
+type ChannelIndicatorExclusionDraft = {
+  channelNodeId: number | null;
+  indicatorId: number | null;
+  effectiveFrom: string;
+  effectiveTo: string;
+  reason: string;
+};
+
+type ExclusionSearchTree = {
+  nodesById: Record<number, DashboardRow>;
+  childrenByParentId: Record<number, number[]>;
+  rootIds: number[];
+  matchingChannelIds: Set<number>;
+  totalMatches: number;
+  isLimited: boolean;
+};
+
+const EXCLUSION_SEARCH_LIMIT = 200;
+
+const EXCLUSION_TREE_CHILD_TYPE: Partial<Record<DashboardRow["node_type"], DashboardRow["node_type"]>> = {
+  CITY: "BRANCH",
+  BRANCH: "GRID",
+  GRID: "CHANNEL_MANAGER",
+  CHANNEL_MANAGER: "CHANNEL",
+};
+
+function exclusionTreeChildType(nodeType: DashboardRow["node_type"]) {
+  return EXCLUSION_TREE_CHILD_TYPE[nodeType] || null;
+}
+
+function indexDashboardRows(rows: DashboardRow[]) {
+  return rows.reduce<Record<number, DashboardRow>>((indexed, row) => {
+    indexed[row.id] = row;
+    return indexed;
+  }, {});
+}
+
+export function buildExclusionSearchTree(
+  channels: DashboardRow[],
+  ancestorRows: DashboardRow[],
+  totalMatches: number,
+  isLimited = false,
+): ExclusionSearchTree {
+  const allNodesById = new Map<number, DashboardRow>();
+  for (const row of [...ancestorRows, ...channels]) {
+    allNodesById.set(row.id, row);
+  }
+
+  const visibleIds = new Set<number>();
+  const matchingChannelIds = new Set<number>();
+  for (const channel of channels) {
+    matchingChannelIds.add(channel.id);
+    let current: DashboardRow | undefined = channel;
+    const visited = new Set<number>();
+    while (current && !visited.has(current.id)) {
+      visibleIds.add(current.id);
+      visited.add(current.id);
+      current = current.parent_id == null
+        ? undefined
+        : allNodesById.get(current.parent_id);
+    }
+  }
+
+  const nodesById: Record<number, DashboardRow> = {};
+  const childrenByParentId: Record<number, number[]> = {};
+  for (const nodeId of visibleIds) {
+    const node = allNodesById.get(nodeId);
+    if (!node) continue;
+    nodesById[nodeId] = node;
+  }
+  for (const node of Object.values(nodesById)) {
+    if (node.parent_id == null || !nodesById[node.parent_id]) continue;
+    const children = childrenByParentId[node.parent_id] || [];
+    children.push(node.id);
+    childrenByParentId[node.parent_id] = children;
+  }
+  for (const children of Object.values(childrenByParentId)) {
+    children.sort((left, right) => (
+      nodesById[left].node_name.localeCompare(nodesById[right].node_name, "zh-CN")
+    ));
+  }
+
+  const rootIds = Object.values(nodesById)
+    .filter((node) => node.parent_id == null || !nodesById[node.parent_id])
+    .sort((left, right) => left.node_name.localeCompare(right.node_name, "zh-CN"))
+    .map((node) => node.id);
+
+  return {
+    nodesById,
+    childrenByParentId,
+    rootIds,
+    matchingChannelIds,
+    totalMatches,
+    isLimited,
+  };
+}
 
 const TARGET_NODE_TYPES: Array<"" | DashboardRow["node_type"]> = [
   "",
@@ -3496,6 +3644,565 @@ function TargetValueManager({
                 </button>
               )}
             </div>}
+          </main>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function emptyChannelIndicatorExclusionDraft(): ChannelIndicatorExclusionDraft {
+  return {
+    channelNodeId: null,
+    indicatorId: null,
+    effectiveFrom: new Date().toISOString().slice(0, 10),
+    effectiveTo: "",
+    reason: "",
+  };
+}
+
+function ChannelIndicatorExclusionManager({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [catalog, setCatalog] = useState<DashboardCatalogIndicator[]>([]);
+  const [exclusions, setExclusions] = useState<DashboardChannelIndicatorExclusion[]>([]);
+  const [treeNodesById, setTreeNodesById] = useState<Record<number, DashboardRow>>({});
+  const [treeRootIds, setTreeRootIds] = useState<number[]>([]);
+  const [treeChildrenByParentId, setTreeChildrenByParentId] = useState<Record<number, number[]>>({});
+  const [expandedTreeNodeIds, setExpandedTreeNodeIds] = useState<Set<number>>(() => new Set());
+  const [loadingTreeNodeIds, setLoadingTreeNodeIds] = useState<Set<number>>(() => new Set());
+  const [selectedChannel, setSelectedChannel] = useState<DashboardRow | null>(null);
+  const [draft, setDraft] = useState<ChannelIndicatorExclusionDraft>(
+    () => emptyChannelIndicatorExclusionDraft(),
+  );
+  const [channelKeyword, setChannelKeyword] = useState("");
+  const [searchTree, setSearchTree] = useState<ExclusionSearchTree | null>(null);
+  const [channelSearchLoading, setChannelSearchLoading] = useState(false);
+  const [treeMessage, setTreeMessage] = useState("");
+  const [preview, setPreview] = useState<DashboardChannelIndicatorExclusionPreview | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const searchAncestorRowsRef = useRef<DashboardRow[] | null>(null);
+  const channelSearchRequestRef = useRef(0);
+
+  const storeIndicators = useMemo(
+    () => catalog.filter((indicator) => indicator.enabled && indicator.storage_mode === "STORE"),
+    [catalog],
+  );
+  const activeExclusions = useMemo(
+    () => exclusions
+      .filter((exclusion) => exclusion.status === "ACTIVE")
+      .sort((left, right) => right.effective_from.localeCompare(left.effective_from)),
+    [exclusions],
+  );
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const [exclusionData, catalogData, cityData] = await Promise.all([
+        getDashboardChannelIndicatorExclusions(),
+        getDashboardIndicators(false, true),
+        getCurrentDashboard("CITY"),
+      ]);
+      let nextRoots = cityData.rows.filter((row) => row.node_type === "CITY");
+      if (!nextRoots.length) {
+        const branchData = await getCurrentDashboard("BRANCH");
+        nextRoots = branchData.rows.filter((row) => row.node_type === "BRANCH");
+      }
+      const nextStoreIndicators = catalogData.indicators.filter(
+        (indicator) => indicator.enabled && indicator.storage_mode === "STORE",
+      );
+      setExclusions(exclusionData.exclusions);
+      setCatalog(catalogData.indicators);
+      setTreeNodesById(indexDashboardRows(nextRoots));
+      setTreeRootIds(nextRoots.map((row) => row.id));
+      setTreeChildrenByParentId({});
+      setExpandedTreeNodeIds(new Set());
+      setLoadingTreeNodeIds(new Set());
+      setTreeMessage("");
+      setDraft((current) => ({
+        ...current,
+        indicatorId: nextStoreIndicators.some((indicator) => indicator.id === current.indicatorId)
+          ? current.indicatorId
+          : nextStoreIndicators[0]?.id ?? null,
+      }));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const refreshExclusions = useCallback(async () => {
+    const exclusionData = await getDashboardChannelIndicatorExclusions();
+    setExclusions(exclusionData.exclusions);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const loadSearchAncestors = useCallback(async () => {
+    if (searchAncestorRowsRef.current) return searchAncestorRowsRef.current;
+    const [cityData, branchData, gridData, managerData] = await Promise.all([
+      getCurrentDashboard("CITY"),
+      getCurrentDashboard("BRANCH"),
+      getCurrentDashboard("GRID"),
+      getCurrentDashboard("CHANNEL_MANAGER"),
+    ]);
+    const rows = [
+      ...cityData.rows,
+      ...branchData.rows,
+      ...gridData.rows,
+      ...managerData.rows,
+    ].filter((row) => row.node_type !== "CHANNEL");
+    searchAncestorRowsRef.current = rows;
+    return rows;
+  }, []);
+
+  useEffect(() => {
+    const keyword = channelKeyword.trim();
+    const indicatorCode = storeIndicators[0]?.code;
+    if (!keyword || !indicatorCode) {
+      channelSearchRequestRef.current += 1;
+      setChannelSearchLoading(false);
+      setSearchTree(null);
+      setTreeMessage("");
+      return;
+    }
+    const requestId = channelSearchRequestRef.current + 1;
+    channelSearchRequestRef.current = requestId;
+    const timer = window.setTimeout(() => {
+      setChannelSearchLoading(true);
+      setTreeMessage("");
+      void Promise.all([
+        getCurrentDashboard(
+          "CHANNEL",
+          undefined,
+          [indicatorCode],
+          "REALTIME",
+          "NORMAL",
+          keyword,
+          EXCLUSION_SEARCH_LIMIT + 1,
+        ),
+        loadSearchAncestors(),
+      ]).then(([result, ancestorRows]) => {
+        if (channelSearchRequestRef.current !== requestId) return;
+        const isLimited = result.row_count > EXCLUSION_SEARCH_LIMIT;
+        const channels = result.rows
+          .filter((row) => row.node_type === "CHANNEL")
+          .slice(0, EXCLUSION_SEARCH_LIMIT);
+        setSearchTree(buildExclusionSearchTree(
+          channels,
+          ancestorRows,
+          channels.length,
+          isLimited,
+        ));
+      }).catch((error) => {
+        if (channelSearchRequestRef.current !== requestId) return;
+        setSearchTree(null);
+        setTreeMessage(error instanceof Error ? error.message : String(error));
+      }).finally(() => {
+        if (channelSearchRequestRef.current === requestId) setChannelSearchLoading(false);
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [channelKeyword, loadSearchAncestors, storeIndicators]);
+
+  const selectChannel = (channel: DashboardRow) => {
+    setSelectedChannel(channel);
+    setTreeNodesById((current) => ({ ...current, [channel.id]: channel }));
+    setDraft((current) => ({ ...current, channelNodeId: channel.id }));
+    setPreview(null);
+  };
+
+  const toggleTreeNode = async (node: DashboardRow) => {
+    const childType = exclusionTreeChildType(node.node_type);
+    if (!childType) {
+      if (node.node_type === "CHANNEL") selectChannel(node);
+      return;
+    }
+    if (expandedTreeNodeIds.has(node.id)) {
+      setExpandedTreeNodeIds((current) => {
+        const next = new Set(current);
+        next.delete(node.id);
+        return next;
+      });
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(treeChildrenByParentId, node.id)) {
+      setExpandedTreeNodeIds((current) => new Set(current).add(node.id));
+      return;
+    }
+    if (loadingTreeNodeIds.has(node.id)) return;
+    setLoadingTreeNodeIds((current) => new Set(current).add(node.id));
+    setTreeMessage("");
+    try {
+      const result = await getCurrentDashboard(childType, node.id);
+      const children = result.rows.filter((row) => row.node_type === childType);
+      setTreeNodesById((current) => ({ ...current, ...indexDashboardRows(children) }));
+      setTreeChildrenByParentId((current) => ({
+        ...current,
+        [node.id]: children.map((child) => child.id),
+      }));
+      setExpandedTreeNodeIds((current) => new Set(current).add(node.id));
+    } catch (error) {
+      setTreeMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingTreeNodeIds((current) => {
+        const next = new Set(current);
+        next.delete(node.id);
+        return next;
+      });
+    }
+  };
+
+  const buildPayload = (): SaveDashboardChannelIndicatorExclusionPayload | null => {
+    if (draft.channelNodeId == null || draft.indicatorId == null || !draft.effectiveFrom) {
+      setMessage("请选择渠道、指标和生效日期");
+      return null;
+    }
+    if (draft.effectiveTo && draft.effectiveTo < draft.effectiveFrom) {
+      setMessage("失效日期不能早于生效日期");
+      return null;
+    }
+    return {
+      channel_node_id: draft.channelNodeId,
+      indicator_id: draft.indicatorId,
+      effective_from: draft.effectiveFrom,
+      effective_to: draft.effectiveTo || null,
+      reason: draft.reason.trim() || null,
+    };
+  };
+
+  const save = async () => {
+    const payload = buildPayload();
+    if (!payload) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await createDashboardChannelIndicatorExclusion(payload);
+      setPreview(null);
+      setDraft((current) => ({ ...current, effectiveTo: "", reason: "" }));
+      await refreshExclusions();
+      onSaved();
+      setMessage("已保存渠道指标排除规则");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const previewRule = async () => {
+    const payload = buildPayload();
+    if (!payload) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await previewDashboardChannelIndicatorExclusion(payload);
+      setPreview(result);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelExclusion = async (exclusion: DashboardChannelIndicatorExclusion) => {
+    if (!window.confirm(
+      `确定取消「${exclusion.channel_node_name} · ${exclusion.indicator_name}」的排除规则吗？`,
+    )) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await deleteDashboardChannelIndicatorExclusion(exclusion.id);
+      await refreshExclusions();
+      onSaved();
+      setMessage("已取消排除规则");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const searchActive = Boolean(channelKeyword.trim());
+  const displayNodesById = searchActive
+    ? searchTree?.nodesById || {}
+    : treeNodesById;
+  const displayChildrenByParentId = searchActive
+    ? searchTree?.childrenByParentId || {}
+    : treeChildrenByParentId;
+  const displayRootIds = searchActive
+    ? searchTree?.rootIds || []
+    : treeRootIds;
+
+  const renderTreeNode = (nodeId: number, depth: number) => {
+    const node = displayNodesById[nodeId];
+    if (!node) return null;
+    const childType = exclusionTreeChildType(node.node_type);
+    const childIds = displayChildrenByParentId[node.id] || [];
+    const hasLoadedChildren = Object.prototype.hasOwnProperty.call(
+      displayChildrenByParentId,
+      node.id,
+    );
+    const isBranch = searchActive ? childIds.length > 0 : Boolean(childType);
+    const isExpanded = searchActive
+      ? childIds.length > 0
+      : expandedTreeNodeIds.has(node.id);
+    const isLoading = loadingTreeNodeIds.has(node.id);
+    const isSelected = node.id === draft.channelNodeId;
+    const isMatch = searchTree?.matchingChannelIds.has(node.id) ?? false;
+
+    return (
+      <div key={node.id} className="exclusion-tree-item">
+        <div
+          className="exclusion-tree-row"
+          style={{ "--tree-depth": depth } as React.CSSProperties}
+        >
+          {isBranch && !searchActive ? (
+            <button
+              type="button"
+              className="exclusion-tree-toggle"
+              disabled={isLoading}
+              title={isExpanded ? "收起子级" : "展开子级"}
+              aria-label={`${isExpanded ? "收起" : "展开"} ${node.node_name}`}
+              onClick={() => void toggleTreeNode(node)}
+            >
+              {isLoading ? <RefreshCw size={14} className="spin" /> : isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            </button>
+          ) : (
+            <span className="exclusion-tree-spacer" aria-hidden="true" />
+          )}
+          <button
+            type="button"
+            className={[
+              "exclusion-tree-node",
+              node.node_type === "CHANNEL" ? "channel" : "branch",
+              isSelected ? "active" : "",
+              isMatch ? "match" : "",
+            ].filter(Boolean).join(" ")}
+            disabled={searchActive && node.node_type !== "CHANNEL"}
+            onClick={() => {
+              if (node.node_type === "CHANNEL") {
+                selectChannel(node);
+              } else if (!searchActive) {
+                void toggleTreeNode(node);
+              }
+            }}
+          >
+            <strong>{node.node_name}</strong>
+            <span>{node.node_code} · {levelLabel(node.node_type)}</span>
+          </button>
+        </div>
+        {isExpanded && childIds.map((childId) => renderTreeNode(childId, depth + 1))}
+        {isExpanded && !childIds.length && hasLoadedChildren && !searchActive && (
+          <div className="exclusion-tree-empty" style={{ "--tree-depth": depth + 1 } as React.CSSProperties}>
+            暂无下级节点
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="custom-metric-backdrop" role="dialog" aria-modal="true" aria-label="渠道指标排除">
+      <section className="custom-metric-modal exclusion-manager-modal">
+        <header className="custom-metric-head">
+          <div>
+            <strong>渠道指标排除</strong>
+            <span>渠道结构与完整采集保持不变；完整口径在下一次成功采集后呈现。</span>
+          </div>
+          <button type="button" onClick={onClose}>关闭</button>
+        </header>
+        <div className="custom-metric-body exclusion-manager-body">
+          <aside className="custom-metric-list exclusion-channel-panel">
+            <label className="source-manager-search exclusion-channel-search">
+              <Search size={18} />
+              <input
+                value={channelKeyword}
+                onChange={(event) => setChannelKeyword(event.target.value)}
+                placeholder="搜索渠道名称或编码"
+                aria-label="搜索渠道"
+              />
+            </label>
+            <div className="exclusion-channel-count">
+              {searchActive ? <>
+                <strong>{searchTree?.totalMatches ?? 0}</strong>
+                <span>个匹配渠道</span>
+              </> : <>
+                <strong>{treeRootIds.length}</strong>
+                <span>个顶层节点，按需展开</span>
+              </>}
+            </div>
+            <div className="exclusion-channel-list exclusion-tree-list" aria-label="渠道层级树">
+              {displayRootIds.map((nodeId) => renderTreeNode(nodeId, 0))}
+              {channelSearchLoading && (
+                <div className="source-manager-empty">
+                  <RefreshCw size={16} className="spin" />
+                  正在定位渠道...
+                </div>
+              )}
+              {!channelSearchLoading && !displayRootIds.length && (
+                <div className="source-manager-empty">
+                  {searchActive ? "没有匹配的渠道" : busy ? "正在加载顶层节点..." : "暂无渠道层级"}
+                </div>
+              )}
+              {searchActive && searchTree?.isLimited && (
+                <div className="exclusion-search-limit-note">
+                  匹配结果较多，当前仅定位前 200 个渠道，请继续缩小关键词。
+                </div>
+              )}
+            </div>
+            {treeMessage && <div className="exclusion-tree-message">{treeMessage}</div>}
+          </aside>
+          <main className="custom-metric-form exclusion-manager-form">
+            <section className="exclusion-rule-editor">
+              <div className="exclusion-rule-editor-head">
+                <div>
+                  <strong>新建排除规则</strong>
+                  <span>{selectedChannel ? `${selectedChannel.node_name} · ${selectedChannel.node_code}` : "请选择左侧渠道"}</span>
+                </div>
+                <span className="exclusion-store-badge">仅结果落库指标</span>
+              </div>
+              <div className="exclusion-rule-fields">
+                <label>
+                  <span>指标</span>
+                  <select
+                    value={draft.indicatorId ?? ""}
+                    disabled={busy || !storeIndicators.length}
+                    onChange={(event) => {
+                      setDraft((current) => ({
+                        ...current,
+                        indicatorId: event.target.value ? Number(event.target.value) : null,
+                      }));
+                      setPreview(null);
+                    }}
+                  >
+                    {!storeIndicators.length && <option value="">暂无可选指标</option>}
+                    {storeIndicators.map((indicator) => (
+                      <option key={indicator.id} value={indicator.id}>
+                        {indicator.name} · {indicator.code}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>生效日期</span>
+                  <input
+                    type="date"
+                    value={draft.effectiveFrom}
+                    disabled={busy}
+                    onChange={(event) => {
+                      setDraft((current) => ({ ...current, effectiveFrom: event.target.value }));
+                      setPreview(null);
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>失效日期</span>
+                  <input
+                    type="date"
+                    value={draft.effectiveTo}
+                    disabled={busy}
+                    min={draft.effectiveFrom || undefined}
+                    onChange={(event) => {
+                      setDraft((current) => ({ ...current, effectiveTo: event.target.value }));
+                      setPreview(null);
+                    }}
+                  />
+                </label>
+              </div>
+              <label className="exclusion-reason-field">
+                <span>排除原因</span>
+                <textarea
+                  value={draft.reason}
+                  disabled={busy}
+                  onChange={(event) => setDraft((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder="可选"
+                  maxLength={500}
+                />
+              </label>
+              <div className="exclusion-rule-actions">
+                <button type="button" disabled={busy} onClick={() => void previewRule()}>
+                  <Eye size={15} />
+                  影响预览
+                </button>
+                <button type="button" className="primary" disabled={busy} onClick={() => void save()}>
+                  <Save size={15} />
+                  保存排除规则
+                </button>
+              </div>
+            </section>
+
+            {preview && (
+              <section className="exclusion-preview" aria-live="polite">
+                <div className="exclusion-preview-head">
+                  <strong>影响预览</strong>
+                  <span>{preview.affected_node_count} 个受影响节点</span>
+                </div>
+                <div className="exclusion-preview-list">
+                  {preview.affected_nodes.slice(0, 12).map((node) => (
+                    <span key={node.node_id}>
+                      {node.node_name} · {levelLabel(node.node_type)}
+                    </span>
+                  ))}
+                  {!preview.affected_nodes.length && <span>当前规则未发现受影响节点</span>}
+                </div>
+                {preview.affected_nodes.length > 12 && (
+                  <small>仅展示前 12 个节点</small>
+                )}
+              </section>
+            )}
+
+            <section className="exclusion-active-rules">
+              <div className="exclusion-active-rules-head">
+                <div>
+                  <strong>有效排除规则</strong>
+                  <span>目标值保持原值</span>
+                </div>
+                <span>{activeExclusions.length} 条</span>
+              </div>
+              <div className="exclusion-rule-list">
+                {activeExclusions.map((exclusion) => (
+                  <article key={exclusion.id} className="exclusion-rule-row">
+                    <div className="exclusion-rule-main">
+                      <strong>{exclusion.channel_node_name} · {exclusion.indicator_name}</strong>
+                      <span>{exclusion.channel_node_code} · {exclusion.indicator_code}</span>
+                    </div>
+                    <div className="exclusion-rule-period">
+                      <span>生效</span>
+                      <strong>{exclusion.effective_from}{exclusion.effective_to ? ` 至 ${exclusion.effective_to}` : " 起"}</strong>
+                    </div>
+                    <div className="exclusion-rule-reason" title={exclusion.reason || undefined}>
+                      {exclusion.reason || "未填写原因"}
+                    </div>
+                    <button
+                      type="button"
+                      className="exclusion-cancel-button"
+                      title="取消排除"
+                      aria-label={`取消 ${exclusion.channel_node_name} ${exclusion.indicator_name} 的排除规则`}
+                      disabled={busy}
+                      onClick={() => void cancelExclusion(exclusion)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </article>
+                ))}
+                {!activeExclusions.length && (
+                  <div className="source-manager-empty">
+                    {busy ? "正在加载规则..." : "暂无有效排除规则"}
+                  </div>
+                )}
+              </div>
+            </section>
+            {message && <div className="custom-metric-message">{message}</div>}
           </main>
         </div>
       </section>
@@ -4938,7 +5645,8 @@ function MatrixMetricCell({
   indicator: DashboardCatalogIndicator;
   windowMinutes: number;
 }) {
-  const done = row.metrics[indicator.code];
+  const excluded = isMetricExcluded(row, indicator.code);
+  const done = excluded ? null : row.metrics[indicator.code];
   const target = row.targets?.[indicator.code];
   const progress = done != null && target != null && target > 0 ? done / target : null;
   const change = row.changes?.[indicator.code]?.[`change_${windowMinutes}min`];
@@ -4950,20 +5658,26 @@ function MatrixMetricCell({
       : "flat";
 
   return (
-    <td className="matrix-metric-cell">
+    <td className={excluded ? "matrix-metric-cell is-excluded" : "matrix-metric-cell"}>
       <div className="matrix-cell-main">
-        <strong>{done == null ? "--" : formatNumber(done)}</strong>
-        <span className={progressClass}>
-          {progress == null ? "--" : fmtPct(progress)}
+        <strong className={excluded ? "matrix-excluded-value" : undefined}>
+          {excluded ? "未纳入统计" : done == null ? "--" : formatNumber(done)}
+        </strong>
+        <span className={excluded ? "matrix-excluded-state" : progressClass}>
+          {excluded ? "不参与汇总" : progress == null ? "--" : fmtPct(progress)}
         </span>
       </div>
       <div className="matrix-cell-meta">
         <span>目标 {target == null ? "--" : formatNumber(target)}</span>
-        <span className={changeClass}>
-          {change?.value == null ? "--" : signed(change.value)}
-          {" / "}
-          {change?.rate == null ? "--" : signedPct(change.rate * 100)}
-        </span>
+        {excluded ? (
+          <span>实际值不计入</span>
+        ) : (
+          <span className={changeClass}>
+            {change?.value == null ? "--" : signed(change.value)}
+            {" / "}
+            {change?.rate == null ? "--" : signedPct(change.rate * 100)}
+          </span>
+        )}
       </div>
     </td>
   );
@@ -4981,21 +5695,22 @@ function MatrixOverallCell({
   level: LevelKey;
 }) {
   const result = calculateOverallProgress(row, indicators, rules, level);
+  const allSelectedExcluded = indicators.length > 0 && result.excludedCount === indicators.length;
   const progressClass = matrixProgressTone(result.value);
 
   return (
     <td className="matrix-overall-cell">
       <div className="matrix-cell-main">
-        <strong className={`matrix-overall-value ${progressClass}`}>
-          {result.value == null ? "--" : fmtPct(result.value)}
+        <strong className={`matrix-overall-value ${allSelectedExcluded ? "matrix-overall-excluded" : progressClass}`}>
+          {allSelectedExcluded ? "未纳入统计" : result.value == null ? "--" : fmtPct(result.value)}
         </strong>
         <span className="matrix-overall-count">
-          {result.validCount ? `${result.validCount}项` : "--"}
+          {allSelectedExcluded ? "不计入" : result.validCount ? `${result.validCount}项` : "--"}
         </span>
       </div>
       <div className="matrix-cell-meta">
-        <span>有效权重 {result.validCount ? `${result.weightTotal.toFixed(1)}%` : "--"}</span>
-        <span>无目标不计入</span>
+        <span>{allSelectedExcluded ? "所选指标已排除" : `有效权重 ${result.validCount ? `${result.weightTotal.toFixed(1)}%` : "--"}`}</span>
+        <span>{allSelectedExcluded ? "不参与综合进度" : "无目标不计入"}</span>
       </div>
     </td>
   );
@@ -5397,12 +6112,13 @@ function LevelPanel({
   }, [rows, tableScrollTop, tableViewportHeight, useVirtualRows]);
   const lastWindow = changeWindows[changeWindows.length - 1] ?? 60;
 
-  const totalDone = rows.reduce((s, r) => s + r.done, 0);
-  const targetedRows = rows.filter((r) => r.target != null && r.target > 0);
+  const includedRows = rows.filter((row) => !row.excluded);
+  const totalDone = includedRows.reduce((s, r) => s + r.done, 0);
+  const targetedRows = includedRows.filter((r) => r.target != null && r.target > 0);
   const targetedDone = targetedRows.reduce((s, r) => s + r.done, 0);
   const totalTarget = targetedRows.reduce((s, r) => s + (r.target ?? 0), 0);
   const avgPct = totalTarget > 0 ? targetedDone / totalTarget : null;
-  const lastChange = rows.reduce((s, r) => s + (r.changes[lastWindow]?.value ?? 0), 0);
+  const lastChange = includedRows.reduce((s, r) => s + (r.changes[lastWindow]?.value ?? 0), 0);
 
   const needsScroll = branchHeight != null && !isBranch;
   const panelStyle: React.CSSProperties = needsScroll
@@ -5647,15 +6363,25 @@ const DataRow = memo(function DataRow({
       <span className="rank">{String(rank).padStart(2, "0")}</span>
       <span className="name" title={item.name}>{item.name}</span>
       <span className="completion-cell">
-        <strong>
-          {formatNumber(item.done)}
-          <i>/</i>
-          {item.target == null ? "--" : formatNumber(item.target)}
-        </strong>
-        <em className={matrixProgressTone(pct(item))}>{fmtProgress(pct(item))}</em>
+        {item.excluded ? (
+          <strong className="excluded-metric-value">未纳入统计</strong>
+        ) : (
+          <>
+            <strong>
+              {formatNumber(item.done)}
+              <i>/</i>
+              {item.target == null ? "--" : formatNumber(item.target)}
+            </strong>
+            <em className={matrixProgressTone(pct(item))}>{fmtProgress(pct(item))}</em>
+          </>
+        )}
       </span>
       {changeWindows.map((minutes) => (
-        <ChangeCell key={minutes} change={item.changes[minutes] ?? { value: null, rate: null }} />
+        <ChangeCell
+          key={minutes}
+          change={item.changes[minutes] ?? { value: null, rate: null }}
+          excluded={item.excluded}
+        />
       ))}
     </div>
   );
@@ -5669,7 +6395,8 @@ function EmptyRow({ message = "暂无数据" }: { message?: string }) {
   );
 }
 
-function ChangeCell({ change }: { change: Change }) {
+function ChangeCell({ change, excluded = false }: { change: Change; excluded?: boolean }) {
+  if (excluded) return <span className="change excluded">未纳入统计</span>;
   const v = change.value; const r = change.rate;
   if ((v === null || v === 0) && (r === null || r === 0)) {
     return <span className="change flat">-- / --</span>;

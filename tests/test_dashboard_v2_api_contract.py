@@ -30,3 +30,9 @@ def test_realtime_acc_value_mode_is_exposed_on_all_realtime_queries():
         "/api/dashboard/drill-down",
     ):
         assert "value_mode" in _parameter_names(path)
+
+
+def test_current_query_supports_bounded_channel_search():
+    parameters = _parameter_names("/api/dashboard/current")
+
+    assert {"search", "limit"} <= parameters

@@ -110,6 +110,21 @@ pwsh -File scripts/setup_windows_env.ps1
 
 当开发库与生产库位于同一 MySQL 服务实例时，两边必须在 `config/runtime.local.json` 的 `dashboard.session_overrides` 中分别配置不同的 `collection_database_lock_name` 和 `partition_database_lock_name`，例如名称后缀使用 `_dev`、`_prod`；同一环境中所有机器必须保留相同锁名，避免同一套数据被并发采集或维护。
 
+### 渠道指标排除
+
+驾驶舱右上角“设置”中的“渠道指标排除”用于维护“某个渠道的某个指标不纳入统计”的规则。选择渠道、已启用且结果落库（`STORE`）的指标、生效日期和可选失效日期后保存；规则可预览受影响的渠道经理、网格、分公司和市级路径，也可以取消，但不会物理删除审计记录。
+
+规则不改变上游请求、组织树校验、原始指标事实或目标值。每次采集仍按“采集 -> 结构校验 -> 绑定节点与公式计算 -> 生成排除口径 -> 写入事实”的顺序执行。原始值继续写入 `metric_current`、`metric_snapshot` 与 `metric_acc`；同批次的有效值写入 `metric_caliber_override`，其中渠道自身的被排除指标状态为 `EXCLUDED`，页面显示“未纳入统计”而不是数值 `0`。其祖先节点按被排除渠道的贡献扣减；当前公式只支持加减/线性系数，因此可一并扣减受影响的组合指标。目标值保持原值，不会因排除规则调整。
+
+新规则从生效日期后的下一次成功采集起生成完整的批次重算结果，不需要新建数据库或重算全部历史事实。若需要立即刷新当前汇总，可受控地触发一次驾驶舱采集；不要通过直接修改 `metric_current`、`metric_snapshot` 或 `metric_acc` 代替采集。
+
+| 表 | 职责 |
+| --- | --- |
+| `channel_indicator_exclusion` | 保存渠道、指标、生效区间、状态、原因和审计字段；同一渠道指标的有效日期区间不能重叠。 |
+| `metric_caliber_override` | 保存某一采集批次中渠道 `EXCLUDED` 状态及其祖先/组合指标的有效值，不覆盖原始事实。 |
+
+管理接口为 `GET/POST /api/dashboard/channel-indicator-exclusions`、`POST /api/dashboard/channel-indicator-exclusions/preview`、`PATCH/DELETE /api/dashboard/channel-indicator-exclusions/{id}`。数据库升级后先验证 `python -m alembic -c .\alembic_dashboard_v2.ini current` 已到 `head`，再使用管理界面保存规则。
+
 ### 驾驶舱目标草稿与考核版本
 
 驾驶舱将“日常执行目标”和“用于考核的历史目标”分成两条独立链路。目标值设置页面只维护可编辑的**目标草稿**；版本记录页面只展示只读、可审计的**考核版本**。这样可以持续调整当前执行目标，同时保留每次发布时的考核依据。

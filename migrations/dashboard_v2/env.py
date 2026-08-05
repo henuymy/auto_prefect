@@ -7,12 +7,14 @@ from sqlalchemy import engine_from_config, pool
 
 from infrastructure.dashboard_mysql import DashboardMySQLSettings
 from models.dashboard_v2 import (  # noqa: F401
+    ChannelIndicatorExclusion,
     CollectionRunV2,
     HierarchyNode,
     HierarchyParentHistory,
     IndicatorFormulaComponent,
     IndicatorV2,
     MetricAccV2,
+    MetricCaliberOverride,
     MetricCurrentV2,
     MetricSnapshotV2,
     MetricTargetValue,

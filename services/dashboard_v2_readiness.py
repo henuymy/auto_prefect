@@ -39,11 +39,13 @@ EXPECTED_TABLES = {
     "hierarchy_parent_history",
     "indicator",
     "indicator_formula_component",
+    "channel_indicator_exclusion",
     "target_plan",
     "metric_target_value",
     "metric_current",
     "metric_snapshot",
     "metric_acc",
+    "metric_caliber_override",
     "monitor_runs",
     "monitor_steps",
     "monitor_events",
@@ -70,11 +72,16 @@ EXPECTED_COLUMNS = {
         "id", "custom_indicator_id", "source_indicator_id", "coefficient",
         "sort_order", "created_at", "updated_at",
     },
+    "channel_indicator_exclusion": {
+        "id", "channel_node_id", "indicator_id", "effective_from",
+        "effective_to", "status", "reason", "created_by", "created_at",
+        "updated_at",
+    },
     "target_plan": {
         "id", "plan_name", "scenario", "period_type", "effective_from",
         "effective_to", "priority", "version_no", "status",
-        "supersedes_plan_id", "activated_at", "retired_at", "created_at",
-        "updated_at",
+        "is_realtime", "supersedes_plan_id", "activated_at", "retired_at",
+        "created_at", "updated_at",
     },
     "metric_target_value": {
         "id", "plan_id", "node_id", "indicator_id", "target_value",
@@ -91,6 +98,10 @@ EXPECTED_COLUMNS = {
     "metric_acc": {
         "id", "period_type", "stat_date", "node_id", "indicator_id",
         "collection_run_id", "metric_value", "collected_at", "updated_at",
+    },
+    "metric_caliber_override": {
+        "id", "collection_run_id", "node_id", "indicator_id", "metric_value",
+        "value_state", "calculation_type", "rule_fingerprint", "created_at",
     },
     "monitor_runs": {
         "id", "source", "external_run_id", "task_name", "target_kind",
@@ -131,9 +142,14 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
         ("custom_indicator_id", "source_indicator_id"),
     ),
     (
+        "channel_indicator_exclusion",
+        "uq_channel_indicator_exclusion_channel_indicator_from",
+        ("channel_node_id", "indicator_id", "effective_from"),
+    ),
+    (
         "target_plan",
-        "uq_target_plan_business_version",
-        ("scenario", "period_type", "plan_name", "version_no"),
+        "uq_target_plan_status_version",
+        ("scenario", "period_type", "plan_name", "status", "version_no"),
     ),
     (
         "metric_target_value",
@@ -154,6 +170,11 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
         "metric_acc",
         "uq_metric_acc_period_date_node_indicator",
         ("period_type", "stat_date", "node_id", "indicator_id"),
+    ),
+    (
+        "metric_caliber_override",
+        "uq_metric_caliber_override_run_node_indicator",
+        ("collection_run_id", "node_id", "indicator_id"),
     ),
     (
         "monitor_runs",
@@ -195,6 +216,14 @@ EXPECTED_FOREIGN_KEYS = {
         "indicator_formula_component", ("source_indicator_id",),
         "indicator", ("id",), "RESTRICT",
     ),
+    (
+        "channel_indicator_exclusion", ("channel_node_id",),
+        "hierarchy_node", ("id",), "RESTRICT",
+    ),
+    (
+        "channel_indicator_exclusion", ("indicator_id",),
+        "indicator", ("id",), "RESTRICT",
+    ),
     ("metric_target_value", ("plan_id",), "target_plan", ("id",), "CASCADE"),
     (
         "metric_target_value", ("node_id",),
@@ -216,6 +245,18 @@ EXPECTED_FOREIGN_KEYS = {
         "metric_acc", ("collection_run_id",),
         "collection_run", ("id",), "SET NULL",
     ),
+    (
+        "metric_caliber_override", ("collection_run_id",),
+        "collection_run", ("id",), "SET NULL",
+    ),
+    (
+        "metric_caliber_override", ("node_id",),
+        "hierarchy_node", ("id",), "RESTRICT",
+    ),
+    (
+        "metric_caliber_override", ("indicator_id",),
+        "indicator", ("id",), "RESTRICT",
+    ),
     ("monitor_steps", ("run_id",), "monitor_runs", ("id",), "CASCADE"),
     ("monitor_events", ("run_id",), "monitor_runs", ("id",), "CASCADE"),
 }
@@ -227,6 +268,11 @@ EXPECTED_CHECK_CONSTRAINTS = {
     ("hierarchy_node", "ck_hierarchy_node_valid_level_no"),
     ("indicator", "ck_indicator_valid_indicator_type"),
     ("indicator", "ck_indicator_valid_storage_mode"),
+    ("channel_indicator_exclusion", "ck_channel_indicator_exclusion_valid_status"),
+    (
+        "channel_indicator_exclusion",
+        "ck_channel_indicator_exclusion_valid_effective_dates",
+    ),
     ("target_plan", "ck_target_plan_valid_scenario"),
     ("target_plan", "ck_target_plan_valid_period_type"),
     ("target_plan", "ck_target_plan_valid_status"),
@@ -240,6 +286,15 @@ EXPECTED_CHECK_CONSTRAINTS = {
         "ck_hierarchy_parent_history_valid_history_dates",
     ),
     ("metric_acc", "ck_metric_acc_valid_period_type"),
+    ("metric_caliber_override", "ck_metric_caliber_override_valid_value_state"),
+    (
+        "metric_caliber_override",
+        "ck_metric_caliber_override_valid_calculation_type",
+    ),
+    (
+        "metric_caliber_override",
+        "ck_metric_caliber_override_valid_value_state_metric_value",
+    ),
 }
 EXPECTED_INDEXES = {
     ("collection_run", "ix_collection_run_status_started", ("status", "started_at")),
@@ -279,6 +334,13 @@ EXPECTED_INDEXES = {
         ),
     ),
     (
+        "target_plan", "ix_target_plan_realtime_lookup",
+        (
+            "scenario", "period_type", "status", "is_realtime",
+            "effective_from", "effective_to", "priority",
+        ),
+    ),
+    (
         "indicator", "ix_indicator_enabled_sort_order",
         ("enabled", "sort_order"),
     ),
@@ -289,6 +351,16 @@ EXPECTED_INDEXES = {
     (
         "indicator_formula_component", "ix_indicator_formula_component_source",
         ("source_indicator_id",),
+    ),
+    (
+        "channel_indicator_exclusion",
+        "ix_channel_indicator_exclusion_channel_validity",
+        ("channel_node_id", "effective_from", "effective_to"),
+    ),
+    (
+        "channel_indicator_exclusion",
+        "ix_channel_indicator_exclusion_indicator_validity",
+        ("indicator_id", "effective_from", "effective_to"),
     ),
     (
         "metric_target_value", "ix_metric_target_value_node_indicator",
@@ -319,6 +391,11 @@ EXPECTED_INDEXES = {
         ("period_type", "stat_date", "indicator_id", "metric_value"),
     ),
     ("metric_acc", "ix_metric_acc_stat_date", ("stat_date",)),
+    (
+        "metric_caliber_override",
+        "ix_metric_caliber_override_node_indicator_run",
+        ("node_id", "indicator_id", "collection_run_id"),
+    ),
     (
         "monitor_runs",
         "ix_monitor_runs_status_scheduled",

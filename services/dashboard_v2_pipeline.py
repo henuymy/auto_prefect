@@ -31,6 +31,9 @@ from services.dashboard_v2_metric_store import (
     write_v2_acc_metrics_in_session,
     write_v2_realtime_metrics_in_session,
 )
+from services.dashboard_v2_exclusion_runtime import (
+    write_channel_indicator_exclusion_overrides_in_session,
+)
 
 
 MYSQL_RETRYABLE_ERROR_CODES = {1205, 1213, 2006, 2013}
@@ -356,6 +359,20 @@ def _write_v2_transaction(
         )
         stage_started = perf_counter()
         rows = compose_store_metric_rows(rows, plan["custom_components"])
+        caliber_result = write_channel_indicator_exclusion_overrides_in_session(
+            session,
+            collection_run_id=run.id,
+            business_date=query_date,
+            collected_at=collected_at,
+            rows=rows,
+            store_codes=plan["store_codes"],
+            custom_components=plan["custom_components"],
+        )
+        stage_timings["exclusion_caliber_seconds"] = round(
+            perf_counter() - stage_started, 3
+        )
+
+        stage_started = perf_counter()
         normalized_by_indicator = {
             code: normalize_v2_metric_rows(
                 [
@@ -393,6 +410,9 @@ def _write_v2_transaction(
             current_count = 0
             snapshot_count = 0
             acc_count = metric_result["acc_upsert_count"]
+        metric_result.setdefault("write_stats", {})["exclusion_caliber"] = (
+            caliber_result
+        )
         stage_timings["metric_sql_seconds"] = round(
             perf_counter() - stage_started, 3
         )

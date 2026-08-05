@@ -112,7 +112,7 @@ def test_v2_baseline_creates_exact_schema_and_partition(v2_mysql_engine):
         )
 
     assert tables == EXPECTED_MYSQL_TABLES
-    assert revision == "20260630_0001"
+    assert revision == "20260805_0006"
     assert primary_columns == ["id", "collected_at"]
     assert partitions == {"p_future"}
 
@@ -491,9 +491,11 @@ EXPECTED_MYSQL_TABLES = {
     "hierarchy_parent_history",
     "indicator",
     "indicator_formula_component",
+    "channel_indicator_exclusion",
     "target_plan",
     "metric_target_value",
     "metric_current",
     "metric_snapshot",
     "metric_acc",
+    "metric_caliber_override",
 }

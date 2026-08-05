@@ -49,6 +49,62 @@ export type UpdateIndicatorSettingsPayload = {
   storage_mode?: "STORE" | "COMPONENT";
 };
 
+export type DashboardChannelIndicatorExclusionStatus = "ACTIVE" | "CANCELLED";
+
+export type DashboardChannelIndicatorExclusion = {
+  id: number;
+  channel_node_id: number;
+  channel_node_code: string;
+  channel_node_name: string;
+  indicator_id: number;
+  indicator_code: string;
+  indicator_name: string;
+  effective_from: string;
+  effective_to: string | null;
+  status: DashboardChannelIndicatorExclusionStatus;
+  reason: string | null;
+  created_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type DashboardChannelIndicatorExclusionResponse = {
+  exclusions: DashboardChannelIndicatorExclusion[];
+};
+
+export type SaveDashboardChannelIndicatorExclusionPayload = {
+  channel_node_id: number;
+  indicator_id: number;
+  effective_from: string;
+  effective_to?: string | null;
+  reason?: string | null;
+  created_by?: string | null;
+};
+
+export type UpdateDashboardChannelIndicatorExclusionPayload = Partial<
+  SaveDashboardChannelIndicatorExclusionPayload
+> & {
+  status?: DashboardChannelIndicatorExclusionStatus;
+};
+
+export type DashboardChannelIndicatorExclusionPreview = {
+  rule: SaveDashboardChannelIndicatorExclusionPayload;
+  affected_nodes: Array<{
+    node_id: number;
+    node_type: DashboardRow["node_type"];
+    node_code: string;
+    node_name: string;
+    distance: number;
+  }>;
+  affected_node_count: number;
+};
+
+export type DeleteDashboardChannelIndicatorExclusionResponse = {
+  id: number;
+  deleted: true;
+  status: "CANCELLED";
+};
+
 export type DashboardTargetScenario = "NORMAL" | "PK";
 export type DashboardTargetPeriod = "DAY" | "MONTH";
 export type DashboardTargetSource = "WORKING" | "ASSESSMENT";
@@ -162,6 +218,8 @@ export type DashboardAccumulationMeta = {
   target_period: "MONTH";
 };
 
+export type DashboardMetricState = "VALUE" | "EXCLUDED";
+
 export type DashboardRow = {
   id: number;
   node_code: string;
@@ -172,6 +230,7 @@ export type DashboardRow = {
   collection_run_id: number | null;
   collected_at: string | null;
   metrics: Record<string, number | null>;
+  metric_states?: Record<string, DashboardMetricState>;
   targets?: Record<string, number | null>;
 };
 

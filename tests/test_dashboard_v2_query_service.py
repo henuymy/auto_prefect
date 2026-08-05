@@ -13,6 +13,7 @@ from services import dashboard_v2_query_service
 from services.dashboard_v2_query_service import (
     get_acc_options,
     get_acc_wide_table,
+    get_current_wide_table,
     get_current_with_changes,
     get_dashboard_matrix_page,
     get_dashboard_overview,
@@ -76,6 +77,16 @@ def _engine():
         )
         """,
         """
+        CREATE TABLE channel_indicator_exclusion (
+            id INTEGER PRIMARY KEY, channel_node_id INTEGER NOT NULL,
+            indicator_id INTEGER NOT NULL, effective_from DATE NOT NULL,
+            effective_to DATE, status TEXT NOT NULL DEFAULT 'ACTIVE',
+            reason TEXT, created_by TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
         CREATE TABLE collection_run (
             id INTEGER PRIMARY KEY, batch_no TEXT NOT NULL, run_type TEXT NOT NULL,
             trigger_type TEXT NOT NULL, prefect_flow_run_id TEXT, status TEXT NOT NULL,
@@ -111,6 +122,15 @@ def _engine():
             node_id INTEGER NOT NULL, indicator_id INTEGER NOT NULL,
             collection_run_id INTEGER, metric_value NUMERIC NOT NULL,
             collected_at DATETIME NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE metric_caliber_override (
+            id INTEGER PRIMARY KEY, collection_run_id INTEGER,
+            node_id INTEGER NOT NULL, indicator_id INTEGER NOT NULL,
+            metric_value NUMERIC, value_state TEXT NOT NULL DEFAULT 'VALUE',
+            calculation_type TEXT NOT NULL DEFAULT 'EXCLUSION_ROLLUP',
+            rule_fingerprint TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """,
         """
@@ -219,6 +239,72 @@ def test_overview_returns_v2_tree_with_manager_and_without_legacy_fields():
     assert manager["metrics"]["channel_count"] == 20
     assert manager["targets"]["channel_count"] == 30
     assert not ({"area_id", "area_code", "area_name", "level_type"} & manager.keys())
+
+
+def test_current_wide_table_filters_channel_search_before_loading_metrics():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO hierarchy_node
+                (id, node_type, node_code, node_name, parent_id, level_no, sort_order)
+            VALUES (6, 'CHANNEL', 'C002', '另一个测试渠道', 4, 5, 2)
+        """))
+
+    result = get_current_wide_table(
+        engine,
+        node_type="CHANNEL",
+        indicator_codes=["channel_count"],
+        search="C002",
+        limit=200,
+    )
+
+    assert result["row_count"] == 1
+    assert [row["node_code"] for row in result["rows"]] == ["C002"]
+
+    limited = get_current_wide_table(
+        engine,
+        node_type="CHANNEL",
+        indicator_codes=["channel_count"],
+        limit=1,
+    )
+    assert limited["row_count"] == 1
+
+
+def test_overview_uses_effective_exclusion_values_and_exposes_channel_state():
+    engine = _engine()
+    _insert_working_day_target(engine)
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO channel_indicator_exclusion
+                (id, channel_node_id, indicator_id, effective_from, status)
+            VALUES (1, 5, 1, '2026-06-30', 'ACTIVE')
+        """))
+        connection.execute(text("""
+            INSERT INTO metric_caliber_override
+                (id, collection_run_id, node_id, indicator_id, metric_value,
+                 value_state, calculation_type)
+            VALUES
+                (1, 2, 2, 1, 88, 'VALUE', 'EXCLUSION_ROLLUP'),
+                (2, 2, 3, 1, 38, 'VALUE', 'EXCLUSION_ROLLUP'),
+                (3, 2, 4, 1, 8, 'VALUE', 'EXCLUSION_ROLLUP'),
+                (4, 2, 5, 1, NULL, 'EXCLUDED', 'EXCLUSION_ROLLUP')
+        """))
+
+    result = get_dashboard_overview(
+        engine,
+        branch_code="AQ",
+        indicator_codes=["channel_count"],
+        include_acc=False,
+    )
+
+    branch = next(row for row in result["rows"] if row["id"] == 2)
+    manager = next(row for row in result["rows"] if row["id"] == 4)
+    channel = next(row for row in result["rows"] if row["id"] == 5)
+    assert branch["metrics"]["channel_count"] == 88
+    assert manager["metrics"]["channel_count"] == 8
+    assert manager["targets"]["channel_count"] == 30
+    assert channel["metrics"]["channel_count"] is None
+    assert channel["metric_states"]["channel_count"] == "EXCLUDED"
 
 
 def test_target_scenario_is_explicit_instead_of_pk_fallback():

@@ -218,6 +218,10 @@ C:\AutoNotifyRuntime\
 
 “独立展示 + 结果落库 + 被公式引用”是合法的重叠组合；“仅计算输入”不等于“被公式引用”。服务端必须拒绝 `enabled=true + storage_mode=COMPONENT`，界面也必须阻止该选择。组合指标固定为 `CUSTOM + STORE`，当前只允许引用源指标、只支持加权组合，不支持嵌套组合；已归档源指标不能建立新引用，依赖状态应显示“依赖正常”“依赖可用（不独立展示）”“已归档”或“待选择”。
 
+渠道指标排除是独立于组织树、指标启用和目标方案的有效口径配置。`channel_indicator_exclusion` 只允许指向启用的 `CHANNEL + STORE` 组合，使用包含两端的 `effective_from`/`effective_to` 和 `ACTIVE/CANCELLED` 状态；同一渠道和指标的有效日期区间不得重叠，取消只变更状态、不物理删除审计记录。管理入口固定为 `/api/dashboard/channel-indicator-exclusions`，前端从驾驶舱“设置 -> 渠道指标排除”维护规则和查看影响路径。
+
+采集顺序固定为：上游请求、结构树校验、节点 ID 绑定与公式计算、排除口径计算、原始事实写入、Run 完成。排除不得修改上游响应、`metric_current`、`metric_snapshot`、`metric_acc`、组织结构或目标值；同批次计算的 `EXCLUDED` 标志和祖先/组合指标扣减值单独写入 `metric_caliber_override`，查询时按 `collection_run_id` 叠加。渠道本身被排除的指标必须返回 `metric_states[code] = EXCLUDED`，前端显示“未纳入统计”而非 `0` 或普通空值；目标保持原值。当前公式仅支持线性加减/系数，排除计算只能沿该线性关系传播。新规则由下一次成功采集生成完整批次口径，不对历史原始事实做批量回写。
+
 `effective_from`/`effective_to` 表示包含两端的业务使用区间，不是发布时刻。解析候选考核版本时按优先级、较晚生效日期、较高版本号和记录 ID 取胜。发布新版本时，服务负责截断与新版本相交的较早时间线，并将其标为 `RETIRED`；同一生效日期的修订保留旧版本审计记录，较高版本号的修订在查询时胜出。业务上应避免不必要的重叠方案，优先使用连续、不重叠的日期区间；优先级只能表达有明确审批依据的覆盖规则。
 
 目标模板导入按可识别粒度部分成功：标准“目标值”表按明细行处理，分层 Sheet 按指标列处理。只有启用且 `storage_mode=STORE` 的指标可以写入目标；无效指标列、节点、场景/周期/生效日期或数值行会进入 `skipped`，其他有效行继续新增或覆盖，未涉及的既有草稿目标保持不变。前端必须展示导入数量和未导入原因，不能因为一列无效而回滚整份文件。
@@ -298,6 +302,14 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-08-05 - 驾驶舱渠道指标排除口径
+
+- 原因：业务需要排除特定渠道的特定指标，但不能删除上游采集事实、组织结构或目标值，也不能把被排除值误显示为 `0`。
+- 修改内容：新增日期有效的渠道指标排除规则和同批次有效值覆盖层；采集保持“请求、结构校验、节点绑定/公式、排除口径、事实写入、Run 完成”顺序。原始 `metric_current`、`metric_snapshot`、`metric_acc` 不改写，`metric_caliber_override` 保存渠道 `EXCLUDED` 状态及祖先/组合指标扣减值；实时、历史、累计、变化量、矩阵和下钻统一叠加该口径。渠道单元显示“未纳入统计”，目标值保持原值。
+- 前端与接口：驾驶舱“设置 -> 渠道指标排除”提供渠道搜索、`STORE` 指标选择、日期/原因、影响预览、保存和逻辑取消；新增 `GET/POST /api/dashboard/channel-indicator-exclusions`、`POST /api/dashboard/channel-indicator-exclusions/preview`、`PATCH/DELETE /api/dashboard/channel-indicator-exclusions/{id}`，规则变更会清除驾驶舱响应缓存。
+- 配置或迁移：执行 `python -m alembic -c alembic_dashboard_v2.ini upgrade head`，新 head 为 `20260805_0006`。迁移新增 `channel_indicator_exclusion` 与 `metric_caliber_override`，不迁移或回写历史原始指标事实。
+- 验证：排除服务、运行时、采集、查询、路由、API 契约、schema/readiness/UI 契约测试 `80 passed`；前端 `npm run typecheck`、`npm test`（`35 passed`）和 `npm run build` 通过；本次 Python 文件 Ruff 通过。完整 Python 回归为 `721 passed, 9 skipped`，另有 5 个既有且与本功能无关的失败（Windows 短路径、旧目标方案断言、端口文档、健康响应字段、Prefect 调度开关）。
 
 ### 2026-08-04 - 目标模板按指标列部分导入
 
