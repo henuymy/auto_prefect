@@ -1163,9 +1163,9 @@ export function DashboardCockpit() {
     () => (data?.indicatorCatalog || [])
       .filter((item) => (
         item.storage_mode === "STORE"
-        && (dataTimeMode === "history" || item.enabled)
+        && item.enabled
       )),
-    [data?.indicatorCatalog, dataTimeMode],
+    [data?.indicatorCatalog],
   );
   const handleModeChange = useCallback((nextMode: CockpitMode) => {
     if (nextMode === mode) return;
@@ -1369,7 +1369,7 @@ export function DashboardCockpit() {
       const valueMode: DashboardValueMode = dataTimeMode === "realtime_acc"
         ? "REALTIME_ACC"
         : "REALTIME";
-      const catalogPromise = getDashboardIndicators(historyActive, !historyActive)
+      const catalogPromise = getDashboardIndicators(false, true)
         .catch(() => ({ indicators: [] }));
       const [changesData, accRows] = cumulativeActive
         ? await getAccDashboard(

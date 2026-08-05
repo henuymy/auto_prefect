@@ -13,6 +13,14 @@ def test_history_time_copy_distinguishes_batch_start_and_finish():
     assert "change_tolerance_minutes" in source
 
 
+def test_history_mode_only_lists_currently_enabled_indicators():
+    source = COCKPIT.read_text(encoding="utf-8")
+
+    assert "getDashboardIndicators(false, true)" in source
+    assert 'item.storage_mode === "STORE"\n        && item.enabled' in source
+    assert 'dataTimeMode === "history" || item.enabled' not in source
+
+
 def test_cumulative_mode_queries_selected_daily_accumulation_date():
     source = COCKPIT.read_text(encoding="utf-8")
     assert 'const [cumulativeAsOf, setCumulativeAsOf] = useState("");' in source
