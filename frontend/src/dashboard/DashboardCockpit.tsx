@@ -82,6 +82,15 @@ import type {
   IndicatorChanges,
   SaveDashboardChannelIndicatorExclusionPayload,
 } from "@/types/dashboard";
+import {
+  loadDashboardPreferences,
+  resolveSingleIndicatorCode,
+  updateDashboardPreferences,
+} from "./dashboardPreferences";
+import type {
+  DashboardSortDirection,
+  DashboardSortMap,
+} from "./dashboardPreferences";
 
 /* ── types ── */
 
@@ -858,6 +867,56 @@ function normalizeSorts(
   ) as Record<LevelKey, SortKey>;
 }
 
+type SingleSorts = Record<LevelKey, SortKey>;
+type SingleSortDirections = Record<LevelKey, DashboardSortDirection>;
+
+const DEFAULT_SINGLE_SORTS: SingleSorts = {
+  BRANCH: "done",
+  GRID: "done",
+  CHANNEL_MANAGER: "done",
+  CHANNEL: "done",
+};
+const DEFAULT_SINGLE_SORT_DIRECTIONS: SingleSortDirections = {
+  BRANCH: "desc",
+  GRID: "desc",
+  CHANNEL_MANAGER: "desc",
+  CHANNEL: "desc",
+};
+
+function restoreSingleSorts(saved: DashboardSortMap | undefined): SingleSorts {
+  const restored = { ...DEFAULT_SINGLE_SORTS };
+  for (const { key } of LEVEL_CONFIG) {
+    const savedKey = saved?.[key]?.key;
+    if (savedKey) restored[key] = savedKey as SortKey;
+  }
+  return restored;
+}
+
+function restoreSingleSortDirections(
+  saved: DashboardSortMap | undefined,
+): SingleSortDirections {
+  const restored = { ...DEFAULT_SINGLE_SORT_DIRECTIONS };
+  for (const { key } of LEVEL_CONFIG) {
+    const savedDirection = saved?.[key]?.direction;
+    if (savedDirection === "asc" || savedDirection === "desc") {
+      restored[key] = savedDirection;
+    }
+  }
+  return restored;
+}
+
+function buildSingleSortMap(
+  sorts: SingleSorts,
+  directions: SingleSortDirections,
+): DashboardSortMap {
+  return Object.fromEntries(
+    LEVEL_CONFIG.map(({ key }) => [key, {
+      key: sorts[key],
+      direction: directions[key],
+    }]),
+  );
+}
+
 function applyLevelOverrides<T extends DashboardRow>(
   rows: T[],
   overrides: Partial<Record<LevelKey, LevelOverrideData>>,
@@ -1034,12 +1093,13 @@ function _buildLevels<T extends DashboardRow>(
 
 export function DashboardCockpit() {
   /* state */
+  const [initialDashboardPreferences] = useState(loadDashboardPreferences);
   const branchPanelRef = useRef<HTMLDivElement>(null);
   const monthBranchPanelRef = useRef<HTMLDivElement>(null);
   const [branchHeight, setBranchHeight] = useState<number>(0);
   const [monthBranchHeight, setMonthBranchHeight] = useState<number>(0);
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<CockpitMode>("single");
+  const [mode, setMode] = useState<CockpitMode>(initialDashboardPreferences.mode);
   const [dataTimeMode, setDataTimeMode] = useState<DataTimeMode>("realtime");
   const [targetScenario, setTargetScenario] = useState<DashboardTargetScenario>("NORMAL");
   const [historyAsOf, setHistoryAsOf] = useState("");
@@ -1059,7 +1119,7 @@ export function DashboardCockpit() {
   const [data, setData] = useState<FetchedData | null>(null);
   const [error, setError] = useState(false);
   const [singleRequestSource, setSingleRequestSource] = useState<RequestSource>("idle");
-  const [indicator, setIndicator] = useState("");
+  const [indicator, setIndicator] = useState(initialDashboardPreferences.singleIndicatorCode);
   const [changeWindows, setChangeWindows] = useState<number[]>(loadSingleChangeWindows);
   const [multiMetricWindow, setMultiMetricWindow] = useState(
     () => loadMatrixPreferences().windowMinutes,
@@ -1068,7 +1128,9 @@ export function DashboardCockpit() {
   const [progressColors, setProgressColors] = useState<MatrixProgressColors>(() => loadMatrixProgressColors());
   const [dataRevision, setDataRevision] = useState(0);
   const [drillStack, setDrillStack] = useState<DrillEntry[]>([]);
-  const [scopeMode, setScopeMode] = useState<ScopeMode>("default");
+  const [scopeMode, setScopeMode] = useState<ScopeMode>(() => (
+    initialDashboardPreferences.mode === "multi" ? "all" : "default"
+  ));
   const [dayLevelAllMode, setDayLevelAllMode] = useState<Partial<Record<LevelKey, boolean>>>({});
   const [monthLevelAllMode, setMonthLevelAllMode] = useState<Partial<Record<LevelKey, boolean>>>({});
   const singleScopeStateRef = useRef<{
@@ -1104,18 +1166,18 @@ export function DashboardCockpit() {
   const latestDataVersionRef = useRef<string | null>(null);
   const latestConfigVersionRef = useRef<string | null>(null);
   const cumulativeDateRequestRef = useRef(false);
-  const [daySorts, setDaySorts] = useState<Record<LevelKey, SortKey>>({
-    BRANCH: "done",
-    GRID: "done",
-    CHANNEL_MANAGER: "done",
-    CHANNEL: "done",
-  });
-  const [monthSorts, setMonthSorts] = useState<Record<LevelKey, SortKey>>({
-    BRANCH: "done",
-    GRID: "done",
-    CHANNEL_MANAGER: "done",
-    CHANNEL: "done",
-  });
+  const [daySorts, setDaySorts] = useState<SingleSorts>(() => (
+    restoreSingleSorts(initialDashboardPreferences.daySorts)
+  ));
+  const [monthSorts, setMonthSorts] = useState<SingleSorts>(() => (
+    restoreSingleSorts(initialDashboardPreferences.monthSorts)
+  ));
+  const [daySortDirections, setDaySortDirections] = useState<SingleSortDirections>(() => (
+    restoreSingleSortDirections(initialDashboardPreferences.daySorts)
+  ));
+  const [monthSortDirections, setMonthSortDirections] = useState<SingleSortDirections>(() => (
+    restoreSingleSortDirections(initialDashboardPreferences.monthSorts)
+  ));
 
   const normalizedDrillStack = useMemo(
     () => normalizeDrillStack(drillStack),
@@ -1874,6 +1936,22 @@ export function DashboardCockpit() {
   }, [multiMetricWindow]);
 
   useEffect(() => {
+    updateDashboardPreferences({
+      mode,
+      singleIndicatorCode: indicator,
+      daySorts: buildSingleSortMap(daySorts, daySortDirections),
+      monthSorts: buildSingleSortMap(monthSorts, monthSortDirections),
+    });
+  }, [
+    daySortDirections,
+    daySorts,
+    indicator,
+    mode,
+    monthSortDirections,
+    monthSorts,
+  ]);
+
+  useEffect(() => {
     if (levelAllPopup?.kind !== "error") return;
     const timer = window.setTimeout(() => {
       setLevelAllPopup((prev) => (prev?.kind === "error" ? null : prev));
@@ -1884,11 +1962,10 @@ export function DashboardCockpit() {
   /* auto‑select first indicator when data first arrives */
   useEffect(() => {
     if (selectableIndicators.length) {
-      setIndicator((prev) =>
-        selectableIndicators.some((ind) => ind.code === prev)
-          ? prev
-          : selectableIndicators[0].code,
-      );
+      setIndicator((previous) => resolveSingleIndicatorCode(
+        previous,
+        selectableIndicators.map((item) => item.code),
+      ));
     }
   }, [selectableIndicators]);
 
@@ -2360,6 +2437,8 @@ export function DashboardCockpit() {
             level={level}
             sortKey={daySorts[level.key]}
             onSortChange={(k) => setDaySorts((prev) => ({ ...prev, [level.key]: k as SortKey }))}
+            sortDirection={daySortDirections[level.key]}
+            onSortDirectionChange={(direction) => setDaySortDirections((prev) => ({ ...prev, [level.key]: direction }))}
             changeWindows={dataTimeMode === "cumulative" ? [] : changeWindows}
             onDrill={handleDrill}
             selectedNodeId={selectedNodeIds[level.key]}
@@ -2402,6 +2481,8 @@ export function DashboardCockpit() {
               level={level}
               sortKey={monthSorts[level.key]}
               onSortChange={(k) => setMonthSorts((prev) => ({ ...prev, [level.key]: k as SortKey }))}
+              sortDirection={monthSortDirections[level.key]}
+              onSortDirectionChange={(direction) => setMonthSortDirections((prev) => ({ ...prev, [level.key]: direction }))}
               changeWindows={changeWindows}
               onDrill={handleDrill}
               selectedNodeId={selectedNodeIds[level.key]}
@@ -6021,6 +6102,8 @@ function LevelPanel({
   level,
   sortKey,
   onSortChange,
+  sortDirection,
+  onSortDirectionChange,
   changeWindows,
   onDrill,
   selectedNodeId,
@@ -6038,6 +6121,8 @@ function LevelPanel({
   level: LevelBoard;
   sortKey: SortKey;
   onSortChange: (k: SortKey) => void;
+  sortDirection: DashboardSortDirection;
+  onSortDirectionChange: (direction: DashboardSortDirection) => void;
   changeWindows: number[];
   onDrill: (row: BoardRow, nodeType: string) => void;
   selectedNodeId?: number;
@@ -6052,7 +6137,6 @@ function LevelPanel({
   branchHeight?: number;
   branchPanelRef?: React.RefObject<HTMLDivElement | null>;
 }) {
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [tableScrollTop, setTableScrollTop] = useState(0);
   const [tableViewportHeight, setTableViewportHeight] = useState(600);
   const dataTableRef = useRef<HTMLDivElement>(null);
@@ -6183,7 +6267,7 @@ function LevelPanel({
           options={sortOptions(changeWindows)}
           direction={sortDirection}
           onChange={onSortChange}
-          onDirectionChange={setSortDirection}
+          onDirectionChange={onSortDirectionChange}
         />
         </div>
       </div>
