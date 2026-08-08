@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChannelIndicatorExclusion, DashboardChannelIndicatorExclusionPreview, DashboardChannelIndicatorExclusionResponse, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardTargetPeriod, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetSource, DashboardTargetValuesResponse, DashboardValueMode, DeleteDashboardChannelIndicatorExclusionResponse, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveDashboardChannelIndicatorExclusionPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateDashboardChannelIndicatorExclusionPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
+import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChannelIndicatorExclusion, DashboardChannelIndicatorExclusionPreview, DashboardChannelIndicatorExclusionResponse, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardPresenceResponse, DashboardTargetPeriod, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetSource, DashboardTargetValuesResponse, DashboardValueMode, DeleteDashboardChannelIndicatorExclusionResponse, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveDashboardChannelIndicatorExclusionPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateDashboardChannelIndicatorExclusionPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -368,6 +368,13 @@ export async function importDashboardTargetTemplate(planId: number, file: File) 
 
 export async function getDashboardLatestRun() {
   return request<DashboardLatestRunResponse>("/api/dashboard/latest-run");
+}
+
+export async function heartbeatDashboardPresence(connectionId: string) {
+  return request<DashboardPresenceResponse>("/api/dashboard/presence/heartbeat", {
+    method: "POST",
+    body: JSON.stringify({ connection_id: connectionId }),
+  });
 }
 
 export async function getDashboardHistoryRange() {

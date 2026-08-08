@@ -24,6 +24,7 @@ import {
   Settings,
   Signal,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
 import {
@@ -52,6 +53,7 @@ import {
   getDashboardTargetValues,
   getCurrentDashboard,
   getAccDashboard,
+  heartbeatDashboardPresence,
   importDashboardTargetTemplate,
   saveDashboardCustomIndicator,
   saveDashboardTargetValues,
@@ -91,6 +93,7 @@ import type {
   DashboardSortDirection,
   DashboardSortMap,
 } from "./dashboardPreferences";
+import { getOrCreateDashboardPresenceId } from "./dashboardPresence";
 
 /* ── types ── */
 
@@ -1094,6 +1097,8 @@ function _buildLevels<T extends DashboardRow>(
 export function DashboardCockpit() {
   /* state */
   const [initialDashboardPreferences] = useState(loadDashboardPreferences);
+  const [presenceId] = useState(getOrCreateDashboardPresenceId);
+  const [activeConnections, setActiveConnections] = useState<number | null>(null);
   const branchPanelRef = useRef<HTMLDivElement>(null);
   const monthBranchPanelRef = useRef<HTMLDivElement>(null);
   const [branchHeight, setBranchHeight] = useState<number>(0);
@@ -1178,6 +1183,31 @@ export function DashboardCockpit() {
   const [monthSortDirections, setMonthSortDirections] = useState<SingleSortDirections>(() => (
     restoreSingleSortDirections(initialDashboardPreferences.monthSorts)
   ));
+
+  useEffect(() => {
+    if (!presenceId) return;
+    let disposed = false;
+    let sending = false;
+    const heartbeat = async () => {
+      if (sending) return;
+      sending = true;
+      try {
+        const result = await heartbeatDashboardPresence(presenceId);
+        if (!disposed) setActiveConnections(result.active_connections);
+      } catch {
+        if (!disposed) setActiveConnections(null);
+      } finally {
+        sending = false;
+      }
+    };
+
+    void heartbeat();
+    const timer = window.setInterval(() => void heartbeat(), 15_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [presenceId]);
 
   const normalizedDrillStack = useMemo(
     () => normalizeDrillStack(drillStack),
@@ -2302,6 +2332,7 @@ export function DashboardCockpit() {
         changeWindows={dataTimeMode === "cumulative" ? [] : changeWindows}
         onChangeWindow={updateChangeWindow}
         online={data?.online ?? false}
+        activeConnections={activeConnections}
         updatedAt={data?.updatedAt ?? (dataTimeMode === "cumulative" ? "暂无累计" : nowText())}
         loading={loading}
         onRefresh={() => void fetchData(true)}
@@ -2556,6 +2587,7 @@ function Header({
   changeWindows,
   onChangeWindow,
   online,
+  activeConnections,
   updatedAt,
   loading,
   onRefresh,
@@ -2581,6 +2613,7 @@ function Header({
   changeWindows: number[];
   onChangeWindow: (index: number, minutes: number) => void;
   online: boolean;
+  activeConnections: number | null;
   updatedAt: string;
   loading: boolean;
   onRefresh: () => void;
@@ -2667,6 +2700,12 @@ function Header({
           ? "批次开始时间"
           : dataTimeMode === "cumulative" ? "累计日期" : "更新时间"}</span>
         <strong>{updatedAt}</strong>
+        {activeConnections != null && <>
+          <span className="divider" />
+          <span className="header-presence" title="最近 45 秒内仍在连接的浏览器数">
+            <Users size={14} />当前在线 {activeConnections}
+          </span>
+        </>}
         <ProgressColorConfig
           colors={progressColors}
           onChange={onProgressColorChange}

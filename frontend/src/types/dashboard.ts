@@ -202,6 +202,10 @@ export type DashboardLatestRunResponse = {
   config_version: string;
 };
 
+export type DashboardPresenceResponse = {
+  active_connections: number;
+};
+
 export type ChangeEntry = {
   value: number | null;
   rate: number | null;

@@ -618,6 +618,14 @@ body::-webkit-scrollbar-button,
   font-weight: 800;
 }
 
+.header-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #f8fafc;
+  font-weight: 800;
+}
+
 .pulse-dot,
 .panel-dot {
   width: 10px;

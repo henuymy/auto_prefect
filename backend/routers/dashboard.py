@@ -58,6 +58,7 @@ from services.dashboard_v2_target_admin_service import (
     set_target_plan_realtime,
 )
 from services.dashboard_v2_target_service import TargetPlanError
+from services.dashboard_presence_service import record_dashboard_presence
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -149,6 +150,15 @@ class ChannelIndicatorExclusionUpdatePayload(BaseModel):
     status: str | None = Field(
         None,
         pattern="^(ACTIVE|CANCELLED|active|cancelled)$",
+    )
+
+
+class DashboardPresencePayload(BaseModel):
+    connection_id: str = Field(
+        ...,
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
     )
 
 
@@ -765,6 +775,14 @@ def dashboard_latest_run():
             status_code=503,
             detail=f"驾驶舱最新批次查询失败: {type(exc).__name__}",
         ) from exc
+
+
+@router.post("/presence/heartbeat")
+def dashboard_presence_heartbeat(payload: DashboardPresencePayload):
+    try:
+        return record_dashboard_presence(payload.connection_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/cache-stats")
