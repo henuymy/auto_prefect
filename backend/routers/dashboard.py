@@ -31,6 +31,7 @@ from services.dashboard_v2_exclusion_service import (
 from services.dashboard_v2_query_service import (
     get_dashboard_overview,
     get_dashboard_matrix_page,
+    get_dashboard_staged,
     get_drill_down,
     get_acc_options,
     get_acc_wide_table,
@@ -1043,6 +1044,105 @@ def dashboard_matrix(
         raise HTTPException(
             status_code=503,
             detail=f"驾驶舱矩阵查询失败: {type(exc).__name__}",
+        ) from exc
+
+
+@router.get("/staged")
+def dashboard_staged(
+    data_mode: str = Query(
+        "REALTIME",
+        pattern="^(REALTIME|REALTIME_ACC|CUMULATIVE|HISTORY)$",
+    ),
+    stage: str = Query("CORE", pattern="^(CORE|CHANNELS)$"),
+    payload: str = Query("VALUES", pattern="^(VALUES|CHANGES)$"),
+    scope_mode: str = Query("default", pattern="^(default|all)$"),
+    branch_code: str | None = Query("AQ"),
+    parent_id: int | None = Query(None, ge=1),
+    parent_node_type: str | None = Query(None),
+    as_of: datetime | None = Query(None),
+    stat_date: date | None = Query(None),
+    change_windows: str | None = Query(
+        None,
+        description="逗号分隔的变化窗口分钟数，最多 4 个，例如 5,15,30,60",
+    ),
+    indicator_codes: str | None = Query(None),
+    target_scenario: str = Query("NORMAL", pattern="^(NORMAL|PK)$"),
+):
+    """Return one dashboard slice so lower levels and changes do not block first paint."""
+    engine = get_dashboard_engine()
+    try:
+        normalized_mode = data_mode.upper()
+        normalized_stage = stage.upper()
+        normalized_payload = payload.upper()
+        parsed_windows = _parse_change_windows(change_windows)
+        parsed_codes = _parse_indicator_codes(indicator_codes)
+        version_state = _get_cached_version_state(engine)
+        config_version = str(version_state.get("config_version") or "")
+
+        if normalized_mode == "HISTORY":
+            if as_of is None:
+                raise ValueError("历史档位查询需要 as_of")
+            run_id = get_historical_run_id(engine, as_of)
+            data_version = f"{run_id or 0}:{config_version}"
+            namespace = "history"
+            ttl_seconds = _HISTORY_CACHE_TTL_SECONDS
+        else:
+            data_version = str(version_state.get("data_version") or "")
+            namespace = "realtime"
+            ttl_seconds = _DASHBOARD_CACHE_TTL_SECONDS
+
+        cache_key = (
+            "staged",
+            normalized_mode,
+            normalized_stage,
+            normalized_payload,
+            scope_mode,
+            branch_code,
+            parent_id,
+            parent_node_type,
+            as_of.isoformat() if as_of else None,
+            stat_date.isoformat() if stat_date else None,
+            tuple(parsed_windows or ()),
+            tuple(parsed_codes or ()),
+            target_scenario,
+        )
+        result = _load_cached_response(
+            namespace=namespace,
+            resolved_key=(data_version, *cache_key),
+            ttl_seconds=ttl_seconds,
+            loader=lambda: get_dashboard_staged(
+                engine,
+                data_mode=normalized_mode,
+                stage=normalized_stage,
+                payload=normalized_payload,
+                scope_mode=scope_mode,
+                branch_code=branch_code,
+                parent_id=parent_id,
+                parent_node_type=parent_node_type,
+                as_of=as_of,
+                stat_date=stat_date,
+                indicator_codes=parsed_codes,
+                change_windows=parsed_windows,
+                target_scenario=target_scenario,
+            ),
+        )
+        query_context = dict(result.get("query_context") or {})
+        query_context.update(
+            data_version=data_version,
+            config_version=config_version,
+        )
+        return {
+            **result,
+            "data_version": data_version,
+            "config_version": config_version,
+            "query_context": query_context,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"驾驶舱分阶段查询失败: {type(exc).__name__}",
         ) from exc
 
 

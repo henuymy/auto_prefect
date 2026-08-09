@@ -158,6 +158,8 @@ C:\AutoNotifyRuntime\
 - 组织结构读取遇到 MySQL `2006` 或 `2013` 时，只可在废弃当前连接池后以新连接重试一次，固定退避 `0.5` 秒；该规则仅适用于无副作用的读取。诊断日志只能输出固定类别 `MYSQL_CONNECTION_LOST` 或 `MYSQL_READ_TIMEOUT`、错误码、尝试次数、耗时和 `RETRY`/`RECOVERED`/`FAILED` 结果，不得输出原始异常、SQL、连接地址或凭据。
 - 实时指标写事务有独立的 `2006`/`2013` 恢复协议：事务异常退出后，必须确认 collection MySQL 命名锁仍由当前任务持有，废弃写入连接池，并用新连接读取同一 `batch_no` 的 `collection_run`。仅当状态已为 `SUCCESS` 时，才可返回已持久化的统计值并停止，不得重放 snapshot；这表示 snapshot 插入、`metric_current` upsert、Run 完成状态和统计值已作为同一事务提交。未观察到 `SUCCESS` 时，可在 `0.5` 秒后完整重试一次；第二次连接丢失直接失败。不得将该协议扩展为无限重试、部分写入重放或绕过命名锁。
 - `metric_current` 的 snapshot 决策读取只投影 `node_id`、`indicator_id`、`metric_value`、`stat_date`，不使用整批 `FOR UPDATE`。该无锁读取依赖所有修改当前指标值的写入方使用同一环境的 collection MySQL 命名锁；新增写入路径必须遵守该约束。实时写入顺序固定为：规划 snapshot、插入 snapshot、upsert 全部当前值、将 Run 标记为 `SUCCESS`、提交同一事务。
+- 单指标默认范围的看板查询使用 `/api/dashboard/staged`：`CORE/VALUES` 只能返回 `BRANCH`、`GRID`、`CHANNEL_MANAGER`，`CHANNELS/VALUES` 只能返回 `CHANNEL`，变化量使用 `CORE/CHANGES` 和 `CHANNELS/CHANGES` 的 `{ id, changes }` 补丁。该边界同时适用于 `REALTIME`、`REALTIME_ACC`、`CUMULATIVE` 和 `HISTORY`；累计模式不请求变化量。
+- 分阶段响应的范围必须由当前默认分公司或下钻父节点确定，不能为了补齐渠道而读取其他分公司。后续阶段与核心阶段必须比较 `data_version`、`config_version`，任一版本不一致时丢弃结果并重新查询。单次响应以 200 至 300 KB 为上限目标；多指标、“全部”范围和层级“全部”开关暂时保留原查询路径，扩展前需单独验证分页、范围和响应大小。
 
 ### 目标草稿、考核版本与历史口径约定
 

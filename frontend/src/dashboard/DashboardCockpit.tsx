@@ -48,6 +48,8 @@ import {
   getDashboardHistoryWithChanges,
   getDashboardLatestRun,
   getDashboardMatrix,
+  getDashboardStagedChanges,
+  getDashboardStagedValues,
   getDashboardWithChanges,
   getDashboardTargetPlans,
   getDashboardTargetValues,
@@ -69,6 +71,7 @@ import type {
   DashboardChannelIndicatorExclusionPreview,
   DashboardRow,
   DashboardRowWithChanges,
+  DashboardChangePatch,
   DashboardIndicator,
   DashboardHistoryCoverage,
   DashboardHistoryMeta,
@@ -81,6 +84,7 @@ import type {
   DashboardTargetScenario,
   DashboardTargetValueRow,
   DashboardValueMode,
+  DashboardStagedValuesResponse,
   IndicatorChanges,
   SaveDashboardChannelIndicatorExclusionPayload,
 } from "@/types/dashboard";
@@ -938,6 +942,35 @@ function applyLevelOverrides<T extends DashboardRow>(
   return result;
 }
 
+function mergeDashboardRows(
+  current: DashboardRowWithChanges[],
+  incoming: DashboardRowWithChanges[],
+) {
+  const positions = new Map(current.map((row, index) => [row.id, index]));
+  const merged = [...current];
+  for (const row of incoming) {
+    const position = positions.get(row.id);
+    if (position == null) {
+      positions.set(row.id, merged.length);
+      merged.push(row);
+    } else {
+      merged[position] = row;
+    }
+  }
+  return merged;
+}
+
+function applyChangePatches(
+  rows: DashboardRowWithChanges[],
+  patches: DashboardChangePatch[],
+) {
+  const changesById = new Map(patches.map((patch) => [patch.id, patch.changes]));
+  return rows.map((row) => {
+    const changes = changesById.get(row.id);
+    return changes ? { ...row, changes } : row;
+  });
+}
+
 function buildDefaultBranchScope(rows: DashboardRow[]): {
   branchId: number;
   gridIds: Set<number>;
@@ -1494,6 +1527,199 @@ export function DashboardCockpit() {
         : "REALTIME";
       const catalogPromise = getDashboardIndicators(false, true)
         .catch(() => ({ indicators: [] }));
+
+      const useStagedSingleLoad = (
+        mode === "single"
+        && scopeMode === "default"
+        && !dayLevelAllMode.GRID
+        && !dayLevelAllMode.CHANNEL_MANAGER
+        && !dayLevelAllMode.CHANNEL
+        && !monthLevelAllMode.GRID
+        && !monthLevelAllMode.CHANNEL_MANAGER
+        && !monthLevelAllMode.CHANNEL
+      );
+      if (useStagedSingleLoad) {
+        const stagedDataMode = cumulativeActive
+          ? "CUMULATIVE" as const
+          : historyActive
+            ? "HISTORY" as const
+            : valueMode;
+        const stageRequest = (
+          stage: "CORE" | "CHANNELS",
+          includeChanges = false,
+        ) => ({
+          dataMode: stagedDataMode,
+          stage,
+          scopeMode,
+          branchCode: scopeMode === "default" ? "AQ" : undefined,
+          parentId,
+          parentNodeType,
+          asOf: historyActive ? historyAsOf : undefined,
+          statDate: cumulativeActive ? cumulativeAsOf || undefined : undefined,
+          indicatorCodes: requestedIndicatorCodes ?? undefined,
+          changeWindows: includeChanges ? requestedChangeWindows : undefined,
+          targetScenario,
+        });
+        const cleanStagedRows = <T extends DashboardRow>(rows: T[]): T[] =>
+          rows.map((row) => {
+            if (row.node_type !== "CHANNEL_MANAGER") return row;
+            return { ...row, node_name: row.node_name.split("&")[0].trim() };
+          });
+        const sameStagedVersion = (response: {
+          data_version: string;
+          config_version: string;
+        }, core: DashboardStagedValuesResponse) => (
+          response.data_version === core.data_version
+          && response.config_version === core.config_version
+        );
+        const mergedCoverage = (
+          core: DashboardStagedValuesResponse,
+          channels?: DashboardStagedValuesResponse,
+        ) => {
+          if (!core.coverage && !channels?.coverage) return undefined;
+          return {
+            levels: {
+              ...(core.coverage?.levels || {}),
+              ...(channels?.coverage?.levels || {}),
+            },
+          };
+        };
+        const toFetchedData = (
+          core: DashboardStagedValuesResponse,
+          catalog: DashboardCatalogIndicator[],
+          rows: DashboardRowWithChanges[],
+          channels?: DashboardStagedValuesResponse,
+        ): FetchedData => {
+          const latestRun = core.latest_run;
+          const displayedRunTime = historyActive
+            ? latestRun?.started_at || latestRun?.finished_at
+            : latestRun?.finished_at;
+          const cumulativeMeta = cumulativeActive
+            ? {
+                throughDate: core.through_date || "",
+                statDate: core.stat_date || null,
+                isFallback: Boolean(core.is_fallback),
+              }
+            : undefined;
+          return {
+            online: cumulativeActive
+              ? rows.length > 0
+              : dataTimeMode === "realtime_acc"
+                ? Boolean(latestRun) && !core.accumulation_meta?.baseline_missing
+                : Boolean(latestRun),
+            latestRun,
+            updatedAt: cumulativeActive
+              ? cumulativeMeta?.statDate || "暂无累计"
+              : displayedRunTime
+                ? new Date(displayedRunTime).toLocaleString("zh-CN", { hour12: false })
+                : nowText(),
+            indicators: core.indicators,
+            indicatorCatalog: catalog,
+            changesRows: cleanStagedRows(rows),
+            accRows: [],
+            levelOverrides: {},
+            coverage: mergedCoverage(core, channels),
+            historyMeta: core.history_meta,
+            accumulationMeta: core.accumulation_meta,
+            cumulativeMeta,
+          };
+        };
+        const cacheStagedData = (nextData: FetchedData) => {
+          queryCacheRef.current.set(queryCacheKey, {
+            data: nextData,
+            cachedAt: Date.now(),
+          });
+          while (queryCacheRef.current.size > DASHBOARD_CACHE_MAX_ENTRIES) {
+            const oldestKey = queryCacheRef.current.keys().next().value;
+            if (oldestKey == null) break;
+            queryCacheRef.current.delete(oldestKey);
+          }
+        };
+        const restartForNewVersion = () => {
+          if (seq === fetchSeqRef.current) void fetchData(true);
+        };
+
+        const core = await getDashboardStagedValues(stageRequest("CORE"));
+        const catalog = await catalogPromise;
+        if (seq !== fetchSeqRef.current) return;
+
+        let stagedRows = cleanStagedRows(core.rows);
+        let stagedData = toFetchedData(core, catalog.indicators, stagedRows);
+        setBackgroundLoadingLevels({ CHANNEL: true });
+        startTransition(() => {
+          setData(stagedData);
+          setDataRevision((current) => current + 1);
+        });
+        setLoading(false);
+
+        let channels: DashboardStagedValuesResponse;
+        try {
+          channels = await getDashboardStagedValues(stageRequest("CHANNELS"));
+        } catch {
+          if (seq === fetchSeqRef.current) {
+            setBackgroundLoadingLevels({});
+            setLevelAllPopup({ kind: "error", message: "渠道数据请求失败，请重试" });
+            setSingleRequestSource("network");
+          }
+          return;
+        }
+        if (seq !== fetchSeqRef.current) return;
+        if (!sameStagedVersion(channels, core)) {
+          restartForNewVersion();
+          return;
+        }
+        stagedRows = mergeDashboardRows(stagedRows, cleanStagedRows(channels.rows));
+        stagedData = toFetchedData(core, catalog.indicators, stagedRows, channels);
+        setBackgroundLoadingLevels({});
+        startTransition(() => {
+          setData(stagedData);
+          setDataRevision((current) => current + 1);
+        });
+
+        if (!cumulativeActive) {
+          try {
+            const coreChanges = await getDashboardStagedChanges(stageRequest("CORE", true));
+            if (seq !== fetchSeqRef.current) return;
+            if (!sameStagedVersion(coreChanges, core)) {
+              restartForNewVersion();
+              return;
+            }
+            stagedRows = applyChangePatches(stagedRows, coreChanges.rows);
+            stagedData = toFetchedData(core, catalog.indicators, stagedRows, channels);
+            startTransition(() => {
+              setData(stagedData);
+              setDataRevision((current) => current + 1);
+            });
+
+            const channelChanges = await getDashboardStagedChanges(stageRequest("CHANNELS", true));
+            if (seq !== fetchSeqRef.current) return;
+            if (!sameStagedVersion(channelChanges, core)) {
+              restartForNewVersion();
+              return;
+            }
+            stagedRows = applyChangePatches(stagedRows, channelChanges.rows);
+            stagedData = toFetchedData(core, catalog.indicators, stagedRows, channels);
+          } catch {
+            if (seq === fetchSeqRef.current) {
+              setLevelAllPopup({ kind: "error", message: "变化量请求失败，已保留当前值" });
+            }
+          }
+        }
+
+        if (seq !== fetchSeqRef.current) return;
+        if (cumulativeActive && !cumulativeAsOf && stagedData.cumulativeMeta?.statDate) {
+          setCumulativeAsOf(stagedData.cumulativeMeta.statDate);
+          setCumulativeInput(stagedData.cumulativeMeta.statDate);
+        }
+        cacheStagedData(stagedData);
+        startTransition(() => {
+          setData(stagedData);
+          setDataRevision((current) => current + 1);
+        });
+        setSingleRequestSource("network");
+        return;
+      }
+
       const [changesData, accRows] = cumulativeActive
         ? await getAccDashboard(
             "DAY_ACC",

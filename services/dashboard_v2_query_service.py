@@ -47,6 +47,12 @@ from services.dashboard_v2_exclusion_runtime import (
 
 NODE_TYPES = {"CITY", "BRANCH", "GRID", "CHANNEL_MANAGER", "CHANNEL"}
 VALUE_MODES = {"REALTIME", "REALTIME_ACC"}
+STAGED_DATA_MODES = {"REALTIME", "REALTIME_ACC", "CUMULATIVE", "HISTORY"}
+STAGED_LEVELS = {
+    "CORE": {"BRANCH", "GRID", "CHANNEL_MANAGER"},
+    "CHANNELS": {"CHANNEL"},
+}
+STAGED_PAYLOADS = {"VALUES", "CHANGES"}
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -433,6 +439,76 @@ def _scoped_nodes(
         return candidates
     allowed = {row.id for row in _descendant_nodes(session, branch.id, as_of=as_of)}
     return [row for row in candidates if row.id in allowed]
+
+
+def _normalize_staged_data_mode(value: str | None) -> str:
+    normalized = str(value or "REALTIME").strip().upper()
+    if normalized not in STAGED_DATA_MODES:
+        raise ValueError(f"data_mode 不受支持: {value!r}")
+    return normalized
+
+
+def _normalize_staged_level(value: str | None) -> str:
+    normalized = str(value or "CORE").strip().upper()
+    if normalized not in STAGED_LEVELS:
+        raise ValueError(f"stage 不受支持: {value!r}")
+    return normalized
+
+
+def _normalize_staged_payload(value: str | None) -> str:
+    normalized = str(value or "VALUES").strip().upper()
+    if normalized not in STAGED_PAYLOADS:
+        raise ValueError(f"payload 不受支持: {value!r}")
+    return normalized
+
+
+def _staged_nodes(
+    session: Session,
+    *,
+    stage: str,
+    scope_mode: str,
+    branch_code: str | None,
+    parent_id: int | None,
+    parent_node_type: str | None,
+    as_of: datetime | None = None,
+) -> list[HierarchyNode]:
+    """Resolve the visible hierarchy slice for one staged dashboard request."""
+    requested_types = STAGED_LEVELS[stage]
+    normalized_scope = str(scope_mode or "default").strip().lower()
+    if normalized_scope not in {"default", "all"}:
+        raise ValueError(f"scope_mode 只支持 default/all: {scope_mode!r}")
+
+    if parent_id is not None and parent_node_type:
+        candidates = _drill_context_nodes(
+            session,
+            parent_id=parent_id,
+            parent_node_type=parent_node_type,
+            as_of=as_of,
+        )
+    elif normalized_scope == "all":
+        candidates = _nodes(session, as_of=as_of)
+    else:
+        branches = _nodes(session, node_type="BRANCH", as_of=as_of)
+        branch = next(
+            (row for row in branches if row.node_code == (branch_code or "AQ")),
+            None,
+        )
+        if branch is None:
+            branch = next(
+                (
+                    row
+                    for row in branches
+                    if "中原" in row.node_name or row.node_code == "AQ"
+                ),
+                branches[0] if branches else None,
+            )
+        candidates = branches + (
+            _descendant_nodes(session, branch.id, as_of=as_of)
+            if branch is not None
+            else []
+        )
+
+    return [row for row in candidates if row.node_type in requested_types]
 
 
 def _value_rows_at(
@@ -1714,6 +1790,218 @@ def get_acc_wide_table(
         }
 
 
+def _change_patches(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": row["id"],
+            "changes": row.get("changes") or {},
+        }
+        for row in rows
+    ]
+
+
+def get_dashboard_staged(
+    engine: Engine,
+    *,
+    data_mode: str = "REALTIME",
+    stage: str = "CORE",
+    payload: str = "VALUES",
+    scope_mode: str = "default",
+    branch_code: str | None = "AQ",
+    parent_id: int | None = None,
+    parent_node_type: str | None = None,
+    as_of: datetime | None = None,
+    stat_date: date | None = None,
+    indicator_codes: list[str] | None = None,
+    change_windows: list[int] | None = None,
+    target_scenario: str = "NORMAL",
+) -> dict[str, Any]:
+    """Load one visible dashboard slice without making deep data block the UI."""
+    normalized_mode = _normalize_staged_data_mode(data_mode)
+    normalized_stage = _normalize_staged_level(stage)
+    normalized_payload = _normalize_staged_payload(payload)
+    normalized_target_scenario = normalize_target_scenario(target_scenario)
+
+    if normalized_mode == "HISTORY" and as_of is None:
+        raise ValueError("历史档位查询需要 as_of")
+    if normalized_mode == "CUMULATIVE" and normalized_payload == "CHANGES":
+        raise ValueError("累计模式不支持变化量请求")
+
+    with Session(engine) as session:
+        history_mode = normalized_mode == "HISTORY"
+        nodes = _staged_nodes(
+            session,
+            stage=normalized_stage,
+            scope_mode=scope_mode,
+            branch_code=branch_code,
+            parent_id=parent_id,
+            parent_node_type=parent_node_type,
+            as_of=as_of if history_mode else None,
+        )
+        indicators = _enabled_indicators(session, indicator_codes)
+        result: dict[str, Any] = {
+            "data_mode": normalized_mode,
+            "stage": normalized_stage,
+            "payload": normalized_payload,
+            "indicators": [_indicator_dto(row) for row in indicators],
+        }
+
+        if normalized_mode == "CUMULATIVE":
+            through_date = stat_date or _yesterday_shanghai()
+            target_day = (
+                stat_date
+                if stat_date is not None
+                else session.scalar(
+                    select(func.max(MetricAccV2.stat_date)).where(
+                        MetricAccV2.period_type == "DAY_ACC",
+                        MetricAccV2.stat_date <= through_date,
+                    )
+                )
+            )
+            rows = (
+                _acc_rows_in_session(
+                    session,
+                    nodes=nodes,
+                    indicators=indicators,
+                    period_type="DAY_ACC",
+                    target_day=target_day,
+                    target_period="MONTH",
+                    target_source="ASSESSMENT",
+                    target_date=target_day,
+                    target_scenario=normalized_target_scenario,
+                )
+                if target_day is not None
+                else []
+            )
+            rows = [
+                row
+                for row in rows
+                if any(
+                    value is not None
+                    or row.get("metric_states", {}).get(code) == "EXCLUDED"
+                    for code, value in row["metrics"].items()
+                )
+            ]
+            result.update(
+                latest_run=None,
+                rows=rows,
+                row_count=len(rows),
+                through_date=through_date.isoformat(),
+                stat_date=target_day.isoformat() if target_day else None,
+                is_fallback=bool(
+                    target_day is not None and target_day < through_date
+                ),
+                query_context={
+                    "mode": normalized_mode,
+                    "stage": normalized_stage,
+                    "resolved_stat_date": target_day.isoformat() if target_day else None,
+                    "selected_run_id": None,
+                },
+            )
+            return result
+
+        if history_mode:
+            assert as_of is not None
+            run = _historical_run(session, as_of)
+            value_cutoff = (
+                run.finished_at or run.started_at or as_of
+                if run is not None
+                else as_of
+            )
+            change_anchor = (
+                run.started_at or run.finished_at or as_of
+                if run is not None
+                else as_of
+            )
+            rows = _wide_rows(
+                session,
+                nodes=nodes,
+                indicators=indicators,
+                as_of=value_cutoff,
+                period_type="DAY_ACC",
+                include_targets=True,
+                target_scenario=normalized_target_scenario,
+                business_date=_change_stat_date(run, value_cutoff),
+            )
+            if normalized_payload == "CHANGES":
+                _append_changes(
+                    session,
+                    rows=rows,
+                    indicators=indicators,
+                    anchor=change_anchor,
+                    stat_date=_change_stat_date(run, change_anchor),
+                    windows=change_windows or [5, 15, 30, 60],
+                )
+            coverage = _coverage(nodes, rows, indicators)
+            result.update(
+                selected_time=_iso(as_of),
+                latest_run=_run_dto(run),
+                rows=_change_patches(rows)
+                if normalized_payload == "CHANGES"
+                else rows,
+                row_count=len(rows),
+                coverage=coverage,
+                history_meta=_history_meta(run, as_of),
+                query_context={
+                    "mode": normalized_mode,
+                    "stage": normalized_stage,
+                    "selected_run_id": run.id if run is not None else None,
+                    "resolved_stat_date": _change_stat_date(run, value_cutoff).isoformat(),
+                },
+            )
+            return result
+
+        value_mode = normalized_mode
+        run = _latest_run(session)
+        business_date = _realtime_business_date(run)
+        rows = _wide_rows(
+            session,
+            nodes=nodes,
+            indicators=indicators,
+            period_type="DAY_ACC",
+            include_targets=value_mode != "REALTIME_ACC",
+            current_stat_date=business_date if value_mode == "REALTIME_ACC" else None,
+            target_date=business_date,
+            target_scenario=normalized_target_scenario,
+            business_date=business_date,
+        )
+        if normalized_payload == "CHANGES":
+            anchor = _change_anchor_time(run)
+            _append_changes(
+                session,
+                rows=rows,
+                indicators=indicators,
+                anchor=anchor,
+                stat_date=_change_stat_date(run, anchor),
+                windows=change_windows or [5, 15, 30, 60],
+            )
+        accumulation_meta = _apply_value_mode(
+            session,
+            value_mode=value_mode,
+            rows=rows,
+            nodes=nodes,
+            indicators=indicators,
+            run=run,
+            target_scenario=normalized_target_scenario,
+        )
+        result.update(
+            latest_run=_run_dto(run),
+            rows=_change_patches(rows)
+            if normalized_payload == "CHANGES"
+            else rows,
+            row_count=len(rows),
+            query_context={
+                "mode": normalized_mode,
+                "stage": normalized_stage,
+                "selected_run_id": run.id if run is not None else None,
+                "resolved_stat_date": business_date.isoformat(),
+            },
+        )
+        if accumulation_meta is not None:
+            result["accumulation_meta"] = accumulation_meta
+        return result
+
+
 def get_dashboard_overview(
     engine: Engine, *, branch_id: int | None = None, branch_code: str | None = None,
     period_type: str = "DAY_ACC", change_windows: list[int] | None = None,
@@ -2004,7 +2292,7 @@ def get_drill_down(
 
 __all__ = [
     "get_acc_options", "get_acc_wide_table", "get_current_wide_table", "get_current_with_changes",
-    "get_dashboard_matrix_page", "get_dashboard_overview", "get_drill_down",
+    "get_dashboard_matrix_page", "get_dashboard_overview", "get_dashboard_staged", "get_drill_down",
     "get_historical_matrix_page", "get_historical_run_id",
     "get_historical_with_changes", "get_history_options", "get_history_range",
     "get_indicator_catalog", "get_latest_dashboard_run", "parse_change_window_minutes",

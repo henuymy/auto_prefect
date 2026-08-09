@@ -153,6 +153,18 @@ pwsh -File scripts/setup_windows_env.ps1
 
 累计页面的日期下拉框来自 `GET /api/dashboard/acc/options`，只列出 `metric_acc` 中已经落库的 `period_type=DAY_ACC` 的 `stat_date`，不是按自然日补齐，也不会因为创建月目标草稿而生成日期。日累计任务在业务日结束后写入前一天的快照，因此 2026-08-04 最多显示已成功落库的 2026-08-03，不能期待当天的 2026-08-04 立即出现在历史累计列表。若调度运行成功但页面仍停在旧日期，先刷新页面或重新进入“累计”并点击“查询”；前端会重新读取日期选项。仍无日期时，再检查 `collection_run.run_type=DAY_ACC` 的 `SUCCESS`、`stat_date` 和 `metric_acc` 行数。目标草稿、累计实际快照和前端缓存是三个独立边界。
 
+### 驾驶舱分阶段加载
+
+单指标、默认组织范围且未开启任一层级“全部”时，驾驶舱使用 `GET /api/dashboard/staged` 分阶段读取数据。默认范围是所选分公司及其后代节点；下钻时以当前父节点为范围，不会额外读取其他分公司的渠道经理或渠道。多指标、“全部”范围和层级“全部”开关仍走原有查询链路，避免改变其既有展示与分页语义。
+
+1. `stage=CORE&payload=VALUES` 先返回当前范围内的 `BRANCH`、`GRID`、`CHANNEL_MANAGER`，页面据此完成首屏渲染。
+2. `stage=CHANNELS&payload=VALUES` 随后只返回 `CHANNEL`，前端按节点 ID 合并到已展示的数据中。
+3. `payload=CHANGES` 对 `CORE` 和 `CHANNELS` 分别请求，响应只含 `{ id, changes }` 补丁；数值到达后再补齐变化窗口，不阻塞首屏。`CUMULATIVE` 不计算变化量，因此不发送此类请求。
+
+接口的 `data_mode` 支持 `REALTIME`、`REALTIME_ACC`、`CUMULATIVE` 和 `HISTORY`。历史档位必须传 `as_of`，累计可传 `stat_date`；每个响应均带有 `data_version` 和 `config_version`。前端只合并与核心响应版本一致的后续阶段，版本变化时重新查询，不能把不同采集批次或配置版本的数据混在同一看板中。
+
+单次阶段响应以 200 至 300 KB 为控制目标。新增节点字段、指标字段或变化窗口前，应以实际选定指标和组织范围测量响应体大小；渠道和变化量不能重新合并到首屏核心请求中。
+
 #### 场景、周期与数据表边界
 
 | 因素 | 允许的值/判断字段 | 对应表 | 作用 |

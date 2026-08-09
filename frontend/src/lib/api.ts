@@ -1,5 +1,5 @@
 import type { ConfigVersion, DownloadItem, ReportConfig, RunLog, RuntimeCleanupPreview, RuntimeEntry, SystemStatus, ValidationIssue } from "@/types/config";
-import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChannelIndicatorExclusion, DashboardChannelIndicatorExclusionPreview, DashboardChannelIndicatorExclusionResponse, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardPresenceResponse, DashboardTargetPeriod, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetSource, DashboardTargetValuesResponse, DashboardValueMode, DeleteDashboardChannelIndicatorExclusionResponse, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveDashboardChannelIndicatorExclusionPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateDashboardChannelIndicatorExclusionPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
+import type { CreateTargetPlanPayload, DashboardAccOptionsResponse, DashboardAccResponse, DashboardCatalogIndicator, DashboardChannelIndicatorExclusion, DashboardChannelIndicatorExclusionPreview, DashboardChannelIndicatorExclusionResponse, DashboardChangesResponse, DashboardCurrentResponse, DashboardCustomIndicator, DashboardCustomIndicatorResponse, DashboardHistoryOptionsResponse, DashboardHistoryRangeResponse, DashboardIndicatorCatalogResponse, DashboardLatestRunResponse, DashboardMatrixResponse, DashboardOverviewResponse, DashboardPresenceResponse, DashboardStage, DashboardStagedChangesResponse, DashboardStagedDataMode, DashboardStagedValuesResponse, DashboardTargetPeriod, DashboardTargetPlan, DashboardTargetPlanResponse, DashboardTargetScenario, DashboardTargetSource, DashboardTargetValuesResponse, DashboardValueMode, DeleteDashboardChannelIndicatorExclusionResponse, ImportTargetTemplateResponse, SaveCustomIndicatorPayload, SaveDashboardChannelIndicatorExclusionPayload, SaveTargetValuesPayload, SaveTargetValuesResponse, UpdateDashboardChannelIndicatorExclusionPayload, UpdateIndicatorSettingsPayload } from "@/types/dashboard";
 import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
@@ -538,6 +538,53 @@ export async function getDashboardWithChanges(
   const qs = params.toString();
   return request<DashboardChangesResponse>(
     `/api/dashboard/current-with-changes${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export type DashboardStagedRequest = {
+  dataMode: DashboardStagedDataMode;
+  stage: DashboardStage;
+  scopeMode: "default" | "all";
+  branchCode?: string;
+  parentId?: number;
+  parentNodeType?: string;
+  asOf?: string;
+  statDate?: string;
+  indicatorCodes?: string[];
+  changeWindows?: number[];
+  targetScenario: DashboardTargetScenario;
+};
+
+function dashboardStagedQuery(
+  params: DashboardStagedRequest,
+  payload: "VALUES" | "CHANGES",
+) {
+  const query = new URLSearchParams({
+    data_mode: params.dataMode,
+    stage: params.stage,
+    payload,
+    scope_mode: params.scopeMode,
+    target_scenario: params.targetScenario,
+  });
+  if (params.branchCode) query.set("branch_code", params.branchCode);
+  if (params.parentId != null) query.set("parent_id", String(params.parentId));
+  if (params.parentNodeType) query.set("parent_node_type", params.parentNodeType);
+  if (params.asOf) query.set("as_of", params.asOf);
+  if (params.statDate) query.set("stat_date", params.statDate);
+  if (params.indicatorCodes?.length) query.set("indicator_codes", params.indicatorCodes.join(","));
+  if (params.changeWindows?.length) query.set("change_windows", params.changeWindows.join(","));
+  return query;
+}
+
+export async function getDashboardStagedValues(params: DashboardStagedRequest) {
+  return request<DashboardStagedValuesResponse>(
+    `/api/dashboard/staged?${dashboardStagedQuery(params, "VALUES").toString()}`,
+  );
+}
+
+export async function getDashboardStagedChanges(params: DashboardStagedRequest) {
+  return request<DashboardStagedChangesResponse>(
+    `/api/dashboard/staged?${dashboardStagedQuery(params, "CHANGES").toString()}`,
   );
 }
 

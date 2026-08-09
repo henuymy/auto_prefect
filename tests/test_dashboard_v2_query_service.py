@@ -17,6 +17,7 @@ from services.dashboard_v2_query_service import (
     get_current_with_changes,
     get_dashboard_matrix_page,
     get_dashboard_overview,
+    get_dashboard_staged,
     get_drill_down,
     get_historical_with_changes,
     get_history_options,
@@ -239,6 +240,95 @@ def test_overview_returns_v2_tree_with_manager_and_without_legacy_fields():
     assert manager["metrics"]["channel_count"] == 20
     assert manager["targets"]["channel_count"] == 30
     assert not ({"area_id", "area_code", "area_name", "level_type"} & manager.keys())
+
+
+def test_staged_dashboard_loads_core_before_channels_and_changes_are_patches():
+    engine = _engine()
+
+    core = get_dashboard_staged(
+        engine,
+        data_mode="REALTIME",
+        stage="CORE",
+        payload="VALUES",
+        indicator_codes=["channel_count"],
+    )
+    assert {row["node_type"] for row in core["rows"]} == {
+        "BRANCH", "GRID", "CHANNEL_MANAGER"
+    }
+    assert all("CHANNEL" != row["node_type"] for row in core["rows"])
+
+    channels = get_dashboard_staged(
+        engine,
+        data_mode="REALTIME",
+        stage="CHANNELS",
+        payload="VALUES",
+        indicator_codes=["channel_count"],
+    )
+    assert [row["node_type"] for row in channels["rows"]] == ["CHANNEL"]
+
+    changes = get_dashboard_staged(
+        engine,
+        data_mode="REALTIME",
+        stage="CORE",
+        payload="CHANGES",
+        indicator_codes=["channel_count"],
+        change_windows=[5],
+    )
+    assert {row["id"] for row in changes["rows"]} == {2, 3, 4}
+    assert all(set(row) == {"id", "changes"} for row in changes["rows"])
+
+
+def test_staged_cumulative_and_history_keep_the_same_level_boundary():
+    engine = _engine()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO metric_acc
+                (id, period_type, stat_date, node_id, indicator_id, collection_run_id,
+                 metric_value, collected_at)
+            VALUES
+                (1, 'DAY_ACC', '2026-06-29', 2, 1, 1, 80, '2026-06-29 23:00:00'),
+                (2, 'DAY_ACC', '2026-06-29', 3, 1, 1, 40, '2026-06-29 23:00:00'),
+                (3, 'DAY_ACC', '2026-06-29', 4, 1, 1, 15, '2026-06-29 23:00:00'),
+                (4, 'DAY_ACC', '2026-06-29', 5, 1, 1, 10, '2026-06-29 23:00:00')
+        """))
+
+    cumulative_core = get_dashboard_staged(
+        engine,
+        data_mode="CUMULATIVE",
+        stage="CORE",
+        stat_date=date(2026, 6, 29),
+        indicator_codes=["channel_count"],
+    )
+    cumulative_channels = get_dashboard_staged(
+        engine,
+        data_mode="CUMULATIVE",
+        stage="CHANNELS",
+        stat_date=date(2026, 6, 29),
+        indicator_codes=["channel_count"],
+    )
+    assert {row["node_type"] for row in cumulative_core["rows"]} == {
+        "BRANCH", "GRID", "CHANNEL_MANAGER"
+    }
+    assert [row["node_type"] for row in cumulative_channels["rows"]] == ["CHANNEL"]
+
+    history_core = get_dashboard_staged(
+        engine,
+        data_mode="HISTORY",
+        stage="CORE",
+        as_of=datetime(2026, 6, 30, 10, 10),
+        indicator_codes=["channel_count"],
+    )
+    history_channels = get_dashboard_staged(
+        engine,
+        data_mode="HISTORY",
+        stage="CHANNELS",
+        as_of=datetime(2026, 6, 30, 10, 10),
+        indicator_codes=["channel_count"],
+    )
+    assert {row["node_type"] for row in history_core["rows"]} == {
+        "BRANCH", "GRID", "CHANNEL_MANAGER"
+    }
+    assert [row["node_type"] for row in history_channels["rows"]] == ["CHANNEL"]
 
 
 def test_current_wide_table_filters_channel_search_before_loading_metrics():

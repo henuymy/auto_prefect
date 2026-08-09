@@ -280,6 +280,57 @@ export type DashboardChangesResponse = {
   row_count: number;
 };
 
+export type DashboardStagedDataMode = DashboardValueMode | "CUMULATIVE" | "HISTORY";
+export type DashboardStage = "CORE" | "CHANNELS";
+
+export type DashboardStageContext = {
+  mode: DashboardStagedDataMode;
+  stage: DashboardStage;
+  selected_run_id: number | null;
+  resolved_stat_date: string | null;
+  data_version: string;
+  config_version: string;
+};
+
+type DashboardStagedResponseBase = {
+  data_mode: DashboardStagedDataMode;
+  stage: DashboardStage;
+  data_version: string;
+  config_version: string;
+  query_context: DashboardStageContext;
+  latest_run: {
+    id: number;
+    batch_no: string;
+    stat_date: string | null;
+    started_at: string | null;
+    finished_at: string | null;
+  } | null;
+  indicators: DashboardIndicator[];
+  row_count: number;
+  accumulation_meta?: DashboardAccumulationMeta;
+  coverage?: DashboardHistoryCoverage;
+  history_meta?: DashboardHistoryMeta;
+  selected_time?: string | null;
+  through_date?: string;
+  stat_date?: string | null;
+  is_fallback?: boolean;
+};
+
+export type DashboardStagedValuesResponse = DashboardStagedResponseBase & {
+  payload: "VALUES";
+  rows: DashboardRowWithChanges[];
+};
+
+export type DashboardChangePatch = {
+  id: number;
+  changes: IndicatorChanges;
+};
+
+export type DashboardStagedChangesResponse = DashboardStagedResponseBase & {
+  payload: "CHANGES";
+  rows: DashboardChangePatch[];
+};
+
 export type DashboardHistoryRangeResponse = {
   earliest_at: string | null;
   latest_at: string | null;

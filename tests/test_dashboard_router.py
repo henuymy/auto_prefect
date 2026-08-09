@@ -85,3 +85,62 @@ def test_acc_options_route_forwards_pagination(monkeypatch):
         "page": 2,
         "page_size": 50,
     }
+
+
+def test_staged_route_attaches_a_stable_query_context(monkeypatch):
+    dashboard._dashboard_cache.clear()
+    dashboard._invalidate_version_state()
+    monkeypatch.setattr(dashboard, "get_dashboard_engine", FakeEngine)
+    monkeypatch.setattr(
+        dashboard,
+        "get_latest_dashboard_run",
+        lambda engine: {
+            "latest_run": None,
+            "data_version": "realtime-v1",
+            "config_version": "config-v1",
+        },
+    )
+    calls = {"count": 0}
+
+    def load_stage(engine, **kwargs):
+        calls["count"] += 1
+        assert kwargs["data_mode"] == "REALTIME"
+        assert kwargs["stage"] == "CORE"
+        assert kwargs["payload"] == "VALUES"
+        return {
+            "data_mode": "REALTIME",
+            "stage": "CORE",
+            "payload": "VALUES",
+            "rows": [],
+            "query_context": {"mode": "REALTIME", "stage": "CORE"},
+        }
+
+    monkeypatch.setattr(dashboard, "get_dashboard_staged", load_stage)
+    params = {
+        "data_mode": "REALTIME",
+        "stage": "CORE",
+        "payload": "VALUES",
+        "scope_mode": "default",
+        "branch_code": "AQ",
+        "parent_id": None,
+        "parent_node_type": None,
+        "as_of": None,
+        "stat_date": None,
+        "change_windows": None,
+        "indicator_codes": "metric_a",
+        "target_scenario": "NORMAL",
+    }
+
+    first = dashboard.dashboard_staged(**params)
+    second = dashboard.dashboard_staged(**params)
+
+    assert calls["count"] == 1
+    assert first["data_version"] == "realtime-v1"
+    assert first["config_version"] == "config-v1"
+    assert first["query_context"] == {
+        "mode": "REALTIME",
+        "stage": "CORE",
+        "data_version": "realtime-v1",
+        "config_version": "config-v1",
+    }
+    assert second == first
