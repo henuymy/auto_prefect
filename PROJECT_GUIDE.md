@@ -160,6 +160,8 @@ C:\AutoNotifyRuntime\
 - `metric_current` 的 snapshot 决策读取只投影 `node_id`、`indicator_id`、`metric_value`、`stat_date`，不使用整批 `FOR UPDATE`。该无锁读取依赖所有修改当前指标值的写入方使用同一环境的 collection MySQL 命名锁；新增写入路径必须遵守该约束。实时写入顺序固定为：规划 snapshot、插入 snapshot、upsert 全部当前值、将 Run 标记为 `SUCCESS`、提交同一事务。
 - 单指标默认范围的看板查询使用 `/api/dashboard/staged`：`CORE/VALUES` 只能返回 `BRANCH`、`GRID`、`CHANNEL_MANAGER`，`CHANNELS/VALUES` 只能返回 `CHANNEL`，变化量使用 `CORE/CHANGES` 和 `CHANNELS/CHANGES` 的 `{ id, changes }` 补丁。该边界同时适用于 `REALTIME`、`REALTIME_ACC`、`CUMULATIVE` 和 `HISTORY`；累计模式不请求变化量。
 - 分阶段响应的范围必须由当前默认分公司或下钻父节点确定，不能为了补齐渠道而读取其他分公司。后续阶段与核心阶段必须比较 `data_version`、`config_version`，任一版本不一致时丢弃结果并重新查询。单次响应以 200 至 300 KB 为上限目标；多指标、“全部”范围和层级“全部”开关暂时保留原查询路径，扩展前需单独验证分页、范围和响应大小。
+- 实时首访不得预加载历史范围和历史选项；历史范围、历史时间选项和累计日期选项分别在进入对应模式后按需加载。首个单指标未从浏览器偏好恢复时，只允许共享一次启用指标目录请求，并直接从该结果确定初始指标。
+- 核心阶段返回后必须先更新页面状态，不能等待指标目录、渠道值或变化量完成。指标目录和渠道值允许并行请求，变化量在值数据之后后台补丁更新；目录失败不能阻塞已返回的核心数据。生产部署使用构建后的前端静态资源，开发环境 `5174` 的 Vite 模块转换耗时不作为生产性能基线。
 
 ### 目标草稿、考核版本与历史口径约定
 

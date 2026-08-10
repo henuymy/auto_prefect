@@ -59,6 +59,25 @@ def test_cumulative_mode_uses_lazy_available_date_selector():
     assert "await loadCumulativeDateOptions(true);" in source
 
 
+def test_realtime_first_paint_defers_history_availability_requests():
+    source = COCKPIT.read_text(encoding="utf-8")
+
+    assert "if (dataTimeMode !== \"history\") return;" in source
+    assert "void loadHistoryAvailability();" in source
+
+
+def test_first_single_indicator_reuses_catalog_before_dashboard_query():
+    source = COCKPIT.read_text(encoding="utf-8")
+
+    assert "initialIndicatorCatalogRequestRef" in source
+    assert "setInitialIndicatorReady(true);" in source
+    assert "initialCatalogPromise ?? getDashboardIndicators(false, true)" in source
+    assert "const core = await getDashboardStagedValues(stageRequest(\"CORE\"));" in source
+    assert source.index("const core = await getDashboardStagedValues(stageRequest(\"CORE\"));") < source.index(
+        "let catalog = initialCatalog ?? [];"
+    )
+
+
 def test_target_editor_only_edits_execution_plans_and_keeps_audit_separate():
     source = COCKPIT.read_text(encoding="utf-8")
 

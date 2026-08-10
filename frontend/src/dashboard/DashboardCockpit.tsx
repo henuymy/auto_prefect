@@ -1158,6 +1158,10 @@ export function DashboardCockpit() {
   const [error, setError] = useState(false);
   const [singleRequestSource, setSingleRequestSource] = useState<RequestSource>("idle");
   const [indicator, setIndicator] = useState(initialDashboardPreferences.singleIndicatorCode);
+  const [initialIndicatorReady, setInitialIndicatorReady] = useState(
+    () => initialDashboardPreferences.mode !== "single"
+      || Boolean(initialDashboardPreferences.singleIndicatorCode),
+  );
   const [changeWindows, setChangeWindows] = useState<number[]>(loadSingleChangeWindows);
   const [multiMetricWindow, setMultiMetricWindow] = useState(
     () => loadMatrixPreferences().windowMinutes,
@@ -1203,6 +1207,8 @@ export function DashboardCockpit() {
   });
   const latestDataVersionRef = useRef<string | null>(null);
   const latestConfigVersionRef = useRef<string | null>(null);
+  const initialIndicatorCatalogRef = useRef<DashboardCatalogIndicator[] | null>(null);
+  const initialIndicatorCatalogRequestRef = useRef<ReturnType<typeof getDashboardIndicators> | null>(null);
   const cumulativeDateRequestRef = useRef(false);
   const [daySorts, setDaySorts] = useState<SingleSorts>(() => (
     restoreSingleSorts(initialDashboardPreferences.daySorts)
@@ -1423,6 +1429,38 @@ export function DashboardCockpit() {
     }
   }, [drillStack, normalizedDrillStack]);
 
+  const requestInitialIndicatorCatalog = useCallback(() => {
+    if (!initialIndicatorCatalogRequestRef.current) {
+      initialIndicatorCatalogRequestRef.current = getDashboardIndicators(false, true);
+    }
+    return initialIndicatorCatalogRequestRef.current;
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "single" || indicator || initialIndicatorReady) return;
+    let disposed = false;
+    setLoading(true);
+    setError(false);
+    setSingleRequestSource("loading");
+    void requestInitialIndicatorCatalog()
+      .then((result) => {
+        if (disposed) return;
+        initialIndicatorCatalogRef.current = result.indicators;
+        const firstCode = resolveSingleIndicatorCode(
+          "",
+          result.indicators.map((item) => item.code),
+        );
+        if (firstCode) setIndicator(firstCode);
+        setInitialIndicatorReady(true);
+      })
+      .catch(() => {
+        if (!disposed) setInitialIndicatorReady(true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [indicator, initialIndicatorReady, mode, requestInitialIndicatorCatalog]);
+
   const loadHistoryAvailability = useCallback(async () => {
     const [rangeResult, optionsResult] = await Promise.allSettled([
       getDashboardHistoryRange(),
@@ -1481,8 +1519,9 @@ export function DashboardCockpit() {
   }, [cumulativeDatePage, cumulativeDatesHasMore, cumulativeDatesLoading]);
 
   useEffect(() => {
+    if (dataTimeMode !== "history") return;
     void loadHistoryAvailability();
-  }, [loadHistoryAvailability]);
+  }, [dataTimeMode, loadHistoryAvailability]);
 
   useEffect(() => {
     if (dataTimeMode === "cumulative" && !cumulativeDatesLoaded) {
@@ -1525,8 +1564,14 @@ export function DashboardCockpit() {
       const valueMode: DashboardValueMode = dataTimeMode === "realtime_acc"
         ? "REALTIME_ACC"
         : "REALTIME";
-      const catalogPromise = getDashboardIndicators(false, true)
-        .catch(() => ({ indicators: [] }));
+      const initialCatalog = initialIndicatorCatalogRef.current;
+      initialIndicatorCatalogRef.current = null;
+      const initialCatalogPromise = initialIndicatorCatalogRequestRef.current;
+      initialIndicatorCatalogRequestRef.current = null;
+      const catalogPromise = initialCatalog !== null
+        ? Promise.resolve({ indicators: initialCatalog })
+        : (initialCatalogPromise ?? getDashboardIndicators(false, true))
+          .catch(() => ({ indicators: [] }));
 
       const useStagedSingleLoad = (
         mode === "single"
@@ -1640,11 +1685,11 @@ export function DashboardCockpit() {
         };
 
         const core = await getDashboardStagedValues(stageRequest("CORE"));
-        const catalog = await catalogPromise;
         if (seq !== fetchSeqRef.current) return;
 
         let stagedRows = cleanStagedRows(core.rows);
-        let stagedData = toFetchedData(core, catalog.indicators, stagedRows);
+        let catalog = initialCatalog ?? [];
+        let stagedData = toFetchedData(core, catalog, stagedRows);
         setBackgroundLoadingLevels({ CHANNEL: true });
         startTransition(() => {
           setData(stagedData);
@@ -1652,9 +1697,20 @@ export function DashboardCockpit() {
         });
         setLoading(false);
 
+        const catalogUpdatePromise = catalogPromise.then((catalogResult) => {
+          if (catalogResult.indicators === catalog) return;
+          catalog = catalogResult.indicators;
+          if (seq !== fetchSeqRef.current) return;
+          stagedData = toFetchedData(core, catalog, stagedRows);
+          startTransition(() => {
+            setData(stagedData);
+            setDataRevision((current) => current + 1);
+          });
+        });
+        const channelsPromise = getDashboardStagedValues(stageRequest("CHANNELS"));
         let channels: DashboardStagedValuesResponse;
         try {
-          channels = await getDashboardStagedValues(stageRequest("CHANNELS"));
+          channels = await channelsPromise;
         } catch {
           if (seq === fetchSeqRef.current) {
             setBackgroundLoadingLevels({});
@@ -1663,13 +1719,14 @@ export function DashboardCockpit() {
           }
           return;
         }
+        await catalogUpdatePromise;
         if (seq !== fetchSeqRef.current) return;
         if (!sameStagedVersion(channels, core)) {
           restartForNewVersion();
           return;
         }
         stagedRows = mergeDashboardRows(stagedRows, cleanStagedRows(channels.rows));
-        stagedData = toFetchedData(core, catalog.indicators, stagedRows, channels);
+        stagedData = toFetchedData(core, catalog, stagedRows, channels);
         setBackgroundLoadingLevels({});
         startTransition(() => {
           setData(stagedData);
@@ -1685,7 +1742,7 @@ export function DashboardCockpit() {
               return;
             }
             stagedRows = applyChangePatches(stagedRows, coreChanges.rows);
-            stagedData = toFetchedData(core, catalog.indicators, stagedRows, channels);
+            stagedData = toFetchedData(core, catalog, stagedRows, channels);
             startTransition(() => {
               setData(stagedData);
               setDataRevision((current) => current + 1);
@@ -1698,7 +1755,7 @@ export function DashboardCockpit() {
               return;
             }
             stagedRows = applyChangePatches(stagedRows, channelChanges.rows);
-            stagedData = toFetchedData(core, catalog.indicators, stagedRows, channels);
+            stagedData = toFetchedData(core, catalog, stagedRows, channels);
           } catch {
             if (seq === fetchSeqRef.current) {
               setLevelAllPopup({ kind: "error", message: "变化量请求失败，已保留当前值" });
@@ -2112,10 +2169,12 @@ export function DashboardCockpit() {
     dataTimeMode,
     historyAsOf,
     cumulativeAsOf,
+    requestInitialIndicatorCatalog,
     targetScenario,
   ]);
 
   useEffect(() => {
+    if (mode === "single" && !indicator && !initialIndicatorReady) return;
     if (mode === "multi" && !multiSelectedCodes.length) {
       const initialCodes = selectableIndicators
         .map((item) => item.code);
@@ -2174,6 +2233,8 @@ export function DashboardCockpit() {
     cumulativeDatesLoaded,
     fetchData,
     historyAsOf,
+    indicator,
+    initialIndicatorReady,
     loadHistoryAvailability,
     mode,
     multiSelectedCodes.length,
