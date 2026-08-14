@@ -250,7 +250,7 @@ C:\AutoNotifyRuntime\
 
 Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通过 `StageSessionBroker` 获取会话。Broker 使用独立状态锁与全局登录锁，按所需 stage 重建临时兼容快照、探活并持久化独立 stage 快照及健康状态；成功后删除遗留 `cookie_dump.json` 和临时快照。调用方只能消费返回的内存 `stage_data`，不得重新读取 Cookie 文件。
 
-当前登录使用无头模式并保留同一浏览器 Profile 与进程；业务请求明确认证失效时只允许强刷新一次并重试失败步骤一次。Session Keeper 每 10 分钟在同一个浏览器 Profile 中预热 `report_analysis`、`smart_ops`、`city_ops` 与 `data_market`，不发送会话失败或恢复通知。development 环境的最终业务 Run 失败由外层 Flow 按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
+当前登录使用无头模式并保留同一浏览器 Profile 与进程；业务请求明确认证失效时只允许强刷新一次并重试失败步骤一次。Session Keeper 每 10 分钟在同一个浏览器 Profile 中预热 `report_analysis`、`smart_ops` 与 `city_ops`，不发送会话失败或恢复通知。development 环境的最终业务 Run 失败由外层 Flow 按工作负载、业务标识和 Flow Run 去重后发送一次企业微信告警。
 
 专用自动登录 Profile 固定映射为 `C:\AutoNotifyRuntime\session\browser-profile`，不得与日常 Edge Profile 混用，也不得通过全局结束 `msedge.exe` 来清理。完整登录前，持有 `session\locks\login.lock` 的 Session Manager 是唯一允许关闭专用 Edge 的所有者；它必须按进程名和命令行中的专用 Profile 路径识别 `msedge.exe` / `msedgedriver.exe`，不能只依据 `browser-session.json` 中的历史 PID。只有 `taskkill` 退出码为 `0` 才能记为关闭成功。
 
@@ -264,9 +264,9 @@ Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通�
 
 每次 Session Keeper 成功完成预热后，Flow 日志必须按返回的阶段列表记录共享会话健康确认；阶段列表为空时不记录该确认信息。
 
-`autologin.json` 中 `stage_probes.<stage>` 默认配置单个探活对象；需要更严格的鉴权校验时可改用 `probes` 数组。所有启用探活均成功才判定该 stage 健康；探活的 Cookie、Token 和 Storage 值必须从当前 stage 快照动态注入，禁止在配置、日志或文档中写入固定认证材料。
+`autologin.json` 中 `stage_probes.<stage>` 配置单个主探活对象和可为空的 `fallback_probes` 数组；主探活失败后按顺序尝试备用接口，任一成功即判定该 stage 健康。需要更严格的鉴权校验时可改用 `probes` 数组，所有启用探活均成功才判定该 stage 健康，且不能与 `fallback_probes` 同时配置。探活的 Cookie、Token 和 Storage 值必须从当前 stage 快照动态注入，禁止在配置、日志或文档中写入固定认证材料。
 
-`city_ops` 探活固定使用连接超时 `2` 秒和读取超时 `5` 秒。只有 `requests` 网络异常可在固定退避 `0.5` 秒后重试一次，总共最多两次；一旦获得 HTTP 响应即不重试，认证响应继续按既有会话刷新边界处理。两次网络异常后仅允许记录异常类别，如 `ConnectTimeout` 或 `ReadTimeout`，不得记录原始异常文本、请求头、Cookie、Token 或请求体。其他 stage 未设置分离超时时保持 `timeout_seconds` 的既有单值语义。
+`city_ops` 主探活和备用探活均使用连接超时 `2` 秒、读取超时 `5` 秒和 `0.5` 秒重试间隔。每个接口仅在 `requests` 网络异常时重试一次；主接口仍不可用时再尝试备用接口。一旦任一接口获得有效响应即不再请求后续接口，认证响应继续按既有会话刷新边界处理。两次网络异常后仅允许记录异常类别，如 `ConnectTimeout` 或 `ReadTimeout`，不得记录原始异常文本、请求头、Cookie、Token 或请求体。其他 stage 未设置分离超时时保持 `timeout_seconds` 的既有单值语义。
 
 请求故障按认证失效、基础设施、接口契约和业务结果处理。302、401、403、登录页语义和 `reCode=1101` 的认证边界，以及 429、5xx、超时和 JSON 契约失败的处理规则，统一见 [docs/request-failure-handling.md](docs/request-failure-handling.md)。运行日志不得输出完整内部 URL、认证材料或响应正文。
 
@@ -306,6 +306,24 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-08-14 - 收敛会话阶段与主备探活配置
+
+- 原因：`data_market` 已不再被业务通报使用，却仍在默认和本机登录配置中捕获、校验和预热，增加了无效登录成本和失败面。
+- 修改内容：移除 `data_market` 的登录捕获、会话校验和 Session Keeper 预热；保留 `report_analysis`、`smart_ops`、`city_ops` 三个阶段。每个保留阶段统一配置主探活和可为空的 `fallback_probes` 列表，City Ops 继续使用已配置的备用接口。
+- 涉及文件：`config/modules/{autologin,login_config,session_keeper}.json`、本机 `config/runtime.local.json`、`services/login_service.py`、相关测试、README 与 PROJECT_GUIDE。
+- 配置或迁移：无需迁移。后续新增备用接口时仅在对应 stage 的 `fallback_probes` 追加配置，并继续动态读取当前会话认证材料。
+- 验证：登录、Session Keeper 和 City Ops 聚焦测试 `35 passed`；JSON 解析、Ruff 和 `git diff --check` 通过。
+- 风险与回滚：任何仍依赖 `data_market` 的新任务必须先重新声明该阶段及其探活配置，不能依赖已移除的隐式登录捕获；回滚时同步恢复默认配置、本机覆盖和验证列表。
+
+### 2026-08-14 - City Ops 主备探活
+
+- 原因：主 `getUserInfo` 探活接口偶发读取超时，会在会话仍有效时中断自动通报。
+- 修改内容：`city_ops` 保留原主探活并增加 `getLevelAreaList` 备用探活。主接口失败后按顺序尝试备用接口，任一接口验证成功即复用会话；每个接口的网络异常仍最多重试一次，间隔为 0.5 秒。
+- 涉及文件：`config/modules/autologin.json`、`services/session_manager.py`、`tests/test_session_manager.py`、`tests/test_development_environment_contract.py`、`config/modules/README.md`、`PROJECT_GUIDE.md`。
+- 配置或迁移：无需迁移。备用接口的 Cookie 和 `uapToken` 必须继续从当前阶段会话快照动态注入，禁止写入固定认证材料。
+- 验证：`PYTHONPATH=. pytest -q tests/test_session_manager.py` 为 `77 passed`；City Ops 开发环境契约测试通过；Ruff、JSON 解析和 `git diff --check` 通过。
+- 风险与回滚：主接口和备用接口均不可用时当前 Run 仍会失败且不触发重登。若需回滚，删除 `fallback_probes` 并恢复原单接口探活逻辑与对应测试。
 
 ### 2026-08-05 - 驾驶舱渠道指标排除口径
 

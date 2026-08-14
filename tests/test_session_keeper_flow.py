@@ -56,11 +56,11 @@ def test_format_session_health_confirmation_lists_prepared_stages():
     assert keeper_module.format_session_health_confirmation(
         {
             "status": "reused",
-            "stages": ["report_analysis", "smart_ops", "city_ops", "data_market"],
+            "stages": ["report_analysis", "smart_ops", "city_ops"],
         }
     ) == (
         "共享会话健康状态确认: report_analysis=healthy, smart_ops=healthy, "
-        "city_ops=healthy, data_market=healthy"
+        "city_ops=healthy"
     )
 
 
@@ -77,7 +77,7 @@ def test_keeper_logs_session_health_confirmation(monkeypatch):
         "run_session_keeper",
         lambda *_args: {
             "status": "reused",
-            "stages": ["report_analysis", "smart_ops", "city_ops", "data_market"],
+            "stages": ["report_analysis", "smart_ops", "city_ops"],
         },
     )
 
@@ -86,7 +86,7 @@ def test_keeper_logs_session_health_confirmation(monkeypatch):
     assert messages == [
         "检查共享登录会话",
         "共享会话健康状态确认: report_analysis=healthy, smart_ops=healthy, "
-        "city_ops=healthy, data_market=healthy",
+        "city_ops=healthy",
     ]
 
 

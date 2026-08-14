@@ -125,7 +125,7 @@
     }
   ],
   "id": "中原-号卡新增",
-  "enabled": false,
+  "enabled": true,
   "description": "",
   "wait_for_change": {
     "enabled": false,
@@ -135,12 +135,12 @@
   "deployment": {
     "enabled": true,
     "crons": [
-      "0 9-18 * * *"
+      "0 11,15,17,18 * * *"
     ],
     "timezone": "Asia/Shanghai"
   },
   "has_draft": false,
   "lastRun": "disabled",
-  "updatedAt": "2026-08-14 09:27:32",
+  "updatedAt": "2026-08-14 10:59:06",
   "source": "published"
 }

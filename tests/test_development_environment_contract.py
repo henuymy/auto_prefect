@@ -528,19 +528,24 @@ def test_unified_session_keeper_captures_every_supported_shared_stage():
         "report_analysis",
         "smart_ops",
         "city_ops",
-        "data_market",
     ]
 
 
-def test_city_ops_uses_the_original_user_info_probe():
+def test_city_ops_uses_primary_and_fallback_probes():
     config = json.loads(
         (ROOT / "config" / "modules" / "autologin.json").read_text(encoding="utf-8")
     )
     probe = config["stage_probes"]["city_ops"]
+    fallback = probe["fallback_probes"][0]
 
     assert probe["url"] == "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/base/getUserInfo"
     assert probe["headers_from_session_storage"] == {"Uaptoken": "uapToken"}
     assert probe["data"] == {}
+    assert config["stage_probes"]["report_analysis"]["fallback_probes"] == []
+    assert config["stage_probes"]["smart_ops"]["fallback_probes"] == []
+    assert fallback["url"].endswith("/combatreal/base/getLevelAreaList")
+    assert fallback["headers_from_session_storage"] == {"Uaptoken": "uapToken"}
+    assert fallback["data"] == {"areaLevel": "3", "areaId": "AQ"}
 
 
 def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():

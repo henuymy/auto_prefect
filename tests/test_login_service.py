@@ -116,7 +116,6 @@ def test_login_scopes_usm_capture_and_validation_to_requested_stages(monkeypatch
             {"stage": "report_analysis", "name": "报表分析"},
             {"stage": "smart_ops", "name": "智慧运营"},
             {"stage": "city_ops", "name": "市级运营"},
-            {"stage": "data_market", "name": "数据超市"},
         ]
     }
     monkeypatch.setenv(
@@ -168,6 +167,14 @@ def test_login_keeps_full_usm_capture_when_requested_stage_is_unknown(monkeypatc
         "report_analysis",
         "city_ops",
     ]
+
+
+def test_login_without_usm_apps_has_no_legacy_data_market_fallback(monkeypatch):
+    login = login_service.AutoLogin.__new__(login_service.AutoLogin)
+    login.config = {}
+    monkeypatch.delenv(login_service.REQUIRED_STAGES_ENV, raising=False)
+
+    assert login.get_usm_cookie_apps() == []
 
 
 def test_login_page_no_permission_retries_without_waiting_for_timeout(monkeypatch):
@@ -432,7 +439,11 @@ def test_default_login_config_uses_retained_headless_browser():
         "report_analysis",
         "smart_ops",
         "city_ops",
-        "data_market",
+    ]
+    assert config["session_validation"]["required_stages"] == [
+        "report_analysis",
+        "smart_ops",
+        "city_ops",
     ]
     report = config["usm_cookie_apps"][0]
     assert report["cookie_ready"] == "ssr-token"

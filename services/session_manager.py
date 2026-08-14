@@ -634,12 +634,27 @@ def configured_stage_probes(stage_probe_config):
     return [stage_probe_config]
 
 
+def configured_stage_fallback_probes(stage_probe_config):
+    if not isinstance(stage_probe_config, dict):
+        return []
+    fallback_probes = stage_probe_config.get("fallback_probes")
+    if fallback_probes is None:
+        return []
+    if "probes" in stage_probe_config:
+        raise ValueError("stage_probes 不能同时配置 probes 和 fallback_probes")
+    if not isinstance(fallback_probes, list):
+        raise ValueError("stage_probes.fallback_probes 必须是列表")
+    return fallback_probes
+
+
 def validate_stage_probes(cookie_dump, required_stages=None, stage_probes=None):
     required_stages = required_stages or []
     stage_probes = stage_probes or {}
     results = []
     for stage_name in required_stages:
-        probes = configured_stage_probes(stage_probes.get(stage_name))
+        stage_probe_config = stage_probes.get(stage_name)
+        probes = configured_stage_probes(stage_probe_config)
+        fallback_probes = configured_stage_fallback_probes(stage_probe_config)
         if not probes:
             results.append({"stage": stage_name, "enabled": False, "ok": True, "reason": "no_probe"})
             continue
@@ -653,7 +668,28 @@ def validate_stage_probes(cookie_dump, required_stages=None, stage_probes=None):
             if probe.get("enabled", True) is False:
                 continue
             try:
-                results.append(execute_stage_probe(stage_name, probe, stage))
+                probe_result = execute_stage_probe(stage_name, probe, stage)
+                if probe_result["ok"] or not fallback_probes:
+                    results.append(probe_result)
+                    continue
+
+                fallback_results = []
+                for fallback_probe in fallback_probes:
+                    if not isinstance(fallback_probe, dict):
+                        raise ValueError("stage_probes.fallback_probes 的元素必须是对象")
+                    if fallback_probe.get("enabled", True) is False:
+                        continue
+                    fallback_result = execute_stage_probe(
+                        stage_name, fallback_probe, stage
+                    )
+                    fallback_results.append(fallback_result)
+                    if fallback_result["ok"]:
+                        fallback_result["fallback_used"] = True
+                        results.append(fallback_result)
+                        break
+                else:
+                    results.append(probe_result)
+                    results.extend(fallback_results)
             except AuthenticationMaterialMissingError:
                 results.append(
                     {

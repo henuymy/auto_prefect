@@ -691,9 +691,9 @@ pwsh -File scripts/lib/start_web.ps1 -Mode both
 
 Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge 用户会话；日常探活不应关闭该浏览器。Prefect Deployment 名称为 `session-keeper-flow/session-keeper`，固定在 `Asia/Shanghai` 时区每 10 分钟运行。
 
-- Session Keeper 与业务 Flow 都通过 `StageSessionBroker` 获取会话。Keeper 在同一个 Edge Profile 中预热 `report_analysis`、`smart_ops`、`city_ops` 与 `data_market` 阶段，业务 Flow 复用已验证的阶段数据；下载期间明确认证失效时仍可在全局登录锁内刷新一次，并仅重试失败下载一次。
+- Session Keeper 与业务 Flow 都通过 `StageSessionBroker` 获取会话。Keeper 在同一个 Edge Profile 中预热 `report_analysis`、`smart_ops` 与 `city_ops` 阶段，业务 Flow 复用已验证的阶段数据；下载期间明确认证失效时仍可在全局登录锁内刷新一次，并仅重试失败下载一次。
 - 每次 Session Keeper 成功完成预热后，Flow 日志会按阶段记录共享会话健康确认，便于在 Prefect UI 中核验本轮健康状态。
-- `autologin.json` 中每个 stage 默认配置一个探活；需要更严格的鉴权校验时可配置 `probes` 数组，所有启用探活都成功才判定该 stage 健康。探活必须动态读取当前会话的 Cookie 或 Storage，不得提交固定认证材料。
+- `autologin.json` 中每个 stage 配置一个主探活和可为空的 `fallback_probes` 数组；主探活失败后依次尝试备用接口，任一成功即判定该 stage 健康。需要更严格的鉴权校验时可改用 `probes` 数组，所有启用探活都成功才判定该 stage 健康。探活必须动态读取当前会话的 Cookie 或 Storage，不得提交固定认证材料。
 - 认证明确失效时只在全局登录锁内执行一次完整刷新，并仅重试失败的业务步骤一次；基础设施探活失败不触发登录。
 - `city_ops` 探活使用连接超时 `2` 秒、读取超时 `5` 秒。仅 `requests` 网络异常会在等待 `0.5` 秒后重试一次，总共最多两次；已获得的 HTTP 响应不重试，`302`、`401`、`403` 仍按认证失效处理。两次网络异常后仅记录安全的异常类别，例如 `ConnectTimeout` 或 `ReadTimeout`。
 - 自动登录使用专用目录 `C:\AutoNotifyRuntime\session\browser-profile`，与运维人员日常使用的 Edge Profile 隔离。成功登录后可以保留该专用无头 Edge；保留的是浏览器会话，不是登录锁。任何需要完整登录的 Flow 仍必须先取得 `C:\AutoNotifyRuntime\session\locks\login.lock`。

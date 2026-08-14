@@ -498,6 +498,66 @@ def test_stage_probe_reports_safe_error_after_one_retry(monkeypatch):
     assert "secret" not in repr(result)
 
 
+def test_stage_probe_uses_ordered_fallbacks_after_primary_request_failures(monkeypatch):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.request_calls = []
+    FakeSession.responses = [
+        session_manager.requests.exceptions.ReadTimeout("secret detail"),
+        session_manager.requests.exceptions.ReadTimeout("secret detail"),
+        FakeResponse(status_code=503, payload={"reCode": "503"}),
+        FakeResponse(payload={"reCode": "0000"}),
+    ]
+    sleeps = []
+    monkeypatch.setattr(session_manager.time, "sleep", sleeps.append)
+
+    result = validate_stage_probes(
+        valid_city_ops_cookie_dump(),
+        ["city_ops"],
+        {
+            "city_ops": {
+                "method": "POST",
+                "url": "https://example/getUserInfo",
+                "headers_from_session_storage": {"Uaptoken": "uapToken"},
+                "body_type": "json",
+                "data": {},
+                "success_json_path": "reCode",
+                "success_value": "0000",
+                "fallback_probes": [
+                    {
+                        "method": "POST",
+                        "url": "https://example/getLevelAreaList",
+                        "headers_from_session_storage": {"Uaptoken": "uapToken"},
+                        "body_type": "json",
+                        "data": {"areaLevel": "3", "areaId": "AQ"},
+                        "success_json_path": "reCode",
+                        "success_value": "0000",
+                    },
+                    {
+                        "method": "POST",
+                        "url": "https://example/getSecondaryAreaList",
+                        "headers_from_session_storage": {"Uaptoken": "uapToken"},
+                        "body_type": "json",
+                        "data": {"areaLevel": "2", "areaId": "A"},
+                        "success_json_path": "reCode",
+                        "success_value": "0000",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert result["valid"] is True
+    assert result["results"] == [{"stage": "city_ops", "enabled": True, "url": "https://example/probe", "status_code": 200, "ok": True, "fallback_used": True}]
+    assert [call["url"] for call in FakeSession.request_calls] == [
+        "https://example/getUserInfo",
+        "https://example/getUserInfo",
+        "https://example/getLevelAreaList",
+        "https://example/getSecondaryAreaList",
+    ]
+    assert sleeps == [0.5]
+    assert "secret" not in repr(result)
+
+
 def test_stage_probe_does_not_retry_authentication_response(monkeypatch):
     monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
     FakeSession.request_calls = []

@@ -6,8 +6,7 @@
   "required_stages": [
     "report_analysis",
     "smart_ops",
-    "city_ops",
-    "data_market"
+    "city_ops"
   ],
   "allow_login": true,
   "login_timeout_seconds": 600,
@@ -39,7 +38,8 @@
       "data": {},
       "success_json_path": "returnCode",
       "success_value": "0",
-      "timeout_seconds": 8
+      "timeout_seconds": 8,
+      "fallback_probes": []
     },
     "city_ops": {
       "enabled": true,
@@ -59,7 +59,32 @@
       "success_json_path": "reCode",
       "success_value": "0000",
       "connect_timeout_seconds": 2,
-      "read_timeout_seconds": 5
+      "read_timeout_seconds": 5,
+      "fallback_probes": [
+        {
+          "enabled": true,
+          "method": "POST",
+          "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/base/getLevelAreaList",
+          "headers": {
+            "Accept": "*/*",
+            "Content-Type": "application/json",
+            "Origin": "https://usm.ha.cmcc:19011",
+            "Referer": "https://usm.ha.cmcc:19011/dszzCombat/dszzWeb/h5combatplatform/"
+          },
+          "headers_from_session_storage": {
+            "Uaptoken": "uapToken"
+          },
+          "body_type": "json",
+          "data": {
+            "areaLevel": "3",
+            "areaId": "AQ"
+          },
+          "success_json_path": "reCode",
+          "success_value": "0000",
+          "connect_timeout_seconds": 2,
+          "read_timeout_seconds": 5
+        }
+      ]
     },
     "smart_ops": {
       "enabled": true,
@@ -81,7 +106,8 @@
       "success_status_codes": [200],
       "success_json_path": "header.rspcode",
       "success_value": "0000",
-      "timeout_seconds": 8
+      "timeout_seconds": 8,
+      "fallback_probes": []
     }
   },
   "login_command": "{python_executable} -c \"from services.login_service import run_login; run_login('config/modules/login_config.json')\""

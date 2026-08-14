@@ -172,9 +172,7 @@ class AutoLogin:
         )
 
     def get_usm_cookie_apps(self):
-        apps = self.config.get("usm_cookie_apps") or [
-            {"stage": "data_market", "name": "数据超市"}
-        ]
+        apps = self.config.get("usm_cookie_apps") or []
         requested_stages = self.requested_session_stages()
         available_stages = {str(app.get("stage") or "").strip() for app in apps}
         if not requested_stages or not set(requested_stages).issubset(available_stages):
