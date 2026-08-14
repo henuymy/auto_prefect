@@ -66,6 +66,26 @@ def test_realtime_first_paint_defers_history_availability_requests():
     assert "void loadHistoryAvailability();" in source
 
 
+def test_history_mode_waits_for_explicit_query_selection():
+    source = COCKPIT.read_text(encoding="utf-8")
+
+    assert 'setHistoryAsOf("");' in source
+    assert 'setHistoryInput("");' in source
+    assert '<option value="">请选择日期</option>' in source
+    assert 'const nextAsOf = historyMinuteQueryTime(historyInput);' in source
+    assert 'setHistoryAsOf(nextAsOf);' in source
+    assert 'setHistoryAsOf((current) => current || range.latest_at || "");' not in source
+
+
+def test_matrix_progress_default_colors_swap_mid_and_good_ranges():
+    source = COCKPIT.read_text(encoding="utf-8")
+
+    assert 'mid: "#91e6ad",' in source
+    assert 'good: "#ddc47d",' in source
+    assert 'const usesLegacyDefaultPair' in source
+    assert 'usesLegacyDefaultPair && (key === "mid" || key === "good")' in source
+
+
 def test_first_single_indicator_reuses_catalog_before_dashboard_query():
     source = COCKPIT.read_text(encoding="utf-8")
 

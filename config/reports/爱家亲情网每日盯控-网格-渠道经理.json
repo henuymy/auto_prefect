@@ -25,6 +25,13 @@
         "capture": {
           "mode": "used_range"
         }
+      },
+      {
+        "type": "image",
+        "sheet": "营业厅通报",
+        "capture": {
+          "mode": "used_range"
+        }
       }
     ]
   },
@@ -198,7 +205,7 @@
     },
     {
       "source": "http_api",
-      "name": "搭载率",
+      "name": "515120",
       "stage": "report_analysis",
       "auth_preset": "报表分析 Ssr-token",
       "method": "POST",
@@ -206,22 +213,24 @@
       "headers": {
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
         "Cache-Control": "no-cache",
         "Content-Type": "application/x-www-form-urlencoded",
         "Origin": "https://usm.ha.cmcc:19011",
-        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=335837&ticket=ST-527872-5hKxVSnvlB6k0dTvLVxP0pyDOpo9ECRRNwf-sso",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=515120&ticket=ST-551534-OcOkd3mp5TsQ4QjTlzxVCPKgpP1bWeIaecV-sso",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"
       },
       "body_type": "form",
       "response_mode": "file",
       "data": {
-        "area": "371017",
-        "templateId": "85479",
+        "area": "371",
+        "templateId": "77955",
         "sheetIndex": "-1",
-        "sheetName": "新增",
+        "sheetName": "渠道",
         "type": "excel",
-        "versionName": "${yesterday_yyyymmdd}",
-        "resId": "335837",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
+        "resId": "515120",
         "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
         "param_key": "key",
         "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
@@ -267,14 +276,14 @@
       "engine": "openpyxl"
     },
     {
-      "download_name": "搭载率",
+      "download_name": "515120",
       "engine": "openpyxl",
       "max_workers": 4,
       "sheet_mappings": [
         {
-          "name": "335837_新增",
-          "new_sheet_name": "新增",
-          "template_sheet_name": "335837_新增",
+          "name": "515120_渠道",
+          "new_sheet_name": "渠道",
+          "template_sheet_name": "515120_渠道",
           "header_row": 1,
           "ignore_columns": [],
           "key_columns": []
@@ -299,6 +308,6 @@
   },
   "has_draft": false,
   "lastRun": "disabled",
-  "updatedAt": "2026-08-03 15:21:15",
+  "updatedAt": "2026-08-07 11:16:58",
   "source": "published"
 }

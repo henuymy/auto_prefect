@@ -1,6 +1,6 @@
 {
   "name": "爱家亲情网营业厅每日盯控",
-  "template_path": "templates/爱家亲情网营业厅每日盯控表.xlsx",
+  "template_path": "templates/爱家亲情网营业厅通报.xlsx",
   "send": {
     "webhook_url": "",
     "workbook_name": "爱家亲情网营业厅每日盯控",
@@ -195,6 +195,46 @@
       "headers_from_session_storage": {
         "uapToken": "uapToken"
       }
+    },
+    {
+      "source": "http_api",
+      "name": "515120",
+      "stage": "report_analysis",
+      "auth_preset": "报表分析 Ssr-token",
+      "method": "POST",
+      "url": "https://usm.ha.cmcc:19011/bicpreport/exportReport/exportRptToExcle",
+      "headers": {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Authorization": "d4acc37daa6b4e3cbfc2208bd1d5e181",
+        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://usm.ha.cmcc:19011",
+        "Pragma": "no-cache",
+        "Referer": "https://usm.ha.cmcc:19011/bicpreport/bicpreportOut.html?resId=515120&ticket=ST-551534-OcOkd3mp5TsQ4QjTlzxVCPKgpP1bWeIaecV-sso",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"
+      },
+      "body_type": "form",
+      "response_mode": "file",
+      "data": {
+        "area": "371",
+        "templateId": "77955",
+        "sheetIndex": "-1",
+        "sheetName": "渠道",
+        "type": "excel",
+        "versionName": "${day_before_yesterday_yyyymmdd}",
+        "resId": "515120",
+        "reConfirmList": "{\"tokenId\":\"\",\"uName\":\"\",\"operType\":\"2\"}",
+        "param_key": "key",
+        "param_value": "9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0",
+        "key": "0000",
+        "protectValue": "",
+        "downloadXlsx": "true"
+      },
+      "raw_body": "",
+      "headers_from_cookies": {
+        "Ssr-token": "ssr-token"
+      }
     }
   ],
   "compare_sources": [
@@ -227,6 +267,21 @@
       ],
       "max_workers": 2,
       "engine": "openpyxl"
+    },
+    {
+      "download_name": "515120",
+      "engine": "openpyxl",
+      "max_workers": 4,
+      "sheet_mappings": [
+        {
+          "name": "515120_渠道",
+          "new_sheet_name": "渠道",
+          "template_sheet_name": "515120_渠道",
+          "header_row": 1,
+          "ignore_columns": [],
+          "key_columns": []
+        }
+      ]
     }
   ],
   "id": "爱家亲情网营业厅每日盯控",
@@ -244,7 +299,7 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "updatedAt": "2026-07-18 18:40:06",
+  "updatedAt": "2026-08-07 11:20:53",
   "source": "published",
   "has_draft": false
 }

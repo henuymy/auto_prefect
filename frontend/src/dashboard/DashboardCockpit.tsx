@@ -336,11 +336,13 @@ const MATRIX_SORT_MODES = new Set<MatrixSortMode>([
 ]);
 const DEFAULT_MATRIX_PROGRESS_COLORS: MatrixProgressColors = {
   low: "#a4afbe",
-  mid: "#ddc47d",
+  mid: "#91e6ad",
   near: "#9bc8f5",
-  good: "#91e6ad",
+  good: "#ddc47d",
   stretch: "#7ddce8",
 };
+const LEGACY_MATRIX_PROGRESS_MID_COLOR = "#ddc47d";
+const LEGACY_MATRIX_PROGRESS_GOOD_COLOR = "#91e6ad";
 
 const LEVEL_CONFIG: {
   key: LevelKey;
@@ -614,8 +616,11 @@ function loadMatrixProgressColors(): MatrixProgressColors {
     const raw = window.localStorage.getItem(MATRIX_PROGRESS_COLOR_STORAGE_KEY);
     if (!raw) return DEFAULT_MATRIX_PROGRESS_COLORS;
     const parsed = JSON.parse(raw) as Partial<MatrixProgressColors>;
+    const usesLegacyDefaultPair = parsed.mid?.toLowerCase() === LEGACY_MATRIX_PROGRESS_MID_COLOR
+      && parsed.good?.toLowerCase() === LEGACY_MATRIX_PROGRESS_GOOD_COLOR;
     return Object.fromEntries(
       Object.entries(DEFAULT_MATRIX_PROGRESS_COLORS).map(([key, fallback]) => {
+        if (usesLegacyDefaultPair && (key === "mid" || key === "good")) return [key, fallback];
         const value = parsed[key as keyof MatrixProgressColors];
         return [key, typeof value === "string" && /^#[\da-f]{6}$/i.test(value) ? value : fallback];
       }),
@@ -1154,6 +1159,7 @@ export function DashboardCockpit() {
     latest: "",
   });
   const [historyOptions, setHistoryOptions] = useState<DashboardHistoryOptionsResponse["dates"]>([]);
+  const [historyAvailabilityLoading, setHistoryAvailabilityLoading] = useState(false);
   const [data, setData] = useState<FetchedData | null>(null);
   const [error, setError] = useState(false);
   const [singleRequestSource, setSingleRequestSource] = useState<RequestSource>("idle");
@@ -1462,31 +1468,30 @@ export function DashboardCockpit() {
   }, [indicator, initialIndicatorReady, mode, requestInitialIndicatorCatalog]);
 
   const loadHistoryAvailability = useCallback(async () => {
-    const [rangeResult, optionsResult] = await Promise.allSettled([
-      getDashboardHistoryRange(),
-      getDashboardHistoryOptions(requestedIndicatorCodes),
-    ]);
-    if (rangeResult.status === "fulfilled") {
-      const range = rangeResult.value;
-      const earliest = historyMinuteValue(range.earliest_at);
-      const latest = historyMinuteValue(range.latest_at);
-      setHistoryRange({ earliest, latest });
-      setHistoryAsOf((current) => current || range.latest_at || "");
-      setHistoryInput((current) => current || latest);
-    }
-    if (optionsResult.status === "fulfilled") {
-      const dates = optionsResult.value.dates;
-      setHistoryOptions(dates);
-      setHistoryInput((current) => {
-        const currentDate = current.slice(0, 10);
-        const currentTime = current.slice(11, 16);
-        const currentDateOption = dates.find((option) => option.date === currentDate);
-        if (currentDateOption?.times.includes(currentTime)) return current;
-        const latestOption = dates[0];
-        return latestOption?.times[0]
-          ? `${latestOption.date}T${latestOption.times[0]}`
-          : "";
-      });
+    setHistoryAvailabilityLoading(true);
+    try {
+      const [rangeResult, optionsResult] = await Promise.allSettled([
+        getDashboardHistoryRange(),
+        getDashboardHistoryOptions(requestedIndicatorCodes),
+      ]);
+      if (rangeResult.status === "fulfilled") {
+        const range = rangeResult.value;
+        const earliest = historyMinuteValue(range.earliest_at);
+        setHistoryRange({ earliest, latest: historyMinuteValue(range.latest_at) });
+      }
+      if (optionsResult.status === "fulfilled") {
+        const dates = optionsResult.value.dates;
+        setHistoryOptions(dates);
+        setHistoryInput((current) => {
+          if (!current) return "";
+          const currentDate = current.slice(0, 10);
+          const currentTime = current.slice(11, 16);
+          const currentDateOption = dates.find((option) => option.date === currentDate);
+          return currentDateOption?.times.includes(currentTime) ? current : "";
+        });
+      }
+    } finally {
+      setHistoryAvailabilityLoading(false);
     }
   }, [requestedIndicatorCodes]);
 
@@ -2650,10 +2655,10 @@ export function DashboardCockpit() {
         historyMeta={dataTimeMode === "history" ? data?.historyMeta : undefined}
         accumulationMeta={dataTimeMode === "realtime_acc" ? data?.accumulationMeta : undefined}
         cumulativeMeta={dataTimeMode === "cumulative" ? data?.cumulativeMeta : undefined}
-        loading={loading}
+        loading={loading || historyAvailabilityLoading}
         onModeChange={(nextMode) => {
           if (nextMode === dataTimeMode) return;
-          setLoading(true);
+          setLoading(nextMode !== "history");
           setData(null);
           setDataTimeMode(nextMode);
           if (nextMode === "cumulative") {
@@ -2662,10 +2667,8 @@ export function DashboardCockpit() {
             void loadCumulativeDateOptions(true);
           }
           if (nextMode === "history") {
-            void loadHistoryAvailability();
-            const nextAsOf = historyAsOf || historyMinuteQueryTime(historyRange.latest);
-            setHistoryAsOf(nextAsOf);
-            setHistoryInput(historyMinuteValue(nextAsOf));
+            setHistoryAsOf("");
+            setHistoryInput("");
           }
         }}
         onChange={setHistoryInput}
@@ -3140,7 +3143,8 @@ function HistoryTimeBar({
             onChange(nextTimes.length ? `${nextDate}T${nextTimes[0]}` : "");
           }}
         >
-          {!options.length && <option value="">暂无快照</option>}
+          <option value="">请选择日期</option>
+          {!options.length && <option value="" disabled>暂无快照</option>}
           {options.map((option) => (
             <option key={option.date} value={option.date}>{option.date}</option>
           ))}

@@ -1,9 +1,9 @@
 {
   "name": "中原-权益和新业务独立销售通报",
-  "template_path": "templates/爱家亲情网每日盯控表.xlsx",
+  "template_path": "templates/中原-权益和新业务独立销售通报_新手模板_20260729_143548.xlsx",
   "send": {
     "webhook_url": "",
-    "workbook_name": "爱家亲情网每日盯控-副本",
+    "workbook_name": "通报",
     "items": [
       {
         "type": "image",
@@ -18,13 +18,6 @@
         "text": {
           "mode": "used_range"
         }
-      },
-      {
-        "type": "image",
-        "sheet": "渠道经理通报",
-        "capture": {
-          "mode": "used_range"
-        }
       }
     ]
   },
@@ -36,7 +29,7 @@
   },
   "downloads": [
     {
-      "name": "区公司实时数据",
+      "name": "中原-ly-区公司实时数据",
       "stage": "city_ops",
       "auth_preset": "自定义",
       "method": "POST",
@@ -54,9 +47,9 @@
       "body_type": "json",
       "response_mode": "json_drilldown_to_excel",
       "data": {
-        "indCodes": "sgs_ajvwdz,sgs_ydzjdz,",
+        "indCodes": "371_qyxxzt0615,sgs_xywdlxs,",
         "areaId": "AQ",
-        "diyCodes": "sgs_ajvwdz,sgs_ydzjdz,",
+        "diyCodes": "371_qyxxzt0615,sgs_xywdlxs,",
         "areaType": null,
         "queryDate": "${today_yyyymmdd}"
       },
@@ -85,13 +78,13 @@
             "header": "编码"
           },
           {
-            "field": "sgs_ajvwdz",
-            "header": "爱家亲情网(V网版)",
+            "field": "371_qyxxzt0615",
+            "header": "郑州权益线下活动整体办理量",
             "type": "number"
           },
           {
-            "field": "sgs_ydzjdz",
-            "header": "爱家亲情网(基础版)",
+            "field": "sgs_xywdlxs",
+            "header": "新业务独立销售",
             "type": "number"
           }
         ]
@@ -116,7 +109,7 @@
       }
     },
     {
-      "name": "区公司累计数据",
+      "name": "中原-ly-区公司累计数据",
       "stage": "city_ops",
       "auth_preset": "自定义",
       "method": "POST",
@@ -134,10 +127,10 @@
       "body_type": "json",
       "response_mode": "json_drilldown_to_excel",
       "data": {
-        "indCodes": "sgs_ajvwdz,sgs_ydzjdz,",
+        "indCodes": "371_qyxxzt0615,sgs_xywdlxs,",
         "indType": "DD",
         "areaId": "AQ",
-        "diyCodes": "sgs_ajvwdz,sgs_ydzjdz,",
+        "diyCodes": "371_qyxxzt0615,sgs_xywdlxs,",
         "queryDate": "${yesterday_yyyymmdd}",
         "areaType": null
       },
@@ -166,13 +159,13 @@
             "header": "编码"
           },
           {
-            "field": "sgs_ajvwdz",
-            "header": "爱家亲情网(V网版)",
+            "field": "371_qyxxzt0615",
+            "header": "郑州权益线下活动整体办理量",
             "type": "number"
           },
           {
-            "field": "sgs_ydzjdz",
-            "header": "爱家亲情网(基础版)",
+            "field": "sgs_xywdlxs",
+            "header": "新业务独立销售",
             "type": "number"
           }
         ]
@@ -244,7 +237,8 @@
     ],
     "timezone": "Asia/Shanghai"
   },
-  "has_draft": false,
+  "has_draft": true,
   "lastRun": "disabled",
-  "updatedAt": null
+  "updatedAt": "2026-07-29 14:38:17",
+  "source": "draft"
 }
