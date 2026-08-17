@@ -436,6 +436,37 @@ def test_stage_probe_city_ops_accepts_recode_0000(monkeypatch):
     assert result["results"][0]["ok"] is True
 
 
+def test_stage_probe_resolves_dynamic_date_in_request_data(monkeypatch):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.request_calls = []
+    FakeSession.responses = [FakeResponse(payload={"reCode": "0000"})]
+
+    result = validate_stage_probes(
+        valid_city_ops_cookie_dump(),
+        ["city_ops"],
+        {
+            "city_ops": {
+                "method": "POST",
+                "url": "https://example/getIndexByReal",
+                "headers_from_session_storage": {"Uaptoken": "uapToken"},
+                "body_type": "json",
+                "data": {
+                    "indCode": "sgs_ajvwdz",
+                    "areaId": "AQ",
+                    "queryDate": "${today_yyyymmdd}",
+                },
+                "success_json_path": "reCode",
+                "success_value": "0000",
+            }
+        },
+    )
+
+    assert result["valid"] is True
+    assert FakeSession.request_calls[0]["kwargs"]["json"]["queryDate"] != "${today_yyyymmdd}"
+    assert FakeSession.request_calls[0]["kwargs"]["json"]["queryDate"].isdigit()
+    assert len(FakeSession.request_calls[0]["kwargs"]["json"]["queryDate"]) == 8
+
+
 def test_stage_probe_retries_one_transient_request_failure(monkeypatch):
     monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
     FakeSession.request_calls = []

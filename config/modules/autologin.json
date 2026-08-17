@@ -64,7 +64,7 @@
         {
           "enabled": true,
           "method": "POST",
-          "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/base/getLevelAreaList",
+          "url": "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/getIndexByReal",
           "headers": {
             "Accept": "*/*",
             "Content-Type": "application/json",
@@ -76,8 +76,9 @@
           },
           "body_type": "json",
           "data": {
-            "areaLevel": "3",
-            "areaId": "AQ"
+            "indCode": "sgs_ajvwdz",
+            "areaId": "AQ",
+            "queryDate": "${today_yyyymmdd}"
           },
           "success_json_path": "reCode",
           "success_value": "0000",

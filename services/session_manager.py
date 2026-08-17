@@ -34,6 +34,7 @@ from services.method_service import (
     resolve_storage_references,
 )
 from services.runtime_paths import resolve_runtime_relative_path
+from utils.date_placeholders import resolve_dynamic_structure
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -538,21 +539,25 @@ def build_probe_request_kwargs(probe, stage):
         )
     kwargs = {
         "headers": build_headers(probe, stage),
-        "params": resolve_storage_references(probe.get("params"), stage) or None,
+        "params": resolve_probe_value(probe.get("params"), stage) or None,
         "timeout": timeout,
         "verify": bool(probe.get("verify_ssl", False)),
         "allow_redirects": bool(probe.get("allow_redirects", False)),
     }
     body_type = str(probe.get("body_type") or "").strip().lower()
     if body_type == "json":
-        kwargs["json"] = resolve_storage_references(probe.get("data", {}), stage)
+        kwargs["json"] = resolve_probe_value(probe.get("data", {}), stage)
     elif body_type == "form":
-        kwargs["data"] = resolve_storage_references(probe.get("data", {}), stage)
+        kwargs["data"] = resolve_probe_value(probe.get("data", {}), stage)
     elif body_type == "raw":
-        kwargs["data"] = resolve_storage_references(probe.get("raw_body", ""), stage)
+        kwargs["data"] = resolve_probe_value(probe.get("raw_body", ""), stage)
     elif body_type:
         raise ValueError(f"probe body_type 只支持 form/json/raw: {body_type}")
     return kwargs
+
+
+def resolve_probe_value(value, stage):
+    return resolve_dynamic_structure(resolve_storage_references(value, stage))
 
 
 def execute_stage_probe(stage_name, probe, stage):

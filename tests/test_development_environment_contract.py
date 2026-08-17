@@ -543,9 +543,13 @@ def test_city_ops_uses_primary_and_fallback_probes():
     assert probe["data"] == {}
     assert config["stage_probes"]["report_analysis"]["fallback_probes"] == []
     assert config["stage_probes"]["smart_ops"]["fallback_probes"] == []
-    assert fallback["url"].endswith("/combatreal/base/getLevelAreaList")
+    assert fallback["url"].endswith("/combatreal/getIndexByReal")
     assert fallback["headers_from_session_storage"] == {"Uaptoken": "uapToken"}
-    assert fallback["data"] == {"areaLevel": "3", "areaId": "AQ"}
+    assert fallback["data"] == {
+        "indCode": "sgs_ajvwdz",
+        "areaId": "AQ",
+        "queryDate": "${today_yyyymmdd}",
+    }
 
 
 def test_runtime_start_queues_initial_session_keeper_run_after_worker_start():

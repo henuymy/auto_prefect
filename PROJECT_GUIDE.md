@@ -307,6 +307,15 @@ pwsh -File scripts/stop.ps1
 
 ## 四、变更记录
 
+### 2026-08-17 - 替换 City Ops 备用探活接口
+
+- 原因：原 `getLevelAreaList` 备用接口不再作为 City Ops 会话可用性的首选验证路径。
+- 修改内容：将 City Ops 备用探活替换为 `getIndexByReal`，使用固定指标和区域参数验证已登录会话；探活请求参数新增日期占位符解析，`queryDate` 在运行时生成当天 `yyyyMMdd`，不固化测试当天日期。
+- 涉及文件：`config/modules/autologin.json`、`services/session_manager.py`、City Ops 探活契约与会话测试、`PROJECT_GUIDE.md`。
+- 配置或迁移：无需迁移。认证头和 Cookie 继续仅从当前阶段会话快照动态注入，禁止写入固定认证材料。
+- 验证：City Ops 会话与配置契约测试 `79 passed`；Ruff、JSON 解析和 `git diff --check` 通过。
+- 风险与回滚：若指标接口契约变更或当天未生成可查询数据，备用探活会失败；回滚时恢复前一备用探活配置及相应契约测试。
+
 ### 2026-08-14 - 收敛会话阶段与主备探活配置
 
 - 原因：`data_market` 已不再被业务通报使用，却仍在默认和本机登录配置中捕获、校验和预热，增加了无效登录成本和失败面。
