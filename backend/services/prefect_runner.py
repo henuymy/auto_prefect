@@ -92,7 +92,14 @@ def can_fast_toggle_schedule(previous: dict[str, Any], current: dict[str, Any]) 
     def publish_content(config: dict[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in config.items() if key not in ignored_keys}
 
-    return publish_content(previous) == publish_content(current)
+    if previous.get("enabled", True) == current.get("enabled", True):
+        return False
+    if publish_content(previous) != publish_content(current):
+        return False
+
+    report_name = _safe_name(current.get("name") or current.get("id") or "未命名配置")
+    task_config_path = PROJECT_ROOT / "config" / "tasks" / f"{report_name}.json"
+    return task_config_path.is_file()
 
 
 def _prefect_api_request(method: str, path: str, payload: Any | None = None) -> Any:

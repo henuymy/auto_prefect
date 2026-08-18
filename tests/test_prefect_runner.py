@@ -194,7 +194,12 @@ def test_publish_pauses_every_schedule_for_multiple_crons(monkeypatch, tmp_path)
     assert result["scheduleStatus"] == "disabled"
 
 
-def test_can_fast_toggle_schedule_ignores_only_state_and_metadata():
+def test_can_fast_toggle_schedule_requires_state_change_and_task_pointer(monkeypatch, tmp_path):
+    monkeypatch.setattr(prefect_runner, "PROJECT_ROOT", tmp_path)
+    task_path = tmp_path / "config" / "tasks" / "日报.json"
+    task_path.parent.mkdir(parents=True)
+    task_path.write_text("{}", encoding="utf-8")
+
     previous = {
         "name": "日报",
         "enabled": True,
@@ -210,6 +215,11 @@ def test_can_fast_toggle_schedule_ignores_only_state_and_metadata():
     }
 
     assert prefect_runner.can_fast_toggle_schedule(previous, current)
+    assert not prefect_runner.can_fast_toggle_schedule(current, current)
+
+    task_path.unlink()
+    assert not prefect_runner.can_fast_toggle_schedule(previous, current)
+
     current["deployment"] = {"crons": ["0 10 * * *"], "timezone": "Asia/Shanghai"}
     assert not prefect_runner.can_fast_toggle_schedule(previous, current)
 

@@ -310,9 +310,9 @@ pwsh -File scripts/stop.ps1
 ### 2026-08-18 - 配置中心 JSON 定位、比对引用与试跑反馈修复
 
 - 原因：JSON 预览在重复字段和嵌套数组中按缩进猜行号，配置改名后比对源仍可能引用旧下载标识，长时间真实试跑还会因前端 30 秒超时或固定计时进度出现误报。
-- 修改内容：新增结构化 JSON 路径索引；下载标识在表单和 JSON 编辑器中联动更新比对引用，保存、临时试跑、空报表预检和真实比对均要求下载标识完全相同。真实试跑和其他长操作使用独立超时，前端只显示不猜阶段的执行中状态并提供运行日志入口，写入成功与后续列表刷新解耦。
-- 涉及文件：`frontend/src/components/json-panel/`、`frontend/src/lib/{api,downloadReferences}.ts`、`frontend/src/App.tsx`、`frontend/src/components/config-form/ConfigForm.tsx`、`backend/services/prefect_runner.py`、相关报表配置与测试。
-- 配置或迁移：无需数据库迁移；历史配置无需强制重写，但 `compare_sources[].download_name` 必须与对应 `downloads[].name` 完全相同。
+- 修改内容：新增结构化 JSON 路径索引；下载标识在表单和 JSON 编辑器中联动更新比对引用，保存、临时试跑、空报表预检和真实比对均要求下载标识完全相同。保存继续只写报表配置，正式发布负责生成 `config/tasks` 运行指针；快速启停仅在指针存在且启停状态确实变化时使用，指针缺失会回退完整发布。真实试跑和其他长操作使用独立超时，前端只显示不猜阶段的执行中状态并提供运行日志入口，写入成功与后续列表刷新解耦。
+- 涉及文件：`frontend/src/components/json-panel/`、`frontend/src/lib/{api,downloadReferences}.ts`、`frontend/src/App.tsx`、`frontend/src/components/config-form/ConfigForm.tsx`、`backend/services/prefect_runner.py`、`config/tasks/中原-权益和新业务独立销售通报.json`、相关报表配置与测试。
+- 配置或迁移：无需数据库迁移；历史配置无需强制重写，但 `compare_sources[].download_name` 必须与对应 `downloads[].name` 完全相同；已补回中原通报缺失的正式 task 指针，指向现有报表 JSON。
 - 验证：前端 `npm test -- --run`（55 passed）、`npm run typecheck`、`npm run build`；Python 聚焦配置/Flow/比对测试（87 passed）、Ruff 和 `git diff --check`。完整测试为 `752 passed, 9 skipped, 5 failed`；失败项均与本次无关。
 - 风险与回滚：下载标识不完全一致会明确报错，不会静默选择错误报表；回滚需同步恢复 JSON 路径索引、下载引用联动、长请求超时和进度日志处理。
 
