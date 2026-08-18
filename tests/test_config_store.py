@@ -182,6 +182,20 @@ def test_normalize_config_fills_compare_defaults():
     assert source["max_workers"] == 4
 
 
+def test_normalize_config_preserves_download_identifiers_verbatim():
+    normalized = config_store.normalize_config(
+        {
+            "name": "日报",
+            "template_path": "templates/a.xlsx",
+            "downloads": [{"name": "  519353-1  "}],
+            "compare_sources": [{"download_name": "519353_1", "sheet_mappings": []}],
+        }
+    )
+
+    assert normalized["downloads"][0]["name"] == "  519353-1  "
+    assert normalized["compare_sources"][0]["download_name"] == "519353_1"
+
+
 def test_normalize_config_initializes_smartbook_selector_without_range():
     normalized = config_store.normalize_config(
         {

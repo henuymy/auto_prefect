@@ -418,7 +418,9 @@ def validate_config(config: dict[str, Any]) -> list[dict[str, str]]:
             except (TypeError, ValueError):
                 issues.append({"path": f"/compare_sources/{source_index}/max_workers", "message": "并发 Sheet 数必须是数字"})
         download_name = source.get("download_name")
-        if download_name and download_name not in download_names:
+        if not download_name:
+            issues.append({"path": f"/compare_sources/{source_index}/download_name", "message": "比对源下载标识不能为空"})
+        elif download_name not in download_names:
             issues.append({"path": f"/compare_sources/{source_index}/download_name", "message": f"比对源找不到对应下载项: {download_name}"})
         for mapping_index, mapping in enumerate(source.get("sheet_mappings") or []):
             if not mapping.get("new_sheet_name"):

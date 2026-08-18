@@ -342,6 +342,66 @@ def test_validate_config_requires_compare_engine_and_workers():
     assert "/compare_sources/0/max_workers" in paths
 
 
+def test_validate_config_requires_exact_download_name():
+    issues = prefect_runner.validate_config(
+        {
+            "name": "日报",
+            "template_path": "templates/missing.xlsx",
+            "downloads": [
+                {
+                    "name": "  519353-1  ",
+                    "stage": "report_analysis",
+                    "method": "POST",
+                    "url": "https://example/export",
+                    "body_type": "form",
+                    "response_mode": "file",
+                }
+            ],
+            "compare_sources": [
+                {
+                    "download_name": "519353_1",
+                    "engine": "openpyxl",
+                    "max_workers": 1,
+                    "sheet_mappings": [{"new_sheet_name": "源", "template_sheet_name": "模板"}],
+                }
+            ],
+            "send": {"items": [{"type": "image", "sheet": "通报"}]},
+        }
+    )
+
+    assert any("找不到对应下载项" in issue["message"] for issue in issues)
+
+
+def test_validate_config_requires_compare_download_name():
+    issues = prefect_runner.validate_config(
+        {
+            "name": "日报",
+            "template_path": "templates/missing.xlsx",
+            "downloads": [
+                {
+                    "name": "下载A",
+                    "stage": "report_analysis",
+                    "method": "POST",
+                    "url": "https://example/export",
+                    "body_type": "form",
+                    "response_mode": "file",
+                }
+            ],
+            "compare_sources": [
+                {
+                    "download_name": "",
+                    "engine": "openpyxl",
+                    "max_workers": 1,
+                    "sheet_mappings": [{"new_sheet_name": "源", "template_sheet_name": "模板"}],
+                }
+            ],
+            "send": {"items": [{"type": "image", "sheet": "通报"}]},
+        }
+    )
+
+    assert {issue["path"] for issue in issues if "下载标识不能为空" in issue["message"]} == {"/compare_sources/0/download_name"}
+
+
 def test_validate_config_requires_compare_sources_when_enabled():
     issues = prefect_runner.validate_config(
         {
@@ -446,3 +506,27 @@ def test_write_task_config_disables_login_for_document_only_downloads(monkeypatc
     )
 
     assert json.loads(task_path.read_text(encoding="utf-8"))["steps"]["login"] == {"enabled": False}
+
+
+def test_write_task_config_preserves_compare_download_name(monkeypatch, tmp_path):
+    monkeypatch.setattr(prefect_runner, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setenv("AUTO_NOTIFY_RUNTIME_ROOT", str(tmp_path / "runtime"))
+
+    task_path = prefect_runner.write_task_config(
+        {
+            "name": "历史配置",
+            "downloads": [
+                {"name": "519353-1", "stage": "report_analysis", "method": "POST", "url": "https://example/export", "body_type": "form", "response_mode": "file"}
+            ],
+            "compare_sources": [
+                {"download_name": "519353_1", "engine": "openpyxl", "max_workers": 1, "sheet_mappings": []}
+            ],
+        },
+        draft=True,
+        dry_run=True,
+    )
+
+    report_path = tmp_path / "runtime" / "config" / "drafts" / "历史配置.dry_run.report.json"
+    assert task_path.exists()
+    saved = json.loads(report_path.read_text(encoding="utf-8"))
+    assert saved["compare_sources"][0]["download_name"] == "519353_1"

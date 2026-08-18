@@ -246,3 +246,24 @@ def test_find_empty_download_sheet_mappings_reports_empty_data_area():
         ]
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_find_empty_download_sheet_mappings_requires_exact_download_name():
+    work_dir = make_work_dir()
+    try:
+        workbook_path = work_dir / "new.xlsx"
+        create_workbook(workbook_path, {"明细": [["name", "count"]]})
+        manifest = {"results": [{"name": "519353-1", "output_path": str(workbook_path)}]}
+        compare_sources = [
+            {
+                "download_name": "519353_1",
+                "sheet_mappings": [
+                    {"new_sheet_name": "明细", "template_sheet_name": "模板明细", "header_row": 1}
+                ],
+            }
+        ]
+
+        with pytest.raises(RuntimeError, match="519353_1"):
+            find_empty_download_sheet_mappings(manifest, compare_sources)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)

@@ -12,6 +12,7 @@ import { ResponseParserPanel } from "@/components/config-form/ResponseParserPane
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tabs } from "@/components/ui/tabs";
 import { generateStarterTemplate, listTemplates, templateDownloadUrl, uploadTemplate } from "@/lib/api";
+import { updateDownloadWithReferences } from "@/lib/downloadReferences";
 import { collectQuickDateFields, DATE_PRESETS, formatCustomDate, updateQuickDateField, type QuickDateField } from "@/lib/quickDate";
 import { cn, parseJsonSafe, prettyJson } from "@/lib/utils";
 import type { CompareSource, DownloadItem, ExcelColumn, ReportConfig, SendItem, TencentSheetConfig, TencentSmartbookConfig } from "@/types/config";
@@ -478,7 +479,7 @@ function DownloadsTab({ config, onChange }: { config: ReportConfig; onChange: (c
   const tencentEntries = entries.filter(({ item }) => sourceOf(item) === "tencent_sheet");
   const smartbookEntries = entries.filter(({ item }) => sourceOf(item) === "tencent_smartbook");
   const activeEntries = activeSource === "http_api" ? httpEntries : activeSource === "tencent_sheet" ? tencentEntries : smartbookEntries;
-  const updateDownload = (index: number, next: DownloadItem) => onChange({ ...config, downloads: updateAt(config.downloads, index, next) });
+  const updateDownload = (index: number, next: DownloadItem) => onChange(updateDownloadWithReferences(config, index, next));
   const deleteDownload = (index: number) => onChange({ ...config, downloads: config.downloads.filter((_, itemIndex) => itemIndex !== index) });
   const addHttp = () => onChange({ ...config, downloads: [...config.downloads, defaultHttpDownload(httpEntries.length + 1)] });
   const addTencent = () => onChange({ ...config, downloads: [...config.downloads, defaultTencentSheetDownload(tencentEntries.length + 1)] });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { toast } from "sonner";
-import { FileSpreadsheet, History } from "lucide-react";
+import { FileSpreadsheet, History, Loader2 } from "lucide-react";
 import { ConfigForm } from "@/components/config-form/ConfigForm";
 import type { ConfigFormTab } from "@/components/config-form/ConfigForm";
 import { Header } from "@/components/layout/Header";
@@ -13,12 +13,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { createConfig, deleteConfig, deleteDeployment, getConfig, getSystemStatus, listConfigs, listRunLogs, publishConfig, realTestRunConfig, saveDraftConfig, testRunConfig, updateConfig, updateConfigOrder, validateConfig } from "@/lib/api";
 import type { ConfigSource } from "@/lib/api";
+import { syncDownloadReferences } from "@/lib/downloadReferences";
 import { uid } from "@/lib/utils";
 import { validateReportConfig } from "@/schemas/reportConfigSchema";
 import type { ReportConfig, RunLog, SystemStatus, ValidationIssue } from "@/types/config";
 
 const SAFETY_TEST_STEPS = ["配置校验", "生成临时配置", "执行 dry-run", "读取日志"];
-const REAL_TEST_STEPS = ["配置校验", "会话探活/登录", "下载比对", "截图发送", "读取日志"];
 
 function useMediaQuery(query: string) {
   const [matches, setMatches] = useState(() => (typeof window === "undefined" ? false : window.matchMedia(query).matches));
@@ -138,7 +138,6 @@ export default function App() {
   const [testing, setTesting] = useState(false);
   const [testStep, setTestStep] = useState(0);
   const [realTesting, setRealTesting] = useState(false);
-  const [realTestStep, setRealTestStep] = useState(0);
   const [dark, setDark] = useState(false);
   const wideLayout = useMediaQuery("(min-width: 1280px)");
 
@@ -151,7 +150,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!logsOpen) return;
+    if (!logsOpen && !realTesting) return;
 
     let cancelled = false;
     const refreshLogs = async () => {
@@ -168,7 +167,7 @@ export default function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [logsOpen]);
+  }, [logsOpen, realTesting]);
 
   useEffect(() => {
     if (!testing) return;
@@ -178,15 +177,6 @@ export default function App() {
     }, 2500);
     return () => window.clearInterval(timer);
   }, [testing]);
-
-  useEffect(() => {
-    if (!realTesting) return;
-    setRealTestStep(0);
-    const timer = window.setInterval(() => {
-      setRealTestStep((step) => Math.min(step + 1, REAL_TEST_STEPS.length - 1));
-    }, 4500);
-    return () => window.clearInterval(timer);
-  }, [realTesting]);
 
   const liveIssues = useMemo(() => (config ? validateReportConfig(config) : []), [config]);
   const persistedConfigs = useMemo(() => configs.filter((item) => !isTemporaryConfigId(item.id)), [configs]);
@@ -216,6 +206,7 @@ export default function App() {
         setSelectedId(loadedConfigs[0].id);
         const first = await getConfig(loadedConfigs[0].id, configSourceForLoad(loadedConfigs[0]));
         setConfig(first);
+        setJsonFocusPath([]);
         setIssues(validateReportConfig(first));
       } else {
         createLocalConfig();
@@ -245,11 +236,48 @@ export default function App() {
     const selected = configs.find((item) => item.id === id);
     const loaded = await getConfig(id, configSourceForLoad(selected));
     setConfig(loaded);
+    setJsonFocusPath([]);
     setIssues(validateReportConfig(loaded));
   }
 
   function configSourceForLoad(item?: ReportConfig): ConfigSource {
     return item?.has_draft || item?.source === "draft" ? "draft" : "published";
+  }
+
+  function mergeConfigIntoList(nextConfig: ReportConfig) {
+    setConfigs((current) => {
+      const index = current.findIndex((item) => item.id === nextConfig.id);
+      if (index < 0) return [nextConfig, ...current];
+      const next = [...current];
+      next[index] = { ...next[index], ...nextConfig };
+      return next;
+    });
+  }
+
+  /**
+   * A successful write must not be reported as a failure merely because a
+   * follow-up list refresh timed out while the backend was still busy. Return
+   * whether the refresh completed; callers can keep the saved response in the
+   * local list when it did not.
+   */
+  async function refreshConfigList(saved?: ReportConfig) {
+    try {
+      const nextConfigs = await listConfigs();
+      setConfigs(nextConfigs);
+      return true;
+    } catch {
+      if (saved) mergeConfigIntoList(saved);
+      return false;
+    }
+  }
+
+  async function refreshRunLogs() {
+    try {
+      setLogs(await listRunLogs());
+    } catch {
+      // listRunLogs already has a backend-independent fallback. Keep this
+      // guard so a refresh failure never changes a completed action to error.
+    }
   }
 
   function createLocalConfig() {
@@ -260,6 +288,7 @@ export default function App() {
     const next = emptyConfig();
     setSelectedId(next.id);
     setConfig(next);
+    setJsonFocusPath([]);
     setIssues(validateReportConfig(next));
     toast.success("已新建通报配置", { description: "填写完成后点击“保存配置”写入 config/reports。" });
   }
@@ -335,21 +364,23 @@ export default function App() {
       },
     };
 
+    let created: ReportConfig;
     try {
-      const created = await createConfig(copy);
-      const nextConfigs = await listConfigs();
-      setConfigs(nextConfigs);
-      setSelectedId(created.id);
-      setConfig(created);
-      setIssues(validateReportConfig(created));
-      setLogs(await listRunLogs());
-      toast.success("配置复制成功", {
-        description: `已创建 ${created.name}，定时调度默认关闭；模板继续引用 ${created.template_path}`,
-        duration: 4200,
-      });
+      created = await createConfig(copy);
     } catch (error) {
       toast.error("复制配置失败", { description: toastDescription(error), duration: 3000 });
+      return;
     }
+    const refreshed = await refreshConfigList(created);
+    setSelectedId(created.id);
+    setConfig(created);
+    setJsonFocusPath([]);
+    setIssues(validateReportConfig(created));
+    await refreshRunLogs();
+    toast.success("配置复制成功", {
+      description: `已创建 ${created.name}，定时调度默认关闭；模板继续引用 ${created.template_path}${refreshed ? "" : "（列表刷新稍后重试）"}`,
+      duration: 4200,
+    });
   }
 
   function updateConfigFromForm(next: ReportConfig) {
@@ -375,40 +406,48 @@ export default function App() {
     if (!config) return;
     const nextIssues = validateReportConfig(config);
     setIssues(nextIssues);
+    let saved: ReportConfig;
     try {
-      const saved = await saveDraftConfig(config.id, config);
-      const nextConfigs = await listConfigs();
-      setConfig(saved);
-      setSelectedId(saved.id);
-      setConfigs(nextConfigs);
-      setLogs(await listRunLogs());
-      if (nextIssues.length) {
-        toast.warning("草稿已保存，但配置还需要修正", {
-          description: `${nextIssues[0].path}: ${nextIssues[0].message}`,
-          duration: 2400,
-        });
-      } else {
-        toast.success("草稿已保存", { description: `C:\\AutoNotifyRuntime\\config\\drafts\\${saved.name}.json` });
-      }
+      saved = await saveDraftConfig(config.id, config);
     } catch (error) {
       toast.error("保存草稿失败", { description: toastDescription(error), duration: 2400 });
+      return;
+    }
+
+    setConfig(saved);
+    setSelectedId(saved.id);
+    setJsonFocusPath([]);
+    const refreshed = await refreshConfigList(saved);
+    await refreshRunLogs();
+    const savedDescription = `C:\\AutoNotifyRuntime\\config\\drafts\\${saved.name}.json`;
+    if (nextIssues.length) {
+      toast.warning("草稿已保存，但配置还需要修正", {
+        description: `${nextIssues[0].path}: ${nextIssues[0].message}${refreshed ? "" : "（列表刷新稍后重试）"}`,
+        duration: 2400,
+      });
+    } else {
+      toast.success("草稿已保存", { description: `${savedDescription}${refreshed ? "" : "（列表刷新稍后重试）"}` });
     }
   }
 
   async function saveConfig() {
     if (!config) return;
     if (blockIfInvalid("保存配置")) return;
+    let saved: ReportConfig;
     try {
-      const saved = isPersistedConfig ? await updateConfig(config.id, config) : await createConfig(config);
-      const nextConfigs = await listConfigs();
-      setSelectedId(saved.id);
-      setConfig(saved);
-      setConfigs(nextConfigs);
-      setLogs(await listRunLogs());
-      toast.success("配置已保存", { description: `config/reports/${saved.name}.json` });
+      saved = isPersistedConfig ? await updateConfig(config.id, config) : await createConfig(config);
     } catch (error) {
       toast.error("保存配置失败", { description: toastDescription(error), duration: 2400 });
+      return;
     }
+    setSelectedId(saved.id);
+    setConfig(saved);
+    setJsonFocusPath([]);
+    const refreshed = await refreshConfigList(saved);
+    await refreshRunLogs();
+    toast.success("配置已保存", {
+      description: `config/reports/${saved.name}.json${refreshed ? "" : "（列表刷新稍后重试）"}`,
+    });
   }
 
   async function validate() {
@@ -453,17 +492,21 @@ export default function App() {
     if (!config) return;
     if (blockIfInvalid("真实试跑")) return;
     if (!window.confirm("真实试跑会真实下载、比对、生成截图并发送企业微信，但不会提交正式模板。\n\n会先按本次抓取项做 session 探活；探活通过就复用已有会话，探活失败才会关闭旧自动登录浏览器并重新登录。登录成功后会保留浏览器，供下次运行继续探活复用。确定继续吗？")) return;
+    // Load the current log snapshot before starting the long-running request.
+    // The polling effect continues while realTesting is true.
+    const initialLogs = await listRunLogs();
+    setLogs(initialLogs);
     setRealTesting(true);
-    setRealTestStep(0);
     setLogsOpen(true);
     try {
-      setLogs(await listRunLogs());
       await realTestRunConfig(config);
-      setLogs(await listRunLogs());
+      const finalLogs = await listRunLogs();
+      setLogs(finalLogs);
       setLogsOpen(true);
       toast.success("真实试跑完成");
     } catch (error) {
-      setLogs(await listRunLogs());
+      const finalLogs = await listRunLogs();
+      setLogs(finalLogs);
       setLogsOpen(true);
       toast.error("真实试跑失败，详情见运行日志", { description: toastDescription(error), duration: 2400 });
     } finally {
@@ -482,23 +525,43 @@ export default function App() {
       ? `确定删除草稿「${config.name}」吗？正式配置不会受影响。`
       : `确定删除配置「${config.name}」吗？该操作会同步删除 config/reports、config/tasks 和 C:\\AutoNotifyRuntime\\config\\drafts 中的同名配置文件。`;
     if (!window.confirm(confirmText)) return;
+    let result: Awaited<ReturnType<typeof deleteConfig>>;
     try {
-      const result = await deleteConfig(config.id, deleteSource);
-      const nextConfigs = (await listConfigs()).filter((item) => !isTemporaryConfigId(item.id));
-      setConfigs(nextConfigs);
-      setLogs(await listRunLogs());
-      if (nextConfigs[0]) {
-        setSelectedId(nextConfigs[0].id);
-        const next = await getConfig(nextConfigs[0].id, configSourceForLoad(nextConfigs[0]));
-        setConfig(next);
-        setIssues(validateReportConfig(next));
-      } else {
-        createLocalConfig();
-      }
-      toast.success("配置已删除", { description: `同步清理 ${result.deleted?.length || 0} 个配置文件` });
+      result = await deleteConfig(config.id, deleteSource);
     } catch (error) {
       toast.error("删除配置失败", { description: toastDescription(error), duration: 2400 });
+      return;
     }
+
+    let nextConfigs = configs.filter((item) => item.id !== config.id && !isTemporaryConfigId(item.id));
+    let refreshed = true;
+    try {
+      nextConfigs = (await listConfigs()).filter((item) => !isTemporaryConfigId(item.id));
+    } catch {
+      refreshed = false;
+    }
+    setConfigs(nextConfigs);
+    await refreshRunLogs();
+    if (nextConfigs[0]) {
+      setSelectedId(nextConfigs[0].id);
+      try {
+        const next = await getConfig(nextConfigs[0].id, configSourceForLoad(nextConfigs[0]));
+        setConfig(next);
+        setJsonFocusPath([]);
+        setIssues(validateReportConfig(next));
+      } catch {
+        // The list response is still a usable fallback when the detail
+        // request races with the delete/write on a busy backend.
+        setConfig(nextConfigs[0]);
+        setJsonFocusPath([]);
+        setIssues(validateReportConfig(nextConfigs[0]));
+      }
+    } else {
+      createLocalConfig();
+    }
+    toast.success("配置已删除", {
+      description: `同步清理 ${result.deleted?.length || 0} 个配置文件${refreshed ? "" : "（列表刷新稍后重试）"}`,
+    });
   }
 
   async function publish() {
@@ -522,14 +585,25 @@ export default function App() {
       }
       toast.loading("正在发布到调度", { id: toastId, description: "同名更新原调度；改名会新建调度。" });
       const result = await publishConfig(config);
-      const nextConfigs = await listConfigs();
-      setConfigs(nextConfigs);
-      const selected = nextConfigs.find((item) => item.id === config.id);
-      if (selected) {
-        const next = await getConfig(selected.id, configSourceForLoad(selected));
-        setConfig(next);
+      let refreshed = true;
+      try {
+        const nextConfigs = await listConfigs();
+        setConfigs(nextConfigs);
+        const selected = nextConfigs.find((item) => item.id === config.id);
+        if (selected) {
+          try {
+            const next = await getConfig(selected.id, configSourceForLoad(selected));
+            setConfig(next);
+            setJsonFocusPath([]);
+          } catch {
+            // The publish response is authoritative for the operation; keep
+            // the current editor snapshot if the detail refresh races it.
+          }
+        }
+      } catch {
+        refreshed = false;
       }
-      setLogs(await listRunLogs());
+      await refreshRunLogs();
       setLogsOpen(true);
       const scheduleCount = result.crons?.length || config.deployment.crons.length;
       const scheduleText = result.scheduleStatus === "enabled"
@@ -539,7 +613,7 @@ export default function App() {
           : "部署已创建，未配置 Cron";
       toast.success(result.publishMode === "schedule-state-only" ? "调度状态已快速更新" : "已发布到调度", {
         id: toastId,
-        description: scheduleText,
+        description: `${scheduleText}${refreshed ? "" : "（列表刷新稍后重试）"}`,
         duration: 4200,
       });
     } catch (error) {
@@ -601,8 +675,10 @@ export default function App() {
       issues={issues.length ? issues : liveIssues}
       focusPath={jsonFocusPath}
       onJsonApply={(next) => {
-        setConfig(next);
-        setIssues(validateReportConfig(next));
+        const synchronized = syncDownloadReferences(config, next);
+        setJsonFocusPath(findFirstDiffPath(config, synchronized));
+        setConfig(synchronized);
+        setIssues(validateReportConfig(synchronized));
       }}
     />
   );
@@ -654,14 +730,19 @@ export default function App() {
           </div>
         )}
         {realTesting && (
-          <div className="border-b border-amber-200 bg-amber-50/90 px-3 py-3 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/35 dark:text-amber-100 lg:px-5">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="font-semibold">真实试跑正在运行：{REAL_TEST_STEPS[realTestStep]}</div>
-              <div className="flex flex-wrap gap-2">
-                {REAL_TEST_STEPS.map((step, index) => (
-                  <Badge key={step} variant={index <= realTestStep ? "running" : "default"}>{index + 1}. {step}</Badge>
-                ))}
+          <div
+            className="border-b border-amber-200 bg-amber-50/90 px-3 py-3 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/35 dark:text-amber-100 lg:px-5"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2 font-semibold">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                <span>真实试跑执行中</span>
               </div>
+              <Button variant="ghost" size="sm" onClick={() => setLogsOpen(true)} className="shrink-0">
+                <History className="h-4 w-4" />查看运行日志
+              </Button>
             </div>
           </div>
         )}

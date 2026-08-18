@@ -4,6 +4,14 @@ import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 const API_REQUEST_TIMEOUT_MS = 30_000;
+// The backend executes a real test in-process and allows up to 15 minutes for
+// downloads, comparison, screenshots, and delivery.  Keep a small margin for
+// response serialization instead of letting the generic 30s UI timeout turn a
+// successful long-running operation into a false error toast.
+const REAL_TEST_REQUEST_TIMEOUT_MS = 16 * 60_000;
+const SAFETY_TEST_REQUEST_TIMEOUT_MS = 4 * 60_000;
+const PREFECT_OPERATION_TIMEOUT_MS = 4 * 60_000;
+const STARTER_TEMPLATE_REQUEST_TIMEOUT_MS = 16 * 60_000;
 
 let logs: RunLog[] = [];
 
@@ -113,12 +121,14 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
   };
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs = API_REQUEST_TIMEOUT_MS): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      signal: AbortSignal.timeout(API_REQUEST_TIMEOUT_MS),
+      ...(timeoutMs === API_REQUEST_TIMEOUT_MS
+        ? { signal: AbortSignal.timeout(API_REQUEST_TIMEOUT_MS) }
+        : { signal: AbortSignal.timeout(timeoutMs) }),
       headers: {
         "Content-Type": "application/json",
         ...(init?.headers || {}),
@@ -706,7 +716,8 @@ export async function testRunConfig(config: ReportConfig) {
   const result = await request<{ flowRunId: string; status: string; message: string; output?: string; taskConfigPath?: string }>(`/api/configs/${encodeURIComponent(config.id)}/test-run`, {
     method: "POST",
     body: JSON.stringify(normalizeReportConfig(config)),
-  });
+  }, SAFETY_TEST_REQUEST_TIMEOUT_MS);
+  assertSuccessfulRunResult(result);
   const log = pushLog("success", "测试运行", result.message, result.output || result.taskConfigPath);
   return { ...result, log };
 }
@@ -715,9 +726,16 @@ export async function realTestRunConfig(config: ReportConfig) {
   const result = await request<{ flowRunId: string; status: string; message: string; output?: string; taskConfigPath?: string }>(`/api/configs/${encodeURIComponent(config.id)}/real-test-run`, {
     method: "POST",
     body: JSON.stringify(normalizeReportConfig(config)),
-  });
+  }, REAL_TEST_REQUEST_TIMEOUT_MS);
+  assertSuccessfulRunResult(result);
   const log = pushLog("success", "真实试跑", result.message, result.output || result.taskConfigPath);
   return { ...result, log };
+}
+
+function assertSuccessfulRunResult(result: { status?: string; message?: string }): void {
+  const status = String(result.status || "").toLowerCase();
+  if (["success", "succeeded", "completed", "skipped"].includes(status)) return;
+  throw new Error(result.message || `运行返回未成功状态: ${result.status || "未知"}`);
 }
 
 export async function publishConfig(config: ReportConfig) {
@@ -734,7 +752,7 @@ export async function publishConfig(config: ReportConfig) {
   }>(`/api/configs/${encodeURIComponent(config.id)}/publish`, {
     method: "POST",
     body: JSON.stringify(normalizeReportConfig(config)),
-  });
+  }, PREFECT_OPERATION_TIMEOUT_MS);
   const log = pushLog("success", "发布到调度", result.message, result.output || result.taskConfigPath);
   return { ...result, log };
 }
@@ -748,7 +766,7 @@ export async function deleteDeployment(config: ReportConfig) {
   }>(`/api/configs/${encodeURIComponent(config.id)}/deployment`, {
     method: "DELETE",
     body: JSON.stringify(normalizeReportConfig(config)),
-  });
+  }, PREFECT_OPERATION_TIMEOUT_MS);
   const log = pushLog("success", "删除 Deployment", result.message, result.deploymentId);
   return { ...result, log };
 }
@@ -818,7 +836,7 @@ export async function generateStarterTemplate(config: ReportConfig) {
   }>(`/api/configs/${encodeURIComponent(config.id)}/starter-template`, {
     method: "POST",
     body: JSON.stringify(normalizeReportConfig(config)),
-  });
+  }, STARTER_TEMPLATE_REQUEST_TIMEOUT_MS);
   pushLog("success", "生成新手模板", `已生成 ${result.template_path}`);
   return result;
 }

@@ -469,7 +469,7 @@
       ]
     },
     {
-      "download_name": "519353_1",
+      "download_name": "519353-1",
       "engine": "openpyxl",
       "max_workers": 4,
       "sheet_mappings": [
@@ -514,7 +514,7 @@
       ]
     },
     {
-      "download_name": "505042",
+      "download_name": "505402",
       "engine": "openpyxl",
       "max_workers": 4,
       "sheet_mappings": [

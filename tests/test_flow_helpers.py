@@ -529,6 +529,32 @@ def test_build_compare_source_configs_maps_download_outputs():
     assert configs[1]["config"]["sheet_mappings"][0]["template_sheet_name"] == "T2"
 
 
+def test_build_compare_source_configs_requires_exact_download_name():
+    report_cfg = {
+        "template_path": "templates/template.xlsx",
+        "downloads": [{
+            "name": "519353-1",
+            "stage": "report_analysis",
+            "method": "POST",
+            "url": "https://example/export",
+            "body_type": "json",
+            "response_mode": "file",
+        }],
+        "compare_sources": [{
+            "download_name": "519353_1",
+            "sheet_mappings": [{"new_sheet_name": "源", "template_sheet_name": "模板"}],
+        }],
+    }
+    with pytest.raises(RuntimeError, match="519353_1"):
+        build_compare_source_configs(
+            {},
+            report_cfg,
+            {"results": [{"name": "519353-1", "output_path": "runtime/downloads/a.xls"}]},
+            {},
+            PROJECT_TEST_RUNTIME_DIR,
+        )
+
+
 def test_aggregate_compare_results_all_changed_requires_every_sheet_changed():
     compare_runs = [
         {
