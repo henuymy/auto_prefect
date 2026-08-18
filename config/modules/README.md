@@ -29,3 +29,7 @@ stage 健康。需要主备探活时，可在单个主探活对象上使用按�
 `probes` 同时配置。每个探活对象可使用 `headers_from_cookies` 或
 `headers_from_session_storage` 动态引用当前 stage 的认证材料，禁止写入固定
 Cookie、Token 或账号密码。
+
+每个探活对象可选填 `timeout_seconds`，或分别使用
+`connect_timeout_seconds` 与 `read_timeout_seconds`。网络异常会重试一次；
+`retry_delay_seconds` 控制两次请求之间的等待时间，默认 `0.5` 秒，必须为非负数。

@@ -59,7 +59,8 @@
       "success_json_path": "reCode",
       "success_value": "0000",
       "connect_timeout_seconds": 2,
-      "read_timeout_seconds": 5,
+      "read_timeout_seconds": 3,
+      "retry_delay_seconds": 2,
       "fallback_probes": [
         {
           "enabled": true,
@@ -83,7 +84,8 @@
           "success_json_path": "reCode",
           "success_value": "0000",
           "connect_timeout_seconds": 2,
-          "read_timeout_seconds": 5
+          "read_timeout_seconds": 3,
+          "retry_delay_seconds": 2
         }
       ]
     },

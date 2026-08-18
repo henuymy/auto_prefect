@@ -486,6 +486,7 @@ def test_stage_probe_retries_one_transient_request_failure(monkeypatch):
                 "url": "https://example/getUserInfo",
                 "connect_timeout_seconds": 2,
                 "read_timeout_seconds": 5,
+                "retry_delay_seconds": 2,
                 "headers_from_session_storage": {"uapToken": "uapToken"},
                 "body_type": "json",
                 "data": {},
@@ -497,7 +498,7 @@ def test_stage_probe_retries_one_transient_request_failure(monkeypatch):
 
     assert result["valid"] is True
     assert len(FakeSession.request_calls) == 2
-    assert sleeps == [0.5]
+    assert sleeps == [2.0]
     assert FakeSession.request_calls[0]["kwargs"]["timeout"] == (2, 5)
 
 

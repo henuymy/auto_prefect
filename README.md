@@ -695,7 +695,7 @@ Session Keeper 仅支持 Windows 部署，依赖持续存活的 Microsoft Edge �
 - 每次 Session Keeper 成功完成预热后，Flow 日志会按阶段记录共享会话健康确认，便于在 Prefect UI 中核验本轮健康状态。
 - `autologin.json` 中每个 stage 配置一个主探活和可为空的 `fallback_probes` 数组；主探活失败后依次尝试备用接口，任一成功即判定该 stage 健康。需要更严格的鉴权校验时可改用 `probes` 数组，所有启用探活都成功才判定该 stage 健康。探活必须动态读取当前会话的 Cookie 或 Storage，不得提交固定认证材料。
 - 认证明确失效时只在全局登录锁内执行一次完整刷新，并仅重试失败的业务步骤一次；基础设施探活失败不触发登录。
-- `city_ops` 探活使用连接超时 `2` 秒、读取超时 `5` 秒。仅 `requests` 网络异常会在等待 `0.5` 秒后重试一次，总共最多两次；已获得的 HTTP 响应不重试，`302`、`401`、`403` 仍按认证失效处理。两次网络异常后仅记录安全的异常类别，例如 `ConnectTimeout` 或 `ReadTimeout`。
+- `city_ops` 探活使用连接超时 `2` 秒、读取超时 `3` 秒和重试间隔 `2` 秒。仅 `requests` 网络异常会重试一次，总共最多两次；已获得的 HTTP 响应不重试，`302`、`401`、`403` 仍按认证失效处理。两次网络异常后仅记录安全的异常类别，例如 `ConnectTimeout` 或 `ReadTimeout`。
 - 自动登录使用专用目录 `C:\AutoNotifyRuntime\session\browser-profile`，与运维人员日常使用的 Edge Profile 隔离。成功登录后可以保留该专用无头 Edge；保留的是浏览器会话，不是登录锁。任何需要完整登录的 Flow 仍必须先取得 `C:\AutoNotifyRuntime\session\locks\login.lock`。
 - 需要重新登录时，锁的所有者先定向查询命令行包含该专用 Profile 路径的 `msedge.exe` / `msedgedriver.exe`，再关闭它们。历史 PID 不能单独作为结束进程的依据，避免 Windows PID 复用时误伤无关进程；`taskkill` 只有退出码为 `0` 才视为关闭成功。
 - 关闭后的等待是条件等待：每 `0.5` 秒重新确认专用 Profile 关联进程是否已退出，确认后立即启动新的 WebDriver。`browser_close_wait_seconds`（默认 `10` 秒）只是本次清理的总上限，并非固定睡眠时间。新的 WebDriver 若仅因 `user data directory is already in use`、`DevToolsActivePort` 等 Profile 释放窗口错误而失败，也会在同一上限内按相同轮询间隔重试；成功后立即继续登录。

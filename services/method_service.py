@@ -409,6 +409,13 @@ def retry_settings(report, defaults=None):
         "retries": int(report.get("request_retries", defaults.get("request_retries", 2)) or 0),
         "delay_seconds": float(report.get("request_retry_delay_seconds", defaults.get("request_retry_delay_seconds", 2)) or 0),
         "backoff": float(report.get("request_retry_backoff", defaults.get("request_retry_backoff", 2)) or 1),
+        "transient_business_retries": int(
+            report.get(
+                "transient_business_retries",
+                defaults.get("transient_business_retries", 0),
+            )
+            or 0
+        ),
     }
 
 
@@ -513,6 +520,11 @@ def is_empty_report_data_message(message: str) -> bool:
     )
 
 
+def is_transient_download_business_error(returncode: str, returnmsg: str) -> bool:
+    normalized_message = returnmsg.strip().rstrip("!！。.")
+    return returncode == "1" and normalized_message == "下载文件错误"
+
+
 def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_env, proxies, request_retry=None):
     started = perf_counter()
     request_retry = retry_settings(report, request_retry)
@@ -520,13 +532,32 @@ def download_one_report(report, stage, output_dir, timeout, verify_ssl, trust_en
     session.trust_env = trust_env
     session.cookies.update(build_cookie_jar(stage, cookie_names=report.get("cookie_names")))
     session.headers.update({"User-Agent": "report-downloader/1.0"})
-    response = request_report(session, report, stage, timeout, verify_ssl, proxies, retry=request_retry)
-    raise_for_status_with_context(response)
-    business_error = response_business_error(response)
-    if business_error:
+    transient_business_attempt = 0
+    while True:
+        response = request_report(session, report, stage, timeout, verify_ssl, proxies, retry=request_retry)
+        raise_for_status_with_context(response)
+        business_error = response_business_error(response)
+        if not business_error:
+            break
+
         returncode, returnmsg = business_error
         if not response.content and is_empty_report_data_message(returnmsg):
             raise EmptyReportDataError(report.get("name") or "未命名报表", response.url, returncode, returnmsg)
+        if (
+            is_transient_download_business_error(returncode, returnmsg)
+            and transient_business_attempt < request_retry["transient_business_retries"]
+        ):
+            transient_business_attempt += 1
+            wait_seconds = request_retry["delay_seconds"]
+            print(
+                f"[WARN] 下载接口临时业务错误，准备重试 "
+                f"{transient_business_attempt}/{request_retry['transient_business_retries']}: "
+                f"report={report.get('name') or '未命名报表'}，"
+                f"returncode={returncode}，wait={wait_seconds:.1f}s"
+            )
+            if wait_seconds > 0:
+                sleep(wait_seconds)
+            continue
         raise RuntimeError(
             "下载接口返回业务错误: "
             f"report={report.get('name') or '未命名报表'}, "

@@ -541,10 +541,16 @@ def test_city_ops_uses_primary_and_fallback_probes():
     assert probe["url"] == "https://usm.ha.cmcc:19011/dszzCombat/dszzRestful/combatreal/base/getUserInfo"
     assert probe["headers_from_session_storage"] == {"Uaptoken": "uapToken"}
     assert probe["data"] == {}
+    assert probe["connect_timeout_seconds"] == 2
+    assert probe["read_timeout_seconds"] == 3
+    assert probe["retry_delay_seconds"] == 2
     assert config["stage_probes"]["report_analysis"]["fallback_probes"] == []
     assert config["stage_probes"]["smart_ops"]["fallback_probes"] == []
     assert fallback["url"].endswith("/combatreal/getIndexByReal")
     assert fallback["headers_from_session_storage"] == {"Uaptoken": "uapToken"}
+    assert fallback["connect_timeout_seconds"] == 2
+    assert fallback["read_timeout_seconds"] == 3
+    assert fallback["retry_delay_seconds"] == 2
     assert fallback["data"] == {
         "indCode": "sgs_ajvwdz",
         "areaId": "AQ",

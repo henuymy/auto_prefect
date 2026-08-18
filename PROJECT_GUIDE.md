@@ -266,7 +266,7 @@ Session Keeper、业务 Flow、配置式下载和受支持维护工具必须通�
 
 `autologin.json` 中 `stage_probes.<stage>` 配置单个主探活对象和可为空的 `fallback_probes` 数组；主探活失败后按顺序尝试备用接口，任一成功即判定该 stage 健康。需要更严格的鉴权校验时可改用 `probes` 数组，所有启用探活均成功才判定该 stage 健康，且不能与 `fallback_probes` 同时配置。探活的 Cookie、Token 和 Storage 值必须从当前 stage 快照动态注入，禁止在配置、日志或文档中写入固定认证材料。
 
-`city_ops` 主探活和备用探活均使用连接超时 `2` 秒、读取超时 `5` 秒和 `0.5` 秒重试间隔。每个接口仅在 `requests` 网络异常时重试一次；主接口仍不可用时再尝试备用接口。一旦任一接口获得有效响应即不再请求后续接口，认证响应继续按既有会话刷新边界处理。两次网络异常后仅允许记录异常类别，如 `ConnectTimeout` 或 `ReadTimeout`，不得记录原始异常文本、请求头、Cookie、Token 或请求体。其他 stage 未设置分离超时时保持 `timeout_seconds` 的既有单值语义。
+`city_ops` 主探活和备用探活均使用连接超时 `2` 秒、读取超时 `3` 秒和 `2` 秒重试间隔。每个接口仅在 `requests` 网络异常时重试一次；主接口仍不可用时再尝试备用接口。一旦任一接口获得有效响应即不再请求后续接口，认证响应继续按既有会话刷新边界处理。两次网络异常后仅允许记录异常类别，如 `ConnectTimeout` 或 `ReadTimeout`，不得记录原始异常文本、请求头、Cookie、Token 或请求体。其他 stage 未设置分离超时时保持 `timeout_seconds` 的既有单值语义；未配置 `retry_delay_seconds` 时使用默认 `0.5` 秒。
 
 请求故障按认证失效、基础设施、接口契约和业务结果处理。302、401、403、登录页语义和 `reCode=1101` 的认证边界，以及 429、5xx、超时和 JSON 契约失败的处理规则，统一见 [docs/request-failure-handling.md](docs/request-failure-handling.md)。运行日志不得输出完整内部 URL、认证材料或响应正文。
 
@@ -306,6 +306,22 @@ pwsh -File scripts/stop.ps1
 截图流程启动 Excel 前必须先把 Windows 默认打印机切换为配置的 `Microsoft Print to PDF`，再创建 COM 实例，避免 Excel 继承 RustDesk 等虚拟打印机。打印机配置使用系统打印机名称，不写端口后缀；切换成功后不自动恢复旧默认打印机，因此专用 Windows 用户不应依赖其他默认打印机。
 
 ## 四、变更记录
+
+### 2026-08-18 - 报表导出临时业务错误重试
+
+- 原因：报表导出接口偶发返回 `returncode=1` 和“下载文件错误”，手工重新运行通常成功，但现有下载重试仅处理网络异常。
+- 修改内容：新增 `transient_business_retries` 配置。仅对该明确业务错误有限重试，默认两次，每次固定等待 2 秒；不刷新会话，也不重试空数据、认证或其他业务错误。
+- 涉及文件：`config/modules/report_downloader.json`、`services/method_service.py`、`tests/test_method_service.py`、`docs/request-failure-handling.md`、`PROJECT_GUIDE.md`。
+- 验证：`python -m pytest tests/test_method_service.py -v` 为 28 passed；Ruff、JSON 校验和 `git diff --check` 通过。
+- 风险与回滚：若上游的同一错误并非瞬态，单次 Flow 最多增加 6 秒等待与两次 POST 请求；将 `transient_business_retries` 设为 `0` 可停用，或回滚本条源码和配置恢复立即失败。
+
+### 2026-08-18 - City Ops 探活读取超时与重试间隔调整
+
+- 原因：公司 VPN 或代理链路短暂抖动时，City Ops 探活在读取阶段等待过久，0.5 秒重试间隔也可能早于链路恢复。
+- 修改内容：`city_ops` 主探活和备用探活的读取超时从 5 秒调整为 3 秒；新增 `retry_delay_seconds` 探活配置，网络异常重试间隔设为 2 秒，其他 stage 未配置时保持 0.5 秒默认值。
+- 涉及文件：`config/modules/autologin.json`、`services/session_manager.py`、`tests/test_session_manager.py`、`tests/test_development_environment_contract.py`、`README.md`、`config/modules/README.md`、`PROJECT_GUIDE.md`。
+- 验证：相关 Session Manager 与开发环境契约测试通过，Ruff 检查通过；全量相关测试另有 1 项既有前端端口文档断言失败，与本变更无关。
+- 风险与回滚：读取超时缩短后，持续慢响应会更快失败；恢复 `read_timeout_seconds` 为 5、删除 `retry_delay_seconds` 并恢复默认实现即可回滚。
 
 ### 2026-08-18 - 配置中心 JSON 定位、比对引用与试跑反馈修复
 

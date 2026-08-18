@@ -567,6 +567,15 @@ def execute_stage_probe(stage_name, probe, stage):
     session.headers.update({"User-Agent": "session-probe/1.0"})
     method = str(probe.get("method") or "GET").upper()
     request_kwargs = build_probe_request_kwargs(probe, stage)
+    retry_delay_seconds = probe.get("retry_delay_seconds", 0.5)
+    if isinstance(retry_delay_seconds, bool):
+        raise ValueError("probe retry_delay_seconds 必须是非负数")
+    try:
+        retry_delay_seconds = float(retry_delay_seconds)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("probe retry_delay_seconds 必须是非负数") from exc
+    if retry_delay_seconds < 0:
+        raise ValueError("probe retry_delay_seconds 必须是非负数")
     for attempt in range(2):
         try:
             response = session.request(method, probe["url"], **request_kwargs)
@@ -580,7 +589,7 @@ def execute_stage_probe(stage_name, probe, stage):
                     "reason": "probe_error",
                     "error": type(exc).__name__,
                 }
-            time.sleep(0.5)
+            time.sleep(retry_delay_seconds)
 
     payload = response_json_or_none(response)
 

@@ -372,6 +372,95 @@ def test_download_one_report_raises_empty_report_data_error(monkeypatch):
         raise AssertionError("expected EmptyReportDataError")
 
 
+def test_download_one_report_retries_transient_business_error(monkeypatch):
+    work_dir = make_work_dir()
+    sleeps = []
+    responses = iter(
+        [
+            FakeResponse(
+                200,
+                "error",
+                headers={"returncode": "1", "returnmsg": "下载文件错误！"},
+            ),
+            FakeResponse(
+                200,
+                "error",
+                headers={"returncode": "1", "returnmsg": "下载文件错误！"},
+            ),
+            FakeResponse(
+                200,
+                "xlsx-content",
+                headers={"Content-Disposition": 'attachment; filename="report.xlsx"'},
+            ),
+        ]
+    )
+    monkeypatch.setattr("services.method_service.request_report", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr("services.method_service.sleep", sleeps.append)
+
+    try:
+        result = download_one_report(
+            {
+                "name": "515120",
+                "method": "POST",
+                "url": "https://example/export",
+                "response_mode": "file",
+            },
+            {"cookies": []},
+            work_dir,
+            30,
+            False,
+            False,
+            None,
+            request_retry={
+                "retries": 0,
+                "delay_seconds": 2,
+                "backoff": 2,
+                "transient_business_retries": 2,
+            },
+        )
+
+        assert sleeps == [2, 2]
+        assert Path(result["output_path"]).read_bytes() == b"xlsx-content"
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def test_download_one_report_does_not_retry_other_business_errors(monkeypatch):
+    calls = []
+    response = FakeResponse(
+        200,
+        "error",
+        headers={"returncode": "1", "returnmsg": "参数校验失败"},
+    )
+    monkeypatch.setattr(
+        "services.method_service.request_report",
+        lambda *args, **kwargs: calls.append(1) or response,
+    )
+
+    try:
+        download_one_report(
+            {"name": "日报", "method": "POST", "url": "https://example/export", "response_mode": "file"},
+            {"cookies": []},
+            Path("."),
+            30,
+            False,
+            False,
+            None,
+            request_retry={
+                "retries": 0,
+                "delay_seconds": 2,
+                "backoff": 2,
+                "transient_business_retries": 2,
+            },
+        )
+    except RuntimeError as exc:
+        assert "参数校验失败" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+    assert calls == [1]
+
+
 def test_build_request_kwargs_sends_raw_body_as_data():
     stage = {"cookies": []}
     report = {
