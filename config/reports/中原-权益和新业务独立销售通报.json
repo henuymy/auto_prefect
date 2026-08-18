@@ -1,21 +1,70 @@
 {
   "name": "中原-权益和新业务独立销售通报",
-  "template_path": "templates/中原-权益和新业务独立销售通报_新手模板_20260729_143548.xlsx",
+  "template_path": "templates/中原-权益和新业务独立销售通报.xlsx",
   "send": {
-    "webhook_url": "",
+    "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=14957f64-6845-47eb-8bd7-61208f91096d",
     "workbook_name": "通报",
     "items": [
       {
         "type": "image",
-        "sheet": "通报",
+        "sheet": "网格小时级通报",
         "capture": {
           "mode": "used_range"
         }
       },
       {
         "type": "text",
-        "sheet": "通报文字",
+        "sheet": "网格小时级通报文字",
         "text": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "image",
+        "sheet": "自控小时级通报",
+        "capture": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "text",
+        "sheet": "自控小时级通报文字",
+        "text": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "image",
+        "sheet": "网格月累计通报",
+        "capture": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "text",
+        "sheet": "网格月累计通报文字",
+        "text": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "image",
+        "sheet": "自控月累计通报",
+        "capture": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "text",
+        "sheet": "自控月累计通报文字",
+        "text": {
+          "mode": "used_range"
+        }
+      },
+      {
+        "type": "image",
+        "sheet": "营业厅人员通报",
+        "capture": {
           "mode": "used_range"
         }
       }
@@ -47,9 +96,9 @@
       "body_type": "json",
       "response_mode": "json_drilldown_to_excel",
       "data": {
-        "indCodes": "371_qyxxzt0615,sgs_xywdlxs,",
+        "indCodes": "1B_TCSD,371_qyxxzt0615,sgs_xywdlxs,371_llb0409,371_qqthd0128,371_xywxm0616,",
         "areaId": "AQ",
-        "diyCodes": "371_qyxxzt0615,sgs_xywdlxs,",
+        "diyCodes": "1B_TCSD,371_qyxxzt0615,sgs_xywdlxs,371_llb0409,371_qqthd0128,371_xywxm0616,",
         "areaType": null,
         "queryDate": "${today_yyyymmdd}"
       },
@@ -78,13 +127,33 @@
             "header": "编码"
           },
           {
+            "field": "1B_TCSD",
+            "header": "套餐升档",
+            "type": "number"
+          },
+          {
             "field": "371_qyxxzt0615",
-            "header": "郑州权益线下活动整体办理量",
+            "header": "郑州_权益线下活动整体办理量",
             "type": "number"
           },
           {
             "field": "sgs_xywdlxs",
             "header": "新业务独立销售",
+            "type": "number"
+          },
+          {
+            "field": "371_llb0409",
+            "header": "郑州_流量包",
+            "type": "number"
+          },
+          {
+            "field": "371_qqthd0128",
+            "header": "郑州_全球通预存送活动",
+            "type": "number"
+          },
+          {
+            "field": "371_xywxm0616",
+            "header": "郑州_6月PK赛-新业务项目办理量",
             "type": "number"
           }
         ]
@@ -127,10 +196,10 @@
       "body_type": "json",
       "response_mode": "json_drilldown_to_excel",
       "data": {
-        "indCodes": "371_qyxxzt0615,sgs_xywdlxs,",
+        "indCodes": "1B_TCSD,371_qyxxzt0615,sgs_xywdlxs,371_llb0409,371_qqthd0128,371_xywxm0616,",
         "indType": "DD",
         "areaId": "AQ",
-        "diyCodes": "371_qyxxzt0615,sgs_xywdlxs,",
+        "diyCodes": "1B_TCSD,371_qyxxzt0615,sgs_xywdlxs,371_llb0409,371_qqthd0128,371_xywxm0616,",
         "queryDate": "${yesterday_yyyymmdd}",
         "areaType": null
       },
@@ -159,13 +228,33 @@
             "header": "编码"
           },
           {
+            "field": "1B_TCSD",
+            "header": "套餐升档",
+            "type": "number"
+          },
+          {
             "field": "371_qyxxzt0615",
-            "header": "郑州权益线下活动整体办理量",
+            "header": "郑州_权益线下活动整体办理量",
             "type": "number"
           },
           {
             "field": "sgs_xywdlxs",
             "header": "新业务独立销售",
+            "type": "number"
+          },
+          {
+            "field": "371_llb0409",
+            "header": "郑州_流量包",
+            "type": "number"
+          },
+          {
+            "field": "371_qqthd0128",
+            "header": "郑州_全球通预存送活动",
+            "type": "number"
+          },
+          {
+            "field": "371_xywxm0616",
+            "header": "郑州_6月PK赛-新业务项目办理量",
             "type": "number"
           }
         ]
@@ -192,7 +281,7 @@
   ],
   "compare_sources": [
     {
-      "download_name": "区公司实时数据",
+      "download_name": "中原-ly-区公司实时数据",
       "sheet_mappings": [
         {
           "name": "区公司实时数据",
@@ -207,7 +296,7 @@
       "engine": "openpyxl"
     },
     {
-      "download_name": "区公司累计数据",
+      "download_name": "中原-ly-区公司累计数据",
       "sheet_mappings": [
         {
           "name": "区公司累计数据",
@@ -223,7 +312,7 @@
     }
   ],
   "id": "中原-权益和新业务独立销售通报",
-  "enabled": false,
+  "enabled": true,
   "description": "",
   "wait_for_change": {
     "enabled": false,
@@ -233,12 +322,12 @@
   "deployment": {
     "enabled": true,
     "crons": [
-      "0 9-18 * * *"
+      "0 11,12,14,15,17,18 * * *"
     ],
     "timezone": "Asia/Shanghai"
   },
-  "has_draft": true,
+  "has_draft": false,
   "lastRun": "disabled",
-  "updatedAt": "2026-07-29 14:38:17",
-  "source": "draft"
+  "updatedAt": "2026-08-18 14:18:59",
+  "source": "published"
 }

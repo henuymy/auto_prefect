@@ -43,7 +43,7 @@ def resolve_path(value, base_dir=PROJECT_DIR):
     if is_runtime_relative_path(path):
         return resolve_runtime_relative_path(path)
     if path.is_absolute():
-        return path
+        return path.resolve()
     return (base_dir / path).resolve()
 
 
