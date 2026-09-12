@@ -2460,6 +2460,26 @@ export function DashboardCockpit() {
     });
   }, [data?.changesRows]);
 
+  const ancestorTitles = useMemo(() => {
+    const byId = new Map((data?.changesRows ?? []).map((row) => [row.id, row]));
+    const result = new Map<number, string>();
+    for (const row of data?.changesRows ?? []) {
+      if (row.node_type === "BRANCH") continue;
+      const names: string[] = [];
+      let parentId = row.parent_id;
+      const seen = new Set<number>();
+      while (parentId != null && !seen.has(parentId)) {
+        seen.add(parentId);
+        const parent = byId.get(parentId);
+        if (!parent) break;
+        names.push(parent.node_name);
+        parentId = parent.parent_id;
+      }
+      if (names.length) result.set(row.id, `归属：${names.join(" / ")}`);
+    }
+    return result;
+  }, [data?.changesRows]);
+
   const handleScopeChange = useCallback((value: string) => {
     setDayLevelAllMode({});
     setMonthLevelAllMode({});
@@ -2787,6 +2807,7 @@ export function DashboardCockpit() {
             isBranch={level.key === "BRANCH"}
             branchHeight={branchHeight}
             branchPanelRef={level.key === "BRANCH" ? branchPanelRef : undefined}
+            ancestorTitles={ancestorTitles}
           />
         ))}
       </main>
@@ -2819,6 +2840,7 @@ export function DashboardCockpit() {
               isBranch={level.key === "BRANCH"}
               branchHeight={monthBranchHeight}
               branchPanelRef={level.key === "BRANCH" ? monthBranchPanelRef : undefined}
+              ancestorTitles={ancestorTitles}
             />
           ))}
         </main>
@@ -6447,6 +6469,7 @@ function LevelPanel({
   isBranch,
   branchHeight,
   branchPanelRef,
+  ancestorTitles,
 }: {
   level: LevelBoard;
   sortKey: SortKey;
@@ -6466,6 +6489,7 @@ function LevelPanel({
   isBranch?: boolean;
   branchHeight?: number;
   branchPanelRef?: React.RefObject<HTMLDivElement | null>;
+  ancestorTitles?: Map<number, string>;
 }) {
   const [tableScrollTop, setTableScrollTop] = useState(0);
   const [tableViewportHeight, setTableViewportHeight] = useState(600);
@@ -6636,6 +6660,7 @@ function LevelPanel({
             nodeType={level.key}
             onDrill={onDrill}
             selected={r.nodeId === selectedNodeId}
+            ancestorTitle={level.key !== "BRANCH" ? ancestorTitles?.get(r.nodeId) : undefined}
           />
         ))}
         {!hideStaleRows && !showLoadingPlaceholder && virtualRows.bottomHeight > 0 && (
@@ -6747,6 +6772,7 @@ const DataRow = memo(function DataRow({
   nodeType,
   onDrill,
   selected,
+  ancestorTitle,
 }: {
   rank: number;
   item: BoardRow;
@@ -6754,6 +6780,7 @@ const DataRow = memo(function DataRow({
   nodeType: LevelKey;
   onDrill: (row: BoardRow, nodeType: string) => void;
   selected?: boolean;
+  ancestorTitle?: string;
 }) {
   const clickable = nodeType !== "CHANNEL";
   const activate = () => onDrill(item, nodeType);
@@ -6766,6 +6793,7 @@ const DataRow = memo(function DataRow({
       tabIndex={clickable ? 0 : undefined}
       aria-current={selected ? "true" : undefined}
       aria-label={clickable ? `${item.name}${selected ? "，当前选中" : "，点击下探"}` : undefined}
+      title={ancestorTitle}
       onClick={clickable ? activate : undefined}
       onKeyDown={clickable ? (event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -6775,7 +6803,7 @@ const DataRow = memo(function DataRow({
       } : undefined}
     >
       <span className="rank">{String(rank).padStart(2, "0")}</span>
-      <span className="name" title={item.name}>{item.name}</span>
+      <span className="name" title={ancestorTitle || item.name}>{item.name}</span>
       <span className="completion-cell">
         {item.excluded ? (
           <strong className="excluded-metric-value">未纳入统计</strong>
