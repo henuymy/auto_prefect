@@ -33,3 +33,6 @@ Cookie、Token 或账号密码。
 每个探活对象可选填 `timeout_seconds`，或分别使用
 `connect_timeout_seconds` 与 `read_timeout_seconds`。网络异常会重试一次；
 `retry_delay_seconds` 控制两次请求之间的等待时间，默认 `0.5` 秒，必须为非负数。
+对于上游临时 HTTP 故障，可使用 `retry_status_codes`、`status_retry_attempts`
+和 `status_retry_delay_seconds` 配置有限的指数退避重试；每次退避时间按
+`基准秒数 * 2^重试序号` 计算。该机制不会把认证状态码当作网络故障处理。

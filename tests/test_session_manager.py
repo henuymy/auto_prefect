@@ -612,6 +612,81 @@ def test_stage_probe_does_not_retry_authentication_response(monkeypatch):
     assert len(FakeSession.request_calls) == 1
 
 
+def test_stage_probe_retries_configured_transient_statuses_with_backoff(monkeypatch):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.request_calls = []
+    FakeSession.responses = [
+        FakeResponse(status_code=502, text="bad gateway"),
+        FakeResponse(status_code=503, text="service unavailable"),
+        FakeResponse(payload={"rspcode": "0000"}),
+    ]
+    sleeps = []
+    monkeypatch.setattr(session_manager.time, "sleep", sleeps.append)
+
+    result = validate_stage_probes(
+        {
+            "stages": [
+                {
+                    "stage": "smart_ops",
+                    "cookies": [{"name": "JSESSIONID", "value": "sid", "domain": "example.com"}],
+                    "session_storage": {"zhyyptInfo": {"accessToken": "token"}},
+                }
+            ]
+        },
+        ["smart_ops"],
+        {
+            "smart_ops": {
+                "method": "POST",
+                "url": "https://example/getNameById",
+                "headers_from_session_storage": {"user-info": "zhyyptInfo.accessToken"},
+                "body_type": "json",
+                "data": {"area": "371"},
+                "success_json_path": "rspcode",
+                "success_value": "0000",
+                "retry_status_codes": [502, 503, 504],
+                "status_retry_attempts": 2,
+                "status_retry_delay_seconds": 1,
+            }
+        },
+    )
+
+    assert result["valid"] is True
+    assert len(FakeSession.request_calls) == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_stage_probe_stops_after_configured_transient_status_retries(monkeypatch):
+    monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
+    FakeSession.request_calls = []
+    FakeSession.responses = [
+        FakeResponse(status_code=502, text="bad gateway"),
+        FakeResponse(status_code=502, text="bad gateway"),
+        FakeResponse(status_code=502, text="bad gateway"),
+    ]
+    sleeps = []
+    monkeypatch.setattr(session_manager.time, "sleep", sleeps.append)
+
+    result = validate_stage_probes(
+        valid_city_ops_cookie_dump(),
+        ["city_ops"],
+        {
+            "city_ops": {
+                "method": "POST",
+                "url": "https://example/getUserInfo",
+                "retry_status_codes": [502, 503, 504],
+                "status_retry_attempts": 2,
+                "status_retry_delay_seconds": 1,
+            }
+        },
+    )
+
+    assert result["valid"] is False
+    assert result["results"][0]["reason"] == "status_not_allowed"
+    assert result["results"][0]["status_code"] == 502
+    assert len(FakeSession.request_calls) == 3
+    assert sleeps == [1.0, 2.0]
+
+
 def test_stage_probe_city_ops_requires_all_configured_probes(monkeypatch):
     monkeypatch.setattr(session_manager.requests, "Session", FakeSession)
     FakeSession.responses = [
@@ -708,7 +783,19 @@ def test_smart_ops_probe_config_uses_region_lookup():
     assert probe["body_type"] == "json"
     assert probe["data"] == {"area": "371"}
     assert probe["success_json_path"] == "header.rspcode"
+    assert probe["retry_status_codes"] == [502, 503, 504]
+    assert probe["status_retry_attempts"] == 2
+    assert probe["status_retry_delay_seconds"] == 1
     assert probe["success_value"] == "0000"
+
+
+def test_report_analysis_probe_config_retries_transient_statuses():
+    config_path = Path(__file__).resolve().parents[1] / "config" / "modules" / "autologin.json"
+    probe = json.loads(config_path.read_text(encoding="utf-8"))["stage_probes"]["report_analysis"]
+
+    assert probe["retry_status_codes"] == [502, 503, 504]
+    assert probe["status_retry_attempts"] == 2
+    assert probe["status_retry_delay_seconds"] == 1
 
 
 def test_prepare_session_reuses_after_lock_when_probe_recovers(monkeypatch):

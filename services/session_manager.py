@@ -576,6 +576,33 @@ def execute_stage_probe(stage_name, probe, stage):
         raise ValueError("probe retry_delay_seconds 必须是非负数") from exc
     if retry_delay_seconds < 0:
         raise ValueError("probe retry_delay_seconds 必须是非负数")
+
+    retry_status_codes = probe.get("retry_status_codes") or []
+    try:
+        retry_status_codes = {int(code) for code in retry_status_codes}
+    except (TypeError, ValueError) as exc:
+        raise ValueError("probe retry_status_codes 必须是状态码列表") from exc
+    status_retry_attempts = probe.get("status_retry_attempts", 0)
+    if isinstance(status_retry_attempts, bool):
+        raise ValueError("probe status_retry_attempts 必须是非负整数")
+    try:
+        status_retry_attempts = int(status_retry_attempts or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("probe status_retry_attempts 必须是非负整数") from exc
+    if status_retry_attempts < 0:
+        raise ValueError("probe status_retry_attempts 必须是非负整数")
+    status_retry_delay_seconds = probe.get(
+        "status_retry_delay_seconds", retry_delay_seconds
+    )
+    if isinstance(status_retry_delay_seconds, bool):
+        raise ValueError("probe status_retry_delay_seconds 必须是非负数")
+    try:
+        status_retry_delay_seconds = float(status_retry_delay_seconds)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("probe status_retry_delay_seconds 必须是非负数") from exc
+    if status_retry_delay_seconds < 0:
+        raise ValueError("probe status_retry_delay_seconds 必须是非负数")
+
     for attempt in range(2):
         try:
             response = session.request(method, probe["url"], **request_kwargs)
@@ -590,6 +617,21 @@ def execute_stage_probe(stage_name, probe, stage):
                     "error": type(exc).__name__,
                 }
             time.sleep(retry_delay_seconds)
+
+    for retry_index in range(status_retry_attempts):
+        if response.status_code not in retry_status_codes:
+            break
+        time.sleep(status_retry_delay_seconds * (2**retry_index))
+        try:
+            response = session.request(method, probe["url"], **request_kwargs)
+        except requests.exceptions.RequestException as exc:
+            return {
+                "stage": stage_name,
+                "enabled": True,
+                "ok": False,
+                "reason": "probe_error",
+                "error": type(exc).__name__,
+            }
 
     payload = response_json_or_none(response)
 

@@ -39,6 +39,9 @@
       "success_json_path": "returnCode",
       "success_value": "0",
       "timeout_seconds": 8,
+      "retry_status_codes": [502, 503, 504],
+      "status_retry_attempts": 2,
+      "status_retry_delay_seconds": 1,
       "fallback_probes": []
     },
     "city_ops": {
@@ -110,6 +113,9 @@
       "success_json_path": "header.rspcode",
       "success_value": "0000",
       "timeout_seconds": 8,
+      "retry_status_codes": [502, 503, 504],
+      "status_retry_attempts": 2,
+      "status_retry_delay_seconds": 1,
       "fallback_probes": []
     }
   },
