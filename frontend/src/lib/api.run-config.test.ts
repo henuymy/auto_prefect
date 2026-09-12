@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { realTestRunConfig } from "./api";
+import { getDashboardLatestRun, realTestRunConfig } from "./api";
 import type { ReportConfig } from "@/types/config";
 
 const config = {
@@ -16,6 +16,10 @@ const config = {
 
 function jsonResponse(payload: unknown) {
   return { ok: true, json: async () => payload } as Response;
+}
+
+function statusResponse(status: number) {
+  return { ok: false, status, text: async () => "" } as Response;
 }
 
 afterEach(() => {
@@ -45,5 +49,20 @@ describe("real test API request", () => {
     })));
 
     await expect(realTestRunConfig(config)).rejects.toThrow("发送失败");
+  });
+});
+
+describe("dashboard API request", () => {
+  it("retries transient failures and uses a 60 second timeout", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(statusResponse(503))
+      .mockResolvedValueOnce(jsonResponse({ data_version: "v1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getDashboardLatestRun()).resolves.toEqual({ data_version: "v1" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const signal = fetchMock.mock.calls[0]?.[1]?.signal as AbortSignal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal.aborted).toBe(false);
   });
 });

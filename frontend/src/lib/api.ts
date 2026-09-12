@@ -4,6 +4,9 @@ import { uid } from "@/lib/utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 const API_REQUEST_TIMEOUT_MS = 30_000;
+const DASHBOARD_REQUEST_TIMEOUT_MS = 60_000;
+const DASHBOARD_REQUEST_RETRIES = 2;
+const DASHBOARD_RETRY_STATUS_CODES = new Set([502, 503, 504]);
 // The backend executes a real test in-process and allows up to 15 minutes for
 // downloads, comparison, screenshots, and delivery.  Keep a small margin for
 // response serialization instead of letting the generic 30s UI timeout turn a
@@ -122,26 +125,39 @@ export function normalizeReportConfig(config: RawReportConfig): ReportConfig {
 }
 
 async function request<T>(path: string, init?: RequestInit, timeoutMs = API_REQUEST_TIMEOUT_MS): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      ...(timeoutMs === API_REQUEST_TIMEOUT_MS
-        ? { signal: AbortSignal.timeout(API_REQUEST_TIMEOUT_MS) }
-        : { signal: AbortSignal.timeout(timeoutMs) }),
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers || {}),
-      },
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw new Error("请求超时，请检查后端服务");
+  const method = (init?.method || "GET").toUpperCase();
+  const retryableDashboardRead = path.startsWith("/api/dashboard/") && method === "GET";
+  const effectiveTimeoutMs = retryableDashboardRead ? DASHBOARD_REQUEST_TIMEOUT_MS : timeoutMs;
+  const maxRetries = retryableDashboardRead ? DASHBOARD_REQUEST_RETRIES : 0;
+
+  for (let attempt = 0; ; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}${path}`, {
+        ...init,
+        signal: AbortSignal.timeout(effectiveTimeoutMs),
+        headers: {
+          "Content-Type": "application/json",
+          ...(init?.headers || {}),
+        },
+      });
+    } catch (error) {
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+        continue;
+      }
+      if (error instanceof DOMException && error.name === "TimeoutError") {
+        throw new Error("请求超时，请检查后端服务");
+      }
+      throw error;
     }
-    throw error;
-  }
-  if (!response.ok) {
+
+    if (response.ok) return response.json() as Promise<T>;
     const text = await response.text();
+    if (retryableDashboardRead && DASHBOARD_RETRY_STATUS_CODES.has(response.status) && attempt < maxRetries) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+      continue;
+    }
     try {
       const payload = JSON.parse(text);
       const detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail || payload);
@@ -153,7 +169,6 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = API_REQU
       throw error;
     }
   }
-  return response.json() as Promise<T>;
 }
 
 export async function getCurrentDashboard(
