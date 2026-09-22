@@ -12,7 +12,10 @@ from services.dashboard_structure import (
     StructureGraph,
     StructureNode,
 )
-from services.dashboard_v2_hierarchy import sync_v2_hierarchy_in_session
+from services.dashboard_v2_hierarchy import (
+    load_v2_structure_graph,
+    sync_v2_hierarchy_in_session,
+)
 
 
 NODE_ROWS = [
@@ -137,6 +140,26 @@ def candidate_graph(
         targets={key: node for key, node in nodes.items() if key[0] != "CHANNEL"},
         edges=edges,
     )
+
+
+def test_load_v2_structure_graph_projects_only_graph_fields(session):
+    graph = load_v2_structure_graph(session)
+
+    assert set(graph.areas) == {
+        ("CITY", "A"),
+        ("BRANCH", "B"),
+        ("GRID", "G"),
+        ("CHANNEL_MANAGER", "M"),
+        ("CHANNEL", "C"),
+    }
+    assert set(graph.targets) == {
+        ("CITY", "A"),
+        ("BRANCH", "B"),
+        ("GRID", "G"),
+        ("CHANNEL_MANAGER", "M"),
+    }
+    assert StructureEdge("CITY", "A", "BRANCH", "B") in graph.edges
+    assert StructureEdge("CHANNEL_MANAGER", "M", "CHANNEL", "C") in graph.edges
 
 
 def test_stable_observed_nodes_refresh_last_seen_without_structure_update(session):

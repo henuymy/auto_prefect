@@ -320,39 +320,51 @@ def attach_v2_node_ids_in_session(
 
 def load_v2_structure_graph(session: Session) -> StructureGraph:
     """Expose enabled V2 nodes through the established drift graph contract."""
-    records = session.scalars(
-        select(HierarchyNode).where(HierarchyNode.enabled.is_(True))
-    ).all()
-    by_id = {record.id: record for record in records}
+    # The graph only needs identity, parent, and the two participation flags.
+    # Avoid loading the full ORM row here: this read runs before every
+    # collection and can otherwise transfer timestamps and bookkeeping fields
+    # for every enabled node over the MySQL connection.
+    records = session.execute(
+        select(
+            HierarchyNode.id,
+            HierarchyNode.node_type,
+            HierarchyNode.node_code,
+            HierarchyNode.node_name,
+            HierarchyNode.parent_id,
+            HierarchyNode.request_enabled,
+            HierarchyNode.metric_enabled,
+        ).where(HierarchyNode.enabled.is_(True))
+    ).mappings().all()
+    by_id = {record["id"]: record for record in records}
     areas: dict[tuple[str, str], StructureNode] = {}
     targets: dict[tuple[str, str], StructureNode] = {}
     edges: set[StructureEdge] = set()
     for record in records:
-        identity = (record.node_type, record.node_code)
+        identity = (record["node_type"], record["node_code"])
         graph_node = StructureNode(
-            node_type=record.node_type,
-            code=record.node_code,
-            name=record.node_name,
-            node_id=record.id,
+            node_type=record["node_type"],
+            code=record["node_code"],
+            name=record["node_name"],
+            node_id=record["id"],
         )
-        if record.metric_enabled:
+        if record["metric_enabled"]:
             areas[identity] = graph_node
-        if record.request_enabled:
+        if record["request_enabled"]:
             targets[identity] = graph_node
-        if record.parent_id is None:
+        if record["parent_id"] is None:
             continue
-        parent = by_id.get(record.parent_id)
+        parent = by_id.get(record["parent_id"])
         if parent is None:
             raise V2HierarchyError(
                 f"启用节点父级不存在或已停用: "
-                f"{record.node_type}/{record.node_code}"
+                f"{record['node_type']}/{record['node_code']}"
             )
         edges.add(
             StructureEdge(
-                parent_type=parent.node_type,
-                parent_code=parent.node_code,
-                child_type=record.node_type,
-                child_code=record.node_code,
+                parent_type=parent["node_type"],
+                parent_code=parent["node_code"],
+                child_type=record["node_type"],
+                child_code=record["node_code"],
             )
         )
     graph = StructureGraph(areas=areas, targets=targets, edges=edges)

@@ -17,15 +17,24 @@ def run_dashboard_v2_partition_maintenance_task(
     logger = get_run_logger()
     engine = create_dashboard_engine()
     try:
+        # Collection and retention both update collection_run.  Use the
+        # collection lock when it is configured so maintenance cannot hold
+        # row locks while a realtime batch is starting.  Keep the partition
+        # lock as a fallback for older configurations.
+        lock_name = str(
+            config.get("collection_database_lock_name")
+            or config.get("partition_database_lock_name")
+            or "auto_notify_dashboard_collection"
+        )
+        lock_wait_seconds = int(
+            config.get("collection_database_lock_wait_seconds")
+            or config.get("partition_database_lock_wait_seconds", 5)
+            or 5
+        )
         with dashboard_mysql_lock(
             engine,
-            lock_name=str(
-                config.get("partition_database_lock_name")
-                or "auto_notify_dashboard_partition_maintenance"
-            ),
-            wait_seconds=int(
-                config.get("partition_database_lock_wait_seconds", 5) or 5
-            ),
+            lock_name=lock_name,
+            wait_seconds=lock_wait_seconds,
         ):
             result = execute_v2_retention_maintenance(
                 engine,

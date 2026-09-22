@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import random
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -11,6 +13,7 @@ from time import perf_counter
 from typing import Any, Callable, Iterator
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from infrastructure.dashboard_mysql import (
@@ -269,29 +272,82 @@ def recover_stale_v2_runs(
     timeout_minutes: int,
     exclude_batch_no: str | None = None,
 ) -> int:
-    """Close stale runs only after the caller owns the global MySQL lock."""
+    """Close stale runs without blocking a live collection indefinitely.
+
+    Retention maintenance can touch ``collection_run`` while a collection is
+    starting.  MySQL 8 supports ``SKIP LOCKED`` for this best-effort cleanup,
+    so rows currently owned by another transaction are left for a later run.
+    Lock conflicts that still occur are retried briefly; failure to recover a
+    stale row must not abort an otherwise healthy realtime collection.
+    """
     if timeout_minutes <= 0:
         raise ValueError("timeout_minutes 必须大于 0")
     cutoff = now_shanghai().replace(tzinfo=None) - timedelta(minutes=timeout_minutes)
-    with Session(engine) as session, session.begin():
-        query = (
-            select(CollectionRunV2)
-            .where(
-                CollectionRunV2.status.in_(["PENDING", "RUNNING"]),
-                CollectionRunV2.started_at < cutoff,
+    logger = logging.getLogger(__name__)
+    dialect_name = str(getattr(getattr(engine, "dialect", None), "name", ""))
+    supports_skip_locked = dialect_name in {"mysql", "mariadb"}
+
+    for attempt in range(1, 4):
+        try:
+            with Session(engine) as session, session.begin():
+                query = select(CollectionRunV2).where(
+                    CollectionRunV2.status.in_(["PENDING", "RUNNING"]),
+                    CollectionRunV2.started_at < cutoff,
+                )
+                if exclude_batch_no:
+                    query = query.where(CollectionRunV2.batch_no != exclude_batch_no)
+                query = query.with_for_update(skip_locked=supports_skip_locked)
+                rows = list(session.scalars(query))
+                finished_at = now_shanghai().replace(tzinfo=None)
+                for row in rows:
+                    row.status = "FAILED"
+                    row.phase = "RECOVER_TIMEOUT"
+                    row.finished_at = finished_at
+                    row.error_type = "STALE_RUN_TIMEOUT"
+                    row.error_message = {
+                        "message": f"批次超过 {timeout_minutes} 分钟未完成"
+                    }
+                return len(rows)
+        except OperationalError as exc:
+            error_code = _mysql_error_code(exc)
+            if error_code in {2006, 2013}:
+                # The cleanup is best effort.  A restarted server or a broken
+                # pooled connection must not turn into a collection failure;
+                # the next batch will retry stale-run recovery.
+                logger.warning(
+                    "V2 超时批次收口连接已断开，延期本次收口 batch=%s code=%s",
+                    exclude_batch_no,
+                    error_code,
+                )
+                engine.dispose()
+                return 0
+            if error_code not in {1205, 1213}:
+                raise
+            if attempt >= 3:
+                logger.warning(
+                    "V2 超时批次收口因数据库锁冲突延期 batch=%s code=%s attempts=%s",
+                    exclude_batch_no,
+                    error_code,
+                    attempt,
+                )
+                return 0
+            delay = min(2.0, 0.2 * (2 ** (attempt - 1))) + random.uniform(0, 0.1)
+            logger.warning(
+                "V2 超时批次收口遇到数据库锁冲突，准备重试 batch=%s code=%s "
+                "attempt=%s delay=%.3fs",
+                exclude_batch_no,
+                error_code,
+                attempt,
+                delay,
             )
-            .with_for_update()
-        )
-        if exclude_batch_no:
-            query = query.where(CollectionRunV2.batch_no != exclude_batch_no)
-        rows = list(session.scalars(query))
-        finished_at = now_shanghai().replace(tzinfo=None)
-        for row in rows:
-            row.status = "FAILED"
-            row.phase = "RECOVER_TIMEOUT"
-            row.finished_at = finished_at
-            row.error_type = "STALE_RUN_TIMEOUT"
-            row.error_message = {
-                "message": f"批次超过 {timeout_minutes} 分钟未完成"
-            }
-        return len(rows)
+            time.sleep(delay)
+
+    raise AssertionError("V2 超时批次收口重试流程未返回")
+
+
+def _mysql_error_code(exc: OperationalError) -> int | None:
+    args = getattr(exc.orig, "args", ())
+    try:
+        return int(args[0])
+    except (IndexError, TypeError, ValueError):
+        return None
