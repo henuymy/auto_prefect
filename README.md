@@ -110,6 +110,23 @@ pwsh -File scripts/setup_windows_env.ps1
 
 当开发库与生产库位于同一 MySQL 服务实例时，两边必须在 `config/runtime.local.json` 的 `dashboard.session_overrides` 中分别配置不同的 `collection_database_lock_name` 和 `partition_database_lock_name`，例如名称后缀使用 `_dev`、`_prod`；同一环境中所有机器必须保留相同锁名，避免同一套数据被并发采集或维护。
 
+### 驾驶舱 MySQL 连接与锁等待故障
+
+驾驶舱采集遇到 `2013 Lost connection` 时，先确认 MySQL 是否在同一时间被人工重启；重启会强制关闭 `dashboard_app` 连接，应用侧应重启 Dashboard Worker 或重建 SQLAlchemy 连接池。遇到 `1205 Lock wait timeout exceeded` 时，重点排查 `collection_run` 上的长事务和采集/分区维护并发，不要只调大 `innodb_lock_wait_timeout`。
+
+当前代码对超时批次回收使用 MySQL `SKIP LOCKED`，对 `1205/1213` 做有限重试，对 `2006/2013` 延期清理；分区维护与实时采集使用同一把数据库锁。部署后应手动执行一次 `REALTIME:session`，确认 Flow 成功，并观察 MySQL 日志不再持续出现连接、IO 或 redo log 告警。
+
+只读诊断命令：
+
+```sql
+SHOW FULL PROCESSLIST;
+SHOW ENGINE INNODB STATUS;
+SELECT * FROM sys.innodb_lock_waits;
+SELECT * FROM information_schema.innodb_trx;
+```
+
+完整原因分析、锁等待定位、发布步骤和验收清单见：[驾驶舱 MySQL 连接与锁等待故障处置记录](docs/dashboard-mysql-lock-timeout-repair.md)。
+
 ### 渠道指标排除
 
 驾驶舱右上角“设置”中的“渠道指标排除”用于维护“某个渠道的某个指标不纳入统计”的规则。选择渠道、已启用且结果落库（`STORE`）的指标、生效日期和可选失效日期后保存；规则可预览受影响的渠道经理、网格、分公司和市级路径，也可以取消，但不会物理删除审计记录。
