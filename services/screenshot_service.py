@@ -418,14 +418,24 @@ def export_range_to_pdf(ws, rng, pdf_path, capture):
             excel.CalculateFull()
         except Exception:
             pass
-        ws.ExportAsFixedFormat(
-            Type=XL_TYPE_PDF,
-            Filename=str(pdf_path.resolve()),
-            Quality=XL_QUALITY_STANDARD,
-            IncludeDocProperties=False,
-            IgnorePrintAreas=False,
-            OpenAfterPublish=False,
-        )
+        export_kwargs = {
+            "Type": XL_TYPE_PDF,
+            "Filename": str(pdf_path.resolve()),
+            "Quality": XL_QUALITY_STANDARD,
+            "IncludeDocProperties": False,
+            "IgnorePrintAreas": False,
+            "OpenAfterPublish": False,
+        }
+        # Some Excel/pywin32 installations do not expose the worksheet
+        # dispatch member even though the workbook export API is available.
+        # Export the active sheet through its parent workbook in that case.
+        try:
+            ws.ExportAsFixedFormat(**export_kwargs)
+        except AttributeError as exc:
+            if "ExportAsFixedFormat" not in str(exc):
+                raise
+            workbook = ws.Parent
+            workbook.ExportAsFixedFormat(**export_kwargs)
         # ExportAsFixedFormat may return before the printer driver finishes
         # consuming PageSetup. Do not restore it until the PDF is stable.
         wait_for_pdf_export(
@@ -961,7 +971,12 @@ def build_message_package_com(config, base_dir=PROJECT_DIR, visible=False):
                         save_package(package_file, package)
             finally:
                 if workbook is not None:
-                    workbook.Close(SaveChanges=False)
+                    try:
+                        workbook.Close(SaveChanges=False)
+                    except Exception:
+                        # Preserve the capture/opening exception. COM can
+                        # return a dynamic placeholder when Open failed.
+                        pass
     finally:
         quit_excel(excel, excel_pid)
 

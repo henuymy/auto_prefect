@@ -16,6 +16,12 @@ Prefect Flow
 
 驾驶舱采集链路独立写入 MySQL，经 FastAPI 提供查询接口，由 React 前端展示实时值、累计值、历史数据和目标完成情况。
 
+### Excel 截图与 PDF 渲染
+
+通报中的 Excel 图片采用“Excel COM → 单页 PDF → PNG”流程生成。运行截图任务的 Windows 会话必须安装桌面版 Microsoft Excel，并可使用 `Microsoft Print to PDF`；截图服务会设置打印区域、分页参数和方向，等待 PDF 写入完成后再转换为 PNG。当前实现要求导出结果为单页，出现多页会直接失败，避免发送被截断的图片。
+
+部分 Excel/pywin32 版本不会在工作表 COM 对象上暴露 `ExportAsFixedFormat`。服务会自动回退到工作簿导出接口；如果工作簿打开失败，清理阶段的 `Close` 异常不会覆盖最初的导出或打开错误，日志中的首个异常才是排查重点。遇到截图失败时，先检查 Excel 是否可交互启动、默认打印机是否为 `Microsoft Print to PDF`，再根据最初的 COM 异常排查模板或打印机状态。
+
 ## 目录结构
 
 ```text
